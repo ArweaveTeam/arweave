@@ -62,7 +62,6 @@ runtime_writable_cases() ->
         {[gossip, data_roots, syncing_enabled], false},
         {[gossip, data_roots, max_duplicates], 5},
         {[sync, local_peers_only], true},
-        {[sync, max_concurrent_sync_bucket_jobs], 50},
         {[disk_pool, max_buffer_size], 200},
         {[randomx, hardware_aes], false},
         {[vdf, pull], false},

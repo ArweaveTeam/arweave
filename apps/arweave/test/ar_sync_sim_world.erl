@@ -6,10 +6,10 @@
 -compile({no_auto_import, [get/1]}).
 
 -export([create/0, delete/0, reset/0, reset/1,
+        start_scenario/0, tick_index/0,
         use_mainnet_replica_2_9_sizes/0,
         storage_modules/0, store_ranges/0, store_ids/0, weave_size/0,
         get/1, update_world/1,
-        get_peers_for_offset/1, get_peer_ranges_for_peers/5,
         get_chunk_binary/2,
         wait_for_entropy/2,
         is_chunk_cache_full/0, chunk_cache_size/0, chunk_cache_size/1,
@@ -17,6 +17,7 @@
         admit_store_write/3, write_completed/2,
         unsynced_intervals/3, unsynced_footprint_intervals/3,
         get_next_synced_interval/3,
+        wait_for_chunk_interval_response/1,
         peer_sync_kind_enabled/2, peer_sync_intervals/1, snapshot/0]).
 
 -export_type([world/0, peer/0, snapshot/0]).
@@ -85,18 +86,32 @@ do_reset(#sim_world{} = World, CacheLimit) ->
     put_value(cache_limit, CacheLimit),
     update_world(World).
 
-%% @doc Return the fixed storage-module configuration shared by all scenarios.
--spec storage_modules() -> [map()].
+%% @doc Mark the end of pipeline startup so scenario predicates use elapsed
+%% test time rather than metadata warm-up time.
+start_scenario() ->
+    put_value(scenario_started_ms, ar_timer:monotonic_ms()).
+
+%% @doc Return the scheduler-tick index relative to scenario start.
+tick_index() ->
+    StartedMS = case ets:lookup(?MODULE, scenario_started_ms) of
+        [{scenario_started_ms, Value}] -> Value;
+        [] -> 0
+    end,
+    (ar_timer:monotonic_ms() - StartedMS)
+        div ar_sync_scheduler:tick_interval_ms().
+
+%% @doc Return the fixed runtime storage modules shared by all scenarios.
 storage_modules() ->
-    [arweave_config:storage_module_to_config(Module)
-        || Module <- store_modules()].
+    store_modules().
 
 store_modules() ->
-    BaseBucket = ?SIM_STORE_BASE div ?SIM_STORE_SIZE,
-    [{?SIM_STORE_SIZE, BaseBucket + N, unpacked}
+    [{?SIM_STORE_BASE + N * ?SIM_STORE_SIZE,
+        ?SIM_STORE_BASE + (N + 1) * ?SIM_STORE_SIZE,
+        unpacked}
         || N <- lists:seq(0, ?SIM_STORES - 1)].
 
-%% @doc Return the fixed simulation store IDs and effective byte ranges.
+%% @doc Return the fixed simulation storage-module byte ranges. Production
+%% sweepers pad these ranges independently when they initialize.
 -spec store_ranges() -> [{term(), {non_neg_integer(), non_neg_integer()}}].
 store_ranges() ->
     [{ar_storage_module:id(Module), ar_storage_module:module_range(Module)}
@@ -136,53 +151,6 @@ get(Key) ->
     ets:lookup_element(?MODULE, Key, 2).
 
 %%%===================================================================
-%%% Direct peer availability.
-%%%===================================================================
-
--spec get_peers_for_offset(non_neg_integer()) -> [term()].
-get_peers_for_offset(_Offset) ->
-    %% Direct scenarios bypass coarse discovery. Expose every configured peer
-    %% and let get_peer_ranges_for_peers/5 apply exact range availability.
-    get(peers).
-
-get_peer_ranges_for_peers(StoreID, Peers, Offset, RangeStart, RangeEnd) ->
-    Requested = ar_intervals:from_list([{RangeEnd, RangeStart}]),
-    PeerRanges = lists:filtermap(
-        fun(Peer) ->
-            Intervals = direct_peer_intersection(Peer, Requested),
-            case ar_intervals:is_empty(Intervals) of
-                true ->
-                    false;
-                false ->
-                    {true, #peer_range{
-                        store_id = StoreID,
-                        offset = Offset,
-                        peer = Peer,
-                        intervals = Intervals,
-                        footprint = none
-                    }}
-            end
-        end,
-        Peers),
-    PeerRanges.
-
-direct_peer_intersection(Peer, Requested) ->
-    case get({peer, Peer}) of
-        #sim_peer{ sync_availability = all } -> Requested;
-        #sim_peer{ sync_availability = {stores, StoreIDs} } ->
-            ar_intervals:intersection(store_intervals(StoreIDs), Requested);
-        #sim_peer{ sync_availability = {intervals, Intervals} } ->
-            ar_intervals:intersection(ar_intervals:from_list(Intervals), Requested)
-    end.
-
-store_intervals(StoreIDs) ->
-    ar_intervals:from_list([
-        {RangeEnd, RangeStart}
-        || {StoreID, {RangeStart, RangeEnd}} <- store_ranges(),
-            lists:member(StoreID, StoreIDs)
-    ]).
-
-%%%===================================================================
 %%% Fetch and capacity model.
 %%%===================================================================
 
@@ -194,6 +162,21 @@ get_chunk_binary(Name, Offset) ->
         do_get_chunk_binary(Name, Offset, NumInflight)
     after
         _ = add_counter({http_inflight, Name}, -1)
+    end.
+
+%% @doc Apply detailed-metadata latency while exposing concurrent requests to
+%% scenarios that model a peer whose metadata endpoint overloads under fan-out.
+wait_for_chunk_interval_response(Peer) ->
+    NumInflight = add_counter({chunk_interval_inflight, Peer}, 1),
+    try
+        #sim_peer{ chunk_interval_latency_ms = Latency } = get({peer, Peer}),
+        LatencyMS = case Latency of
+            Value when is_integer(Value) -> Value;
+            LatencyFun -> LatencyFun(NumInflight)
+        end,
+        ar_timer:sleep(LatencyMS)
+    after
+        _ = add_counter({chunk_interval_inflight, Peer}, -1)
     end.
 
 do_get_chunk_binary(Name, Offset, NumInflight) ->
@@ -224,8 +207,7 @@ failure_outcome(_Name, undefined) ->
     none;
 failure_outcome(Name, FailurePolicy) ->
     RequestSequence = add_counter({fetch_seq, Name}, 1),
-    TickIndex = ar_timer:monotonic_ms()
-        div ar_sync_scheduler:tick_interval_ms(),
+    TickIndex = tick_index(),
     FailurePolicy(TickIndex, RequestSequence).
 
 failure_latency({_Failure, LatencyMS}, _DefaultLatencyMS) ->
@@ -766,56 +748,6 @@ local_data_layout_test() ->
             ar_sync_deps_sim:unsynced_intervals(Start, End, store)))
     end).
 
-direct_byte_availability_test() ->
-    with_world(fun() ->
-        Peer1 = peer_1,
-        Peer2 = peer_2,
-        Chunk = ?DATA_CHUNK_SIZE,
-        do_reset(#sim_world{
-            peers = #{
-                Peer1 => #sim_peer{},
-                Peer2 => #sim_peer{
-                    sync_availability = {intervals, [{2 * Chunk, Chunk}]}
-                }
-            }
-        }, 1),
-        ?assertEqual(lists:sort([Peer1, Peer2]),
-            lists:sort(get_peers_for_offset(Chunk))),
-        PeerRanges = get_peer_ranges_for_peers(store,
-            [Peer1, Peer2], Chunk, 0, 3 * Chunk),
-        ?assertEqual([Peer1, Peer2],
-            [Peer || #peer_range{ peer = Peer } <- PeerRanges]),
-        ?assertEqual(
-            ar_intervals:from_list([{3 * Chunk, 0}]),
-            (hd(PeerRanges))#peer_range.intervals),
-        ?assertEqual(
-            ar_intervals:from_list([{2 * Chunk, Chunk}]),
-            (lists:nth(2, PeerRanges))#peer_range.intervals)
-    end).
-
-store_availability_test() ->
-    with_world(fun() ->
-        Peer = peer,
-        [{SelectedStore, {SelectedStart, SelectedEnd}},
-            {_OtherStore, {OtherStart, OtherEnd}} | _] = store_ranges(),
-        do_reset(#sim_world{ peers = #{
-            Peer => #sim_peer{ sync_availability = {stores, [SelectedStore]} }
-        } }, 1),
-        %% One chunk inside the selected store proves inclusion. The second
-        %% chunk of the adjacent store sits beyond the configured overlap and
-        %% therefore proves exclusion.
-        SelectedChunkEnd = min(SelectedEnd, SelectedStart + ?DATA_CHUNK_SIZE),
-        [#peer_range{ intervals = SelectedIntervals }] =
-            get_peer_ranges_for_peers(SelectedStore, [Peer], SelectedChunkEnd,
-                SelectedStart, SelectedChunkEnd),
-        ?assertEqual([{SelectedChunkEnd, SelectedStart}],
-            ar_intervals:to_list(SelectedIntervals)),
-        OtherChunkStart = OtherStart + ?DATA_CHUNK_SIZE,
-        OtherChunkEnd = min(OtherEnd, OtherChunkStart + ?DATA_CHUNK_SIZE),
-        ?assertEqual([], get_peer_ranges_for_peers(
-            other_store, [Peer], OtherChunkEnd, OtherChunkStart, OtherChunkEnd))
-    end).
-
 discovery_configuration_test() ->
     with_world(fun() ->
         Peer = peer,
@@ -832,10 +764,8 @@ discovery_configuration_test() ->
             maps:from_list([{P, #sim_peer{ sync_kinds = [] }}
                 || P <- GossipPeers])),
         do_reset(#sim_world{
-            peers = Peers,
-            discovery_enabled = true
+            peers = Peers
         }, 1),
-        ?assert((get(world))#sim_world.discovery_enabled),
         ?assertNot(peer_sync_kind_enabled(Peer, byte)),
         ?assert(peer_sync_kind_enabled(Peer, footprint)),
         ?assertEqual(WorldIntervals,

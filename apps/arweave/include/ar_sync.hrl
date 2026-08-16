@@ -82,8 +82,8 @@
 }).
 
 %% Worker time consumed by network fetch attempts. The scheduler aggregates
-%% these values by peer so the concurrency controller responds to the cost of
-%% failures rather than their raw count.
+%% these values by peer so the scheduler's concurrency logic responds to the
+%% cost of failures rather than their raw count.
 -record(fetch_timing, {
     productive_ms = 0 :: non_neg_integer(),
     reject_ms = 0 :: non_neg_integer(),
@@ -140,7 +140,7 @@
 %% Similar to ?NETWORK_DATA_BUCKET_SIZE, except for a footprint bucket
 %% contains several "footprints" - sets of chunks spread out across the partition.
 -ifdef(AR_TEST).
--define(NETWORK_FOOTPRINT_BUCKET_SIZE, 36). % 12 (footprints) * 3 (chunks); ~10 MB
+-define(NETWORK_FOOTPRINT_BUCKET_SIZE, 36). % 9 (footprints) * 4 (chunks); ~10 MB
 -else.
 -define(NETWORK_FOOTPRINT_BUCKET_SIZE, 37888). % 37 (footprints) * 1024 (chunks); ~10 GB
 -endif.
@@ -158,6 +158,9 @@
 
 %% The upper limit for the size of a sync record serialized using Erlang Term Format.
 -define(MAX_ETF_SYNC_RECORD_SIZE, 80 * ?MAX_SHARED_SYNCED_INTERVALS_COUNT).
+
+%% The HTTP timeout for GET /data_sync_record requests.
+-define(DATA_SYNC_RECORD_TIMEOUT_MS, 30_000).
 
 %% byte_size(ar_serialize:jsonify(jiffy:encode(#{ packing => "replica_2_9_" ++ binary_to_list(crypto:strong_rand_bytes(32)), intervals => [[integer_to_list(trunc(math:pow(2, 256) - 1)), integer_to_list(trunc(math:pow(2, 256) - 1))] || _ <- lists:seq(1, 512)] }))).
 %% 243238

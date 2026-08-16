@@ -57,8 +57,6 @@ init([]) ->
         ?CHILD(ar_events, solution, worker),
         %% Events: complete (per-StoreID chunk-copy drain finished).
         ?CHILD(ar_events, chunk_copy, worker),
-        %% Events: chunk_intervals_updated.
-        ?CHILD(ar_events, sync_discovery, worker),
         %% Used for the testing purposes.
         ?CHILD(ar_events, testing, worker)
     ]}}.

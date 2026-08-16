@@ -782,13 +782,6 @@ parse_options([{<<"data_sync_request_packed_chunks">>, Bool} | Rest], Opts)
 parse_options([{<<"data_sync_request_packed_chunks">>, InvalidValue} | _Rest], _Opts) ->
     {error, {bad_type, data_sync_request_packed_chunks, boolean}, InvalidValue};
 
-parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, N} | Rest], Opts)
-  when is_integer(N), N >= 0 ->
-    _ = arweave_config:set([sync, max_concurrent_sync_bucket_jobs], N),
-    parse_options(Rest, Opts);
-parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, InvalidValue} | _Rest], _Opts) ->
-    {error, {bad_type, data_discovery_max_concurrent_peer_scans, number}, InvalidValue};
-
 %% TCP shutdown procedure.
 parse_options([{<<"network.tcp.shutdown.connection_timeout">>, Delay} | Rest], Opts)
   when is_integer(Delay) andalso Delay > 0 ->

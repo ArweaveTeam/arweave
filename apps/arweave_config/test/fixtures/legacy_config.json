@@ -101,7 +101,6 @@
   "max_disk_pool_buffer_mb": 100000,
   "max_disk_pool_data_root_buffer_mb": 100000000,
   "max_duplicate_data_roots": 7,
-  "data_discovery_max_concurrent_peer_scans": 101,
   "data_sync_request_packed_chunks": true,
   "enable_data_roots_syncing": false,
   "disk_cache_size_mb": 1024,

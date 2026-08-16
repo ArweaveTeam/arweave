@@ -4,15 +4,15 @@
 %%% detailed availability from /data_sync_record and /footprints and cache it in
 %%% ETS.
 %%%
-%%% ar_sync_chunk_picker reads this cache when deciding which chunks can be
-%%% fetched from which peers.
+%%% ar_sync_store_sweeper reads this cache and gives ar_sync_chunk_picker an
+%%% immutable snapshot when deciding which chunks can be fetched from which peers.
 -module(ar_sync_discovery).
 -test_category([fast]).
 
 -behaviour(gen_server).
 
--export([start_link/0, get_peers_for_offset/1,
-        get_peer_ranges_for_peers/5]).
+-export([start_link/0, get_peers_for_offset/1, warm_peer_ranges/3,
+        cached_peer_ranges/5]).
 
 -ifdef(AR_TEST).
 -export([collect_peers/0, reset_all_caches/0, inflight_count/0]).
@@ -39,14 +39,13 @@
 -define(QUERY_SYNC_INTERVALS_COUNT_LIMIT, 1000).
 -endif.
 
-%% A freshly booted node needs enough chunk interval capacity to warm all
-%% simulated stores before peer concurrency caps are available.
--define(MIN_CHUNK_INTERVAL_JOBS, 8).
--define(MAX_CHUNK_INTERVAL_JOBS, 200).
--define(MAX_PENDING_CHUNK_INTERVAL_JOBS, 1024).
+%% Each peer, store, and mode has independent metadata, but querying multiple
+%% locations for the same combination concurrently only duplicates work.
+-define(MAX_CHUNK_INTERVAL_JOBS_PER_PEER_STORE_MODE, 1).
 
-%% One chunk interval job per this many published chunk-fetch slots.
--define(FETCH_CAPACITY_PER_CHUNK_INTERVAL_JOB, 8).
+%% Bound each kind of metadata work so discovery cannot saturate the shared
+%% request path and starve chunk fetching.
+-define(MAX_DISCOVERY_JOBS_PER_KIND, 200).
 
 %% A normal query range needs about four pages. Sixteen bounds malformed
 %% or unusually fragmented responses without constraining expected peers.
@@ -67,7 +66,8 @@
 %% Per-peer cache of chunk intervals reported by each peer
 %% (via /data_sync_record for byte mode and /footprints for
 %% footprint mode). Populated by the chunk interval jobs in this module;
-%% read by ar_sync_chunk_picker to compute fetchable intervals.
+%% read by ar_sync_store_sweeper and passed to ar_sync_chunk_picker to compute
+%% fetchable intervals.
 %%
 %% Rows are `{Key, Intervals, MonotonicMs}', keyed by
 %% `{Mode, Location, Peer}'. The timestamp is used for demand-side freshness
@@ -79,7 +79,7 @@
 %% demand.
 
 
-%% Discovery work pending, inflight, or scheduled for later.
+%% Discovery work pending or inflight.
 -record(discovery_job, {
     key,
     kind,
@@ -87,26 +87,19 @@
     store_id = undefined,
     mode = undefined,
     start = undefined,
-    pid = undefined,
-    timer_ref = undefined,
-    token = undefined
+    pid = undefined
 }).
 
 %% Shared state for sync bucket and chunk interval jobs.
 -record(discovery_jobs, {
-    %% Pending identity => #discovery_job{}. Chunk interval requests coalesce
-    %% by peer, store, and mode so the newest requested frontier replaces old work.
+    %% Exact job key => #discovery_job{}. Distinct chunk interval locations
+    %% remain pending independently while peer_store_mode_key/1 limits
+    %% concurrent work for each peer, store, and mode.
     pending = #{},
     %% Key => #discovery_job{ pid = pid() }.
     inflight = #{},
-    %% Key => #discovery_job{ timer_ref = reference(), token = reference() }.
-    %% Empty for job types without schedules.
-    scheduled = #{},
     %% Maximum concurrent jobs in this collection.
-    max_inflight = infinity,
-    %% Sync bucket work is bounded by the tracked peer set. Demand-driven
-    %% chunk interval work supplies an explicit pending limit.
-    max_pending = infinity
+    max_inflight = ?MAX_DISCOVERY_JOBS_PER_KIND
 }).
 
 -record(state, {
@@ -114,8 +107,8 @@
     %% removed peers.
     tracked_peers = sets:new(),
     jobs = #{
-        %% Coarse per-peer jobs bounded by
-        %% [sync, max_concurrent_sync_bucket_jobs].
+        %% Coarse per-peer jobs. Each job fetches byte and footprint metadata
+        %% sequentially, and its exact key limits one job per peer.
         sync_bucket => #discovery_jobs{},
         %% Demand-driven chunk interval jobs. Sync bucket jobs only update
         %% which peers hold which coarse sync buckets; chunk intervals
@@ -123,10 +116,7 @@
         %% bounded span beginning at a store's sweep frontier. Concurrency is
         %% limited so discovery cannot saturate the shared request path and
         %% starve /chunk2 fetching.
-        chunk_interval => #discovery_jobs{
-            max_inflight = ?MIN_CHUNK_INTERVAL_JOBS,
-            max_pending = ?MAX_PENDING_CHUNK_INTERVAL_JOBS
-        }
+        chunk_interval => #discovery_jobs{}
     }
 }).
 
@@ -141,7 +131,7 @@ get_peers_for_offset(Offset) ->
     Peers = lists:foldl(
         fun(Mode, Acc) -> sets:union(Acc, get_peers_for_offset(Mode, Offset)) end,
         sets:new(),
-        ar_sync_cursor:kinds()),
+        [byte, footprint]),
     sets:to_list(Peers).
 
 get_peers_for_offset(Mode, Offset) ->
@@ -215,69 +205,92 @@ collect_sync_bucket_peers(Mode, EndSyncBucket, Peers, Cursor) ->
 %%% Detailed peer availability.
 %%%===================================================================
 
-%% @doc Return each peer's non-empty cached intervals for the requested range.
-%% Missing or stale metadata also schedules one bounded forward job for that
-%% peer, but stale intervals remain usable while their replacement is fetched.
-get_peer_ranges_for_peers(StoreID, Peers, Offset, RangeStart, RangeEnd) ->
-    Results = lists:map(
+%% @doc Warm detailed metadata for the supplied peers at Offset. Cache misses
+%% and stale rows enqueue exact chunk interval jobs; fresh rows and peers that
+%% do not advertise the relevant coarse bucket require no work.
+warm_peer_ranges(StoreID, Peers, Offset) ->
+    lists:foreach(
         fun(Peer) ->
-            get_peer_ranges_for_peer(
-                StoreID, Peer, Offset, RangeStart, RangeEnd)
+            warm_peer_range(byte, StoreID, Peer, Offset),
+            warm_peer_range(footprint, StoreID, Peer, Offset)
         end,
         Peers),
-    {PeerRanges, ChunkIntervalJobs} = combine_peer_range_results(Results),
-    case ChunkIntervalJobs of
-        [] -> ok;
-        _ ->
-            gen_server:cast(
-                ?MODULE, {refresh_chunk_intervals, ChunkIntervalJobs})
-    end,
-    PeerRanges.
+    ok.
 
-get_peer_ranges_for_peer(StoreID, Peer, Offset, RangeStart, RangeEnd) ->
-    PeerRange = #peer_range{
+warm_peer_range(Mode, StoreID, Peer, Offset) ->
+    maybe
+        true ?= peer_supports(Mode, Peer),
+        true ?= peer_has_sync_bucket(Mode, Peer, Offset),
+        true ?= chunk_interval_refresh_needed(Mode, Peer, Offset),
+        PeerRange = #peer_range{
+            store_id = StoreID,
+            offset = Offset,
+            peer = Peer
+        },
+        gen_server:cast(?MODULE,
+            {refresh_chunk_intervals,
+                chunk_interval_job(Mode, PeerRange)})
+    else
+        false ->
+            ok
+    end.
+
+chunk_interval_refresh_needed(Mode, Peer, Offset) ->
+    case chunk_interval_lookup(Mode, Peer, Offset) of
+        {hit, _Intervals} -> false;
+        _MissingOrStale -> true
+    end.
+
+%% @doc Return non-empty cached peer ranges without scheduling discovery work.
+%% `ok' means every relevant peer/mode has a cached row; successful empty and
+%% stale rows count as cached, while a missing row returns `cache_miss'.
+cached_peer_ranges(StoreID, Peers, Offset, RangeStart, RangeEnd) ->
+    {PeerRanges, AnyCacheMiss} = lists:foldl(
+        fun(Peer, Acc) ->
+            cached_peer_ranges_for_peer(StoreID, Peer, Offset,
+                RangeStart, RangeEnd, Acc)
+        end,
+        {[], false},
+        Peers),
+    CacheStatus = case AnyCacheMiss of
+        true -> cache_miss;
+        false -> ok
+    end,
+    {lists:reverse(PeerRanges), CacheStatus}.
+
+cached_peer_ranges_for_peer(StoreID, Peer, Offset, RangeStart, RangeEnd,
+        Acc) ->
+    BasePeerRange = #peer_range{
         store_id = StoreID,
         offset = Offset,
         peer = Peer,
         intervals = ar_intervals:new()
     },
-    Results = lists:map(
-        fun(Mode) ->
-            get_peer_ranges_for_peer(
-                Mode, PeerRange, RangeStart, RangeEnd)
-        end,
-        peer_kinds(Peer)),
-    combine_peer_range_results(Results).
+    Acc2 = cached_peer_range(byte, BasePeerRange, RangeStart, RangeEnd, Acc),
+    cached_peer_range(
+        footprint, BasePeerRange, RangeStart, RangeEnd, Acc2).
 
-combine_peer_range_results(Results) ->
-    {PeerRangeGroups, JobGroups} = lists:unzip(Results),
-    {lists:append(PeerRangeGroups), lists:append(JobGroups)}.
-
-get_peer_ranges_for_peer(Mode, BasePeerRange, RangeStart, RangeEnd) ->
+cached_peer_range(Mode, BasePeerRange, RangeStart, RangeEnd,
+        {PeerRanges, AnyCacheMiss}) ->
     #peer_range{ peer = Peer, offset = Offset, store_id = StoreID } =
         BasePeerRange,
-    case peer_has_sync_bucket(Mode, Peer, Offset) of
+    maybe
+        true ?= peer_supports(Mode, Peer),
+        true ?= peer_has_sync_bucket(Mode, Peer, Offset),
+        {_Freshness, Intervals} ?= get_chunk_intervals(
+            Mode, Peer, Offset, RangeStart, RangeEnd),
+        true ?= not ar_intervals:is_empty(Intervals),
+        Location = interval_location(Mode, Offset),
+        PeerRange = BasePeerRange#peer_range{
+            intervals = Intervals,
+            footprint = footprint_key(Mode, StoreID, Location)
+        },
+        {[PeerRange | PeerRanges], AnyCacheMiss}
+    else
         false ->
-            {[], []};
-        true ->
-            Location = interval_location(Mode, Offset),
-            {Intervals, ShouldRefresh} =
-                case get_chunk_intervals(Mode, Peer, Location) of
-                    {error, cache_miss} ->
-                        {ar_intervals:new(), true};
-                    {Freshness, CachedIntervals} ->
-                        {CachedIntervals, Freshness =:= stale}
-                end,
-            PeerRange = BasePeerRange#peer_range{
-                footprint = footprint_key(Mode, StoreID, Location)
-            },
-            PeerRanges = build_peer_ranges(
-                Mode, PeerRange, Intervals, RangeStart, RangeEnd),
-            ChunkIntervalJobs = case ShouldRefresh of
-                true -> [chunk_interval_job(Mode, PeerRange)];
-                false -> []
-            end,
-            {PeerRanges, ChunkIntervalJobs}
+            {PeerRanges, AnyCacheMiss};
+        cache_miss ->
+            {PeerRanges, true}
     end.
 
 %% Which footprint a peer range belongs to. The peer is not part of it: the
@@ -290,50 +303,36 @@ footprint_key(footprint, StoreID, {Partition, Footprint}) ->
     #footprint{ store_id = StoreID, partition = Partition,
         footprint = Footprint }.
 
-%% @doc Return a peer's cached chunk intervals at the mode-specific location.
-%% Byte locations are offsets; footprint locations are `{Partition, Footprint}'.
--spec get_chunk_intervals(Mode, Peer, Location) ->
-        {ok, ar_intervals:intervals()} | {stale, ar_intervals:intervals()}
-            | {error, cache_miss} when
-    Mode :: byte | footprint,
-    Peer :: term(),
-    Location :: non_neg_integer() | {non_neg_integer(), non_neg_integer()}.
-get_chunk_intervals(Mode, Peer, Location) ->
-    case chunk_interval_lookup(Mode, Peer, Location) of
-        {hit, Intervals} ->
-            {ok, Intervals};
-        {stale, Intervals} ->
-            {stale, Intervals};
+%% @doc Return a peer's cached availability as byte intervals. Byte metadata
+%% is clipped to the requested range; footprint metadata is converted from
+%% footprint-record space.
+get_chunk_intervals(_Mode, _Peer, _Offset, RangeStart, RangeEnd)
+        when RangeStart >= RangeEnd ->
+    {ok, ar_intervals:new()};
+get_chunk_intervals(Mode, Peer, Offset, RangeStart, RangeEnd) ->
+    case chunk_interval_lookup(Mode, Peer, Offset) of
         miss ->
-            {error, cache_miss}
+            cache_miss;
+        {Freshness, Intervals} ->
+            ByteIntervals = chunk_intervals_to_byte_intervals(
+                Mode, Intervals, RangeStart, RangeEnd),
+            case Freshness of
+                hit -> {ok, ByteIntervals};
+                stale -> {stale, ByteIntervals}
+            end
     end.
+
+chunk_intervals_to_byte_intervals(byte, Intervals, RangeStart, RangeEnd) ->
+    ByteRange = ar_intervals:from_list([{RangeEnd, RangeStart}]),
+    ar_intervals:intersection(Intervals, ByteRange);
+chunk_intervals_to_byte_intervals(footprint, Intervals, _RangeStart, _RangeEnd) ->
+    ar_footprint_record:footprint_intervals_to_byte_intervals(Intervals).
 
 interval_location(byte, Offset) ->
-    Offset;
+    Step = ar_sync_cursor:query_range_step_size(),
+    (Offset div Step) * Step;
 interval_location(footprint, Offset) ->
     ar_footprint_record:get_location(Offset + ?DATA_CHUNK_SIZE).
-
-%% @doc Convert cached intervals into non-empty byte-space peer ranges. Byte
-%% ranges are clipped to the request; a footprint location returns its complete
-%% advertised footprint so downstream admission can preserve entropy reuse.
--spec build_peer_ranges(byte | footprint, #peer_range{},
-        ar_intervals:intervals(), non_neg_integer(), non_neg_integer()) ->
-        [#peer_range{}].
-build_peer_ranges(_Mode, _PeerRange, _Intervals, RangeStart, RangeEnd)
-        when RangeStart >= RangeEnd ->
-    [];
-build_peer_ranges(Mode, PeerRange, Intervals, RangeStart, RangeEnd) ->
-    ByteIntervals = case Mode of
-        byte ->
-            ByteRange = ar_intervals:from_list([{RangeEnd, RangeStart}]),
-            ar_intervals:intersection(Intervals, ByteRange);
-        footprint ->
-            ar_footprint_record:footprint_intervals_to_byte_intervals(Intervals)
-    end,
-    case ar_intervals:is_empty(ByteIntervals) of
-        true -> [];
-        false -> [PeerRange#peer_range{ intervals = ByteIntervals }]
-    end.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -347,9 +346,9 @@ init([]) ->
     %% gen_server crashing or restarting doesn't wipe the cache.
     ar_timer:send_after(
         ?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, self(), collect_peers),
-    %% Periodic maintenance updates job limits and cache state, then emits
-    %% discovery metrics. It fires from
-    %% inside the gen_server so it has direct access to State.
+    schedule_sync_bucket_refresh(),
+    %% Periodic maintenance updates cache state and emits discovery metrics.
+    %% It fires inside the gen_server so it has direct access to State.
     ar_timer:send_after(?MAINTENANCE_INTERVAL_MS, self(), maintenance),
     [ok, ok] = ar_events:subscribe([peer, node_state]),
     {ok, #state{}}.
@@ -373,21 +372,16 @@ handle_cast({add_peers, Peers}, State) ->
     State2 = lists:foldl(fun add_peer/2, State, Peers),
     {noreply, start_jobs(sync_bucket, State2)};
 
-handle_cast({refresh_chunk_intervals, ChunkIntervalJobs}, State) ->
-    State2 = lists:foldl(
-        fun(ChunkIntervalJob, Acc) ->
-            enqueue_job(ChunkIntervalJob, Acc)
-        end,
-        State,
-        ChunkIntervalJobs),
+handle_cast({refresh_chunk_intervals, ChunkIntervalJob}, State) ->
+    State2 = enqueue_job(ChunkIntervalJob, State),
     {noreply, start_jobs(chunk_interval, State2)};
 
 handle_cast({job_result, Peer, Result}, State) ->
-    case is_peer_tracked(Peer, State) of
-        true -> record_job_result(Peer, Result);
-        false -> ok
+    State2 = case is_peer_tracked(Peer, State) of
+        true -> record_job_result(Peer, Result, State);
+        false -> State
     end,
-    {noreply, State};
+    {noreply, State2};
 
 handle_cast({remove_peer, Peer, Reason}, State) ->
     do_remove_peer(Peer, Reason, State);
@@ -424,14 +418,15 @@ handle_info(collect_peers, State) ->
     collect_peers(),
     {noreply, State};
 
+handle_info(refresh_sync_buckets, State) ->
+    schedule_sync_bucket_refresh(),
+    State2 = enqueue_sync_bucket_jobs(State),
+    {noreply, start_jobs(sync_bucket, State2)};
+
 handle_info(maintenance, State0) ->
     ar_timer:send_after(?MAINTENANCE_INTERVAL_MS, self(), maintenance),
     State = start_jobs(chunk_interval, run_maintenance(State0)),
     {noreply, start_jobs(sync_bucket, State)};
-
-handle_info({enqueue_scheduled_job, Kind, Key, Token}, State) ->
-    State2 = enqueue_scheduled_job(Kind, Key, Token, State),
-    {noreply, start_jobs(Kind, State2)};
 
 handle_info(Message, State) ->
     ?LOG_WARNING([{event, unhandled_info}, {message, Message}]),
@@ -447,17 +442,7 @@ terminate(Reason, State) ->
 %%% Maintenance.
 %%%===================================================================
 
-run_maintenance(State0) ->
-    ChunkIntervalMaxInflight = chunk_interval_max_inflight(
-        ar_sync_peer:published_concurrency_cap_total()),
-    #state{ jobs = JobsByKind } = State0,
-    ChunkIntervalJobs = maps:get(chunk_interval, JobsByKind),
-    ChunkIntervalJobs2 = ChunkIntervalJobs#discovery_jobs{
-        max_inflight = ChunkIntervalMaxInflight
-    },
-    State = State0#state{
-        jobs = JobsByKind#{chunk_interval := ChunkIntervalJobs2}
-    },
+run_maintenance(State) ->
     delete_expired_sync_buckets(),
     trim_chunk_interval_cache(),
     emit_metrics(State),
@@ -517,11 +502,6 @@ is_peer_tracked(Peer, State) ->
     #state{ tracked_peers = TrackedPeers } = State,
     sets:is_element(Peer, TrackedPeers).
 
-peer_kinds(Peer) ->
-    lists:filter(
-        fun(Mode) -> peer_supports(Mode, Peer) end,
-        ar_sync_cursor:kinds()).
-
 peer_supports(byte, _Peer) ->
     true;
 peer_supports(footprint, Peer) ->
@@ -534,112 +514,50 @@ peer_supports(footprint, Peer) ->
 inflight_count(#discovery_jobs{ inflight = Inflight }) ->
     map_size(Inflight).
 
-job_exists(Key, Jobs) ->
+job_exists(Key, State) ->
+    Jobs = jobs_for_key(Key, State),
     #discovery_jobs{
         pending = Pending,
-        inflight = Inflight,
-        scheduled = Scheduled
+        inflight = Inflight
     } = Jobs,
-    PendingMatch = case maps:get(pending_key(Key), Pending, undefined) of
+    PendingMatch = case maps:get(Key, Pending, undefined) of
         #discovery_job{ key = Key } -> true;
         _ -> false
     end,
-    PendingMatch
-        orelse maps:is_key(Key, Inflight)
-        orelse maps:is_key(Key, Scheduled).
+    PendingMatch orelse maps:is_key(Key, Inflight).
 
-pending_key({chunk_interval, Peer, StoreID, Mode, _Start}) ->
-    {chunk_interval, Peer, StoreID, Mode};
-pending_key(Key) ->
+jobs_for_key(Key, #state{ jobs = JobsByKind }) ->
+    maps:get(element(1, Key), JobsByKind).
+
+%% @doc Identify the peer, store, and mode shared by chunk interval locations.
+peer_store_mode_key({chunk_interval, Peer, StoreID, Mode, _Start}) ->
+    {Peer, StoreID, Mode};
+peer_store_mode_key(Key) ->
     Key.
 
+%% @doc Add Job when its peer is tracked and its exact location is not already
+%% active. Locations for the same peer, store, and mode remain pending
+%% independently but run serially, so bounded readahead cannot expire before
+%% it starts.
 enqueue_job(Job, State) ->
-    #discovery_job{ kind = Kind } = Job,
-    #state{ tracked_peers = TrackedPeers, jobs = JobsByKind } = State,
-    Jobs = maps:get(Kind, JobsByKind),
-    {_Result, Jobs2} = enqueue_job(Job, Jobs, TrackedPeers),
-    State#state{ jobs = JobsByKind#{Kind := Jobs2} }.
-
-%% @doc Add Job when its peer is tracked and its key is not already active.
-%% A newer chunk interval request replaces pending work for the same peer,
-%% store, and mode. Other work is deferred when the pending limit is full.
-enqueue_job(Job, Jobs, TrackedPeers) ->
-    #discovery_job{ key = Key, peer = Peer } = Job,
-    #discovery_jobs{
-        pending = Pending,
-        max_pending = MaxPending
-    } = Jobs,
-    PendingKey = pending_key(Key),
-    case {
-        sets:is_element(Peer, TrackedPeers),
-        job_exists(Key, Jobs),
-        maps:is_key(PendingKey, Pending),
-        map_size(Pending) >= MaxPending
-    } of
-        {false, _, _, _} ->
-            {untracked, Jobs};
-        {true, true, _, _} ->
-            {duplicate, Jobs};
-        {true, false, true, _} ->
-            {replaced, Jobs#discovery_jobs{
-                pending = maps:put(PendingKey, Job, Pending)
-            }};
-        {true, false, false, true} ->
-            {full, Jobs};
-        {true, false, false, false} ->
-            {enqueued, Jobs#discovery_jobs{
-                pending = maps:put(PendingKey, Job, Pending)
-                }}
-    end.
-
-%% @doc Move a scheduled job into the pending set when its timer token still
-%% matches. A stale timer leaves the current schedule unchanged.
-enqueue_scheduled_job(Kind, Key, Token, State) ->
-    #state{ jobs = JobsByKind } = State,
-    Jobs = maps:get(Kind, JobsByKind),
-    #discovery_jobs{ scheduled = Scheduled } = Jobs,
-    case maps:get(Key, Scheduled, undefined) of
-        #discovery_job{ token = Token } = ScheduledJob ->
-            Jobs2 = Jobs#discovery_jobs{
-                scheduled = maps:remove(Key, Scheduled)
-            },
-            PendingJob = ScheduledJob#discovery_job{
-                timer_ref = undefined,
-                token = undefined
-            },
-            State2 = State#state{
-                jobs = JobsByKind#{Kind := Jobs2}
-            },
-            enqueue_job(PendingJob, State2);
-        _ ->
-            State
-    end.
-
-%% @doc Schedule Job unless its peer is no longer tracked or the same job key
-%% is already pending, inflight, or scheduled.
-schedule_job(Job, DelayMs, State) ->
     #discovery_job{ key = Key, kind = Kind, peer = Peer } = Job,
     #state{ jobs = JobsByKind } = State,
     Jobs = maps:get(Kind, JobsByKind),
-    maybe
-        true ?= is_peer_tracked(Peer, State),
-        true ?= not job_exists(Key, Jobs),
-        Token = make_ref(),
-        {ok, TimerRef} = ar_timer:send_after(
-            DelayMs, self(), {enqueue_scheduled_job, Kind, Key, Token}),
-        #discovery_jobs{ scheduled = Scheduled } = Jobs,
-        ScheduledJob = Job#discovery_job{
-            pid = undefined,
-            timer_ref = TimerRef,
-            token = Token
-        },
-        Jobs2 = Jobs#discovery_jobs{
-            scheduled = maps:put(Key, ScheduledJob, Scheduled)
-        },
-        State#state{ jobs = JobsByKind#{Kind := Jobs2} }
-    else
-        false -> State
-    end.
+    #discovery_jobs{ pending = Pending } = Jobs,
+    Jobs2 = case {
+        is_peer_tracked(Peer, State),
+        job_exists(Key, State)
+    } of
+        {false, _} -> %% Untracked peer.
+            Jobs;
+        {true, true} -> %% Duplicate job.
+            Jobs;
+        {true, false} -> %% Enqueue new job.
+            Jobs#discovery_jobs{
+                pending = maps:put(Key, Job, Pending)
+            }
+    end,
+    State#state{ jobs = JobsByKind#{Kind := Jobs2} }.
 
 %% @doc Spawn Job and track its process PID on the inflight job.
 start_job(Job, Jobs) ->
@@ -653,7 +571,7 @@ start_job(Job, Jobs) ->
 run_job(#discovery_job{ kind = sync_bucket, peer = Peer }) ->
     fetch_sync_buckets(Peer);
 run_job(#discovery_job{ kind = chunk_interval } = Job) ->
-    safe_refresh_chunk_intervals(Job).
+    refresh_chunk_intervals(Job).
 
 pid_to_job(Pid, Inflight) ->
     case lists:search(
@@ -661,24 +579,23 @@ pid_to_job(Pid, Inflight) ->
                 JobPid =:= Pid
             end,
             maps:to_list(Inflight)) of
-        {value, {Key, Job}} -> {ok, Key, Job};
+        {value, {Key, _Job}} -> {ok, Key};
         false -> error
     end.
 
 finish_job(Pid, State) ->
     #state{ jobs = JobsByKind } = State,
     Result = maps:fold(
-        fun(_Kind, _Jobs, {ok, _, _, _} = Acc) ->
+        fun(_Kind, _Jobs, {ok, _, _} = Acc) ->
                 Acc;
             (Kind, Jobs, error) ->
                 #discovery_jobs{ inflight = Inflight } = Jobs,
                 case pid_to_job(Pid, Inflight) of
-                    {ok, Key, Job} ->
+                    {ok, Key} ->
                         Jobs2 = Jobs#discovery_jobs{
                             inflight = maps:remove(Key, Inflight)
                         },
-                        {ok, Kind,
-                            Job#discovery_job{ pid = undefined }, Jobs2};
+                        {ok, Kind, Jobs2};
                     error ->
                         error
                 end
@@ -686,27 +603,18 @@ finish_job(Pid, State) ->
         error,
         JobsByKind),
     case Result of
-        {ok, Kind, Job, Jobs2} ->
-            State2 = State#state{
-                jobs = JobsByKind#{Kind := Jobs2}
-            },
-            job_completed(Job, State2);
+        {ok, Kind, Jobs2} ->
+            Jobs3 = start_jobs(Jobs2),
+            State#state{ jobs = JobsByKind#{Kind := Jobs3} };
         error ->
             State
     end.
-
-job_completed(#discovery_job{ kind = sync_bucket } = Job, State) ->
-    State2 = schedule_job(Job, sync_bucket_job_delay_ms(), State),
-    start_jobs(sync_bucket, State2);
-job_completed(#discovery_job{ kind = chunk_interval }, State) ->
-    start_jobs(chunk_interval, State).
 
 %% @doc Remove all work for Peer and stop its inflight job processes.
 remove_jobs(Peer, Jobs) ->
     #discovery_jobs{
         pending = Pending,
-        inflight = Inflight,
-        scheduled = Scheduled
+        inflight = Inflight
     } = Jobs,
     Jobs#discovery_jobs{
         pending = maps:filter(
@@ -724,33 +632,13 @@ remove_jobs(Peer, Jobs) ->
                 (_Key, _Job) ->
                     true
             end,
-            Inflight),
-        scheduled = maps:filter(
-            fun(_Key, #discovery_job{
-                    peer = JobPeer,
-                    timer_ref = TimerRef
-                }) when JobPeer =:= Peer ->
-                    _ = ar_timer:cancel(TimerRef),
-                    false;
-                (_Key, _Job) ->
-                    true
-            end,
-            Scheduled)
+            Inflight)
     }.
 
 %% @doc Start pending jobs while preferring idle peers and stores.
 start_jobs(Kind, State) ->
     #state{ jobs = JobsByKind } = State,
-    Jobs0 = maps:get(Kind, JobsByKind),
-    Jobs = case Kind of
-        sync_bucket ->
-            Jobs0#discovery_jobs{
-                max_inflight = arweave_config:get(
-                    [sync, max_concurrent_sync_bucket_jobs])
-            };
-        chunk_interval ->
-            Jobs0
-    end,
+    Jobs = maps:get(Kind, JobsByKind),
     Jobs2 = start_jobs(Jobs),
     State#state{ jobs = JobsByKind#{Kind := Jobs2} }.
 
@@ -761,27 +649,42 @@ start_jobs(Jobs) ->
             Jobs;
         true ->
             {PeerLoad, StoreLoad} = compute_job_load(Jobs),
-            start_pending_jobs(Jobs, PeerLoad, StoreLoad)
+            PeerStoreModeCounts = inflight_peer_store_mode_counts(Jobs),
+            start_pending_jobs(
+                Jobs, PeerLoad, StoreLoad, PeerStoreModeCounts)
     end.
 
-start_pending_jobs(Jobs, PeerLoad, StoreLoad) ->
+start_pending_jobs(Jobs, PeerLoad, StoreLoad, PeerStoreModeCounts) ->
     case has_capacity(Jobs) of
         true ->
-            case take_next_job(Jobs, PeerLoad, StoreLoad) of
+            case take_next_job(
+                    Jobs, PeerLoad, StoreLoad, PeerStoreModeCounts) of
                 {ok, #discovery_job{
                         peer = Peer,
                         store_id = StoreID
                     } = Job, Jobs2} ->
                     Jobs3 = start_job(Job, Jobs2),
+                    PeerStoreMode = peer_store_mode_key(
+                        Job#discovery_job.key),
                     start_pending_jobs(Jobs3,
                         arweave_util:increment_map_value(Peer, PeerLoad),
-                        arweave_util:increment_map_value(StoreID, StoreLoad));
+                        arweave_util:increment_map_value(StoreID, StoreLoad),
+                        arweave_util:increment_map_value(
+                            PeerStoreMode, PeerStoreModeCounts));
                 none ->
                     Jobs
             end;
         false ->
             Jobs
     end.
+
+inflight_peer_store_mode_counts(#discovery_jobs{ inflight = Inflight }) ->
+    maps:fold(
+        fun(Key, _Job, Acc) ->
+            arweave_util:increment_map_value(peer_store_mode_key(Key), Acc)
+        end,
+        #{},
+        Inflight).
 
 has_capacity(#discovery_jobs{ max_inflight = infinity }) ->
     true;
@@ -801,9 +704,16 @@ compute_job_load(#discovery_jobs{ inflight = Inflight }) ->
         {#{}, #{}},
         Inflight).
 
-take_next_job(Jobs, PeerLoad, StoreLoad) ->
+take_next_job(Jobs, PeerLoad, StoreLoad, PeerStoreModeCounts) ->
     #discovery_jobs{ pending = Pending } = Jobs,
-    case maps:to_list(Pending) of
+    Runnable = maps:filter(
+        fun(PendingKey, _Job) ->
+            maps:get(peer_store_mode_key(PendingKey),
+                PeerStoreModeCounts, 0)
+                < ?MAX_CHUNK_INTERVAL_JOBS_PER_PEER_STORE_MODE
+        end,
+        Pending),
+    case maps:to_list(Runnable) of
         [] ->
             none;
         PendingJobs ->
@@ -870,26 +780,41 @@ sync_bucket_job(Peer) ->
         peer = Peer
     }.
 
-%% @doc The delay before a peer's next sync bucket job, with +/-25% jitter so
-%% peers do not all become due together.
-sync_bucket_job_delay_ms() ->
+%% @doc Queue one sync bucket refresh for every tracked peer. Existing pending
+%% or inflight work is retained without duplication.
+enqueue_sync_bucket_jobs(#state{ tracked_peers = TrackedPeers } = State) ->
+    sets:fold(
+        fun(Peer, Acc) -> enqueue_job(sync_bucket_job(Peer), Acc) end,
+        State,
+        TrackedPeers).
+
+%% @doc Schedule the next node-wide refresh with +/-25% jitter so nodes that
+%% start together do not repeatedly query peers at the same time.
+schedule_sync_bucket_refresh() ->
+    {ok, _} = ar_timer:send_after(
+        sync_bucket_refresh_delay_ms(), self(), refresh_sync_buckets),
+    ok.
+
+sync_bucket_refresh_delay_ms() ->
     Spread = ?SYNC_BUCKET_JOB_INTERVAL_MS div 4,
     ?SYNC_BUCKET_JOB_INTERVAL_MS - Spread + rand:uniform(2 * Spread + 1) - 1.
 
 %% Fetch the peer's coarse availability for each mode
 %% sequentially so one peer occupies at most one metadata connection at a time.
 fetch_sync_buckets(Peer) ->
-    lists:foreach(
-        fun(Mode) -> fetch_sync_buckets(Mode, Peer) end,
-        peer_kinds(Peer)).
+    fetch_sync_buckets(byte, Peer),
+    fetch_sync_buckets(footprint, Peer).
 
 fetch_sync_buckets(Mode, Peer) ->
     try
-        case ar_sync_deps:get_sync_buckets(Peer, Mode) of
-            {ok, SyncBuckets} ->
-                gen_server:cast(?MODULE,
-                    {job_result, Peer, {sync_buckets, Mode, SyncBuckets}}),
-                {ok, SyncBuckets};
+        maybe
+            true ?= peer_supports(Mode, Peer),
+            {ok, SyncBuckets} ?= ar_sync_deps:get_sync_buckets(Peer, Mode),
+            gen_server:cast(?MODULE,
+                {job_result, Peer, {sync_buckets, Mode, SyncBuckets}})
+        else
+            false ->
+                ok;
             {error, request_type_not_found} ->
                 ?LOG_DEBUG([{event, sync_buckets_request_type_not_found},
                     {peer, arweave_util:format_peer(Peer)}, {mode, Mode}]),
@@ -915,34 +840,33 @@ fetch_sync_buckets(Mode, Peer) ->
             {class, Class},
             {reason, io_lib:format("~p", [Reason])},
             {stacktrace, Stacktrace}])
-    end.
+    end,
+    ok.
 
 %%%===================================================================
 %%% Cache manipulation.
 %%%===================================================================
 
-record_job_result(Peer, {sync_buckets, Mode, SyncBuckets}) ->
+record_job_result(Peer, {sync_buckets, Mode, SyncBuckets}, State) ->
     store_sync_buckets(Mode, Peer, SyncBuckets),
     ?LOG_DEBUG([{event, processed_sync_buckets},
-        {peer, arweave_util:format_peer(Peer)}, {mode, Mode}]);
+        {peer, arweave_util:format_peer(Peer)}, {mode, Mode}]),
+    State;
 record_job_result(Peer,
-        {chunk_intervals, StoreID, Offset, Mode, Location, {ok, Intervals}}) ->
-    store_row(chunk_interval, Mode, Location, Peer, Intervals),
-    notify_chunk_intervals_updated(StoreID, Offset, Intervals);
+        {chunk_intervals, _StoreID, Offset, Mode, {ok, Intervals}}, State) ->
+    store_row(chunk_interval, Mode, Offset, Peer, Intervals),
+    State;
 record_job_result(Peer,
-        {chunk_intervals, _StoreID, _Offset, Mode, Location, _Error}) ->
+        {chunk_intervals, _StoreID, Offset, Mode, _Error}, State) ->
     %% Do not continue serving stale metadata when its replacement cannot be
     %% fetched. A later sweep will request it again.
-    delete_row(chunk_interval, Mode, Location, Peer).
+    delete_row(chunk_interval, Mode, Offset, Peer),
+    State.
 
 row_key(sync_bucket, Mode, SyncBucket, Peer) ->
     {Mode, SyncBucket, Peer};
-row_key(chunk_interval, byte, Offset, Peer) ->
-    %% Byte rows use the step-aligned location queried by chunk interval jobs.
-    Step = ar_sync_cursor:query_range_step_size(),
-    {byte, (Offset div Step) * Step, Peer};
-row_key(chunk_interval, footprint, Location, Peer) ->
-    {footprint, Location, Peer}.
+row_key(chunk_interval, Mode, Offset, Peer) ->
+    {Mode, interval_location(Mode, Offset), Peer}.
 
 store_row(Kind, Mode, Location, Peer, Value) ->
     ets:insert(table(Kind),
@@ -1056,11 +980,8 @@ chunk_interval_job(Mode, PeerRange) ->
         offset = Offset
     } = PeerRange,
     Start = case Mode of
-        byte ->
-            Step = ar_sync_cursor:query_range_step_size(),
-            (Offset div Step) * Step;
-        footprint ->
-            Offset
+        byte -> interval_location(byte, Offset);
+        footprint -> Offset
     end,
     #discovery_job{
         key = {chunk_interval, Peer, StoreID, Mode, Start},
@@ -1071,81 +992,34 @@ chunk_interval_job(Mode, PeerRange) ->
         start = Start
     }.
 
-%% @doc Bound metadata concurrency to a fraction of chunk-fetch capacity.
-%% The minimum does not depend on active peer caps: a peer needs refreshed
-%% metadata before it can serve chunks and earn a cap.
-chunk_interval_max_inflight(PublishedCapTotal) ->
-    max(?MIN_CHUNK_INTERVAL_JOBS,
-        min(PublishedCapTotal div ?FETCH_CAPACITY_PER_CHUNK_INTERVAL_JOB,
-            ?MAX_CHUNK_INTERVAL_JOBS)).
-
-safe_refresh_chunk_intervals(ChunkIntervalJob) ->
-    #discovery_job{
-        kind = chunk_interval,
-        peer = Peer,
-        mode = Mode
-    } = ChunkIntervalJob,
-    try
-        refresh_chunk_intervals(ChunkIntervalJob)
-    catch Class:Reason:Stacktrace ->
-        ?LOG_WARNING([{event, chunk_interval_job_crashed}, {class, Class},
-                {peer, arweave_util:format_peer(Peer)}, {mode, Mode},
-                {reason, io_lib:format("~p", [Reason])}, {stacktrace, Stacktrace}])
-    end.
-
-%% @doc Refresh chunk interval metadata at and immediately after the requested
-%% frontier. The periodically refreshed coarse map determines which requests
-%% are useful. Byte and footprint positions use their native traversal order.
-refresh_chunk_intervals(Job) ->
+%% @doc Refresh one exact chunk interval location. The sweeper owns bounded
+%% readahead and submits each future location as a separate discovery job.
+refresh_chunk_intervals(ChunkIntervalJob) ->
     #discovery_job{
         kind = chunk_interval,
         peer = Peer,
         store_id = StoreID,
         mode = Mode,
         start = Start
-    } = Job,
-    Offsets = chunk_interval_offsets(Mode, StoreID, Start),
-    lists:foreach(
-        fun(Offset) ->
-            refresh_chunk_intervals(Mode, Peer, StoreID, Offset)
-        end,
-        Offsets).
-
-refresh_chunk_intervals(Mode, Peer, StoreID, Offset) ->
-    case peer_has_sync_bucket(Mode, Peer, Offset) of
-        true ->
-            Location = interval_location(Mode, Offset),
-            case chunk_interval_lookup(Mode, Peer, Location) of
-                {hit, _Intervals} ->
-                    ok;
-                _MissOrStale ->
-                    Result = fetch_chunk_intervals(Mode, Peer, Location),
-                    gen_server:cast(?MODULE,
-                        {job_result, Peer,
-                            {chunk_intervals, StoreID, Offset,
-                                Mode, Location, Result}})
-            end;
-        false ->
-            ok
+    } = ChunkIntervalJob,
+    try
+        maybe
+            true ?= peer_has_sync_bucket(Mode, Peer, Start),
+            true ?= chunk_interval_refresh_needed(Mode, Peer, Start),
+            Location = interval_location(Mode, Start),
+            Result = fetch_chunk_intervals(Mode, Peer, Location),
+            gen_server:cast(?MODULE,
+                {job_result, Peer,
+                    {chunk_intervals, StoreID, Start, Mode, Result}})
+        else
+            false ->
+                ok
+        end
+    catch Class:Reason:Stacktrace ->
+        ?LOG_WARNING([{event, chunk_interval_job_crashed}, {class, Class},
+                {peer, arweave_util:format_peer(Peer)}, {mode, Mode},
+                {reason, io_lib:format("~p", [Reason])}, {stacktrace, Stacktrace}])
     end.
-
-notify_chunk_intervals_updated(StoreID, Offset, Intervals) ->
-    case ar_intervals:is_empty(Intervals) of
-        true -> ok;
-        false -> ar_events:send(sync_discovery,
-            {chunk_intervals_updated, StoreID, Offset})
-    end.
-
-%% Eight byte query ranges keep metadata just ahead of the byte cursor without
-%% building a second readahead queue.
-chunk_interval_offsets(byte, _StoreID, Start) ->
-    Step = ar_sync_cursor:query_range_step_size(),
-    lists:seq(Start, Start + 7 * Step, Step);
-%% One footprint response describes up to 1024 chunks. Fetch only the requested
-%% footprint so one readahead worker cannot hold a job slot across many HTTP
-%% requests while other peer/store fronts remain cold.
-chunk_interval_offsets(footprint, _StoreID, Start) ->
-    [Start].
 
 %%%===================================================================
 %%% Chunk interval cache.
@@ -1157,7 +1031,7 @@ mark_chunk_intervals_stale(Mode, Peer, SyncBucket) ->
     lists:foreach(
         fun(Location) ->
             ets:update_element(?CHUNK_INTERVAL_CACHE_TABLE,
-                row_key(chunk_interval, Mode, Location, Peer),
+                {Mode, Location, Peer},
                 {3, StaleTimestamp})
         end,
         chunk_interval_locations(Mode, Peer, SyncBucket)).
@@ -1166,7 +1040,8 @@ delete_chunk_intervals(Mode, Peer, SyncBucket) ->
     Locations = chunk_interval_locations(Mode, Peer, SyncBucket),
     lists:foreach(
         fun(Location) ->
-            delete_row(chunk_interval, Mode, Location, Peer)
+            ets:delete(?CHUNK_INTERVAL_CACHE_TABLE,
+                {Mode, Location, Peer})
         end,
         Locations),
     record_chunk_interval_evictions(withdrawn, length(Locations)).
@@ -1184,8 +1059,8 @@ chunk_interval_locations(Mode, Peer, SyncBucket) ->
 %% row as needing a chunk interval job. refresh_chunk_intervals/1 uses this
 %% same freshness result for both modes, so a stale row is replaced rather than
 %% reused. Primary freshness is share-diffing; this TTL is the safety floor.
-chunk_interval_lookup(Mode, Peer, Location) ->
-    Key = row_key(chunk_interval, Mode, Location, Peer),
+chunk_interval_lookup(Mode, Peer, Offset) ->
+    Key = row_key(chunk_interval, Mode, Offset, Peer),
     case ets:lookup(?CHUNK_INTERVAL_CACHE_TABLE, Key) of
         [{_, Intervals, MonotonicMs}] ->
             Cutoff = expiration_cutoff(?CHUNK_INTERVAL_CACHE_TTL_MS),
@@ -1335,13 +1210,10 @@ record_chunk_interval_evictions(Reason, Count) ->
     arweave_metrics:counter_inc(chunk_interval_cache_evictions, [Reason], Count).
 
 emit_sync_discovery_peers() ->
-    Modes = ar_sync_cursor:kinds(),
-    StorageModules = lists:map(
-        fun arweave_config:config_to_storage_module/1,
-        arweave_config:get([storage_modules])),
+    Modes = [byte, footprint],
     StorePeerSets = lists:flatmap(
         fun(Module) -> get_peers_for_store(Module, Modes) end,
-        StorageModules),
+        arweave_config:storage_modules()),
     lists:foreach(
         fun({Mode, StoreID, Peers}) ->
             arweave_metrics:gauge_set(sync_discovery_peers,
@@ -1460,8 +1332,7 @@ with_mocked_chunk_interval_pages(Peer, Release, PageFun, TestFun) ->
     ], TestFun, 30).
 
 chunk_interval_job_for_test(Peer, StoreID, Start) ->
-    Step = ar_sync_cursor:query_range_step_size(),
-    AlignedStart = (Start div Step) * Step,
+    AlignedStart = interval_location(byte, Start),
     #discovery_job{
         key = {chunk_interval, Peer, StoreID, byte, AlignedStart},
         kind = chunk_interval,
@@ -1475,53 +1346,52 @@ chunk_interval_job_for_test(Peer, StoreID, Start) ->
 %%% Tests.
 %%%===================================================================
 
-chunk_interval_max_inflight_test() ->
-    ?assertEqual(?MIN_CHUNK_INTERVAL_JOBS, chunk_interval_max_inflight(0)),
-    ?assertEqual(?MIN_CHUNK_INTERVAL_JOBS,
-        chunk_interval_max_inflight(
-            ?FETCH_CAPACITY_PER_CHUNK_INTERVAL_JOB
-                * ?MIN_CHUNK_INTERVAL_JOBS - 1)),
-    %% 320 published fetch slots provide 40 chunk interval jobs at 8:1.
-    ?assertEqual(40, chunk_interval_max_inflight(320)),
-    ?assertEqual(?MAX_CHUNK_INTERVAL_JOBS, chunk_interval_max_inflight(1600)),
-    ?assertEqual(?MAX_CHUNK_INTERVAL_JOBS, chunk_interval_max_inflight(6400)).
-
 enqueue_job_deduplicates_pending_and_inflight_test() ->
     Job = chunk_interval_job_for_test(peer, store, 0),
     TrackedPeers = sets:from_list([Job#discovery_job.peer]),
-    {enqueued, PendingJobs} =
-        enqueue_job(Job, #discovery_jobs{}, TrackedPeers),
+    State = #state{ tracked_peers = TrackedPeers },
+    State2 = enqueue_job(Job, State),
+    PendingJobs = maps:get(chunk_interval, State2#state.jobs),
     ?assertEqual(1, map_size(PendingJobs#discovery_jobs.pending)),
-    ?assertEqual(
-        {duplicate, PendingJobs},
-        enqueue_job(Job, PendingJobs, TrackedPeers)),
-    {ok, Job, TakenJobs} = take_next_job(PendingJobs, #{}, #{}),
+    ?assertEqual(State2, enqueue_job(Job, State2)),
+    {ok, Job, TakenJobs} = take_next_job(
+        PendingJobs, #{}, #{},
+        inflight_peer_store_mode_counts(PendingJobs)),
     ?assertEqual(0, map_size(TakenJobs#discovery_jobs.pending)),
     InflightJob = Job#discovery_job{ pid = job_pid },
     InflightJobs = TakenJobs#discovery_jobs{
         inflight = #{Job#discovery_job.key => InflightJob}
     },
-    ?assertEqual(
-        {duplicate, InflightJobs},
-        enqueue_job(Job, InflightJobs, TrackedPeers)).
+    State3 = State2#state{ jobs = (State2#state.jobs)#{
+        chunk_interval := InflightJobs } },
+    ?assertEqual(State3, enqueue_job(Job, State3)).
 
 enqueue_job_rejects_untracked_peer_test() ->
     Job = chunk_interval_job_for_test(peer, store, 0),
-    Jobs = #discovery_jobs{},
-    ?assertEqual({untracked, Jobs},
-        enqueue_job(Job, Jobs, sets:new())).
+    State = #state{},
+    ?assertEqual(State, enqueue_job(Job, State)).
 
-enqueue_job_replaces_older_pending_lane_test() ->
+enqueue_job_keeps_distinct_pending_locations_test() ->
     Step = ar_sync_cursor:query_range_step_size(),
-    Existing = chunk_interval_job_for_test(peer, store, 0),
-    Incoming = chunk_interval_job_for_test(peer, store, Step),
+    Later = chunk_interval_job_for_test(peer, store, Step),
+    Earlier = chunk_interval_job_for_test(peer, store, 0),
+    Latest = chunk_interval_job_for_test(peer, store, 2 * Step),
     TrackedPeers = sets:from_list([peer]),
-    {enqueued, Jobs} =
-        enqueue_job(Existing, #discovery_jobs{ max_pending = 1 }, TrackedPeers),
-    {replaced, Jobs2} = enqueue_job(Incoming, Jobs, TrackedPeers),
-    ?assertEqual(1, map_size(Jobs2#discovery_jobs.pending)),
-    ?assertNot(job_exists(Existing#discovery_job.key, Jobs2)),
-    ?assert(job_exists(Incoming#discovery_job.key, Jobs2)).
+    State = #state{ tracked_peers = TrackedPeers },
+    JobsByKind = State#state.jobs,
+    %% Three locations for one peer, store, and mode must remain pending
+    %% independently; otherwise a sweep range can reach its deadline before
+    %% its discarded location is retried.
+    State2 = State#state{ jobs = JobsByKind#{
+        chunk_interval := #discovery_jobs{} } },
+    State3 = enqueue_job(Later, State2),
+    State4 = enqueue_job(Earlier, State3),
+    State5 = enqueue_job(Latest, State4),
+    Jobs = maps:get(chunk_interval, State5#state.jobs),
+    ?assertEqual(3, map_size(Jobs#discovery_jobs.pending)),
+    ?assert(job_exists(Earlier#discovery_job.key, State5)),
+    ?assert(job_exists(Later#discovery_job.key, State5)),
+    ?assert(job_exists(Latest#discovery_job.key, State5)).
 
 %% @doc Completing a chunk interval job leaves sync bucket job state unchanged.
 finish_job_updates_matching_kind_test() ->
@@ -1551,38 +1421,30 @@ add_peer_enqueues_one_sync_bucket_job_test() ->
     State = add_peer(Peer, #state{}),
     Jobs = maps:get(sync_bucket, State#state.jobs),
     ?assert(sets:is_element(Peer, State#state.tracked_peers)),
-    ?assertEqual(#{}, Jobs#discovery_jobs.scheduled),
     ?assertEqual(1, map_size(Jobs#discovery_jobs.pending)),
-    ?assert(job_exists({sync_bucket, Peer}, Jobs)),
+    ?assert(job_exists({sync_bucket, Peer}, State)),
     %% Re-collecting an already tracked peer must not duplicate its job.
     ?assertEqual(State, add_peer(Peer, State)).
 
-scheduled_job_requires_current_token_test() ->
-    Peer = peer,
-    Job = sync_bucket_job(Peer),
-    Key = Job#discovery_job.key,
-    Token = make_ref(),
-    ScheduledJob = Job#discovery_job{
-        timer_ref = timer_ref,
-        token = Token
-    },
-    State0 = #state{ tracked_peers = sets:from_list([Peer]) },
+enqueue_sync_bucket_jobs_deduplicates_active_peers_test() ->
+    Peer1 = peer1,
+    Peer2 = peer2,
+    Job1 = (sync_bucket_job(Peer1))#discovery_job{ pid = job_pid },
+    State0 = #state{ tracked_peers = sets:from_list([Peer1, Peer2]) },
     State = State0#state{
         jobs = (State0#state.jobs)#{
             sync_bucket := #discovery_jobs{
-                scheduled = #{Key => ScheduledJob}
+                inflight = #{Job1#discovery_job.key => Job1}
             }
         }
     },
-    %% A stale timer token leaves the current scheduled job unchanged.
-    ?assertEqual(State,
-        enqueue_scheduled_job(sync_bucket, Key, make_ref(), State)),
-    State2 = enqueue_scheduled_job(sync_bucket, Key, Token, State),
-    Jobs2 = maps:get(sync_bucket, State2#state.jobs),
-    ?assertEqual(#{}, Jobs2#discovery_jobs.scheduled),
-    ?assertEqual(
-        #{Key => Job},
-        Jobs2#discovery_jobs.pending).
+    State2 = enqueue_sync_bucket_jobs(State),
+    Jobs = maps:get(sync_bucket, State2#state.jobs),
+    ?assertEqual(#{Job1#discovery_job.key => Job1},
+        Jobs#discovery_jobs.inflight),
+    ?assertEqual(#{
+        {sync_bucket, Peer2} => sync_bucket_job(Peer2)
+    }, Jobs#discovery_jobs.pending).
 
 remove_jobs_keeps_other_peers_test() ->
     RemovedPeer = removed_peer,
@@ -1597,92 +1459,52 @@ remove_jobs_keeps_other_peers_test() ->
         RemovedInflightJob#discovery_job{ pid = RemovedJobPID },
     Jobs = #discovery_jobs{
         pending = #{
-            pending_key(RemovedPendingJob#discovery_job.key) => RemovedPendingJob,
-            pending_key(KeptPendingJob#discovery_job.key) => KeptPendingJob
+            RemovedPendingJob#discovery_job.key => RemovedPendingJob,
+            KeptPendingJob#discovery_job.key => KeptPendingJob
         },
         inflight = #{
             RemovedInflightJob2#discovery_job.key => RemovedInflightJob2
         }
     },
     Jobs2 = remove_jobs(RemovedPeer, Jobs),
+    State0 = #state{},
+    State = State0#state{ jobs = (State0#state.jobs)#{
+        chunk_interval := Jobs2 } },
     ?assertNot(is_process_alive(RemovedJobPID)),
-    ?assertNot(job_exists(RemovedPendingJob#discovery_job.key, Jobs2)),
-    ?assertNot(job_exists(RemovedInflightJob2#discovery_job.key, Jobs2)),
-    ?assert(job_exists(KeptPendingJob#discovery_job.key, Jobs2)).
+    ?assertNot(job_exists(RemovedPendingJob#discovery_job.key, State)),
+    ?assertNot(job_exists(RemovedInflightJob2#discovery_job.key, State)),
+    ?assert(job_exists(KeptPendingJob#discovery_job.key, State)).
 
 removed_peer_job_results_are_ignored_test() ->
     reset_all_caches(),
     Peer = {10, 0, 0, 1, 1984},
-    Location = 0,
+    Offset = 0,
     Intervals = ar_intervals:from_list([{?DATA_CHUNK_SIZE, 0}]),
     TrackedState = add_peer(Peer, #state{}),
     _ = handle_cast(
         {job_result, Peer,
-            {chunk_intervals, test_store, Location,
-                byte, Location, {ok, Intervals}}},
+            {chunk_intervals, test_store, Offset,
+                byte, {ok, Intervals}}},
         TrackedState),
-    ?assertEqual({hit, Intervals}, chunk_interval_lookup(byte, Peer, Location)),
+    ?assertEqual({hit, Intervals}, chunk_interval_lookup(byte, Peer, Offset)),
     store_row(sync_bucket, byte, 0, Peer, 1.0),
     {noreply, RemovedState} =
         do_remove_peer(Peer, test, TrackedState),
-    ?assertEqual(miss, chunk_interval_lookup(byte, Peer, Location)),
+    ?assertEqual(miss, chunk_interval_lookup(byte, Peer, Offset)),
     ?assertNot(ets:member(?SYNC_BUCKET_CACHE_TABLE,
         row_key(sync_bucket, byte, 0, Peer))),
     _ = handle_cast(
         {job_result, Peer,
-            {chunk_intervals, test_store, Location,
-                byte, Location, {ok, Intervals}}},
+            {chunk_intervals, test_store, Offset,
+                byte, {ok, Intervals}}},
         RemovedState),
-    ?assertEqual(miss, chunk_interval_lookup(byte, Peer, Location)),
+    ?assertEqual(miss, chunk_interval_lookup(byte, Peer, Offset)),
     SyncBuckets = ar_sync_buckets:from_intervals(Intervals),
     _ = handle_cast(
         {job_result, Peer, {sync_buckets, byte, SyncBuckets}},
         RemovedState),
     ?assertNot(ets:member(?SYNC_BUCKET_CACHE_TABLE,
         row_key(sync_bucket, byte, 0, Peer))).
-
-chunk_intervals_update_notifies_requesting_store_test_() ->
-    ar_test_util:with_mocked([
-        {ar_events, send,
-            fun(sync_discovery, Event) ->
-                put(sync_discovery_event, Event),
-                ok
-            end}
-    ], fun() ->
-        reset_all_caches(),
-        erase(sync_discovery_event),
-        Peer = {10, 0, 0, 12, 1984},
-        Intervals = ar_intervals:from_list([{?DATA_CHUNK_SIZE, 0}]),
-        ?assertEqual(ok, record_job_result(Peer,
-            {chunk_intervals, test_store, 0, byte, 0, {ok, Intervals}})),
-        ?assertEqual(
-            {chunk_intervals_updated, test_store, 0},
-            get(sync_discovery_event))
-    end, 30).
-
-%% The one-entry limit models any full pending set without constructing the
-%% production-sized set. An active job explains why pending work has not started.
-enqueue_job_defers_when_pending_limit_reached_test() ->
-    Existing = chunk_interval_job_for_test(existing_peer, store, 0),
-    Inflight = (chunk_interval_job_for_test(inflight_peer, store, 0))#discovery_job{
-        pid = self()
-    },
-    Incoming = chunk_interval_job_for_test(incoming_peer, store, 0),
-    Jobs = #discovery_jobs{
-        pending = #{pending_key(Existing#discovery_job.key) => Existing},
-        inflight = #{Inflight#discovery_job.key => Inflight},
-        max_inflight = 1,
-        max_pending = 1
-    },
-    TrackedPeers = sets:from_list([
-        Existing#discovery_job.peer,
-        Inflight#discovery_job.peer,
-        Incoming#discovery_job.peer
-    ]),
-    ?assertEqual({full, Jobs},
-        enqueue_job(Incoming, Jobs, TrackedPeers)),
-    ?assertNot(job_exists(Incoming#discovery_job.key, Jobs)),
-    ?assert(job_exists(Existing#discovery_job.key, Jobs)).
 
 %% @doc Selection prefers the least-loaded peer before considering store load.
 take_next_job_prefers_less_loaded_peer_test() ->
@@ -1691,11 +1513,11 @@ take_next_job_prefers_less_loaded_peer_test() ->
     Inflight2 = chunk_interval_job_for_test(p1, s2, Step),
     Inflight3 = chunk_interval_job_for_test(p2, s1, 2 * Step),
     Q1 = chunk_interval_job_for_test(p1, s3, 3 * Step),
-    Q2 = chunk_interval_job_for_test(p2, s1, 4 * Step),
+    Q2 = chunk_interval_job_for_test(p2, s2, 4 * Step),
     Jobs = #discovery_jobs{
         pending = #{
-            pending_key(Q1#discovery_job.key) => Q1,
-            pending_key(Q2#discovery_job.key) => Q2
+            Q1#discovery_job.key => Q1,
+            Q2#discovery_job.key => Q2
         },
         inflight = #{
             Inflight1#discovery_job.key =>
@@ -1708,13 +1530,45 @@ take_next_job_prefers_less_loaded_peer_test() ->
     {PeerLoad, StoreLoad} = compute_job_load(Jobs),
     ?assertEqual(#{p1 => 2, p2 => 1}, PeerLoad),
     ?assertEqual(#{s1 => 2, s2 => 1}, StoreLoad),
-    {ok, Selected, _Jobs2} =
-        take_next_job(Jobs, PeerLoad, StoreLoad),
+    {ok, Selected, _Jobs2} = take_next_job(
+        Jobs, PeerLoad, StoreLoad,
+        inflight_peer_store_mode_counts(Jobs)),
     ?assertEqual(p2, Selected#discovery_job.peer).
+
+%% @doc A newer frontier waits behind the active request for the same peer,
+%% store, and mode while unrelated stores continue using discovery capacity.
+take_next_job_limits_peer_store_mode_test() ->
+    Step = ar_sync_cursor:query_range_step_size(),
+    Inflight = chunk_interval_job_for_test(peer, store1, 0),
+    SamePendingKey = chunk_interval_job_for_test(peer, store1, Step),
+    OtherStore = chunk_interval_job_for_test(peer, store2, Step),
+    Jobs = #discovery_jobs{
+        pending = #{
+            SamePendingKey#discovery_job.key => SamePendingKey,
+            OtherStore#discovery_job.key => OtherStore
+        },
+        inflight = #{
+            Inflight#discovery_job.key =>
+                Inflight#discovery_job{ pid = self() }
+        }
+    },
+    {PeerLoad, StoreLoad} = compute_job_load(Jobs),
+    Counts = inflight_peer_store_mode_counts(Jobs),
+    SameCombinationJobs = Jobs#discovery_jobs{
+        pending = #{SamePendingKey#discovery_job.key => SamePendingKey}
+    },
+    ?assertEqual(none, take_next_job(
+        SameCombinationJobs, PeerLoad, StoreLoad, Counts)),
+    {ok, Selected, Jobs2} = take_next_job(
+        Jobs, PeerLoad, StoreLoad, Counts),
+    ?assertEqual(store2, Selected#discovery_job.store_id),
+    ?assertEqual(
+        #{SamePendingKey#discovery_job.key => SamePendingKey},
+        Jobs2#discovery_jobs.pending).
 
 %% At the job limit, start_jobs/2 leaves pending and inflight work unchanged.
 start_jobs_respects_inflight_limit_test() ->
-    Limit = ?MIN_CHUNK_INTERVAL_JOBS,
+    Limit = ?MAX_DISCOVERY_JOBS_PER_KIND,
     InflightJobs = [
         chunk_interval_job_for_test({p, N}, {s, N}, N)
         || N <- lists:seq(1, Limit)
@@ -1724,24 +1578,17 @@ start_jobs_respects_inflight_limit_test() ->
         || Job <- InflightJobs
     ]),
     PendingJob = chunk_interval_job_for_test(
-        pending_peer, pending_store, Limit + 1),
-    State0 = #state{},
-    State = State0#state{
-        tracked_peers = sets:from_list([
-            Job#discovery_job.peer
-            || Job <- [PendingJob | InflightJobs]
-        ]),
-        jobs = (State0#state.jobs)#{
-            chunk_interval := #discovery_jobs{
-                max_inflight = Limit,
-                inflight = Inflight,
-                pending = #{
-                    pending_key(PendingJob#discovery_job.key) => PendingJob
-                }
-            }
-        }
+        {p, 1}, pending_store, Limit + 1),
+    DefaultJobsByKind = (#state{})#state.jobs,
+    DefaultSyncBucketJobs = maps:get(sync_bucket, DefaultJobsByKind),
+    ?assertEqual(Limit, DefaultSyncBucketJobs#discovery_jobs.max_inflight),
+    DefaultJobs = maps:get(chunk_interval, DefaultJobsByKind),
+    ?assertEqual(Limit, DefaultJobs#discovery_jobs.max_inflight),
+    Jobs = DefaultJobs#discovery_jobs{
+        inflight = Inflight,
+        pending = #{PendingJob#discovery_job.key => PendingJob}
     },
-    ?assertEqual(State, start_jobs(chunk_interval, State)).
+    ?assertEqual(Jobs, start_jobs(Jobs)).
 
 get_peers_for_offset_unions_sync_bucket_sources_test() ->
     reset_all_caches(),
@@ -1756,7 +1603,7 @@ get_peers_for_offset_unions_sync_bucket_sources_test() ->
     ?assertEqual(lists:sort([BytePeer, FootprintPeer]),
         lists:sort(get_peers_for_offset(Offset))).
 
-get_peer_ranges_for_peers_includes_byte_and_footprint_ranges_test() ->
+cached_peer_ranges_includes_byte_and_footprint_ranges_test() ->
     ar_test_util:with_mocked([
         {ar_peers, get_peer_release,
             fun(_) -> ?GET_FOOTPRINT_SUPPORT_RELEASE end}
@@ -1781,13 +1628,12 @@ get_peer_ranges_for_peers_includes_byte_and_footprint_ranges_test() ->
                 Offset + ?DATA_CHUNK_SIZE),
             Peer, 1.0),
         store_row(chunk_interval, byte, 0, Peer, ByteIntervals),
-        store_row(chunk_interval, footprint,
-            {Partition, Footprint}, Peer, FootprintIntervals),
+        store_row(chunk_interval, footprint, Offset, Peer, FootprintIntervals),
         ExpectedFootprintIntervals =
             ar_footprint_record:footprint_intervals_to_byte_intervals(
                 FootprintIntervals),
         ?assertEqual(
-            [
+            {[
                 #peer_range{
                     store_id = test_store,
                     offset = Offset,
@@ -1802,47 +1648,71 @@ get_peer_ranges_for_peers_includes_byte_and_footprint_ranges_test() ->
                     intervals = ExpectedFootprintIntervals,
                     footprint = FootprintKey
                 }
-            ],
-            get_peer_ranges_for_peers(
+            ], ok},
+            cached_peer_ranges(
                 test_store, [Peer], Offset, RangeStart, RangeEnd))
     end).
 
-build_peer_ranges_limits_chunk_intervals_to_requested_range_test() ->
+get_chunk_intervals_limits_byte_metadata_to_requested_range_test() ->
+    reset_all_caches(),
+    Peer = {10, 0, 0, 1, 1984},
     Chunk = ?DATA_CHUNK_SIZE,
     %% The cached range spans four chunks while the query selects its middle two.
     Intervals = ar_intervals:from_list([{4 * Chunk, 0}]),
     Expected = ar_intervals:from_list([{3 * Chunk, Chunk}]),
-    PeerRange = #peer_range{
-        store_id = test_store,
-        offset = Chunk,
-        peer = peer,
-        intervals = ar_intervals:new(),
-        footprint = none
-    },
-    ?assertEqual([
-        #peer_range{
-            store_id = test_store,
-            offset = Chunk,
-            peer = peer,
-            intervals = Expected,
-            footprint = none
-        }
-    ], build_peer_ranges(byte, PeerRange, Intervals, Chunk, 3 * Chunk)).
+    store_row(chunk_interval, byte, Chunk, Peer, Intervals),
+    ?assertEqual({ok, Expected}, get_chunk_intervals(
+        byte, Peer, Chunk, Chunk, 3 * Chunk)).
 
-unadvertised_peer_is_omitted_test() ->
+irrelevant_peer_has_no_cache_miss_without_detail_metadata_test() ->
     reset_all_caches(),
     Peer = {10, 0, 0, 7, 1984},
-    ?assertEqual({[], []}, get_peer_ranges_for_peer(
-        ?DEFAULT_MODULE, Peer, ?DATA_CHUNK_SIZE, 0, ?DATA_CHUNK_SIZE)).
+    ?assertEqual({[], ok}, cached_peer_ranges(
+        ?DEFAULT_MODULE, [Peer], ?DATA_CHUNK_SIZE, 0, ?DATA_CHUNK_SIZE)).
 
-missing_chunk_interval_metadata_requests_job_test() ->
+cached_empty_metadata_is_ok_test() ->
+    reset_all_caches(),
+    Peer = {10, 0, 0, 7, 1984},
+    store_row(sync_bucket, byte, 0, Peer, 1.0),
+    store_row(chunk_interval, byte, 0, Peer, ar_intervals:new()),
+    ?assertEqual({[], ok}, cached_peer_ranges(
+        ?DEFAULT_MODULE, [Peer], 0, 0, ?DATA_CHUNK_SIZE)).
+
+warming_schedules_miss_but_cached_read_has_no_side_effect_test() ->
     reset_all_caches(),
     Peer = {10, 0, 0, 8, 1984},
     store_row(sync_bucket, byte, 0, Peer, 1.0),
-    {PeerRanges, Jobs} = get_peer_ranges_for_peer(
-        ?DEFAULT_MODULE, Peer, 0, 0, ?DATA_CHUNK_SIZE),
-    ?assertEqual([], PeerRanges),
-    ?assertMatch([#discovery_job{ kind = chunk_interval, mode = byte }], Jobs).
+    DiscoveryPid = whereis(?MODULE),
+    1 = erlang:trace(DiscoveryPid, true, ['receive']),
+    try
+        ?assertEqual({[], cache_miss}, cached_peer_ranges(
+            ?DEFAULT_MODULE, [Peer], 0, 0, ?DATA_CHUNK_SIZE)),
+        _ = sys:get_state(DiscoveryPid),
+        receive
+            {trace, DiscoveryPid, 'receive',
+                    {'$gen_cast', {refresh_chunk_intervals, _Job}}} ->
+                ?assert(false)
+        after 0 ->
+            ok
+        end,
+        ?assertEqual(ok,
+            warm_peer_ranges(?DEFAULT_MODULE, [Peer], 0)),
+        %% Reading the state is a mailbox barrier for the preceding cast.
+        _ = sys:get_state(DiscoveryPid),
+        RefreshRequest = receive
+            {trace, DiscoveryPid, 'receive',
+                    {'$gen_cast', {refresh_chunk_intervals, Job}}} ->
+                Job
+        %% The server mailbox barrier does not order delivery of trace messages.
+        after 1000 ->
+            none
+        end,
+        ?assertMatch(
+            #discovery_job{ kind = chunk_interval, mode = byte },
+            RefreshRequest)
+    after
+        1 = erlang:trace(DiscoveryPid, false, ['receive'])
+    end.
 
 %% An aged row is served as {stale, Intervals}: the data is still used while the
 %% demand path requests a chunk interval job. A fresh row stays a plain hit.
@@ -1853,32 +1723,67 @@ stale_interval_rows_remain_usable_test() ->
     Intervals = ar_intervals:from_list([{RangeEnd, 0}]),
     ByteKey = {byte, 0, Peer},
     store_row(chunk_interval, byte, 0, Peer, Intervals),
-    ?assertEqual({ok, Intervals}, get_chunk_intervals(byte, Peer, 0)),
+    ?assertEqual({ok, Intervals},
+        get_chunk_intervals(byte, Peer, 0, 0, RangeEnd)),
     StaleMs = ar_timer:monotonic_ms()
             - ?CHUNK_INTERVAL_CACHE_TTL_MS - 1,
     ets:insert(?CHUNK_INTERVAL_CACHE_TABLE, {ByteKey, Intervals, StaleMs}),
-    ?assertEqual({stale, Intervals}, get_chunk_intervals(byte, Peer, 0)),
-    %% A stale byte row remains usable and also requests a chunk interval job.
+    ?assertEqual({stale, Intervals},
+        get_chunk_intervals(byte, Peer, 0, 0, RangeEnd)),
+    %% A stale byte row remains usable without making the cached read impure.
     store_row(sync_bucket, byte, 0, Peer, 1.0),
     ?assertEqual(
-        [#peer_range{
+        {[#peer_range{
             store_id = ?DEFAULT_MODULE,
             offset = 0,
             peer = Peer,
             intervals = Intervals,
             footprint = none
-        }],
-        get_peer_ranges_for_peers(?DEFAULT_MODULE, [Peer], 0, 0, RangeEnd)),
+        }], ok},
+        cached_peer_ranges(?DEFAULT_MODULE, [Peer], 0, 0, RangeEnd)),
     %% Footprint rows age against the same safety floor.
-    FpKey = {footprint, {1, 2}, Peer},
-    store_row(chunk_interval, footprint, {1, 2}, Peer, Intervals),
-    ?assertEqual({ok, Intervals},
-        get_chunk_intervals(footprint, Peer, {1, 2})),
+    FootprintOffset = 0,
+    FootprintIntervals = ar_intervals:from_list([{1, 0}]),
+    ExpectedFootprintIntervals =
+        ar_footprint_record:footprint_intervals_to_byte_intervals(
+            FootprintIntervals),
+    FpKey = row_key(chunk_interval, footprint, FootprintOffset, Peer),
+    store_row(chunk_interval, footprint,
+        FootprintOffset, Peer, FootprintIntervals),
+    ?assertEqual({ok, ExpectedFootprintIntervals}, get_chunk_intervals(
+        footprint, Peer, FootprintOffset, 0, RangeEnd)),
     FpStaleMs = ar_timer:monotonic_ms()
             - ?CHUNK_INTERVAL_CACHE_TTL_MS - 1,
-    ets:insert(?CHUNK_INTERVAL_CACHE_TABLE, {FpKey, Intervals, FpStaleMs}),
-    ?assertEqual({stale, Intervals},
-        get_chunk_intervals(footprint, Peer, {1, 2})).
+    ets:insert(?CHUNK_INTERVAL_CACHE_TABLE,
+        {FpKey, FootprintIntervals, FpStaleMs}),
+    ?assertEqual({stale, ExpectedFootprintIntervals}, get_chunk_intervals(
+        footprint, Peer, FootprintOffset, 0, RangeEnd)).
+
+warming_stale_metadata_requests_refresh_test() ->
+    reset_all_caches(),
+    Peer = {10, 0, 0, 9, 1984},
+    Intervals = ar_intervals:from_list([{?DATA_CHUNK_SIZE, 0}]),
+    StaleMs = ar_timer:monotonic_ms() - ?CHUNK_INTERVAL_CACHE_TTL_MS - 1,
+    store_row(sync_bucket, byte, 0, Peer, 1.0),
+    ets:insert(?CHUNK_INTERVAL_CACHE_TABLE,
+        {row_key(chunk_interval, byte, 0, Peer), Intervals, StaleMs}),
+    DiscoveryPid = whereis(?MODULE),
+    1 = erlang:trace(DiscoveryPid, true, ['receive']),
+    try
+        ?assertEqual(ok, warm_peer_ranges(?DEFAULT_MODULE, [Peer], 0)),
+        _ = sys:get_state(DiscoveryPid),
+        receive
+            {trace, DiscoveryPid, 'receive',
+                    {'$gen_cast', {refresh_chunk_intervals,
+                        #discovery_job{ mode = byte }}}} ->
+                ok
+        %% The server mailbox barrier does not order delivery of trace messages.
+        after 1000 ->
+            ?assert(false)
+        end
+    after
+        1 = erlang:trace(DiscoveryPid, false, ['receive'])
+    end.
 
 %% A changed byte sync-bucket share marks the covered chunk intervals stale.
 %% Unchanged shares and chunk intervals in other sync buckets remain fresh.
@@ -1902,21 +1807,28 @@ footprint_share_change_marks_chunk_intervals_stale_test() ->
     reset_all_caches(),
     Peer = {10, 0, 0, 1, 1984},
     Intervals = ar_intervals:from_list([{100, 0}]),
-    {InSyncBucket, _} = chunk_interval_location_range(footprint, 0),
-    {FarAway, _} = chunk_interval_location_range(footprint, 1000),
-    store_row(chunk_interval, footprint, InSyncBucket, Peer, Intervals),
-    store_row(chunk_interval, footprint, FarAway, Peer, Intervals),
-    store_row(sync_bucket, footprint, 0, Peer, 0.5),
+    InSyncBucketOffset = 0,
+    %% Two buckets away is beyond the one-footprint boundary superset marked
+    %% stale with bucket zero.
+    FarAwayChunkEnd =
+        ar_footprint_record:get_padded_offset_from_footprint_offset(
+            2 * ?NETWORK_FOOTPRINT_BUCKET_SIZE + 1),
+    FarAwayOffset = FarAwayChunkEnd - ?DATA_CHUNK_SIZE,
+    SyncBucket = sync_bucket(footprint, InSyncBucketOffset),
+    store_row(chunk_interval, footprint,
+        InSyncBucketOffset, Peer, Intervals),
+    store_row(chunk_interval, footprint, FarAwayOffset, Peer, Intervals),
+    store_row(sync_bucket, footprint, SyncBucket, Peer, 0.5),
     mark_chunk_intervals_stale_on_share_change(
-        footprint, Peer, 0, 0.5),
+        footprint, Peer, SyncBucket, 0.5),
     ?assertMatch({hit, _},
-        chunk_interval_lookup(footprint, Peer, InSyncBucket)),
+        chunk_interval_lookup(footprint, Peer, InSyncBucketOffset)),
     mark_chunk_intervals_stale_on_share_change(
-        footprint, Peer, 0, 0.7),
+        footprint, Peer, SyncBucket, 0.7),
     ?assertMatch({stale, _},
-        chunk_interval_lookup(footprint, Peer, InSyncBucket)),
+        chunk_interval_lookup(footprint, Peer, InSyncBucketOffset)),
     ?assertMatch({hit, _},
-        chunk_interval_lookup(footprint, Peer, FarAway)).
+        chunk_interval_lookup(footprint, Peer, FarAwayOffset)).
 
 %% Sync buckets not updated within ?SYNC_BUCKET_CACHE_TTL_MS are retired
 %% together with their cached chunk intervals; recently updated buckets remain.
@@ -2025,26 +1937,30 @@ refresh_chunk_intervals_reuses_cache_test() ->
     reset_all_caches(),
     Peer = {10, 0, 0, 1, 1984},
     Offset = 0,
-    Location = interval_location(footprint, Offset),
-    Intervals = ar_intervals:from_list([{100, 0}]),
+    Intervals = ar_intervals:from_list([{1, 0}]),
+    Expected = ar_footprint_record:footprint_intervals_to_byte_intervals(
+        Intervals),
     store_row(sync_bucket, footprint,
         sync_bucket(footprint, Offset), Peer, 1.0),
-    store_row(chunk_interval, footprint, Location, Peer, Intervals),
+    store_row(chunk_interval, footprint, Offset, Peer, Intervals),
     meck:new(ar_http_iface_client, [passthrough]),
     meck:expect(ar_http_iface_client, get_footprints,
             fun(_, _, _) -> {error, timeout} end),
-    meck:new(ar_events, [passthrough]),
     try
+        Job = #discovery_job{
+            kind = chunk_interval,
+            peer = Peer,
+            store_id = test_store,
+            mode = footprint,
+            start = Offset
+        },
         ?assertEqual(ok,
-            refresh_chunk_intervals(footprint, Peer, test_store, Offset)),
+            refresh_chunk_intervals(Job)),
         ?assertEqual(0,
             meck:num_calls(ar_http_iface_client, get_footprints, 3)),
-        ?assertEqual(0,
-            meck:num_calls(ar_events, send, [sync_discovery, '_'])),
-        ?assertEqual({ok, Intervals},
-            get_chunk_intervals(footprint, Peer, Location))
+        ?assertEqual({ok, Expected}, get_chunk_intervals(
+            footprint, Peer, Offset, 0, ?DATA_CHUNK_SIZE))
     after
-        meck:unload(ar_events),
         meck:unload(ar_http_iface_client)
     end.
 

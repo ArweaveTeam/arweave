@@ -10,9 +10,11 @@
         admission_headroom/2, claim_limit/2,
         chunks_in_claim/1, claimed_chunks/2, is_claimed/3,
         admit/3, release_claim/3,
-        queues_empty/1, queued_count/2, queued_tasks/2, claims_empty/1,
+        queues_empty/1, queued_count/2, queued_task_count/2,
+        queued_tasks/1, queued_tasks/2, claims_empty/1,
         peers/1,
-        record_write_completed/2, sample_drain_rates/3, drain_rate/2,
+        record_write_completed/2, sample_drain_rates/2, drain_rate/2,
+        cache_limit/2, pipeline_limit/2,
         start_dispatch/3, finish_dispatch/1,
         best_store/1, pop_work/2,
         add_reservations/2, start_task/2,
@@ -30,22 +32,41 @@
 
 %% Enough queued work to cover transient write variance without letting a slow
 %% store monopolize the chunk cache.
--define(PIPELINE_HORIZON_MS, 4000).
+-define(PIPELINE_HORIZON_MS, 5000).
 
-%% A store whose measured rate collapses must retain enough work to make
-%% progress and earn a higher rate again.
--define(TASK_FLOOR, 50).
+%% A delayed fetch can occupy five seconds before entering the five-second
+%% write horizon. One additional second covers strict admission boundaries and
+%% scheduler/completion-wave quantization.
+-define(ASSIGNMENT_PIPELINE_HORIZON_MS, 11_000).
+
+%% Smooth write-completion bursts over roughly two drain-rate observations.
+%% The first continuously backlogged interval seeds the estimate directly.
+-define(DRAIN_RATE_ALPHA, 0.5).
+
+%% Measure across at least one production scheduler interval so batched writes
+%% are not interpreted as alternating zero-rate and burst-rate samples.
+-define(DRAIN_SAMPLE_MIN_MS, 10_000).
+
+%% Keep a small probe available after a zero or very low drain-rate sample.
+%% Twenty-five chunks bound recovery work while leaving enough requests to
+%% observe whether a stalled store has resumed draining.
+-define(MIN_CLAIM_LIMIT, 25).
 
 -record(store_state, {
     store_id,
     %% Persistent work retained across dispatch passes.
     work_queue = gb_sets:new(),
     claimed = ar_intervals:new(),
+    %% Concrete tasks that can enter the fetch/write pipeline.
     claimed_chunks = 0,
+    %% Whole-footprint credits retained only until a reservation binds.
+    reservation_chunks = 0,
     queued_peer_counts = #{},
-    completed_writes_since_tick = 0,
-    drain_rate = undefined,
-    write_backlog_at_last_tick = false
+    queued_task_count = 0,
+    completed_writes_since_sample = 0,
+    drain_sample_started_ms = undefined,
+    drain_sample_starved = false,
+    drain_rate = undefined
 }).
 
 -opaque state() :: #{term() => #store_state{}}.
@@ -56,6 +77,10 @@
     fetching_count = 0,
     writing_count = 0,
     cached_chunk_count = 0,
+    %% Drain-derived limit for chunks that have reached the local cache.
+    cache_limit = 0,
+    %% Hard fair share for cached chunks plus fetches that can become cached.
+    pipeline_limit = 0,
     disk_ready = false,
     %% Dispatch-pass copy plus bound footprints eligible during this pass.
     work_queue = gb_sets:new(),
@@ -89,10 +114,10 @@ new() ->
 
 %% @doc Chunks the store may still claim before reaching its work horizon.
 admission_headroom(StoreID, States) ->
-    State = get_state(StoreID, States),
-    max(0, claim_limit(State) - State#store_state.claimed_chunks).
+    admission_headroom(get_state(StoreID, States)).
 
-%% @doc Number of fetched and fetching chunks allowed for the store. An
+%% @doc Target number of chunks kept ahead of a store. Admission applies it to
+%% queued work and dispatch applies it to the fetched/write-stage cache. An
 %% unmeasured store starts from a cache-derived bootstrap limit.
 claim_limit(StoreID, States) ->
     claim_limit(get_state(StoreID, States)).
@@ -100,7 +125,7 @@ claim_limit(StoreID, States) ->
 claim_limit(#store_state{ drain_rate = undefined }) ->
     bootstrap_limit(ar_sync_deps:chunk_cache_size_limit());
 claim_limit(#store_state{ drain_rate = ChunksPerSecond }) ->
-    max(?TASK_FLOOR,
+    max(?MIN_CLAIM_LIMIT,
         round(ChunksPerSecond * ?PIPELINE_HORIZON_MS / 1000)).
 
 
@@ -113,7 +138,8 @@ chunks_in_claim(#footprint_reservation{} = Reservation) ->
 
 %% @doc Number of concrete chunks and footprint claims currently held.
 claimed_chunks(StoreID, States) ->
-    (get_state(StoreID, States))#store_state.claimed_chunks.
+    State = get_state(StoreID, States),
+    State#store_state.claimed_chunks + State#store_state.reservation_chunks.
 
 %% @doc Return whether Offset belongs to an existing concrete chunk claim.
 is_claimed(StoreID, Offset, States) ->
@@ -123,33 +149,40 @@ is_claimed(Offset, #store_state{ claimed = Claimed }) ->
     ar_intervals:is_inside(Claimed, Offset + 1).
 
 %% @doc Claim and enqueue a candidate when the store has admission headroom.
+%% A zero claim means the concrete chunk was already claimed.
 admit(StoreID, Task, States) ->
     State = get_state(StoreID, States),
     case admit(Task, State) of
         {ok, ClaimedChunks, State2} ->
             {ok, ClaimedChunks, put_state(State2, States)};
-        rejected ->
-            rejected
+        blocked ->
+            blocked
     end.
 
 admit(#task{ offset = Offset } = Task, State) ->
-    case admission_headroom(State) > 0 andalso not is_claimed(Offset, State) of
-        true ->
+    case {is_claimed(Offset, State), admission_headroom(State) > 0} of
+        {true, _} ->
+            {ok, 0, State};
+        {false, true} ->
             {ok, 1, enqueue_state(Task, State)};
-        false ->
-            rejected
+        {false, false} ->
+            blocked
     end;
 admit(Reservation, State) ->
-    case admission_headroom(State) > 0 of
+    case reservation_headroom(State) > 0 of
         true ->
             ClaimedChunks = chunks_in_claim(Reservation),
             {ok, ClaimedChunks, enqueue_state(Reservation, State)};
         false ->
-            rejected
+            blocked
     end.
 
-admission_headroom(#store_state{ claimed_chunks = ClaimedChunks } = State) ->
-    max(0, claim_limit(State) - ClaimedChunks).
+admission_headroom(#store_state{ queued_task_count = QueuedTaskCount } = State) ->
+    max(0, claim_limit(State) - QueuedTaskCount).
+
+reservation_headroom(#store_state{ queued_task_count = QueuedTaskCount,
+        reservation_chunks = ReservationChunks } = State) ->
+    max(0, claim_limit(State) - QueuedTaskCount - ReservationChunks).
 
 %% @doc Release one concrete chunk claim after its task finishes.
 release_claim(StoreID, Offset, States) ->
@@ -174,10 +207,22 @@ queues_empty(States) ->
 queued_count(StoreID, States) ->
     gb_sets:size((get_state(StoreID, States))#store_state.work_queue).
 
+%% @doc Number of concrete chunk tasks queued for StoreID.
+queued_task_count(StoreID, States) ->
+    (get_state(StoreID, States))#store_state.queued_task_count.
+
+%% @doc Every concrete task currently waiting in a store queue.
+queued_tasks(States) ->
+    maps:fold(
+        fun(_StoreID, State, Tasks) ->
+            queued_tasks_in_state(State) ++ Tasks
+        end,
+        [],
+        States).
+
 %% @doc Queued tasks in dispatch order.
 queued_tasks(StoreID, States) ->
-    WorkQueue = (get_state(StoreID, States))#store_state.work_queue,
-    [Task || {_Priority, Task} <- gb_sets:to_list(WorkQueue)].
+    queued_tasks_in_state(get_state(StoreID, States)).
 
 %% @doc Return whether the store retains no exact or reserved claims.
 claims_empty(States) ->
@@ -205,44 +250,119 @@ peers(States) ->
 %%% Drain-rate sampling.
 %%%===================================================================
 
-%% @doc Record one completed store write in the current scheduler interval.
+%% @doc Record one completed store write in the current drain sample.
 record_write_completed(StoreID, States) ->
     State = get_state(StoreID, States),
-    State2 = State#store_state{ completed_writes_since_tick =
-        State#store_state.completed_writes_since_tick + 1 },
+    SampleStartedMs = case State#store_state.drain_sample_started_ms of
+        undefined -> ar_timer:monotonic_ms();
+        StartedMs -> StartedMs
+    end,
+    State2 = State#store_state{
+        completed_writes_since_sample =
+            State#store_state.completed_writes_since_sample + 1,
+        drain_sample_started_ms = SampleStartedMs
+    },
     put_state(State2, States).
 
-%% @doc Sample drain capacity at a scheduler boundary. A persistent write
-%% backlog measures the completed rate. Completing work without retaining a
-%% backlog clears a stale low estimate and returns the store to bootstrap.
-sample_drain_rates(StoresWithWriteBacklog, TickIntervalMs, States) ->
+%% @doc Sample completed writes at tick boundaries. If the fetched cache was
+%% empty during the sample, observed throughput is demand-limited and a fully
+%% consumed horizon may grow. A continuously backlogged sample is authoritative
+%% in both directions, including zero throughput.
+sample_drain_rates(NowMs, States) ->
     maps:map(
         fun(StoreID, State) ->
-            HasWriteBacklog = sets:is_element(StoreID, StoresWithWriteBacklog),
-            sample_drain_rate(HasWriteBacklog, TickIntervalMs, State)
+            CachedChunkCount = ar_sync_deps:chunk_cache_size(StoreID),
+            sample_drain_rate(CachedChunkCount, NowMs, State)
         end,
         States).
 
-sample_drain_rate(HasWriteBacklog, TickIntervalMs, State) ->
+sample_drain_rate(CachedChunkCount, NowMs, State) ->
     #store_state{
-        completed_writes_since_tick = CompletedWrites,
-        drain_rate = DrainRate,
-        write_backlog_at_last_tick = HadWriteBacklog
+        completed_writes_since_sample = CompletedWrites,
+        drain_sample_started_ms = SampleStartedMs,
+        drain_sample_starved = SampleStarved
     } = State,
-    DrainRate2 = case {HadWriteBacklog, HasWriteBacklog, CompletedWrites} of
-        {true, true, _} -> CompletedWrites * 1000 / TickIntervalMs;
-        {_, false, Count} when Count > 0 -> undefined;
-        _ -> DrainRate
-    end,
-    State#store_state{
-        completed_writes_since_tick = 0,
-        drain_rate = DrainRate2,
-        write_backlog_at_last_tick = HasWriteBacklog
-    }.
+    case SampleStartedMs of
+        undefined when CachedChunkCount > 0 ->
+            State#store_state{
+                drain_sample_started_ms = NowMs
+            };
+        undefined ->
+            State;
+        _ when NowMs - SampleStartedMs >= ?DRAIN_SAMPLE_MIN_MS ->
+            ElapsedMs = NowMs - SampleStartedMs,
+            Sample = CompletedWrites * 1000 / ElapsedMs,
+            Starved = SampleStarved orelse CachedChunkCount =:= 0,
+            DrainRate2 = update_drain_rate(
+                not Starved, CompletedWrites, Sample,
+                State#store_state.drain_rate),
+            State#store_state{
+                completed_writes_since_sample = 0,
+                drain_sample_started_ms = NowMs,
+                drain_sample_starved = CachedChunkCount =:= 0,
+                drain_rate = DrainRate2
+            };
+        _ ->
+            State#store_state{
+                drain_sample_starved =
+                    SampleStarved orelse CachedChunkCount =:= 0
+            }
+    end.
+
+update_drain_rate(true, _CompletedWrites, Sample, undefined) ->
+    Sample;
+update_drain_rate(true, _CompletedWrites, Sample, DrainRate)
+        when Sample >= DrainRate ->
+    Sample;
+update_drain_rate(true, _CompletedWrites, Sample, DrainRate) ->
+    arweave_util:ema(DrainRate, Sample, ?DRAIN_RATE_ALPHA);
+update_drain_rate(false, CompletedWrites, Sample, undefined)
+        when CompletedWrites > 0 ->
+    Sample;
+update_drain_rate(false, CompletedWrites, Sample, DrainRate)
+        when CompletedWrites > 0 ->
+    max(DrainRate, Sample);
+update_drain_rate(false, 0, _Sample, DrainRate) ->
+    DrainRate.
 
 %% @doc Latest measured drain rate in chunks per second, or undefined.
 drain_rate(StoreID, States) ->
     (get_state(StoreID, States))#store_state.drain_rate.
+
+%% @doc Per-store share of the hard fetched-chunk cache. A measured store is
+%% bounded by its drain horizon; an unmeasured store starts with a small probe.
+cache_limit(StoreID, States) ->
+    State = get_state(StoreID, States),
+    do_cache_limit(State, configured_store_count()).
+
+%% @doc Per-store hard bound covering cached chunks plus network fetches.
+pipeline_limit(StoreID, States) ->
+    State = get_state(StoreID, States),
+    do_pipeline_limit(State, configured_store_count()).
+
+do_cache_limit(State, StoreCount) ->
+    FairShare = fair_share(StoreCount),
+    min(FairShare, initial_cache_limit(State)).
+
+do_pipeline_limit(State, StoreCount) ->
+    min(fair_share(StoreCount), assignment_pipeline_limit(State)).
+
+fair_share(StoreCount) ->
+    max(1, ar_sync_deps:chunk_cache_size_limit() div StoreCount).
+
+configured_store_count() ->
+    max(1, length(arweave_config:storage_modules())).
+
+initial_cache_limit(#store_state{ drain_rate = undefined }) ->
+    ?MIN_CLAIM_LIMIT;
+initial_cache_limit(State) ->
+    claim_limit(State).
+
+assignment_pipeline_limit(#store_state{ drain_rate = undefined }) ->
+    ?MIN_CLAIM_LIMIT;
+assignment_pipeline_limit(#store_state{ drain_rate = ChunksPerSecond }) ->
+    max(?MIN_CLAIM_LIMIT, round(ChunksPerSecond
+        * ?ASSIGNMENT_PIPELINE_HORIZON_MS / 1000)).
 
 %%%===================================================================
 %%% Dispatch snapshot.
@@ -251,8 +371,12 @@ drain_rate(StoreID, States) ->
 %% @doc Snapshot every indexed store, existing task, and pending footprint
 %% footprint work for one scheduler dispatch pass.
 start_dispatch(Footprints, Tasks, States) ->
+    StoreCount = configured_store_count(),
     Dispatches = maps:map(
-        fun new_store_dispatch/2,
+        fun(StoreID, State) ->
+            new_store_dispatch(StoreID, State,
+                fair_share(StoreCount))
+        end,
         States),
     Dispatches2 = add_reservations(Footprints, Dispatches),
     maps:fold(
@@ -293,15 +417,24 @@ load(#store_dispatch{ fetching_count = FetchingCount,
     {FetchingCount, FetchingCount + WritingCount}.
 
 %% @doc Return whether the store can start another network fetch within its
-%% local work horizon. The scheduler enforces the node-wide cache limit.
+%% write-stage horizon.
 has_capacity(#store_dispatch{
         state = State,
         fetching_count = FetchingCount,
         cached_chunk_count = CachedChunkCount,
+        cache_limit = CacheLimit,
+        pipeline_limit = PipelineLimit,
         disk_ready = DiskReady
     }) ->
-    ProjectedCachedChunkCount = CachedChunkCount + FetchingCount,
-    DiskReady andalso ProjectedCachedChunkCount < claim_limit(State).
+    DiskReady andalso CachedChunkCount < CacheLimit
+        andalso CachedChunkCount + FetchingCount < PipelineLimit
+        andalso initial_fetch_has_capacity(FetchingCount, State).
+
+initial_fetch_has_capacity(FetchingCount,
+        #store_state{ drain_rate = undefined }) ->
+    FetchingCount < ?MIN_CLAIM_LIMIT;
+initial_fetch_has_capacity(_FetchingCount, #store_state{}) ->
+    true.
 
 %% @doc Return whether one store can start another network fetch this pass.
 has_capacity(StoreID, Dispatches) ->
@@ -395,9 +528,10 @@ bind_footprint(Reservation, Dispatches) ->
     Dispatch = get_dispatch(StoreID, Dispatches),
     State = Dispatch#store_dispatch.state,
     State2 = dequeue(Reservation, State),
-    put_dispatch(Dispatch#store_dispatch{
-        state = State2#store_state{ claimed_chunks = max(0,
-            State2#store_state.claimed_chunks - chunks_in_claim(Reservation)) }
+    put_dispatch(Dispatch#store_dispatch{ state = State2#store_state{
+        reservation_chunks = max(0,
+            State2#store_state.reservation_chunks
+                - chunks_in_claim(Reservation)) }
     }, Dispatches).
 
 %% @doc Return chunks in Intervals not already claimed by this dispatch.
@@ -431,7 +565,7 @@ stores_by_peer(Dispatches) ->
 %%%===================================================================
 
 bootstrap_limit(ChunkCacheLimit) ->
-    max(?TASK_FLOOR, ChunkCacheLimit div 4).
+    max(?MIN_CLAIM_LIMIT, ChunkCacheLimit div 4).
 
 get_state(StoreID, States) ->
     maps:get(StoreID, States, #store_state{ store_id = StoreID }).
@@ -442,17 +576,23 @@ put_state(#store_state{ store_id = StoreID } = State, States) ->
 get_dispatch(StoreID, Dispatches) ->
     case maps:find(StoreID, Dispatches) of
         {ok, Dispatch} -> Dispatch;
-        error -> new_store_dispatch(StoreID, #store_state{ store_id = StoreID })
+        error ->
+            StoreCacheLimit = fair_share(configured_store_count()),
+            new_store_dispatch(StoreID,
+                #store_state{ store_id = StoreID }, StoreCacheLimit)
     end.
 
 put_dispatch(#store_dispatch{ state = #store_state{ store_id = StoreID } } = Dispatch,
         Dispatches) ->
     maps:put(StoreID, Dispatch, Dispatches).
 
-new_store_dispatch(StoreID, State) ->
+new_store_dispatch(StoreID, State, StorePipelineLimit) ->
     #store_dispatch{
         state = State,
         cached_chunk_count = ar_sync_deps:chunk_cache_size(StoreID),
+        cache_limit = min(StorePipelineLimit, initial_cache_limit(State)),
+        pipeline_limit = min(
+            StorePipelineLimit, assignment_pipeline_limit(State)),
         disk_ready = ar_sync_deps:is_disk_space_sufficient(StoreID) =:= true,
         work_queue = State#store_state.work_queue,
         peers = sets:from_list(maps:keys(State#store_state.queued_peer_counts))
@@ -460,28 +600,39 @@ new_store_dispatch(StoreID, State) ->
 
 claims_empty_for_store(#store_state{
         claimed = Claimed,
-        claimed_chunks = ClaimedChunks
+        claimed_chunks = ClaimedChunks,
+        reservation_chunks = ReservationChunks
     }) ->
-    ClaimedChunks =:= 0 andalso ar_intervals:is_empty(Claimed).
+    ClaimedChunks =:= 0 andalso ReservationChunks =:= 0
+        andalso ar_intervals:is_empty(Claimed).
 
 enqueue_state(#task{ offset = Offset } = Task, State) ->
     enqueue_task(Task, State#store_state{
         claimed = ar_intervals:add(
             State#store_state.claimed, Offset + ?DATA_CHUNK_SIZE, Offset),
-        claimed_chunks = State#store_state.claimed_chunks + 1
+        claimed_chunks = State#store_state.claimed_chunks + 1,
+        queued_task_count = State#store_state.queued_task_count + 1
     });
 enqueue_state(Reservation, State) ->
     enqueue_task(Reservation, State#store_state{
-        claimed_chunks = State#store_state.claimed_chunks
+        reservation_chunks = State#store_state.reservation_chunks
             + chunks_in_claim(Reservation)
     }).
 
-dequeue(Task, State) ->
+dequeue(#task{ sources = Sources } = Task, State) ->
     State#store_state{
         work_queue = gb_sets:delete(
             work_element(Task), State#store_state.work_queue),
         queued_peer_counts = adjust_peer_counts(
-            sources(Task), -1, State#store_state.queued_peer_counts)
+            Sources, -1, State#store_state.queued_peer_counts),
+        queued_task_count = max(0, State#store_state.queued_task_count - 1)
+    };
+dequeue(Reservation, State) ->
+    State#store_state{
+        work_queue = gb_sets:delete(
+            work_element(Reservation), State#store_state.work_queue),
+        queued_peer_counts = adjust_peer_counts(
+            sources(Reservation), -1, State#store_state.queued_peer_counts)
     }.
 
 do_unclaimed_intervals(Intervals, #store_state{ claimed = Claimed }) ->
@@ -499,6 +650,13 @@ enqueue_task(Task, State) ->
         queued_peer_counts = adjust_peer_counts(
             sources(Task), 1, State#store_state.queued_peer_counts)
     }.
+
+queued_tasks_in_state(#store_state{ work_queue = WorkQueue }) ->
+    lists:filtermap(
+        fun({_Priority, #task{} = Task}) -> {true, Task};
+            (_) -> false
+        end,
+        gb_sets:to_list(WorkQueue)).
 
 sources(#task{ sources = Sources }) ->
     Sources;
@@ -585,20 +743,71 @@ capacity_limits_are_chunk_granular_test() ->
     ar_replica_2_9:override_entropy_size(
         100 * ?DATA_CHUNK_SIZE div ?SUB_CHUNK_COUNT),
     try
-        %% One quarter of a 2000-chunk cache is 500 chunks.
+        %% One quarter of a 2000-chunk cache provides 500 bootstrap chunks.
         ?assertEqual(500, bootstrap_limit(2000)),
-        %% Four seconds at 100 chunks/s is 400 chunks.
-        ?assertEqual(400,
+        %% An unmeasured store starts with the twenty-five-chunk probe.
+        ?assertEqual(25, do_cache_limit(#store_state{}, 1)),
+        %% Five seconds at 100 chunks/s is 500 chunks.
+        ?assertEqual(500,
             claim_limit(#store_state{ drain_rate = 100 })),
-        %% Four seconds at 105 chunks/s is 420 chunks without footprint rounding.
-        ?assertEqual(420,
+        %% Five seconds at 105 chunks/s is 525 chunks without footprint rounding.
+        ?assertEqual(525,
             claim_limit(#store_state{ drain_rate = 105 })),
-        %% A one-chunk/s store retains the 50-chunk progress floor.
-        ?assertEqual(50,
+        %% Five seconds at fifteen chunks/s is a seventy-five-chunk cache limit.
+        ?assertEqual(75,
+            do_cache_limit(#store_state{ drain_rate = 15 }, 1)),
+        %% Cached and fetching stages retain eleven seconds, or 165 chunks.
+        ?assertEqual(165,
+            do_pipeline_limit(#store_state{ drain_rate = 15 }, 1)),
+        %% Five seconds at one chunk/s is below the 25-chunk progress probe.
+        ?assertEqual(25,
             claim_limit(#store_state{ drain_rate = 1 }))
     after
         ar_replica_2_9:reset_all_overrides()
     end.
+
+admission_headroom_counts_only_queued_tasks_test() ->
+    %% One chunk/s resolves to the twenty-five-chunk progress floor. Concrete
+    %% claims already fetching or writing remain for deduplication but do not
+    %% consume future queue capacity.
+    State = #store_state{
+        drain_rate = 1,
+        claimed_chunks = 25,
+        queued_task_count = 4
+    },
+    ?assertEqual(21, admission_headroom(State)).
+
+fetching_tasks_do_not_consume_store_write_horizon_test() ->
+    %% Once drain is measured, peer and global limits bound network requests;
+    %% the store horizon applies only after chunks enter its cache.
+    Dispatch = #store_dispatch{
+        state = #store_state{ drain_rate = 1 },
+        cached_chunk_count = 3,
+        fetching_count = 10,
+        cache_limit = 4,
+        pipeline_limit = 14,
+        disk_ready = true
+    },
+    ?assert(has_capacity(Dispatch)),
+    ?assertNot(has_capacity(Dispatch#store_dispatch{
+        cached_chunk_count = 4
+    })),
+    ?assertNot(has_capacity(Dispatch#store_dispatch{
+        fetching_count = 11
+    })).
+
+unmeasured_store_limits_initial_fetch_probe_test() ->
+    Dispatch = #store_dispatch{
+        state = #store_state{},
+        fetching_count = ?MIN_CLAIM_LIMIT - 1,
+        cache_limit = 500,
+        pipeline_limit = 500,
+        disk_ready = true
+    },
+    ?assert(has_capacity(Dispatch)),
+    ?assertNot(has_capacity(Dispatch#store_dispatch{
+        fetching_count = ?MIN_CLAIM_LIMIT
+    })).
 
 footprint_claim_reserves_complete_footprint_test() ->
     Footprint = #footprint{ store_id = store1, partition = 0, footprint = 1 },
@@ -619,7 +828,8 @@ footprint_claim_reserves_complete_footprint_test() ->
     InitialClaimedChunks = bootstrap_limit(ChunkCacheLimit) - 1,
     InitialState = put_state(#store_state{
         store_id = store1,
-        claimed_chunks = InitialClaimedChunks
+        claimed_chunks = InitialClaimedChunks,
+        queued_task_count = InitialClaimedChunks
     }, new()),
     {ok, ClaimedChunks, State} = admit(store1, Reservation, InitialState),
     FootprintChunks = ar_sync_footprint:claim_size(Reservation),
@@ -627,11 +837,20 @@ footprint_claim_reserves_complete_footprint_test() ->
     ?assertEqual(FootprintChunks, ClaimedChunks),
     ?assertEqual(InitialClaimedChunks + FootprintChunks,
         claimed_chunks(store1, State)),
+    ?assertEqual(1, queued_count(store1, State)),
+    ?assertEqual(InitialClaimedChunks, queued_task_count(store1, State)),
+    %% Reservation credit does not consume the one remaining concrete task of
+    %% headroom; exact claims arbitrate overlap when the footprint binds.
+    Task = #task{ offset = ?DATA_CHUNK_SIZE,
+        sources = [#task_source{ peer = peer1 }] },
+    {ok, 1, State2} = admit(store1, Task, State),
+    ?assertEqual(InitialClaimedChunks + 1,
+        queued_task_count(store1, State2)),
     %% A reservation may exceed the final positive headroom, but its complete
     %% footprint charge prevents another reservation from being admitted.
     Reservation2 = ar_sync_footprint:new_reservation(
         store1, Footprint#footprint{ footprint = 2 }, Sources),
-    ?assertEqual(rejected, admit(store1, Reservation2, State)).
+    ?assertEqual(blocked, admit(store1, Reservation2, State2)).
 
 dispatch_best_store_orders_by_load_test() ->
     %% The first dispatch has no active tasks. The next two have one fetch each,
@@ -640,13 +859,13 @@ dispatch_best_store_orders_by_load_test() ->
         sources = [#task_source{ peer = peer }] },
     WorkQueue = gb_sets:singleton(work_element(Task)),
     StoreA = #store_dispatch{ state = #store_state{ store_id = store_a },
-        disk_ready = true,
+        disk_ready = true, cache_limit = 100, pipeline_limit = 100,
         work_queue = WorkQueue },
     StoreB = #store_dispatch{ state = #store_state{ store_id = store_b },
-        disk_ready = true,
+        disk_ready = true, cache_limit = 100, pipeline_limit = 100,
         work_queue = WorkQueue, fetching_count = 1 },
     StoreC = #store_dispatch{ state = #store_state{ store_id = store_c },
-        fetching_count = 1,
+        fetching_count = 1, cache_limit = 100, pipeline_limit = 100,
         writing_count = 1, disk_ready = true, work_queue = WorkQueue },
     Dispatches = #{store_c => StoreC, store_b => StoreB, store_a => StoreA},
     {ok, store_a} = best_store(Dispatches),
@@ -707,7 +926,7 @@ work_removed_from_a_pass_returns_in_the_next_pass_test() ->
     {ok, 1, State2} = admit(store1, Second, State1),
     Dispatch0 = test_dispatch(State2),
     {First, Dispatch1} = pop_work(store1, Dispatch0),
-    %% Leaving rejected work out of the dispatch-local queue exposes the next
+    %% Leaving blocked work out of the dispatch-local queue exposes the next
     %% item without changing persistent queued work.
     {Second, _Dispatch2} = pop_work(store1, Dispatch1),
     %% A new pass is rebuilt from persistent state, so the first task is ready
@@ -715,38 +934,51 @@ work_removed_from_a_pass_returns_in_the_next_pass_test() ->
     NewDispatch = test_dispatch(State2),
     {First, _NewDispatch2} = pop_work(store1, NewDispatch).
 
-drain_rate_tick_boundaries_test() ->
-    TickIntervalMs = 10_000,
+drain_rate_uses_tick_samples_test() ->
+    SampleStartMs = 1_000,
+    SampleIntervalMs = 10_000,
     InitialRate = 100,
     State0 = #store_state{ drain_rate = InitialRate,
-        completed_writes_since_tick = 200 },
+        drain_sample_started_ms = SampleStartMs,
+        completed_writes_since_sample = 200 },
 
-    %% The first busy boundary starts a complete sample and retains the old rate.
-    State1 = sample_drain_rate(true, TickIntervalMs, State0),
-    ?assertEqual(InitialRate, State1#store_state.drain_rate),
-    ?assertEqual(true, State1#store_state.write_backlog_at_last_tick),
-    ?assertEqual(0, State1#store_state.completed_writes_since_tick),
+    %% Twenty chunks/s without pending writes is only a lower bound, so it
+    %% cannot reduce the existing 100-chunk/s estimate.
+    State1 = sample_drain_rate(
+        0, SampleStartMs + SampleIntervalMs, State0),
+    ?assertEqual(100, State1#store_state.drain_rate),
 
-    %% 200 completions over ten seconds is 20 cps and an 80-chunk horizon.
-    State2 = sample_drain_rate(true, TickIntervalMs,
-        State1#store_state{ completed_writes_since_tick = 200 }),
-    ?assertEqual(20.0, State2#store_state.drain_rate),
-    ?assertEqual(80, claim_limit(State2)),
+    %% The same twenty-chunk/s sample with pending writes is authoritative.
+    %% The half-weight EMA moves the estimate from 100 to 60 chunks/s.
+    State2 = sample_drain_rate(1, SampleStartMs + 2 * SampleIntervalMs,
+        State1#store_state{ completed_writes_since_sample = 200,
+            drain_sample_starved = false }),
+    ?assertEqual(60.0, State2#store_state.drain_rate),
+    ?assertEqual(300, claim_limit(State2)),
 
-    %% A continuously busy interval with no completions reaches the 50-chunk floor.
-    StalledState = sample_drain_rate(true, TickIntervalMs, State2),
-    ?assertEqual(0.0, StalledState#store_state.drain_rate),
-    ?assertEqual(50, claim_limit(StalledState)),
+    %% Eight hundred completions with no pending writes prove at least eighty
+    %% chunks/s and raise the lower bound directly.
+    State3 = sample_drain_rate(0, SampleStartMs + 3 * SampleIntervalMs,
+        State2#store_state{ completed_writes_since_sample = 800 }),
+    ?assertEqual(80.0, State3#store_state.drain_rate),
 
-    %% An idle interval with no writes retains the last measured capacity.
-    IdleState = sample_drain_rate(false, TickIntervalMs, State2),
-    ?assertEqual(20.0, IdleState#store_state.drain_rate),
+    %% A higher authoritative sample takes effect immediately so a recovered
+    %% store is not held to its earlier capacity for several long windows.
+    IncreasedState = sample_drain_rate(1,
+        SampleStartMs + 4 * SampleIntervalMs,
+        State3#store_state{ completed_writes_since_sample = 1000,
+            drain_sample_starved = false }),
+    ?assertEqual(100.0, IncreasedState#store_state.drain_rate),
 
-    %% Completing the offered work with no remaining backlog invalidates the
-    %% stalled estimate so the next admission uses the larger bootstrap limit.
-    CompletedState = StalledState#store_state{
-        completed_writes_since_tick = 1 },
-    RecoveredState = sample_drain_rate(false, TickIntervalMs, CompletedState),
-    ?assertEqual(undefined, RecoveredState#store_state.drain_rate).
+    %% A fully idle interval carries no new capacity evidence.
+    State4 = sample_drain_rate(
+        0, SampleStartMs + 5 * SampleIntervalMs, IncreasedState),
+    ?assertEqual(100.0, State4#store_state.drain_rate),
+
+    %% Pending writes with no completions provide a zero-rate sample, moving
+    %% the half-weight EMA down to forty chunks/s.
+    State5 = sample_drain_rate(1, SampleStartMs + 6 * SampleIntervalMs,
+        State4#store_state{ drain_sample_starved = false }),
+    ?assertEqual(50.0, State5#store_state.drain_rate).
 
 -endif.

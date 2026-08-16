@@ -11,8 +11,7 @@
 -test_category([fast]).
 -behaviour(ar_sync_deps).
 
--export([get_peers_for_offset/1, pick_peers/2, is_throttled/2,
-        get_peer_ranges_for_peers/5,
+-export([pick_peers/2, is_throttled/2,
         rate_fetched_data/5, get_chunk_binary/3,
         is_chunk_cache_full/0, chunk_cache_size/0, chunk_cache_size/1,
         chunk_cache_size_limit/0,
@@ -40,12 +39,6 @@
 %%% ar_sync_deps callbacks.
 %%%===================================================================
 
-get_peers_for_offset(Offset) ->
-    case (ar_sync_sim_world:get(world))#sim_world.discovery_enabled of
-        true -> ar_sync_discovery:get_peers_for_offset(Offset);
-        false -> ar_sync_sim_world:get_peers_for_offset(Offset)
-    end.
-
 pick_peers(Peers, Count) ->
     {Picked, _Rest} = arweave_util:split_at_most(Count, Peers),
     Picked.
@@ -54,16 +47,6 @@ is_throttled(Peer, _Path) ->
     #sim_peer{ selection_throttled = IsThrottled } =
         ar_sync_sim_world:get({peer, Peer}),
     IsThrottled.
-
-get_peer_ranges_for_peers(StoreID, Peers, Offset, RangeStart, RangeEnd) ->
-    case (ar_sync_sim_world:get(world))#sim_world.discovery_enabled of
-        true ->
-            ar_sync_discovery:get_peer_ranges_for_peers(
-                StoreID, Peers, Offset, RangeStart, RangeEnd);
-        false ->
-            ar_sync_sim_world:get_peer_ranges_for_peers(
-                StoreID, Peers, Offset, RangeStart, RangeEnd)
-    end.
 
 %% Peer goodput derives from completed fetches reported through the scheduler;
 %% ar_peers plays no part.
@@ -136,12 +119,11 @@ get_next_synced_interval(Byte, End, _ID, StoreID) ->
 
 %% The ar_sync_scheduler tick cadence keys the scenario predicates.
 tick_index() ->
-    ar_timer:monotonic_ms() div ar_sync_scheduler:tick_interval_ms().
+    ar_sync_sim_world:tick_index().
 
 %%%===================================================================
-%%% ar_sync_discovery's outward dependencies (discovery world only):
-%%% the peer's metadata endpoints, modeled like get_chunk_binary — real
-%%% worker processes paying a simulated latency on ar_timer's clock.
+%%% ar_sync_discovery's outward dependencies: the peer registry and metadata
+%%% endpoints, modeled as real workers paying latency on ar_timer's clock.
 %%%===================================================================
 
 %% Above every release gate (?GET_FOOTPRINT_SUPPORT_RELEASE = 91).
@@ -149,12 +131,7 @@ get_peer_release(Peer) ->
     (ar_sync_sim_world:get({peer, Peer}))#sim_peer.release.
 
 get_peers(current) ->
-    %% Direct-availability scenarios keep supervised discovery idle. Discovery
-    %% scenarios expose both serving peers and known peers with no sync kinds.
-    case (ar_sync_sim_world:get(world))#sim_world.discovery_enabled of
-        true -> ar_sync_sim_world:get(peers);
-        false -> []
-    end.
+    ar_sync_sim_world:get(peers).
 
 is_joined() ->
     true.
@@ -163,55 +140,52 @@ get_weave_size() ->
     ar_sync_sim_world:weave_size().
 
 get_sync_buckets(Peer, Mode) ->
-    case (ar_sync_sim_world:get(world))#sim_world.discovery_enabled of
-        true -> ar_timer:sleep(?SIM_METADATA_LATENCY_MS);
-        false -> ok
-    end,
+    ar_timer:sleep(?SIM_METADATA_LATENCY_MS),
     do_get_sync_buckets(Peer, Mode).
 
-%% Coarse byte buckets over the peer's configured intervals. Discovery worlds
-%% resolve the default to bounded store prefixes so AR_TEST bucket granularity
-%% stays at roughly 1000 rows instead of millions.
-do_get_sync_buckets(Peer, byte) ->
-    case ar_sync_sim_world:peer_sync_kind_enabled(Peer, byte) of
-        true ->
-            {ok, ar_sync_buckets:from_intervals(
-                ar_sync_sim_world:peer_sync_intervals(Peer))};
-        false ->
-            {ok, ar_sync_buckets:new()}
-    end;
+do_get_sync_buckets(Peer, Mode) ->
+    Enabled = ar_sync_sim_world:peer_sync_kind_enabled(Peer, Mode),
+    do_get_sync_buckets(Peer, Mode, Enabled).
+
+do_get_sync_buckets(_Peer, _Mode, false) ->
+    {ok, ar_sync_buckets:new()};
+
+%% Coarse byte buckets over the peer's configured intervals. The default
+%% resolves to bounded store prefixes so AR_TEST bucket granularity stays at
+%% roughly 1000 rows instead of millions.
+do_get_sync_buckets(Peer, byte, true) ->
+    {ok, ar_sync_buckets:from_intervals(
+        ar_sync_sim_world:peer_sync_intervals(Peer))};
 
 %% Footprint buckets are the byte intervals mapped into footprint-offset
 %% space at the network footprint bucket size.
-do_get_sync_buckets(Peer, footprint) ->
-    case ar_sync_sim_world:peer_sync_kind_enabled(Peer, footprint) of
-        false ->
-            {ok, ar_sync_buckets:new()};
-        true ->
-            %% Footprints INTERLEAVE in byte space (consecutive chunks
-            %% belong to consecutive FOOTPRINTS, not consecutive slots),
-            %% so a byte prefix's footprint-offset image is a scatter of
-            %% single-slot points, one per chunk — mapping it as one
-            %% contiguous interval advertised ~the whole partition and
-            %% inserted 1.45M bucket rows (measured in the shakeout).
-            FpIntervals = lists:foldl(
-                fun({End, Start}, Acc) ->
-                    lists:foldl(
-                        fun(ChunkEnd, Acc2) ->
-                            Fp = ar_footprint_record:get_offset(
-                                ar_block:get_chunk_padded_offset(ChunkEnd)),
-                            ar_intervals:add(Acc2, Fp, Fp - 1)
-                        end,
-                        Acc,
-                        lists:seq(Start + ?DATA_CHUNK_SIZE, End,
-                            ?DATA_CHUNK_SIZE))
-                end,
-                ar_intervals:new(),
-                ar_intervals:to_list(ar_sync_sim_world:peer_sync_intervals(Peer))),
-            {ok, ar_sync_buckets:from_intervals(FpIntervals,
-                ar_sync_buckets:new(
-                    ar_sync_buckets:get_network_footprint_bucket_size()))}
-    end.
+do_get_sync_buckets(Peer, footprint, true) ->
+    {ok, build_footprint_sync_buckets(Peer)}.
+
+build_footprint_sync_buckets(Peer) ->
+    %% Footprints interleave in byte space, so a byte interval maps to
+    %% individual footprint-offset points rather than one contiguous range.
+    EmptyBuckets = ar_sync_buckets:new(
+        ar_sync_buckets:get_network_footprint_bucket_size()),
+    ar_intervals:fold(
+        fun add_interval_to_footprint_buckets/2,
+        EmptyBuckets,
+        ar_sync_sim_world:peer_sync_intervals(Peer)).
+
+add_interval_to_footprint_buckets({End, Start}, SyncBuckets) ->
+    add_chunk_ends_to_footprint_buckets(
+        Start + ?DATA_CHUNK_SIZE, End, SyncBuckets).
+
+add_chunk_ends_to_footprint_buckets(ChunkEnd, End, SyncBuckets)
+        when ChunkEnd > End ->
+    SyncBuckets;
+add_chunk_ends_to_footprint_buckets(ChunkEnd, End, SyncBuckets) ->
+    FootprintOffset = ar_footprint_record:get_offset(
+        ar_block:get_chunk_padded_offset(ChunkEnd)),
+    SyncBuckets2 = ar_sync_buckets:add(
+        FootprintOffset, FootprintOffset - 1, SyncBuckets),
+    add_chunk_ends_to_footprint_buckets(
+        ChunkEnd + ?DATA_CHUNK_SIZE, End, SyncBuckets2).
 
 %% Chunk intervals: full coverage of the requested window in one
 %% page (fewer intervals than the page limit ends pagination).
@@ -271,17 +245,9 @@ simulated_footprint_intervals(FirstOffset, FootprintSize, PeerIntervals) ->
         ar_intervals:new(),
         lists:seq(FirstOffset, FirstOffset + FootprintSize - 1)).
 
-%% @doc Apply the peer's detailed-availability response time when discovery is
-%% active. Direct adapter tests bypass the delay.
+%% @doc Apply the peer's detailed-availability response time.
 wait_for_chunk_interval_response(Peer) ->
-    case (ar_sync_sim_world:get(world))#sim_world.discovery_enabled of
-        false ->
-            ok;
-        true ->
-            #sim_peer{ chunk_interval_latency_ms = LatencyMS } =
-                ar_sync_sim_world:get({peer, Peer}),
-            ar_timer:sleep(LatencyMS)
-    end.
+    ar_sync_sim_world:wait_for_chunk_interval_response(Peer).
 
 %%%===================================================================
 %%% Tests.
@@ -305,14 +271,29 @@ peer_metadata_uses_peer_configuration_test() ->
         }),
         %% The page limit spans the complete three-chunk query.
         PageLimit = 3,
-        {ok, ByteIntervals} = fetch_chunk_intervals(BytePeer,
+        {ok, ByteIntervals} = do_fetch_chunk_intervals(BytePeer,
             {byte, 0, 3 * Chunk, PageLimit}),
         ?assertEqual(Intervals, ar_intervals:to_list(ByteIntervals)),
-        ?assertEqual({ok, ar_intervals:new()}, fetch_chunk_intervals(
+        ?assertEqual({ok, ar_intervals:new()}, do_fetch_chunk_intervals(
             FootprintPeer, {byte, 0, 3 * Chunk, PageLimit})),
         ?assertEqual({ok, ar_sync_buckets:new()},
-            get_sync_buckets(FootprintPeer, byte)),
-        {ok, FootprintIntervals} = fetch_chunk_intervals(
+            do_get_sync_buckets(FootprintPeer, byte)),
+        %% The configured two-chunk interval contributes these two chunk ends.
+        FootprintOffsets = [
+            ar_footprint_record:get_offset(ChunkEnd)
+            || ChunkEnd <- [Chunk, 2 * Chunk]
+        ],
+        ExpectedFootprintIntervals = ar_intervals:from_list([
+            {FootprintOffset, FootprintOffset - 1}
+            || FootprintOffset <- FootprintOffsets
+        ]),
+        ExpectedFootprintBuckets = ar_sync_buckets:from_intervals(
+            ExpectedFootprintIntervals,
+            ar_sync_buckets:new(
+                ar_sync_buckets:get_network_footprint_bucket_size())),
+        ?assertEqual({ok, ExpectedFootprintBuckets},
+            do_get_sync_buckets(FootprintPeer, footprint)),
+        {ok, FootprintIntervals} = do_fetch_chunk_intervals(
             FootprintPeer, {footprint, 0, 0}),
         ?assertEqual(
             [{ar_replica_2_9:get_footprint_size(), 0}],

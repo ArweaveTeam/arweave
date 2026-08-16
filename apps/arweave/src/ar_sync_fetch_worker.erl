@@ -54,8 +54,8 @@ rate_peer(Peer, ok, ElapsedUs, BytesFetched) ->
 rate_peer(_Peer, {worker_crash, _, _, _}, _ElapsedUs, _BytesFetched) ->
     ok;
 %% A 429 is the peer correctly enforcing its rate policy, not bad data or ill
-%% health, and its worker time already feeds the concurrency controller, so it
-%% is not booked as an invalid_data failure.
+%% health, and its worker time already feeds the scheduler's concurrency logic,
+%% so it is not booked as an invalid_data failure.
 %% Booking it let the politeness equilibrium (high reject ratios at small
 %% caps) sink average_success below ?MINIMUM_SUCCESS and remove healthy
 %% rate-limited peers (measured 2026-07-13: average_success 0.33 on a peer

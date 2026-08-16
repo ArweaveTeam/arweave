@@ -29,11 +29,6 @@
 %% block header and downloads it from peers.
 -define(DEFAULT_HEADER_SYNC_JOBS, 1).
 
-%% Maximum concurrent sync bucket jobs. Each
-%% worker refreshes one peer's supported maps sequentially; per-peer rate
-%% limiting is enforced separately by arweave_throttling.
--define(DEFAULT_SYNC_MAX_CONCURRENT_SYNC_BUCKET_JOBS, 100).
-
 %% The default expiration time for a data root in the disk pool.
 -define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 30 * 60).
 

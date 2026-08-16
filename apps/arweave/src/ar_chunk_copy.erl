@@ -204,15 +204,15 @@ read_chunk_range(StoreID, Source, Start, End, Rest, CopyState, State) ->
 enqueue_intervals_from_source(StoreID, SourceStoreID, OtherStoreIDs,
                               #copy_state{ range_start = RangeStart,
                                            range_end = RangeEnd } = CopyState) ->
-    ScanEnd = case SourceStoreID of
+    LiveEnd = case SourceStoreID of
                   ?DEFAULT_MODULE -> min(RangeEnd, ar_disk_pool:get_threshold());
                   _ -> RangeEnd
               end,
     Intervals = determine_intervals_to_copy_from_module(
-                  StoreID, SourceStoreID, RangeStart, ScanEnd),
+                  StoreID, SourceStoreID, RangeStart, LiveEnd),
     ?LOG_DEBUG([{event, sync_local}, {stage, scan},
                 {store_id, StoreID}, {source_store_id, SourceStoreID},
-                {range_start, RangeStart}, {range_end, ScanEnd},
+                {range_start, RangeStart}, {range_end, LiveEnd},
                 {found_intervals, length(Intervals)}]),
     CopyState#copy_state{
       pending_intervals = Intervals,

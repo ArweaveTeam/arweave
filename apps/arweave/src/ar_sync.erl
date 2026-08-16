@@ -36,7 +36,7 @@ enabled() ->
 start_store(StoreID) ->
     ar_sync_store_sweeper:start(StoreID).
 
-%% @doc Update the live weave bound of one store's sweeper.
+%% @doc Update the live sync bounds of one store's sweeper.
 set_weave_size(StoreID, WeaveSize) ->
     ar_sync_store_sweeper:set_weave_size(StoreID, WeaveSize).
 

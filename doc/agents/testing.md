@@ -1,6 +1,6 @@
 # Testing
 
-Read this before adding, modifying, or disabling any test.
+Read this before running, adding, modifying, or disabling any test.
 
 ## Running tests
 
@@ -16,6 +16,16 @@ Use `./bin/test` for EUnit-style test modules:
 # Multiple modules and/or tests together
 ./bin/test ar_mining_io_tests ar_data_sync_root_tests:data_roots_syncs_from_peer_test_
 ```
+
+### Sandboxed agent environments
+
+`./bin/test` always starts the BEAM as a named distributed Erlang node, even for
+local `fast` modules such as `ar_sync_sim_tests`. The launcher and EPMD must bind
+loopback TCP sockets. In an agent execution sandbox that restricts socket
+creation, request unsandboxed execution for `./bin/test` on the first attempt
+instead of waiting for the restricted run to fail. The usual pre-test symptom is
+an `inet_tcp` register/listen `eacces` error; it does not indicate a simulator or
+test failure.
 
 ### Concurrent test runs
 

@@ -350,7 +350,7 @@ get_sync_record(Peer) ->
                                               peer => Peer,
                                               method => get,
                                               path => "/data_sync_record",
-                                              timeout => 30 * 1000,
+                                              timeout => ?DATA_SYNC_RECORD_TIMEOUT_MS,
                                               connect_timeout => 2000,
                                               limit => ?MAX_ETF_SYNC_RECORD_SIZE,
                                               headers => Headers
@@ -363,7 +363,7 @@ get_sync_record(Peer, Start, Limit) ->
                                               method => get,
                                               path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/"
                                               ++ integer_to_list(Limit),
-                                              timeout => 30 * 1000,
+                                              timeout => ?DATA_SYNC_RECORD_TIMEOUT_MS,
                                               connect_timeout => 5000,
                                               limit => ?MAX_ETF_SYNC_RECORD_SIZE,
                                               headers => Headers
@@ -376,7 +376,7 @@ get_sync_record(Peer, Start, End, Limit) ->
                                               method => get,
                                               path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/"
                                               ++ integer_to_list(End) ++ "/" ++ integer_to_list(Limit),
-                                              timeout => 30 * 1000,
+                                              timeout => ?DATA_SYNC_RECORD_TIMEOUT_MS,
                                               connect_timeout => 5000,
                                               limit => ?MAX_ETF_SYNC_RECORD_SIZE,
                                               headers => Headers

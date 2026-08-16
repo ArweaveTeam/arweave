@@ -19,7 +19,8 @@
 %% requests arrive (get_connection) and shrinks one connection per tick while the
 %% peer is idle (evaluate_pools). There is no sizing beyond the configured ceiling:
 %% for a store/peer-bound workload more connections don't raise throughput and can
-%% overload the peer, so connections_per_peer is a fixed cap, not a controller.
+%% overload the peer, so connections_per_peer is a fixed cap rather than a
+%% scheduler decision.
 -define(POOL_EVAL_INTERVAL_MS, 10_000).
 %% Per-peer count of requests currently inside req/2 (throttle -> get_connection ->
 %% gun request/await). evaluate_pools only shrinks a peer whose count is 0, so a

@@ -1,7 +1,7 @@
 %% @doc Sweep traversal and cursor helpers for ar_sync_store_sweeper.
 -module(ar_sync_cursor).
 
--export([kinds/0, new/2, current/2, start/2, set/3,
+-export([new/2, current/2, start/2, set/3,
         live_end/4, is_complete/3, advance/2, query_range_step_size/0]).
 -export_type([t/0]).
 
@@ -23,9 +23,6 @@
 }).
 
 -opaque t() :: #state{}.
-
-kinds() ->
-    [byte, footprint].
 
 -ifdef(AR_TEST).
 query_range_step_size() ->
@@ -72,7 +69,7 @@ is_complete(State, WeaveSize, DiskPoolThreshold) ->
         fun(Kind) ->
             current(Kind, State) >= live_end(Kind, State, WeaveSize, DiskPoolThreshold)
         end,
-        kinds()).
+        [byte, footprint]).
 
 advance(#unsynced_range{ kind = byte, advance = End }, State) ->
     set(byte, End, State);
