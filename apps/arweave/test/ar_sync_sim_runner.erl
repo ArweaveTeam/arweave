@@ -87,7 +87,8 @@ start_sim(#sim_world{} = World) ->
     ar_timer:start_simulated_time(),
     ar_sync_sim_world:reset(World),
     ar_sync_discovery:reset_all_caches(),
-    start_pipeline(World),
+    start_pipeline(),
+    ar_sync_sim_world:start_scenario(),
     ok.
 
 %% @doc Apply a runtime world change and expose its current peers to discovery.
@@ -96,53 +97,35 @@ update_world(#sim_world{} = World) ->
     ar_sync_sim_world:update_world(World),
     maybe_collect_peers(PreviousWorld, World).
 
-maybe_collect_peers(#sim_world{ peers = Peers, discovery_enabled = Enabled },
-        #sim_world{ peers = Peers, discovery_enabled = Enabled }) ->
+maybe_collect_peers(#sim_world{ peers = Peers }, #sim_world{ peers = Peers }) ->
     ok;
-maybe_collect_peers(_PreviousWorld, World) ->
-    collect_peers(World).
+maybe_collect_peers(_PreviousWorld, _World) ->
+    collect_peers().
 
-collect_peers(#sim_world{ discovery_enabled = true }) ->
-    ar_sync_discovery:collect_peers();
-collect_peers(#sim_world{}) ->
-    ok.
+collect_peers() ->
+    ar_sync_discovery:collect_peers().
 
-start_pipeline(#sim_world{ discovery_enabled = false }) ->
-    {ok, _} = supervisor:restart_child(ar_data_sync_sup, ar_sync_sup),
-    WeaveSize = ar_sync_sim_world:weave_size(),
-    [begin
-        ok = ar_sync_store_sweeper:set_weave_size(StoreID, WeaveSize),
-        ok = ar_sync:start_store(StoreID),
-        drain_sweeper(StoreID)
-    end || StoreID <- ar_sync_sim_world:store_ids()],
-    ok;
-start_pipeline(#sim_world{ discovery_enabled = true } = World) ->
+start_pipeline() ->
     {ok, _} = supervisor:restart_child(ar_data_sync_sup, ar_sync_sup),
     WeaveSize = ar_sync_sim_world:weave_size(),
     [begin
         ok = ar_sync_store_sweeper:set_weave_size(StoreID, WeaveSize),
         drain_sweeper(StoreID)
     end || StoreID <- ar_sync_sim_world:store_ids()],
-    collect_peers(World),
-    wait_for_coarse_discovery(),
+    collect_peers(),
     [begin
         ok = ar_sync:start_store(StoreID),
         drain_sweeper(StoreID)
     end || StoreID <- ar_sync_sim_world:store_ids()],
+    %% Start simulated time from a stable mailbox boundary. This only waits for
+    %% already-started workers to park at time zero; metadata remains unresolved
+    %% and the sweepers discover it through their normal polling loop.
+    wait_until_workers_sleep(),
     ok.
 
 drain_sweeper(StoreID) ->
     pong = gen_server:call(ar_sync_store_sweeper:name(StoreID), ping),
     ok.
-
-wait_for_coarse_discovery() ->
-    case ar_sync_discovery:inflight_count() of
-        0 ->
-            ok;
-        _ ->
-            advance_second(),
-            wait_for_coarse_discovery()
-    end.
 
 stop_pipeline() ->
     %% Discovery and the scheduler terminate the exact workers they own.
@@ -196,13 +179,9 @@ wait_until_workers_sleep(Deadline) ->
     flush_pipeline(),
     FetchInflight = ar_sync_scheduler:inflight_count(),
     Sleeping = ar_timer:sleeping(),
-    DiscoveryInflight = case (ar_sync_sim_world:get(world))#sim_world.discovery_enabled of
-        true ->
-            case catch ar_sync_discovery:inflight_count() of
-                N when is_integer(N) -> N;
-                _ -> 0
-            end;
-        false -> 0
+    DiscoveryInflight = case catch ar_sync_discovery:inflight_count() of
+        N when is_integer(N) -> N;
+        _ -> 0
     end,
     case FetchInflight + DiscoveryInflight =:= Sleeping of
         true ->
@@ -224,19 +203,17 @@ wait_until_workers_sleep(Deadline) ->
             end
     end.
 
-%% @doc Drain casts queued in the scheduler, generators, and discovery.
+%% @doc Flush casts queued in the scheduler, generators, and discovery.
 flush_pipeline() ->
     [catch gen_server:call(ar_sync_store_sweeper:name(StoreID), ping)
         || StoreID <- ar_sync_sim_world:store_ids()],
     catch gen_server:call(ar_sync_scheduler, ping),
-    case (ar_sync_sim_world:get(world))#sim_world.discovery_enabled of
-        true ->
-            %% Force DOWN processing so metadata job membership converges
-            %% with the simulated clock's sleeper count.
-            catch ar_sync_discovery:inflight_count();
-        false ->
-            ok
-    end,
+    %% Force DOWN processing so metadata job membership converges with the
+    %% simulated clock's sleeper count.
+    catch ar_sync_discovery:inflight_count(),
+    catch gen_server:call(ar_sync_scheduler, ping),
+    [catch gen_server:call(ar_sync_store_sweeper:name(StoreID), ping)
+        || StoreID <- ar_sync_sim_world:store_ids()],
     catch gen_server:call(ar_sync_scheduler, ping),
     ok.
 

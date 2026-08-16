@@ -5,16 +5,11 @@
 %%% world.
 %%%
 %%% Deliberately NOT in the boundary: time (ar_timer), configuration
-%%% (with_test_config/1), and metrics. Coarse and exact peer availability
-%%% are included so simulations can choose between direct peer availability and
-%%% the real discovery process without another injectable interface.
+%%% (with_test_config/1), metrics, and internal discovery cache operations.
 -module(ar_sync_deps).
 
--include("ar_sync.hrl").
-
 %% Each delegates to m(), so call sites read ar_sync_deps:get_chunk_binary(...).
--export([get_peers_for_offset/1, pick_peers/2, is_throttled/2,
-        get_peer_ranges_for_peers/5,
+-export([pick_peers/2, is_throttled/2,
         rate_fetched_data/5, get_chunk_binary/3,
         is_chunk_cache_full/0, chunk_cache_size/0, chunk_cache_size/1,
         chunk_cache_size_limit/0,
@@ -36,13 +31,9 @@
 %%% Callbacks.
 %%%===================================================================
 
-%% Peer discovery and metadata.
--callback get_peers_for_offset(Offset :: non_neg_integer()) -> [term()].
+%% Peer selection and request accounting.
 -callback pick_peers(Peers :: [term()], Count :: pos_integer()) -> [term()].
 -callback is_throttled(Peer :: term(), Path :: string()) -> boolean().
--callback get_peer_ranges_for_peers(StoreID :: term(), Peers :: [term()],
-    Offset :: non_neg_integer(), RangeStart :: non_neg_integer(),
-    RangeEnd :: non_neg_integer()) -> [#peer_range{}].
 -callback rate_fetched_data(Peer :: term(), DataType :: atom(),
     Result :: term(), ElapsedUs :: term(), Bytes :: non_neg_integer()) -> ok.
 
@@ -120,11 +111,8 @@ m() ->
 %%% Delegation.
 %%%===================================================================
 
-get_peers_for_offset(Offset) -> (m()):get_peers_for_offset(Offset).
 pick_peers(Peers, Count) -> (m()):pick_peers(Peers, Count).
 is_throttled(Peer, Path) -> (m()):is_throttled(Peer, Path).
-get_peer_ranges_for_peers(StoreID, Peers, Offset, RangeStart, RangeEnd) ->
-    (m()):get_peer_ranges_for_peers(StoreID, Peers, Offset, RangeStart, RangeEnd).
 rate_fetched_data(Peer, DataType, Result, ElapsedUs, Bytes) ->
     (m()):rate_fetched_data(Peer, DataType, Result, ElapsedUs, Bytes).
 get_chunk_binary(Peer, Offset, Packing) ->

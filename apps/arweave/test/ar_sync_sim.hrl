@@ -43,13 +43,12 @@
     http_inflight_limit = infinity :: non_neg_integer() | infinity,
     %% Network release advertised by the metadata endpoints.
     release = 100 :: non_neg_integer(),
-    %% Metadata representations advertised by this peer when discovery is enabled.
+    %% Metadata representations advertised by this peer.
     sync_kinds = [byte] :: [byte | footprint],
-    %% Data advertised by this peer. Store selectors cover the selected direct
-    %% ranges and resolve to bounded prefixes for discovery, keeping topology
-    %% scenarios declarative. Exact intervals remain available for sparse and
-    %% frontier contracts. `all` covers every direct request and every store's
-    %% bounded discovery prefix.
+    %% Data advertised through the peer's metadata endpoints. Store selectors
+    %% resolve to bounded prefixes, keeping topology scenarios declarative.
+    %% Exact intervals support sparse and frontier contracts; `all` covers every
+    %% store's bounded prefix.
     sync_availability = all :: all |
         {stores, [term()]} |
         {intervals, [{non_neg_integer(), non_neg_integer()}]},
@@ -59,7 +58,8 @@
     %% Response time for detailed byte and footprint availability requests.
     %% This is independent of chunk-fetch latency because the endpoints may
     %% have different storage and caching behavior.
-    chunk_interval_latency_ms = ?SIM_METADATA_LATENCY_MS :: pos_integer(),
+    chunk_interval_latency_ms = ?SIM_METADATA_LATENCY_MS :: pos_integer() |
+        fun((non_neg_integer()) -> pos_integer()),
     %% Optional request outcome selected by scheduler tick and request sequence.
     failure_policy = undefined :: undefined |
         fun((non_neg_integer(), pos_integer()) ->
@@ -71,7 +71,6 @@
 -record(sim_world, {
     node_config = #{} :: map(),
     peers = #{} :: #{term() => #sim_peer{}},
-    discovery_enabled = false :: boolean(),
     local_data_layout = contiguous :: contiguous | fragmented,
     %% Time spent generating the entropy working set for one source footprint.
     %% Zero leaves entropy generation unmodelled for scenarios that do not

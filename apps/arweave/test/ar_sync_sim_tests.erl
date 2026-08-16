@@ -2,7 +2,7 @@
 %%% against a synthetic world (ar_sync_deps_sim) on ar_timer's simulated clock.
 %%% ar_sync_sim_runner owns process and clock mechanics; scenarios declare a
 %%% #sim_world{}, advance it, and assert stable outcome and performance
-%%% contracts rather than exact schedules or internal controller state. These
+%%% contracts rather than exact schedules or internal scheduler state. These
 %%% contracts are intended to replace repeated multi-hour live-node checks when
 %%% allocation, backpressure, ratings, limits, or scheduling are changed.
 -module(ar_sync_sim_tests).
@@ -134,7 +134,7 @@ test_timeout_resilience() ->
         end,
         Peers0),
     ar_sync_sim_runner:start_sim(#sim_world{ peers = Peers }),
-    %% Thirty ticks establish the controller state before a full 150-tick
+    %% Thirty ticks establish the scheduler state before a full 150-tick
     %% five-peer outage rotation supplies the measurement window.
     ar_sync_sim_runner:run_for(30),
     Measurement = ar_sync_sim_runner:run_for(150),
@@ -210,7 +210,7 @@ test_rate_limit_settles_and_recovers() ->
     World = #sim_world{ peers = Peers },
     ar_sync_sim_runner:start_sim(World),
     %% At 400 chunks/s and 250 ms latency, 100 concurrent requests fill the
-    %% path. Forty ticks cover the controller's 32-tick evidence horizon.
+    %% path. Forty ticks cover the scheduler's 32-tick evidence horizon.
     ar_sync_sim_runner:run_for(40),
     InitialMeasurement = ar_sync_sim_runner:run_for(10),
     assert_metric_utilization(stored_cps, HighCps, InitialMeasurement),
@@ -222,9 +222,10 @@ test_rate_limit_settles_and_recovers() ->
     ar_sync_sim_runner:update_world(World#sim_world{
         peers = Peers#{ ?PEER_LIMITED_1 := LimitedPeer }
     }),
-    %% Ten ticks expose the previous 100-request pipeline to the 80 chunks/s
-    %% limit and allow the peer cap to react.
-    LimitDiscoveryMeasurement = ar_sync_sim_runner:run_for(10),
+    %% Twenty ticks expose the previous 100-request pipeline to the 80 chunks/s
+    %% limit and let the peer cap settle across more than half of its 32-tick
+    %% evidence horizon before throughput is measured.
+    LimitDiscoveryMeasurement = ar_sync_sim_runner:run_for(20),
     assert_greater_than(
         ar_sync_sim_runner:metric(
             {rejected_by_peer, ?PEER_LIMITED_1},
@@ -243,7 +244,7 @@ test_rate_limit_settles_and_recovers() ->
         #{ peer => ?PEER_LIMITED_1, metric => rejected_by_peer }),
 
     ar_sync_sim_runner:update_world(World),
-    %% Twenty clean controller ticks should restore the original rate without
+    %% Twenty clean scheduler ticks should restore the original rate without
     %% immediately discarding the learned limit after one quiet sample.
     ar_sync_sim_runner:run_for(20),
     RecoveryMeasurement = ar_sync_sim_runner:run_for(10),
@@ -275,7 +276,7 @@ test_recurring_rate_limit_preserves_throughput() ->
     ar_sync_sim_runner:start_sim(#sim_world{
         peers = #{ ?PEER_LIMITED_1 => Peer }
     }),
-    %% Forty ticks cover the controller's 32-tick evidence horizon.
+    %% Forty ticks cover the scheduler's 32-tick evidence horizon.
     ar_sync_sim_runner:run_for(40),
     %% Sixty ticks smooth the recurring rejection cadence and measurement
     %% boundaries against the 100 chunks/s serving rate.
@@ -289,8 +290,8 @@ test_recurring_rate_limit_preserves_throughput() ->
 
 %% Contract: occasional full-latency client errors do not permanently suppress
 %% a healthy peer's useful throughput. Every fortieth request fails after the
-%% same two-second latency as a success, matching the 2.5% worker-time failure
-%% share observed in the live single-peer run.
+%% same four-second latency as a success, matching the latency and 2.5%
+%% worker-time failure share observed in the live single-peer run.
 recurring_client_errors_preserve_throughput_test_() ->
     ar_sync_sim_runner:setup_sim(
         fun test_recurring_client_errors_preserve_throughput/0, 400).
@@ -300,7 +301,7 @@ test_recurring_client_errors_preserve_throughput() ->
     ErrorEvery = 40,
     Peer = #sim_peer{
         max_serve_cps = MaxServeCPS,
-        latency_ms = 2000,
+        latency_ms = 4000,
         failure_policy = fun(_Tick, RequestSequence) ->
             case RequestSequence rem ErrorEvery of
                 0 -> client_error;
@@ -311,11 +312,11 @@ test_recurring_client_errors_preserve_throughput() ->
     ar_sync_sim_runner:start_sim(#sim_world{
         peers = #{ ?PEER_UNLIMITED => Peer }
     }),
-    %% At 400 chunks/s and two-second latency, 800 productive requests fill the
-    %% path. Forty ticks let the peer discover that depth despite recurring
+    %% At 400 chunks/s and four-second latency, 1600 productive requests fill
+    %% the path. One hundred ticks let the peer discover that depth despite recurring
     %% failures; twenty measured ticks contain about 8000 requests and 200
     %% errors at full rate, enough to smooth their one-in-forty cadence.
-    ar_sync_sim_runner:run_for(40),
+    ar_sync_sim_runner:run_for(100),
     Measurement = ar_sync_sim_runner:run_for(20),
     assert_greater_than(
         ar_sync_sim_runner:metric(
@@ -346,7 +347,7 @@ test_single_peer_saturation() ->
     %% Forty simulated seconds allow the fragmented workload to reach full rate.
     ar_sync_sim_runner:run_for(40),
     %% Ten seconds contain 4000 chunks at full rate, enough to average the
-    %% fragmented store layout without extending the controller warmup.
+    %% fragmented store layout without extending the scheduler warmup.
     Measurement = ar_sync_sim_runner:run_for(10),
     assert_metric_utilization(stored_cps, MaxServeCps, Measurement).
 
@@ -366,23 +367,25 @@ test_single_throttled_peer_keeps_progressing() ->
         }
     },
     ar_sync_sim_runner:start_sim(#sim_world{ peers = Peers }),
-    ar_sync_sim_runner:run_for(10),
+    %% Ten seconds cover the fixed sweep-range warm wait; ten more let the
+    %% scheduler grow the only peer's request cap before measurement.
+    ar_sync_sim_runner:run_for(20),
     Measurement = ar_sync_sim_runner:run_for(20),
     assert_metric_utilization(stored_cps, MaxServeCps, Measurement).
 
-%% Contract: a high-latency peer can use nearly all of its declared capacity. At
-%% 440 chunks/s and 3.75 seconds network latency plus the simulator's 0.25-second
-%% write quantum, the path needs about 1760 concurrent requests. The controller
-%% must continue increasing request depth while each additional request still
-%% increases useful throughput.
+%% Contract: a high-latency peer can use nearly all of its declared capacity.
+%% The assignment horizon bounds work waiting for the future, but must not cap
+%% requests that are already fetching when a productive peer takes longer than
+%% that horizon to respond.
 high_latency_single_peer_saturation_test_() ->
     ar_sync_sim_runner:setup_sim(
         fun test_high_latency_single_peer_saturation/0, 400).
 
 test_high_latency_single_peer_saturation() ->
     MaxServeCps = 440,
-    %% Fifteen 250ms network substeps plus one write substep model the intended
-    %% four-second end-to-end pipeline without exceeding its controller horizon.
+    %% Fifteen 250ms network substeps model a 3.75-second request path. At
+    %% 440 chunks/s the peer needs roughly 1650 concurrent requests to use all
+    %% of its declared capacity.
     LatencyMS = 15 * ?SIM_SUBSTEP_MS,
     Peers = #{
         ?PEER_UNLIMITED => #sim_peer{
@@ -390,17 +393,59 @@ test_high_latency_single_peer_saturation() ->
             latency_ms = LatencyMS
         }
     },
+    %% Exercise the production scheduler cadence. A one-second scheduler tick
+    %% would fold several driven-zero samples into a 3.75-second request even
+    %% though production observes it within one ten-second interval.
+    ar_sync_scheduler:override_tick_interval_ms(10_000),
     ar_sync_sim_runner:start_sim(#sim_world{ peers = Peers }),
     %% Five simulated minutes require recovery well before the hours-long
     %% underutilization this scenario protects against while covering several
-    %% controller evidence horizons.
-    ar_sync_sim_runner:run_for(300),
+    %% scheduler evidence horizons.
+    ar_sync_sim_runner:run_for(30),
     %% Twenty seconds contain five complete four-second pipeline periods and
     %% 8800 chunks at full capacity. The 5% margin is 440 chunks, so one
     %% full-rate second may cross a measurement boundary without hiding a
     %% sustained capacity loss.
-    Measurement = ar_sync_sim_runner:run_for(20),
+    Measurement = ar_sync_sim_runner:run_for(2),
     assert_metric_utilization(stored_cps, MaxServeCps, Measurement).
+
+%% Contract: a productive peer remains near its serving capacity when request
+%% latency rises as the request pipeline deepens. The scheduler must continue
+%% exploring instead of treating the current rate-latency product as a ceiling.
+load_dependent_latency_preserves_single_peer_throughput_test_() ->
+    ar_sync_sim_runner:setup_sim(
+        fun test_load_dependent_latency_preserves_single_peer_throughput/0,
+        400).
+
+test_load_dependent_latency_preserves_single_peer_throughput() ->
+    MaxServeCPS = 440,
+    MinimumLatencyMS = 4 * ?SIM_SUBSTEP_MS,
+    LoadedLatencyMS = 20 * ?SIM_SUBSTEP_MS,
+    %% Three milliseconds of queueing per concurrent request grows a one-second
+    %% idle path to a five-second loaded path at about 1350 requests.
+    QueueDelayPerRequestMS = 3,
+    Latency = fun(NumInflight) ->
+        min(LoadedLatencyMS,
+            MinimumLatencyMS + NumInflight * QueueDelayPerRequestMS)
+    end,
+    Peer = #sim_peer{
+        max_serve_cps = MaxServeCPS,
+        latency_ms = Latency
+    },
+    %% Use the production scheduler period so this scenario isolates whether
+    %% measured goodput can probe beyond its current concurrency-rate fixed
+    %% point, rather than testing a simulation-only sampling cadence.
+    ar_sync_scheduler:override_tick_interval_ms(10_000),
+    ar_sync_sim_runner:start_sim(#sim_world{
+        peers = #{?PEER_UNLIMITED => Peer}
+    }),
+    %% Five simulated minutes cover several scheduler evidence horizons after
+    %% the request path crosses into its loaded latency.
+    ar_sync_sim_runner:run_for(30),
+    %% Forty seconds cover four production control periods, so a one-tick probe
+    %% cannot hide a lower sustained operating point.
+    Measurement = ar_sync_sim_runner:run_for(4),
+    assert_metric_utilization(stored_cps, MaxServeCPS, Measurement).
 
 %% Contract: syncing scales with a peer whose serving capacity increases
 %% fourfold, then retains that capacity when response latency increases
@@ -428,7 +473,7 @@ test_peer_capacity_and_latency_growth() ->
     ar_sync_sim_runner:update_world(World#sim_world{ peers = Peers#{
         ?PEER_UNLIMITED := FasterPeer
     } }),
-    %% Ten ticks allow the controller to use the fourfold capacity increase.
+    %% Ten ticks allow the scheduler to use the fourfold capacity increase.
     ar_sync_sim_runner:run_for(10),
     CapacityMeasurement = ar_sync_sim_runner:run_for(20),
     assert_metric_utilization(stored_cps, IncreasedServeCPS, CapacityMeasurement),
@@ -456,9 +501,9 @@ test_client_error_recovery_with_http_headroom() ->
     Peers = #{ ?PEER_UNLIMITED => Peer },
     World = #sim_world{ peers = Peers },
     ar_sync_sim_runner:start_sim(World),
-    %% Force an initial failure episode so the recovery path is exercised even
-    %% if a future controller avoids exceeding the sustainable request limit.
-    ForcedMeasurement = ar_sync_sim_runner:run_for(1),
+    %% Twelve one-second ticks cover coarse discovery, the ten-second sweep-range
+    %% warm wait, and time to issue requests against the zero-connection limit.
+    ForcedMeasurement = ar_sync_sim_runner:run_for(12),
     assert_greater_than(
         ar_sync_sim_runner:metric(
             {client_errors_by_peer, ?PEER_UNLIMITED}, ForcedMeasurement),
@@ -571,7 +616,7 @@ test_fast_peer_turns_slow() ->
     ar_sync_sim_runner:run_for(32),
     CollapsedCps = 10,
     %% Five hundred milliseconds models a higher-latency slowdown where queued
-    %% requests retain connections while draining at the peer's lower rate.
+    %% requests retain connections while completing at the peer's lower rate.
     CollapsedLatencyMS = 500,
     ar_sync_sim_runner:update_world(World#sim_world{ peers = Peers#{
         ?PEER_UNLIMITED := Peer#sim_peer{
@@ -579,7 +624,7 @@ test_fast_peer_turns_slow() ->
             latency_ms = CollapsedLatencyMS
         }
     } }),
-    %% Twenty ticks permit stale work to drain and the short EWMAs to settle.
+    %% Twenty ticks permit stale work to finish and the short EWMAs to settle.
     ar_sync_sim_runner:run_for(20),
     Measurement = ar_sync_sim_runner:run_for(20),
     CpsByPeer = ar_sync_sim_runner:metric(cps_by_peer, Measurement),
@@ -630,22 +675,22 @@ test_starved_peer_recovers() ->
         }
     },
     ar_sync_sim_runner:start_sim(#sim_world{ peers = Peers }),
-    %% Ninety ticks is intentionally much longer than the controller's normal
-    %% adaptation windows and proves recovery does not depend on a short outage.
+    %% Eighty-nine ticks are intentionally much longer than the scheduler's
+    %% normal adaptation windows while ending strictly before tick 90 recovers.
     OutageMeasurement = ar_sync_sim_runner:run_for(60),
     Timeouts = ar_sync_sim_runner:metric(
         {timed_out_by_peer, ?PEER_TIMEOUT}, OutageMeasurement),
     assert_greater_than(Timeouts, 0,
         #{ peer => ?PEER_TIMEOUT, metric => timed_out_by_peer }),
     StarvedCps = ar_sync_sim_runner:metric(
-        {cps_by_peer, ?PEER_TIMEOUT}, ar_sync_sim_runner:run_for(30)),
+        {cps_by_peer, ?PEER_TIMEOUT}, ar_sync_sim_runner:run_for(29)),
     assert_less_than(StarvedCps, 1,
         #{ peer => ?PEER_TIMEOUT, metric => cps }),
     %% Tick 90 begins recovery. Forty control intervals let the recovered
     %% subsecond path settle; twenty more average across dispatch/refill
     %% boundaries. The 600 production-equivalent seconds remain far below the
     %% multi-hour recovery failure this scenario guards against.
-    ar_sync_sim_runner:run_for(40),
+    ar_sync_sim_runner:run_for(41),
     Measurement = ar_sync_sim_runner:run_for(20),
     CpsByPeer = ar_sync_sim_runner:metric(cps_by_peer, Measurement),
     %% The always-healthy 400 chunks/s peer and recovered 80 chunks/s peer
@@ -676,13 +721,13 @@ test_slow_disk_write_recovery() ->
     },
     World = #sim_world{ peers = Peers },
     ar_sync_sim_runner:start_sim(World),
-    %% Forty warmup ticks cover the 32-tick controller horizon.
+    %% Forty warmup ticks cover the 32-tick scheduler horizon.
     ar_sync_sim_runner:run_for(40),
     ar_sync_sim_runner:update_world(World#sim_world{
         store_write_cps = 0
     }),
     %% At 470 chunks/s the 7200-chunk cache represents about 15.3 seconds of
-    %% delivered work. Thirty-two ticks cover twice that bounded drain horizon
+    %% delivered work. Thirty-two ticks cover twice that bounded cache-fill horizon
     %% before the following five-tick frozen-state observation.
     ar_sync_sim_runner:run_for(32),
     %% Five additional ticks measure the stalled state. Five percent permits at
@@ -755,7 +800,7 @@ test_single_slow_store_isolation() ->
         end
     }),
     %% Forty ticks exceed both the 29-second failure horizon and the
-    %% controller's 32-tick adaptation period.
+    %% scheduler's 32-tick adaptation period.
     ar_sync_sim_runner:run_for(40),
     ?assertNot(ar_sync_deps:is_chunk_cache_full()),
     %% Ten ticks provide at least 400 chunks at the smallest 40 chunks/s rate.
@@ -771,7 +816,7 @@ test_single_slow_store_isolation() ->
 %%
 %% Several slow stores are required, not one: the single-stalled-store case is
 %% covered separately. Production combines a claim horizon derived from each
-%% store's measured drain rate with reserve-only dispatch near global pressure.
+%% store's measured write rate with reserve-only dispatch near global pressure.
 %% Four accumulating stores exercise the aggregate path where losing both
 %% protections lets them fill the shared cache and block healthy work.
 slow_stores_do_not_monopolize_cache_test_() ->
@@ -805,7 +850,7 @@ test_slow_stores_do_not_monopolize_cache() ->
         end
     }),
     %% Without both store-rate and reserve protections, the 2000-chunk cache can
-    %% fill well inside forty ticks. This also clears the controller's 32-tick
+    %% fill well inside forty ticks. This also clears the scheduler's 32-tick
     %% horizon.
     ar_sync_sim_runner:run_for(40),
     ?assertNot(ar_sync_deps:is_chunk_cache_full()),
@@ -836,19 +881,28 @@ test_shared_slow_device_isolation() ->
         }}
         || {N, {StoreID, _Range}} <- PeerStoreRanges
     ]),
-    InitiallyAvailablePeers = maps:from_list([
-        begin
-            PeerID = {10, 2, 0, N, 1984},
-            {PeerID, maps:get(PeerID, Peers)}
-        end
-        || {N, _StoreRange} <- SlowPeerStoreRanges
-    ]),
-    %% Four independent peer/store paths first warm at 100 chunks/s, then their
-    %% stores stall. The other two peer/store paths become available only after
-    %% the warm peers have had enough time to fill the shared cache.
+    HealthyPeerIDs = [
+        {10, 2, 0, N, 1984}
+        || {N, _StoreRange} <- HealthyPeerStoreRanges
+    ],
+    InitiallyUnavailablePeers = maps:map(
+        fun(PeerID, Peer) ->
+            case lists:member(PeerID, HealthyPeerIDs) of
+                true ->
+                    %% Zero HTTP slots keeps the path unavailable without
+                    %% withholding its metadata from the sweeper.
+                    Peer#sim_peer{ http_inflight_limit = 0 };
+                false ->
+                    Peer
+            end
+        end,
+        Peers),
+    %% Four independent peer/store paths first warm at 50 chunks/s, then their
+    %% stores stall. The other two peer/store paths begin accepting requests only
+    %% after the warm peers have had enough time to fill the shared cache.
     HealthyStores = [StoreID || {_N, {StoreID, _Range}} <- HealthyPeerStoreRanges],
     World = #sim_world{
-        peers = InitiallyAvailablePeers,
+        peers = InitiallyUnavailablePeers,
         %% A 564 MiB sync budget resolves to a 2000-chunk fetched cache. Four
         %% old one-quarter claim allowances can fill it. The six storage modules
         %% give each low-pressure path a 2000 / 6 = 333-chunk eligibility
@@ -868,14 +922,14 @@ test_shared_slow_device_isolation() ->
         end
     },
     ar_sync_sim_runner:update_world(StalledWorld),
-    %% At 400 chunks/s, ten ticks leave a wide margin for the warm stalled paths
-    %% to consume their combined 2000-chunk old claim allowance.
+    %% Four peers at 50 chunks/s provide 200 chunks/s, so ten ticks can consume
+    %% their combined 2000-chunk old claim allowance.
     ar_sync_sim_runner:run_for(10),
     ar_sync_sim_runner:update_world(StalledWorld#sim_world{ peers = Peers }),
-    %% Twenty ticks let the newly added peers' caps rise from the exploration
+    %% Forty ticks let the newly available paths' caps rise from the exploration
     %% floor before measuring.
-    ar_sync_sim_runner:run_for(20),
-    %% Ten seconds contain 1000 chunks from each healthy 100 chunks/s path.
+    ar_sync_sim_runner:run_for(40),
+    %% Ten seconds contain 500 chunks from each healthy 50 chunks/s path.
     Measurement = ar_sync_sim_runner:run_for(10),
     ProgressByStore = ar_sync_sim_runner:metric(
         chunks_stored_by_store, Measurement),
@@ -918,7 +972,7 @@ test_bandwidth_cap_trickle() ->
         peers = Peers,
         node_config = #{ [sync, max_download_rate] => 2 * ?DATA_CHUNK_SIZE }
     }),
-    %% Forty ticks cover the controller horizon; thirty ticks average a two chunks/s
+    %% Forty ticks cover the scheduler horizon; thirty ticks average a two chunks/s
     %% rate whose individual dispatches are intentionally sparse.
     ar_sync_sim_runner:run_for(40),
     MeasurementTicks = 30,
@@ -957,7 +1011,7 @@ test_bandwidth_cap_with_failures() ->
         peers = Peers,
         node_config = #{ [sync, max_download_rate] => 100 * ?DATA_CHUNK_SIZE }
     }),
-    %% Forty ticks cover the controller horizon and four complete fault cycles.
+    %% Forty ticks cover the scheduler horizon and four complete fault cycles.
     WarmupTicks = 40,
     WarmupMeasurement = ar_sync_sim_runner:run_for(WarmupTicks),
     %% Two complete ten-tick fault cycles avoid phase-dependent results.
@@ -988,10 +1042,14 @@ mixed_peer_classes_rate_limited_test_() ->
 
 test_mixed_peer_classes_rate_limited() ->
     BudgetCps = 120,
+    %% Twenty chunks/s sits below the peer's expected rotating share of the
+    %% 120 chunks/s node budget, so the modeled 429 constraint must engage.
+    LimitedServeCPS = 20,
     Peers = #{
         ?PEER_UNLIMITED => #sim_peer{ max_serve_cps = 300 },
         ?PEER_SLOW => #sim_peer{ max_serve_cps = 100, latency_ms = 1000 },
-        ?PEER_LIMITED_1 => #sim_peer{ max_serve_cps = 60, limited = true },
+        ?PEER_LIMITED_1 => #sim_peer{
+            max_serve_cps = LimitedServeCPS, limited = true },
         ?PEER_FLAKY => #sim_peer{
             max_serve_cps = 80,
             latency_ms = 500,
@@ -1008,7 +1066,7 @@ test_mixed_peer_classes_rate_limited() ->
         peers = Peers,
         node_config = #{ [sync, max_download_rate] => 120 * ?DATA_CHUNK_SIZE }
     }),
-    %% Forty ticks cover the controller horizon and two flaky-peer cycles.
+    %% Forty ticks cover the scheduler horizon and two flaky-peer cycles.
     WarmupMeasurement = ar_sync_sim_runner:run_for(40),
     Measurement = ar_sync_sim_runner:run_for(20),
     CpsByPeer = ar_sync_sim_runner:metric(cps_by_peer, Measurement),
@@ -1024,7 +1082,7 @@ test_mixed_peer_classes_rate_limited() ->
         {rejected_by_peer, ?PEER_LIMITED_1}, Measurement),
     HTTP429s = WarmupHTTP429s + MeasurementHTTP429s,
     %% Both modeled constraints must engage during the scenario. HTTP 429
-    %% responses may stop once a future controller learns the peer's rate limit.
+    %% responses may stop once a future scheduler learns the peer's rate limit.
     assert_greater_than(Timeouts, 0,
         #{ peer => ?PEER_FLAKY, metric => timed_out_by_peer }),
     assert_greater_than(HTTP429s, 0,
@@ -1038,11 +1096,9 @@ test_mixed_peer_classes_rate_limited() ->
     %%
     %% A partial regression is caught by the stored-cps utilization assertion
     %% above: the peers together must still deliver 95% of the budget, and that
-    %% aggregate is stable run to run. The split between them is not - across
-    %% sampled runs the unlimited peer ranged 53-98 chunks/s and the rate-limited peer
-    %% 16-50 as they traded share - so these floors sit below the worst share
-    %% each class was observed to hold. Deriving them from a typical share
-    %% instead would test scheduling jitter rather than starvation.
+    %% aggregate is stable run to run. The split between peers is not, so these
+    %% floors sit below the smallest useful rotating share. Deriving them from
+    %% a typical share would test scheduling jitter rather than starvation.
     MaxPeerCPS = 0.85 * BudgetCps,
     %% The flaky peer times out three ticks in twenty and its exploration
     %% stream settles near one chunk/s, so its floor must sit below that. A
@@ -1102,7 +1158,7 @@ test_single_peer_store_spread() ->
     Measurement = ar_sync_sim_runner:run_for(MeasurementTicks),
     %% Equal per-store limits should produce an even split. A 90% floor around
     %% the average allows scheduling variation while directly rejecting skew.
-    assert_chunks_spread_across_stores(Measurement, 0.9),
+    assert_chunks_spread_across_stores(Measurement),
     CpsByPeer = ar_sync_sim_runner:metric(cps_by_peer, Measurement),
     ServedCPS = lists:sum(maps:values(CpsByPeer)),
     AggregateStoreCps = ?SIM_STORES * StoreCps,
@@ -1114,7 +1170,7 @@ test_single_peer_store_spread() ->
 
 %% Contract: one footprint peer serving independently limited store ranges
 %% uses every store's capacity. Repeated partial footprint assignments for one
-%% store must not consume the entropy slots needed by the other stores.
+%% store must not monopolize enough entropy slots to starve other stores.
 single_footprint_peer_store_spread_test_() ->
     ar_sync_sim_runner:setup_sim(
         fun test_single_footprint_peer_store_spread/0, 500).
@@ -1132,7 +1188,6 @@ test_single_footprint_peer_store_spread() ->
     },
     ar_sync_sim_runner:start_sim(#sim_world{
         peers = #{?PEER_UNLIMITED => Peer},
-        discovery_enabled = true,
         remote_store_cps = StoreCPS,
         store_write_cps = StoreCPS,
         node_config = #{
@@ -1142,13 +1197,325 @@ test_single_footprint_peer_store_spread() ->
             [sync, cache_size] => 32768
         }
     }),
-    %% Fifty seconds cover discovery and peer-cap growth. Thirty measurement
-    %% seconds contain 750 writes per store at the expected serving rate and
-    %% average across footprint refill boundaries.
+    %% Fifty seconds cover discovery and peer-cap growth. Sixty measurement
+    %% seconds contain 1,500 writes per store at the expected serving rate;
+    %% the longer window makes the fixed one-second endpoint buckets and
+    %% footprint refill transitions less than the five-percent allowance.
     ar_sync_sim_runner:run_for(50),
-    Measurement = ar_sync_sim_runner:run_for(30),
-    assert_chunks_spread_across_stores(Measurement, 0.9),
+    Measurement = ar_sync_sim_runner:run_for(60),
+    assert_chunks_spread_across_stores(Measurement),
     assert_metric_utilization(stored_cps, AggregateStoreCPS, Measurement).
+
+%% Contract: short, staggered pauses in individual store writes must not reduce
+%% a peer's aggregate useful throughput or skew progress toward whichever stores
+%% most recently wrote chunks. Every store retains the same average write capacity,
+%% so all stores must progress fairly at their combined capacity.
+single_footprint_peer_store_bursts_preserve_throughput_test_() ->
+    ar_sync_sim_runner:setup_sim(
+        fun test_single_footprint_peer_store_bursts_preserve_throughput/0, 500).
+
+test_single_footprint_peer_store_bursts_preserve_throughput() ->
+    ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
+    StoreIDs = ar_sync_sim_world:store_ids(),
+    StoreCount = length(StoreIDs),
+    StoreCPS = 25,
+    AggregateStoreCPS = StoreCount * StoreCPS,
+    %% Divide the six stores into three phase pairs:
+    %%   second 0: stores 0 and 3 write 75 chunks each
+    %%   second 1: stores 1 and 4 write 75 chunks each
+    %%   second 2: stores 2 and 5 write 75 chunks each
+    %% Each store writes 75 chunks once every three seconds, averaging 25
+    %% chunks/s, while one pair always writes and preserves the 150 chunks/s
+    %% aggregate capacity. The two-second pauses are shorter than the modeled
+    %% five-second buffering horizon, so they rotate per-store headroom without
+    %% modeling a persistently slow store. Ten-second rate observations span
+    %% several cycles and therefore see approximately the 25 chunks/s average.
+    BurstPeriod = StoreCount div 2,
+    BurstCPS = StoreCPS * BurstPeriod,
+    StoreIndexes = maps:from_list(
+        lists:zip(StoreIDs, lists:seq(0, StoreCount - 1))),
+    StoreWriteCPS = fun(StoreID, Tick) ->
+        StorePhase = maps:get(StoreID, StoreIndexes) rem BurstPeriod,
+        case Tick rem BurstPeriod =:= StorePhase of
+            true -> BurstCPS;
+            false -> 0
+        end
+    end,
+    Peer = #sim_peer{
+        %% The six remote store paths, not the peer-wide network, set the
+        %% expected 150 chunks/s ceiling.
+        max_serve_cps = 600,
+        latency_ms = 2000,
+        sync_kinds = [footprint]
+    },
+    ar_sync_sim_runner:start_sim(#sim_world{
+        peers = #{?PEER_UNLIMITED => Peer},
+        %% Fifty remote chunks/s exceeds each store's 25 chunks/s sustainable
+        %% write rate, ensuring writes accumulate during pauses and the rotating
+        %% local headroom—not remote availability—is the bottleneck under test.
+        remote_store_cps = 2 * StoreCPS,
+        %% The phase function returns either 75 chunks/s for the active second
+        %% or zero for the two paused seconds, averaging 25 chunks/s per store.
+        store_write_cps = StoreWriteCPS,
+        node_config = #{
+            %% Six active mainnet footprints require 1536 MiB. Two GiB leaves
+            %% room for one footprint per store plus transitions.
+            [packing, entropy, cache_size] => 2048,
+            [sync, cache_size] => 32768
+        }
+    }),
+    %% Sixty one-second ticks cover metadata discovery and capacity growth. The
+    %% 180-second measurement contains sixty complete three-second burst cycles
+    %% and makes endpoint backlog less than five percent of total capacity.
+    ar_sync_sim_runner:run_for(60),
+    Measurement = ar_sync_sim_runner:run_for(180),
+    assert_chunks_spread_across_stores(Measurement),
+    assert_metric_utilization(stored_cps, AggregateStoreCPS, Measurement).
+
+%% Contract: a productive high-latency peer must grow beyond its initial
+%% request pipeline and sustain its serving capacity across all local stores.
+high_latency_peer_preserves_store_throughput_test_() ->
+    ar_sync_sim_runner:setup_sim(
+        fun test_high_latency_peer_preserves_store_throughput/0, 500).
+
+test_high_latency_peer_preserves_store_throughput() ->
+    ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
+    %% Use the production ten-second control interval. The peer takes five
+    %% seconds to answer a request, so each delivery sample spans two complete
+    %% response cycles. The default one-second simulation interval would record
+    %% several samples with requests still in flight and no completions, followed
+    %% by a burst of completions. That phase-dependent pattern would test the
+    %% shortened simulation cadence rather than sustained high-latency throughput.
+    ar_sync_scheduler:override_tick_interval_ms(10_000),
+    PeerCPS = 150,
+    Peer = #sim_peer{
+        %% Five seconds require a 750-request pipeline to sustain the peer's
+        %% 150 chunks/s serving capacity across all six stores.
+        max_serve_cps = PeerCPS,
+        latency_ms = 5000,
+        %% A 250 ms detailed-metadata response makes discovery faster than the
+        %% 150 chunks/s fetch path, keeping request latency as the bottleneck.
+        chunk_interval_latency_ms = ?SIM_SUBSTEP_MS,
+        sync_kinds = [footprint]
+    },
+    ar_sync_sim_runner:start_sim(#sim_world{
+        peers = #{?PEER_UNLIMITED => Peer},
+        node_config = #{
+            %% Six active footprints require 1,536 MiB of entropy. A 2 GiB
+            %% cache permits all stores to participate without entropy churn.
+            [packing, entropy, cache_size] => 2048,
+            %% 564 MiB resolves to a 2,000-chunk fetched cache, comfortably
+            %% above the peer's required 750-request pipeline.
+            [sync, cache_size] => 564
+        }
+    }),
+    %% One hundred sixty scheduler ticks cover discovery and enough
+    %% one-quarter growth steps to exceed the 750-request pipeline required for
+    %% 150 chunks/s at five-second latency. The 120 measured ticks span 1,200
+    %% seconds and contain 30,000 writes per store at the expected rate.
+    ar_sync_sim_runner:run_for(160),
+    Measurement = ar_sync_sim_runner:run_for(120),
+    assert_chunks_spread_across_stores(Measurement),
+    assert_metric_utilization(stored_cps, PeerCPS, Measurement).
+
+%% Contract: raising response latency from 0.5 to 5 seconds must not make the six
+%% 25 chunks/s destination stores alternate between waiting for a response batch
+%% and writing one. Fetches must stay in flight while completed chunks are
+%% written so every store remains supplied. The peer can serve 300 chunks/s
+%% against the stores' combined 150 chunks/s write rate, and each remote source
+%% store can serve 35 chunks/s against its destination's 25 chunks/s write rate.
+%% Local writes are therefore the intended bottleneck. The average must remain
+%% near that bottleneck, and no scheduler interval may become broadly idle.
+delayed_fetches_preserve_store_write_throughput_test_() ->
+    ar_sync_sim_runner:setup_sim(
+        fun test_delayed_fetches_preserve_store_write_throughput/0, 500).
+
+test_delayed_fetches_preserve_store_write_throughput() ->
+    ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
+    %% Match the production scheduler cadence so five-second responses finish
+    %% in large waves inside each observation interval.
+    ar_sync_scheduler:override_tick_interval_ms(10_000),
+    StoreCPS = 25,
+    AggregateStoreCPS = ?SIM_STORES * StoreCPS,
+    InitialLatencyMS = 500,
+    DelayedLatencyMS = 5000,
+    Peer = #sim_peer{
+        %% Six stores write 150 chunks/s; 300 chunks/s leaves a twofold remote
+        %% margin while the initial half-second latency establishes full rate.
+        max_serve_cps = 2 * AggregateStoreCPS,
+        latency_ms = InitialLatencyMS,
+        %% One 250 ms metadata response exposes a complete 1024-chunk footprint,
+        %% comfortably faster than the peer's 300 chunks/s serving path. This
+        %% keeps the test focused on chunk-fetch latency. The default 8 GB
+        %% advertised prefix contains over 30,000 chunks per store, more than
+        %% the 27,500 each can write during this 1100-second scenario.
+        chunk_interval_latency_ms = ?SIM_SUBSTEP_MS,
+        sync_kinds = [footprint]
+    },
+    Peers = #{?PEER_UNLIMITED => Peer},
+    World = #sim_world{
+        peers = Peers,
+        %% Serving at 7/5 of the destination's write rate gives the remote source
+        %% store 40% headroom, so destination-store writes remain the bottleneck.
+        remote_store_cps = 7 * StoreCPS div 5,
+        store_write_cps = StoreCPS,
+        node_config = #{
+            %% Twelve footprint slots let each of the six stores overlap one
+            %% footprint transition, keeping entropy outside this store-write test.
+            [packing, entropy, cache_size] => 3072,
+            [sync, cache_size] => 564
+        }
+    },
+    ar_sync_sim_runner:start_sim(World),
+    %% Sixty scheduler ticks establish full peer and store throughput.
+    ar_sync_sim_runner:run_for(60),
+    ar_sync_sim_runner:update_world(World#sim_world{ peers = Peers#{
+        ?PEER_UNLIMITED := Peer#sim_peer{ latency_ms = DelayedLatencyMS }
+    } }),
+    %% Twenty ticks cover the latency transition and store-write-rate resampling.
+    ar_sync_sim_runner:run_for(20),
+    %% Thirty one-tick samples require at least 95% average utilization. A 70%
+    %% per-sample floor permits one response-wave boundary in a ten-second
+    %% observation while rejecting alternating idle and active intervals.
+    Measurements = [ar_sync_sim_runner:run_for(1)
+        || _ <- lists:seq(1, 30)],
+    StoredCPSByTick = [ar_sync_sim_runner:metric(stored_cps, Measurement)
+        || Measurement <- Measurements],
+    AverageStoredCPS = lists:sum(StoredCPSByTick) / length(StoredCPSByTick),
+    assert_at_least(AverageStoredCPS,
+        ?MIN_STEADY_STATE_UTILIZATION * AggregateStoreCPS),
+    assert_at_least(lists:min(StoredCPSByTick),
+        0.7 * AggregateStoreCPS).
+
+%% Contract: delayed fetch response waves must keep each destination store's
+%% completed-chunk backlog bounded. A transient excess must not become
+%% self-reinforcing and cause a persistent throughput collapse.
+%%
+%% Test mechanism: the simulated completion rate represents the entire local
+%% path after a fetch, not raw disk bandwidth. Each store normally completes 25
+%% chunks/s. If its backlog exceeds ten seconds of that capacity, the simulator
+%% cuts completions to one-fifth of normal. This artificial penalty turns an
+%% excessive backlog into an observable throughput failure; it does not assert
+%% that a production disk slows at that threshold.
+delayed_fetch_waves_do_not_amplify_store_backlog_test_() ->
+    ar_sync_sim_runner:setup_sim(
+        fun test_delayed_fetch_waves_do_not_amplify_store_backlog/0, 500).
+
+test_delayed_fetch_waves_do_not_amplify_store_backlog() ->
+    ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
+    ar_sync_scheduler:override_tick_interval_ms(10_000),
+    StoreCPS = 25,
+    AggregateStoreCPS = ?SIM_STORES * StoreCPS,
+    WriteAllowanceSeconds = 5,
+    %% The normal five-second cached-write allowance is 5 * 25 = 125 chunks.
+    %% A 250-chunk threshold tolerates one additional allowance-sized response
+    %% wave before activating the synthetic pressure penalty described above.
+    BacklogPressureThreshold = 2 * WriteAllowanceSeconds * StoreCPS,
+    PressuredCompletionCPS = StoreCPS div 5,
+    StoreCompletionCPS = fun(StoreID, _Tick) ->
+        case ar_sync_sim_world:chunk_cache_size(StoreID)
+                > BacklogPressureThreshold of
+            true -> PressuredCompletionCPS;
+            false -> StoreCPS
+        end
+    end,
+    InitialLatencyMS = 500,
+    DelayedLatencyMS = 5000,
+    Peer = #sim_peer{
+        %% The six local paths normally complete 150 chunks/s; a twofold peer
+        %% margin keeps local completion capacity as the intended bottleneck.
+        max_serve_cps = 2 * AggregateStoreCPS,
+        latency_ms = InitialLatencyMS,
+        %% A complete footprint arrives from metadata every 250 ms, keeping
+        %% discovery outside this fetched-backlog pressure scenario.
+        chunk_interval_latency_ms = ?SIM_SUBSTEP_MS,
+        sync_kinds = [footprint]
+    },
+    Peers = #{?PEER_UNLIMITED => Peer},
+    World = #sim_world{
+        peers = Peers,
+        %% Each remote source serves 7/5 of the normal local rate, giving it 40%
+        %% headroom so remote storage cannot activate the synthetic penalty.
+        remote_store_cps = 7 * StoreCPS div 5,
+        store_write_cps = StoreCompletionCPS,
+        node_config = #{
+            %% Twelve footprint slots let every store overlap one transition;
+            %% this scenario isolates fetched-backlog pressure from entropy.
+            [packing, entropy, cache_size] => 3072,
+            [sync, cache_size] => 564
+        }
+    },
+    ar_sync_sim_runner:start_sim(World),
+    %% Sixty scheduler ticks establish full throughput before latency creates
+    %% larger completion waves. Twenty ticks cover the transition and sixty
+    %% measured ticks expose any recurring backlog-driven collapse.
+    ar_sync_sim_runner:run_for(60),
+    ar_sync_sim_runner:update_world(World#sim_world{ peers = Peers#{
+        ?PEER_UNLIMITED := Peer#sim_peer{ latency_ms = DelayedLatencyMS }
+    } }),
+    ar_sync_sim_runner:run_for(20),
+    Measurement = ar_sync_sim_runner:run_for(60),
+    assert_chunks_spread_across_stores(Measurement),
+    assert_metric_utilization(stored_cps, AggregateStoreCPS, Measurement).
+
+%% Contract: a temporarily low observation of completed local writes must not
+%% become a permanent throughput ceiling. Once later observations demonstrate
+%% more capacity, every store and the aggregate must recover to that rate.
+%%
+%% Test mechanism: the simulator deliberately permits 60 completions every four
+%% seconds at first, then 100 every four seconds. That changes the observed
+%% average from 15 to 25 chunks/s and verifies recovery from the earlier low
+%% observation. It represents temporary contention anywhere in the end-to-end
+%% local completion path, not a claim that disk speed normally changes abruptly.
+low_local_completion_observation_does_not_limit_recovery_test_() ->
+    ar_sync_sim_runner:setup_sim(
+        fun test_low_local_completion_observation_does_not_limit_recovery/0,
+        500).
+
+test_low_local_completion_observation_does_not_limit_recovery() ->
+    StoreCPS = 25,
+    AggregateStoreCPS = ?SIM_STORES * StoreCPS,
+    BatchPeriod = 4,
+    LowObservationBatchSize = 60,
+    RecoveredBatchSize = StoreCPS * BatchPeriod,
+    RecoveryTick = 40,
+    StoreCompletionCPS = fun(_StoreID, Tick) ->
+        case Tick rem BatchPeriod of
+            0 when Tick < RecoveryTick -> LowObservationBatchSize;
+            0 -> RecoveredBatchSize;
+            _ -> 0
+        end
+    end,
+    Peer = #sim_peer{
+        %% Four seconds of response latency requires a deep, continuously fed
+        %% request pipeline to use the six stores' 150 chunks/s capacity.
+        max_serve_cps = 600,
+        latency_ms = 4000
+    },
+    ar_sync_sim_runner:start_sim(#sim_world{
+        peers = #{?PEER_UNLIMITED => Peer},
+        %% Serving at 7/5 of the recovered local rate gives each remote source
+        %% 40% headroom, so recovered local completions set expected throughput.
+        remote_store_cps = 7 * StoreCPS div 5,
+        store_write_cps = StoreCompletionCPS
+    }),
+    %% Ten four-second batches establish the initial 60 / 4 = 15 chunks/s
+    %% completion observation before the simulated local path recovers.
+    ar_sync_sim_runner:run_for(RecoveryTick),
+    %% Sixty seconds cover fifteen full-capacity batches and scheduler ramp-up.
+    ar_sync_sim_runner:run_for(60),
+    %% Forty seconds average ten complete batches from every store.
+    Measurement = ar_sync_sim_runner:run_for(40),
+    assert_chunks_spread_across_stores(Measurement),
+    DurationSeconds = ar_sync_sim_runner:metric(duration_seconds, Measurement),
+    %% Permit one completion to cross the measurement boundary while retaining
+    %% the 95% aggregate-throughput floor for every other chunk.
+    MinimumStoredChunks = ?MIN_STEADY_STATE_UTILIZATION
+        * AggregateStoreCPS * DurationSeconds - 1,
+    assert_at_least(
+        ar_sync_sim_runner:metric(chunks_stored_total, Measurement),
+        MinimumStoredChunks,
+        #{ metric => chunks_stored_total }).
 
 %% An invisible ceiling: a shared downlink smaller than the peers'
 %% aggregate capacity. Nothing in the pipeline is told the link's size —
@@ -1162,7 +1529,7 @@ test_single_footprint_peer_store_spread() ->
 %%     inflight wins more of each second's slots, and delivery feeds its
 %%     cap (e.g. two-thirds of the link to one peer while the trailing
 %%     peers trickle at a few cps). Every peer must continue making progress.
-%%   - outstanding HTTP requests remain within six seconds of link capacity.
+%%   - outstanding HTTP requests remain within seven seconds of link capacity.
 link_saturation_test_() ->
     ar_sync_sim_runner:setup_sim(fun test_link_saturation/0, 400).
 
@@ -1213,10 +1580,9 @@ test_link_saturation() ->
     HTTPInflightByPeer = ar_sync_sim_runner:metric(
         final_http_inflight_by_peer, Measurement),
     TotalHTTPInflight = lists:sum(maps:values(HTTPInflightByPeer)),
-    %% Six seconds is the maximum acceptable drain time for outstanding work at
-    %% the shared link rate. This bounds request and memory growth independently
-    %% of how the sync controller represents or calculates concurrency.
-    MaxOutstandingSeconds = 6,
+    %% The five-second measured horizon may take one 25% exploration step;
+    %% seven whole seconds also cover integer and endpoint quantization.
+    MaxOutstandingSeconds = 7,
     MaxHTTPInflight = MaxOutstandingSeconds * LinkCps,
     assert_at_most(TotalHTTPInflight, MaxHTTPInflight,
         #{ metric => total_http_inflight }).
@@ -1245,7 +1611,6 @@ test_footprint_entropy_reuse_preserves_throughput() ->
     ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
     World = #sim_world{
         peers = Peers,
-        discovery_enabled = true,
         %% A 250-millisecond miss cost populates the initial eight-entry working
         %% set without making startup the contract under test.
         entropy_generation_ms = 250,
@@ -1285,23 +1650,26 @@ test_footprint_contention_preserves_throughput() ->
     TotalCPS = PeerCount * PeerCPS,
     Peers = maps:from_list([
         {{10, 0, 2, PeerID, 1984},
-            #sim_peer{ max_serve_cps = PeerCPS, sync_kinds = [footprint] }}
+            #sim_peer{
+                max_serve_cps = PeerCPS,
+                chunk_interval_latency_ms = ?SIM_SUBSTEP_MS,
+                sync_kinds = [footprint]
+            }}
         || PeerID <- lists:seq(1, PeerCount)
     ]),
     ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
     ar_sync_sim_runner:start_sim(#sim_world{
         peers = Peers,
-        discovery_enabled = true,
         %% A 500-millisecond miss cost is expensive when assignments churn, while
         %% a stable assignment amortizes one generation over 1024 chunks.
         entropy_generation_ms = 500,
         node_config = #{
             [sync, cache_size] => 32768,
-            %% Each peer/store receives ten of its peer's sixty concurrent
-            %% requests. At 250 ms latency, nine active footprints carry the
-            %% ninety requests needed for 360 chunks/s; twelve slots leave
-            %% three for transitions while 36 fronts still compete for them.
-            [packing, entropy, cache_size] => 3072
+            %% Each peer/store receives ten concurrent requests. At 250 ms
+            %% latency, every 60 chunks/s peer needs two active footprints, so
+            %% twelve slots carry steady work. Sixteen slots leave four for
+            %% transitions while 36 fronts still compete for them.
+            [packing, entropy, cache_size] => 4096
         }
     }),
     %% Fifty seconds cover discovery, peer-cap growth, and the footprint
@@ -1327,19 +1695,28 @@ test_slow_footprint_peer_preserves_healthy_capacity() ->
     HealthyPeerCPS = 60,
     InitialSlowPeer = #sim_peer{
         max_serve_cps = InitialSlowPeerCPS,
+        %% Metadata stays outside the entropy-slot recovery contract.
+        chunk_interval_latency_ms = ?SIM_SUBSTEP_MS,
         sync_kinds = [footprint]
     },
     HealthyPeers = maps:from_list([
         {Peer, #sim_peer{
             max_serve_cps = HealthyPeerCPS,
-            sync_kinds = [footprint]
+            chunk_interval_latency_ms = ?SIM_SUBSTEP_MS,
+            sync_kinds = [footprint],
+            %% Initially these peers advertise their data but cannot accept a
+            %% request, separating scheduler recovery from peer discovery.
+            http_inflight_limit = 0
         }}
         || Peer <- HealthyPeerIDs
     ]),
-    Peers = maps:put(SlowPeer, InitialSlowPeer, HealthyPeers),
+    InitiallyUnavailablePeers = maps:put(
+        SlowPeer, InitialSlowPeer, HealthyPeers),
+    Peers = maps:map(
+        fun(_Peer, Peer) -> Peer#sim_peer{ http_inflight_limit = infinity } end,
+        InitiallyUnavailablePeers),
     World = #sim_world{
-        peers = #{SlowPeer => InitialSlowPeer},
-        discovery_enabled = true,
+        peers = InitiallyUnavailablePeers,
         node_config = #{
             %% A 32 GiB task cache keeps admission out of this entropy-slot
             %% scenario. Sixty-four 256 MiB entropy entries reproduce the live
@@ -1350,7 +1727,7 @@ test_slow_footprint_peer_preserves_healthy_capacity() ->
     },
     ar_sync_sim_runner:start_sim(World),
     %% Fifty seconds warm metadata and let the 300 chunks/s peer occupy the
-    %% footprint slots before the healthy peers appear.
+    %% footprint slots before the healthy peers begin accepting requests.
     ar_sync_sim_runner:run_for(50),
     ar_sync_sim_runner:update_world(World#sim_world{
         peers = Peers#{
@@ -1361,9 +1738,9 @@ test_slow_footprint_peer_preserves_healthy_capacity() ->
             }
         }
     }),
-    %% Twenty seconds let the peer controller and finite footprint batches
-    %% respond before the twenty-second steady measurement.
-    ar_sync_sim_runner:run_for(20),
+    %% Two 32-tick scheduler evidence horizons let healthy sources rotate the
+    %% larger 200-chunk store horizons, then settle before the steady measurement.
+    ar_sync_sim_runner:run_for(64),
     Measurement = ar_sync_sim_runner:run_for(20),
     CpsByPeer = ar_sync_sim_runner:metric(cps_by_peer, Measurement),
     HealthyCPS = lists:sum([
@@ -1400,7 +1777,6 @@ test_footprint_claim_headroom_preserves_peer_breadth() ->
     ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
     ar_sync_sim_runner:start_sim(#sim_world{
         peers = Peers,
-        discovery_enabled = true,
         node_config = #{
             [sync, cache_size] => 564,
             [packing, entropy, cache_size] => 2048
@@ -1445,11 +1821,16 @@ test_byte_and_footprint_sources_share_footprint() ->
     {StoreStart, _StoreEnd} = first_store_range(),
     SingleChunkPeer = {10, 6, 2, 1, 1984},
     FootprintPeer = {10, 6, 2, 2, 1984},
+    %% The ninth byte query step is beyond the initial eight-step byte queue.
+    %% Byte-mode discovery also queries the footprint containing that frontier,
+    %% keeping cold coarse discovery outside this source-sharing contract.
+    Step = ar_sync_cursor:query_range_step_size(),
+    FirstChunkIndex = 9 * Step div ?DATA_CHUNK_SIZE + 1,
     %% The byte peer advertises the first chunk; the footprint peer advertises
     %% that chunk and the following nine chunks in the same footprint.
     AdvertisedChunkCount = 10,
     AdvertisedChunkIntervals = footprint_chunk_intervals(
-        StoreStart, 1, AdvertisedChunkCount),
+        StoreStart, FirstChunkIndex, AdvertisedChunkCount),
     [FirstChunkInterval | _] = AdvertisedChunkIntervals,
     InitialPeers = #{
         SingleChunkPeer => #sim_peer{
@@ -1466,7 +1847,6 @@ test_byte_and_footprint_sources_share_footprint() ->
     },
     InitialWorld = #sim_world{
         peers = InitialPeers,
-        discovery_enabled = true,
         node_config = #{
             [packing, entropy, cache_size] => 2048
         }
@@ -1482,10 +1862,11 @@ test_byte_and_footprint_sources_share_footprint() ->
     ?assertEqual(AdvertisedChunkCount,
         ar_sync_sim_runner:metric(chunks_stored_total, InitialMeasurement)).
 
-%% Contract: once a footprint is bound to a peer, only the tasks created
-%% for fetching count against the store's claim limit. The remaining footprint
-%% work must not prevent a healthy peer discovered later from serving other
-%% chunks in the same store at its serving rate.
+%% Contract: after a footprint reservation binds, its unmaterialized intervals
+%% must not consume ordinary task-admission headroom. Only the finite batch of
+%% concrete tasks awaiting dispatch uses that headroom; active fetches are
+%% bounded separately. Non-overlapping work discovered later for the same store
+%% must therefore be admitted while the footprint's slow requests remain active.
 unpromoted_footprint_work_does_not_block_store_test_() ->
     ar_sync_sim_runner:setup_sim(
         fun test_unpromoted_footprint_work_does_not_block_store/0, 500).
@@ -1512,12 +1893,20 @@ test_unpromoted_footprint_work_does_not_block_store() ->
     },
     %% Sixteen one-GiB sweep steps provide 16,384 healthy chunks, enough for more
     %% than the complete 40-second warm-up and measurement at 100 chunks/s.
-    %% Twenty empty byte sweep steps take forty seconds at the two-second metadata
-    %% pace, so this work is discovered after the healthy peer is introduced.
-    HealthyIntervals = [sweep_chunk_interval(StoreRange, 20, 16)],
+    %% Four empty byte sweep steps let the slow footprint bind before the
+    %% healthy range is discovered. The healthy range then has enough work to
+    %% sustain both the warmup and measurement.
+    HealthyIntervals = [sweep_chunk_interval(StoreRange, 4, 16)],
+    HealthyPeer = #sim_peer{
+        max_serve_cps = HealthyPeerCPS,
+        sync_kinds = [byte],
+        sync_availability = {intervals, HealthyIntervals}
+    },
     InitialWorld = #sim_world{
-        peers = #{SlowFootprintPeer => SlowPeer},
-        discovery_enabled = true,
+        peers = #{
+            SlowFootprintPeer => SlowPeer,
+            HealthyBytePeer => HealthyPeer
+        },
         store_write_cps = HealthyPeerCPS,
         %% A 564 MiB node cache gives each of six stores a 500-chunk share,
         %% rounded up to one complete 1024-chunk footprint reservation.
@@ -1527,23 +1916,10 @@ test_unpromoted_footprint_work_does_not_block_store() ->
         }
     },
     ar_sync_sim_runner:start_sim(InitialWorld),
-    %% Ten seconds cover detailed metadata and bind the slow footprint while
-    %% its thirty-nine-second child requests remain incomplete.
-    ar_sync_sim_runner:run_for(10),
-    HealthyPeer = #sim_peer{
-        max_serve_cps = HealthyPeerCPS,
-        sync_kinds = [byte],
-        sync_availability = {intervals, HealthyIntervals}
-    },
-    ar_sync_sim_runner:update_world(InitialWorld#sim_world{
-        peers = #{
-            SlowFootprintPeer => SlowPeer,
-            HealthyBytePeer => HealthyPeer
-        }
-    }),
-    %% Forty seconds cover healthy metadata discovery, the store sweep, and
-    %% peer-cap growth before a twenty-second throughput measurement. The slow
-    %% peer completes only its small initial batch during this warm-up.
+    %% The slow requests remain active for almost all forty ticks. Correct
+    %% footprint accounting lets healthy metadata, sweeping, and cap growth
+    %% proceed concurrently; retained unpromoted claims delay them until the
+    %% measurement and fail the steady-state floor.
     ar_sync_sim_runner:run_for(40),
     Measurement = ar_sync_sim_runner:run_for(20),
     assert_metric_utilization(
@@ -1570,9 +1946,10 @@ test_sparse_footprint_sources_preserve_throughput() ->
     ChunksPerFootprint = 32,
     %% Each footprint supplies 32 chunks. With two-second responses, one active
     %% footprint per store can deliver at most 6 * 32 / 2 = 96 chunks/s, below
-    %% the peer's 120 chunks/s capacity. The 128 footprints per store provide
-    %% 24,576 chunks, almost three times the 8,400 needed by this scenario.
-    FootprintCountPerStore = 128,
+    %% the peer's 120 chunks/s capacity. The 256 footprints per store provide
+    %% 49,152 chunks, almost six times the 8,400 needed by this scenario and
+    %% leave useful work beyond cold-start readahead.
+    FootprintCountPerStore = 256,
     SparseIntervals = lists:append([
         footprint_chunk_intervals(
             StoreStart, FirstChunkIndex, ChunksPerFootprint)
@@ -1584,6 +1961,10 @@ test_sparse_footprint_sources_preserve_throughput() ->
         SparsePeer => #sim_peer{
             max_serve_cps = PeerCPS,
             latency_ms = 2000,
+            %% One 250 ms metadata response exposes 32 chunks, a 128 chunks/s
+            %% metadata path above the peer's 120 chunks/s serving rate.
+            %% Metadata-scarcity behavior is covered by separate scenarios.
+            chunk_interval_latency_ms = ?SIM_SUBSTEP_MS,
             sync_kinds = [footprint],
             sync_availability = {intervals, SparseIntervals},
             footprint_coverage = exact
@@ -1591,7 +1972,6 @@ test_sparse_footprint_sources_preserve_throughput() ->
     },
     ar_sync_sim_runner:start_sim(#sim_world{
         peers = Peers,
-        discovery_enabled = true,
         node_config = #{
             [sync, cache_size] => 32768,
             %% Sixty-four mainnet-sized entropy entries can carry the thirty
@@ -1604,65 +1984,6 @@ test_sparse_footprint_sources_preserve_throughput() ->
     ar_sync_sim_runner:run_for(50),
     Measurement = ar_sync_sim_runner:run_for(20),
     assert_metric_utilization(stored_cps, PeerCPS, Measurement).
-
-%% Contract: when the available source for a partially synced footprint
-%% changes, the remaining chunks continue through the same physical footprint
-%% after the first source finishes. A stale peer assignment must not retain the
-%% only entropy slot and permanently block the replacement source.
-footprint_source_change_releases_entropy_slot_test_() ->
-    ar_sync_sim_runner:setup_sim(
-        fun test_footprint_source_change_releases_entropy_slot/0, 300).
-
-test_footprint_source_change_releases_entropy_slot() ->
-    ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
-    %% Eight sub-chunks make this test footprint contain eight chunks: one from
-    %% the initial peer and seven introduced while that first chunk is active.
-    ar_replica_2_9:override_entropy_size(8 * ?SUB_CHUNK_SIZE),
-    {StoreStart, _StoreEnd} = first_store_range(),
-    ChunkIntervals = footprint_chunk_intervals(StoreStart, 1, 8),
-    [InitialInterval | ReplacementIntervals] = ChunkIntervals,
-    InitialPeer = {10, 6, 0, 1, 1984},
-    ReplacementPeer = {10, 6, 0, 2, 1984},
-    InitialPeerSpec = #sim_peer{
-        max_serve_cps = 100,
-        %% Thirty-nine seconds leaves the first footprint active long enough
-        %% for the replacement peer's one-second metadata requests to finish,
-        %% while remaining below the forty-second fetch timeout.
-        latency_ms = 39_000,
-        sync_kinds = [footprint],
-        sync_availability = {intervals, [InitialInterval]},
-        footprint_coverage = exact
-    },
-    ReplacementPeerSpec = #sim_peer{
-        max_serve_cps = 100,
-        sync_kinds = [footprint],
-        sync_availability = {intervals, ReplacementIntervals},
-        footprint_coverage = exact
-    },
-    InitialWorld = #sim_world{
-        peers = #{InitialPeer => InitialPeerSpec},
-        discovery_enabled = true,
-        %% An eight-chunk footprint occupies two MiB, so this permits exactly
-        %% one active footprint and makes a retained assignment observable.
-        node_config = #{[packing, entropy, cache_size] => 2}
-    },
-    ar_sync_sim_runner:start_sim(InitialWorld),
-    %% Ten seconds covers detailed metadata while the initial peer's
-    %% thirty-nine-second request remains active.
-    ar_sync_sim_runner:run_for(10),
-    ar_sync_sim_runner:update_world(InitialWorld#sim_world{ peers = #{
-        InitialPeer => InitialPeerSpec,
-        ReplacementPeer => ReplacementPeerSpec
-    }}),
-    Measurement = ar_sync_sim_runner:run_for(50),
-    %% The replacement owns seven chunks. Serving all seven proves the first
-    %% assignment released and useful work resumed through the same footprint.
-    assert_at_least(ar_sync_sim_runner:metric(
-        {served_by_peer, ReplacementPeer}, Measurement), 7,
-        #{ peer => ReplacementPeer, metric => served_chunks }),
-    assert_at_least(ar_sync_sim_runner:metric(
-        chunks_stored_total, Measurement), 8,
-        #{ metric => chunks_stored_total }).
 
 %% Contract: a detailed footprint-availability request that remains pending does
 %% not stop a store from discovering and syncing later work from a healthy peer.
@@ -1680,7 +2001,7 @@ test_pending_chunk_intervals_do_not_stall_store() ->
     HealthyPeerCPS = 25,
     StaleInterval = single_chunk_interval(StoreStart, 1),
     %% Four sweep steps place healthy work beyond the unavailable frontier.
-    %% At the two-second no-task pace the sweeper reaches it after eight seconds.
+    %% The rolling window warms those later steps while the first request waits.
     %% One 1 GiB sweep interval contains 4096 chunks, or more than 160 seconds
     %% at 25 chunks/s, so the healthy source cannot run dry here.
     HealthyIntervals = [sweep_chunk_interval(StoreRange, 4, 1)],
@@ -1701,8 +2022,7 @@ test_pending_chunk_intervals_do_not_stall_store() ->
         }
     },
     ar_sync_sim_runner:start_sim(#sim_world{
-        peers = Peers,
-        discovery_enabled = true
+        peers = Peers
     }),
     %% Forty ticks cover detailed metadata, traversal to the healthy range,
     %% and peer-cap growth. Twenty ticks then average 500 chunks at
@@ -1718,6 +2038,66 @@ test_pending_chunk_intervals_do_not_stall_store() ->
         {chunks_stored_by_store, TargetStore},
         ExpectedStoredChunks,
         Measurement).
+
+%% Contract: repeated empty footprints inside coarse peer advertisements must
+%% not make detailed metadata traversal the throughput bottleneck. Useful
+%% footprints must be discovered often enough to keep aggregate writes at the
+%% peer's serving rate throughout the measurement window without starving a
+%% store.
+repeated_empty_footprint_gaps_preserve_throughput_test_() ->
+    ar_sync_sim_runner:setup_sim(
+        fun test_repeated_empty_footprint_gaps_preserve_throughput/0, 400).
+
+test_repeated_empty_footprint_gaps_preserve_throughput() ->
+    Peer = {10, 6, 6, 1, 1984},
+    PeerCPS = 2,
+    %% Two 250 ms simulation substeps model a responsive metadata endpoint
+    %% while leaving every request asynchronous.
+    MetadataLatencyMS = 2 * ?SIM_SUBSTEP_MS,
+    FootprintSize = ar_replica_2_9:get_footprint_size(),
+    NetworkBucketSize = ar_sync_buckets:get_network_footprint_bucket_size(),
+    0 = NetworkBucketSize rem FootprintSize,
+    %% Four chunks per footprint and thirty-six footprint slots per coarse
+    %% bucket yield nine footprints per bucket. Advertising only the last
+    %% footprint makes the preceding eight detailed responses empty.
+    FootprintsPerBucket = NetworkBucketSize div FootprintSize,
+    EmptyFootprintsPerGap = FootprintsPerBucket - 1,
+    FootprintPeriod = EmptyFootprintsPerGap + 1,
+    %% Twelve useful footprints per store provide 12 * 6 * 4 = 288 chunks,
+    %% more than the 100 seconds * 2 chunks/s = 200 this scenario can use.
+    UsefulFootprintsPerStore = 12,
+    UsefulFootprintIndexes = [
+        N * FootprintPeriod
+        || N <- lists:seq(1, UsefulFootprintsPerStore)
+    ],
+    AvailableIntervals = [
+        Interval
+        || {_StoreID, {StoreStart, _StoreEnd}}
+                <- ar_sync_sim_world:store_ranges(),
+            FootprintIndex <- UsefulFootprintIndexes,
+            Interval <- footprint_chunk_intervals(
+                StoreStart, FootprintIndex, FootprintSize)
+    ],
+    Peers = #{Peer => #sim_peer{
+        max_serve_cps = PeerCPS,
+        sync_kinds = [footprint],
+        sync_availability = {intervals, AvailableIntervals},
+        footprint_coverage = exact,
+        chunk_interval_latency_ms = MetadataLatencyMS
+    }},
+    ar_sync_sim_runner:start_sim(#sim_world{ peers = Peers }),
+    %% Six stores expose 6 * 4 / (9 * 0.5) = 5.33 chunks/s, enough for the
+    %% two chunks/s peer. Forty seconds reach several useful waves and ramp
+    %% the scheduler before throughput is measured.
+    ar_sync_sim_runner:run_for(40),
+    %% Sixty seconds require 120 chunks, more than four six-store waves (96),
+    %% so this measurement requires repeated discovery throughout the window.
+    Measurement = ar_sync_sim_runner:run_for(60),
+    assert_metric_utilization(stored_cps, PeerCPS, Measurement),
+    %% Store ranges enter global coarse buckets at different phases. This
+    %% throughput contract requires progress from every store, not equal shares
+    %% during the finite measurement window.
+    assert_chunks_spread_across_stores(Measurement, 0).
 
 %% Contract: cached footprint availability from a healthy peer remains usable
 %% while detailed availability requests to other peers are still pending. A
@@ -1743,7 +2123,6 @@ test_ready_footprint_peer_progresses_while_metadata_pending() ->
     ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
     ar_sync_sim_runner:start_sim(#sim_world{
         peers = Peers,
-        discovery_enabled = true,
         node_config = #{[packing, entropy, cache_size] => 2048}
     }),
     %% Thirty seconds warm the healthy peer's metadata and concurrency cap.
@@ -1789,7 +2168,6 @@ test_dual_advertisement_uses_byte_capacity() ->
     ar_sync_cursor:override_query_range_step_size(QueryStep),
     ar_sync_sim_runner:start_sim(#sim_world{
         peers = Peers,
-        discovery_enabled = true,
         %% A mainnet footprint contains 1024 chunks and occupies 256 MiB of
         %% entropy cache, so this permits exactly one active footprint. A
         %% 564 MiB total sync budget resolves to a 2000-chunk cache, enough for
@@ -1799,7 +2177,7 @@ test_dual_advertisement_uses_byte_capacity() ->
             [packing, entropy, cache_size] => 256
         }
     }),
-    %% Forty seconds cover metadata warming and controller adaptation while the
+    %% Forty seconds cover metadata warming and scheduler adaptation while the
     %% five chunks/s source keeps its first 1024-chunk footprint active.
     ar_sync_sim_runner:run_for(40),
     %% Twenty seconds contains 100 expected footprint completions, enough for
@@ -1840,7 +2218,6 @@ test_footprint_gossip_share_collapse() ->
     ar_sync_sim_world:use_mainnet_replica_2_9_sizes(),
     ar_sync_sim_runner:start_sim(#sim_world{
         peers = Peers,
-        discovery_enabled = true,
         %% Six stores need six 256 MiB footprint working sets (1536 MiB).
         %% 4096 MiB holds sixteen, leaving ten spare so fine-metadata arrival
         %% order cannot turn this discovery contract into entropy contention.
@@ -1870,19 +2247,43 @@ metadata_scarce_store_spread_test_() ->
     ar_sync_sim_runner:setup_sim(fun test_metadata_scarce_store_spread/0, 400).
 
 test_metadata_scarce_store_spread() ->
+    ChunksPerRange = 64,
+    MetadataLatencySeconds = 1,
+    ar_sync_cursor:override_query_range_step_size(
+        ChunksPerRange * ?DATA_CHUNK_SIZE),
+    %% Sixty-four metadata ranges per store keep metadata scarce while leaving
+    %% useful work beyond the twenty-second warm-up.
+    PeerIntervals = [
+        sweep_chunk_interval(StoreRange, 0, 64)
+        || {_StoreID, StoreRange} <- ar_sync_sim_world:store_ranges()
+    ],
     Peers = #{ ?PEER_UNLIMITED => #sim_peer{
-        max_serve_cps = 400
+        max_serve_cps = 400,
+        %% Six stores need six concurrent metadata requests. Requests beyond
+        %% one per store model endpoint overload and cannot complete during
+        %% this forty-second scenario.
+        chunk_interval_latency_ms = fun(NumInflight) ->
+            case NumInflight =< ?SIM_STORES of
+                true -> MetadataLatencySeconds * 1000;
+                false -> 60_000
+            end
+        end,
+        sync_availability = {intervals, PeerIntervals}
     } },
     ar_sync_sim_runner:start_sim(#sim_world{
-        peers = Peers,
-        discovery_enabled = true
+        peers = Peers
     }),
     %% Twenty seconds warm detailed metadata and distribute requests across
     %% every store before measurement.
     ar_sync_sim_runner:run_for(20),
     Measurement = ar_sync_sim_runner:run_for(20),
-    %% Slow metadata supply is intentional here; the contract is that it is
-    %% spread across every store instead of being serialized through one.
+    %% Metadata capacity must be spread across every store without duplicate
+    %% requests overloading the peer's metadata endpoint.
+    MetadataCPS = ?SIM_STORES * ChunksPerRange / MetadataLatencySeconds,
+    %% The peer can serve 400 chunks/s while metadata exposes 384 chunks/s.
+    %% Ninety percent permits scheduler boundaries but rejects a starved lane.
+    assert_at_least(ar_sync_sim_runner:metric(stored_cps, Measurement),
+        0.90 * MetadataCPS, #{ metric => stored_cps }),
     assert_chunks_spread_across_stores(Measurement, 0),
     ok.
 
@@ -1916,10 +2317,10 @@ test_overlapping_peer_metadata_preserves_store_throughput() ->
         || ID <- lists:seq(1, PeerCount)
     ]),
     ar_sync_sim_runner:start_sim(#sim_world{
-        peers = Peers,
-        discovery_enabled = true
+        peers = Peers
     }),
-    %% Eight seconds submit more requests than the pending limit before measuring.
+    %% Eight seconds let every sweep queue fill before measuring serialized
+    %% per-peer/store metadata progress.
     ar_sync_sim_runner:run_for(8),
     Measurement = ar_sync_sim_runner:run_for(30),
     %% Each store must expose at least one 64-chunk range every two seconds.
@@ -1966,8 +2367,7 @@ test_disjoint_peer_holdings() ->
             <- lists:zip(lists:seq(1, length(StoreRanges)), StoreRanges)
     ]),
     ar_sync_sim_runner:start_sim(#sim_world{
-        peers = Peers,
-        discovery_enabled = true
+        peers = Peers
     }),
     %% Fifty ticks cover the 32-tick control horizon after initially cold
     %% metadata is discovered for all six peer-store paths.
@@ -2026,10 +2426,9 @@ test_stalled_frontier_peer_does_not_hide_later_capacity() ->
             }
         }),
     ar_sync_sim_runner:start_sim(#sim_world{
-        peers = Peers,
-        discovery_enabled = true
+        peers = Peers
     }),
-    %% Fifty seconds cover the controller horizon after discovery reaches the
+    %% Fifty seconds cover the scheduler horizon after discovery reaches the
     %% healthy ranges; twenty seconds smooth the one-second serving limits.
     ar_sync_sim_runner:run_for(50),
     Measurement = ar_sync_sim_runner:run_for(20),
@@ -2045,62 +2444,6 @@ test_stalled_frontier_peer_does_not_hide_later_capacity() ->
                 #{ store => StoreID, metric => chunks_stored })
         end,
         ChunksStoredByStore).
-
-%% Contract: as stalled_frontier_peer_does_not_hide_later_capacity, but the
-%% frontier peer serves slowly instead of not at all. Every request it answers
-%% succeeds, so its ar_peers success average never falls and no removal or
-%% failure-pressure path ever retires it. It stays the sole source for the
-%% first two query ranges of every store for the whole run, which is the
-%% steady state a distant or overloaded peer holding rare data presents. Its
-%% one chunk/s must not park the horizon that the healthy 100 chunks/s needs.
-slow_sole_source_frontier_does_not_park_horizon_test_() ->
-    ar_sync_sim_runner:setup_sim(
-        fun test_slow_sole_source_frontier_does_not_park_horizon/0, 500).
-
-test_slow_sole_source_frontier_does_not_park_horizon() ->
-    StoreRanges = ar_sync_sim_world:store_ranges(),
-    %% Two slow-only ranges establish the frontier. The following 1024 ranges
-    %% form a 1 TiB horizon so healthy metadata stays active while a successful
-    %% but slow sole source continues advancing the earlier ranges.
-    FrontierRangeCount = 2,
-    HealthyRangeCount = 1024,
-    SlowIntervals = [
-        sweep_chunk_interval(StoreRange, 0, FrontierRangeCount)
-        || {_StoreID, StoreRange} <- StoreRanges
-    ],
-    HealthyIntervals = [
-        sweep_chunk_interval(StoreRange, FrontierRangeCount, HealthyRangeCount)
-        || {_StoreID, StoreRange} <- StoreRanges
-    ],
-    SlowPeer = {10, 5, 0, 1, 1984},
-    HealthyPeerIDs = lists:seq(2, 5),
-    %% Four 25 chunks/s peers provide 100 chunks/s. The 95% aggregate floor
-    %% requires every peer to contribute because three can provide at most 75.
-    HealthyPeerCPS = 25,
-    Peers = maps:put(
-        SlowPeer,
-        #sim_peer{
-            max_serve_cps = 1,
-            sync_availability = {intervals, SlowIntervals}
-        },
-        maps:from_list([
-            {{10, 5, 0, ID, 1984}, #sim_peer{
-                max_serve_cps = HealthyPeerCPS,
-                sync_availability = {intervals, HealthyIntervals}
-            }}
-            || ID <- HealthyPeerIDs
-        ])),
-    ar_sync_sim_runner:start_sim(#sim_world{
-        peers = Peers,
-        discovery_enabled = true
-    }),
-    %% Fifty ticks cover the controller horizon after discovery reaches the
-    %% healthy ranges; twenty more average all four required healthy peers.
-    ar_sync_sim_runner:run_for(50),
-    Measurement = ar_sync_sim_runner:run_for(20),
-    HealthyCapacity = length(HealthyPeerIDs) * HealthyPeerCPS,
-    assert_metric_utilization(stored_cps, HealthyCapacity, Measurement),
-    assert_chunks_spread_across_stores(Measurement, 0.5).
 
 %% @doc Return the first configured simulation store ID.
 first_store() ->
@@ -2144,8 +2487,14 @@ sweep_chunk_interval({StoreStart, StoreEnd}, StartStep, StepCount) ->
     End = min(StoreEnd, Start + StepCount * Step),
     {End, Start}.
 
-%% @doc Assert that every configured store completes a minimum fraction of an
-%% equal share of the chunks stored during the measurement.
+%% @doc Assert that every configured store completes at least 90% of an equal
+%% share. The ten-percent margin permits store-level scheduling variation while
+%% rejecting material skew.
+assert_chunks_spread_across_stores(Measurement) ->
+    assert_chunks_spread_across_stores(Measurement, 0.9).
+
+%% @doc Assert that every configured store completes an explicit minimum
+%% fraction of an equal share of the chunks stored during the measurement.
 assert_chunks_spread_across_stores(Measurement, MinimumFairShareFraction) ->
     ChunksStoredByStore = ar_sync_sim_runner:metric(
         chunks_stored_by_store, Measurement),

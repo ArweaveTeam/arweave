@@ -18,7 +18,7 @@
 %% Safe runtime metric helpers — see the "Safe metric helpers" section below.
 -export([gauge_set/2, gauge_set/3, gauge_inc/1, gauge_inc/2, gauge_inc/3,
 		gauge_dec/1, gauge_dec/2, gauge_dec/3, gauge_deregister/1,
-		gauge_value/1, gauge_value/2,
+		gauge_remove/2, gauge_value/1, gauge_value/2, gauge_values/1,
 		counter_inc/1, counter_inc/2, counter_inc/3,
 		histogram_observe/2, histogram_observe/3]).
 
@@ -151,10 +151,16 @@ gauge_dec(Name, Labels, Value) ->
 gauge_deregister(Name) ->
 	try prometheus_gauge:deregister(Name) catch _:_ -> ok end.
 
+gauge_remove(Name, Labels) ->
+	try prometheus_gauge:remove(Name, Labels) catch _:_ -> ok end.
+
 gauge_value(Name) ->
 	try prometheus_gauge:value(Name) catch _:_ -> undefined end.
 gauge_value(Name, Labels) ->
 	try prometheus_gauge:value(Name, Labels) catch _:_ -> undefined end.
+
+gauge_values(Name) ->
+	try prometheus_gauge:values(default, Name) catch _:_ -> [] end.
 
 counter_inc(Name) ->
 	try prometheus_counter:inc(Name) catch _:_ -> ok end.

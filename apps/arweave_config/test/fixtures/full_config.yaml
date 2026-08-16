@@ -275,7 +275,6 @@ repack_modules:
     to_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
 sync:
   cache_size: 10000
-  max_concurrent_sync_bucket_jobs: 101
   request_packed_chunks: true
   local_peers_only: true
   max_download_rate: 12000000

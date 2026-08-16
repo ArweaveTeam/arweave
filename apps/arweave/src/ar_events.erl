@@ -123,6 +123,11 @@ handle_call(cancel, {From, _Tag}, State) ->
             {reply, ok, State#state{ subscribers = Subscribers }}
     end;
 
+handle_call(ping, _From, State) ->
+    %% A synchronous no-op used by deterministic tests to prove that earlier
+    %% event broadcasts have reached every subscriber's mailbox.
+    {reply, pong, State};
+
 handle_call(Request, _From, State) ->
     ?LOG_ERROR([{event, unhandled_call}, {message, Request}]),
     {reply, ok, State}.

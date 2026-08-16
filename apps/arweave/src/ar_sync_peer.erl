@@ -21,7 +21,7 @@
 %%% Each tick the cap is the minimum of a measured-delivery ceiling and a
 %%% bounded growth/cut step:
 %%%
-%%% - pipeline_ceiling: at most four seconds of the peer's measured delivery.
+%%% - pipeline_ceiling: at most five seconds of the peer's measured delivery.
 %%%   This permits the deep request pipelines needed by high-latency storage
 %%%   paths while bounding work assigned from stale goodput after a peer slows
 %%%   down.
@@ -47,18 +47,20 @@
 %%% own HTTP layer sheds as client_error under connection overload).
 %%% An earlier true-BDP attempt (cap = gain x rate x MEASURED latency,
 %%% 2026-07-09) could not probe: by Little's law rate x latency hands
-%%% back the current cap, so it parked wherever it started. The fixed maximum
-%%% delivery horizon provides headroom for continued measurement.
+%%% back the current cap, so it parked wherever it started. The assignment
+%%% horizon and one-step pipeline probe provide bounded headroom for continued
+%%% measurement.
 -module(ar_sync_peer).
 -test_category([fast]).
 
 -export([create_ets/0, reset_rows/0, new/0, record_result/4, tick/5,
-        start_dispatch/2, record_task/3,
-        set_store_task_targets/2, set_store_task_targets/3, concurrency_cap/2,
-        load/2, store_load/3, store_capacity/4, has_capacity/2,
+    start_dispatch/3, enqueue_tasks/3, start_task/3,
+        set_store_task_targets/2, set_store_task_targets/3,
+        concurrency_cap/2,
+        load/2, store_load/3, store_capacity/3,
+        has_capacity/2, has_capacity/3,
         priority/3,
-        best_source/3,
-        published_concurrency_cap_total/0]).
+        best_source/3]).
 -export_type([state/0, dispatch/0]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -78,17 +80,17 @@
 %% delivery sample; productive demand then grows toward its measured ceiling.
 -define(CONCURRENCY_CAP_INITIAL, 8).
 
-%% Keep at most four seconds of the peer's measured delivery in flight.
-%% The target is derived from the July 17 live run: roughly 455 chunks/s at
-%% 2.4 seconds mean response time required about 1,100 concurrent requests.
-%% Four seconds leaves enough exploration headroom when response time grows
-%% with request depth.
+%% Keep five seconds of the peer's measured delivery in flight before the 25%
+%% probe is applied. This gives a loaded request path around five seconds room
+%% to demonstrate increased goodput instead of returning its current
+%% rate-latency product as a self-consistent ceiling.
 %% Regressions: peer_latency_increase_recovers_throughput_test_ and
 %% high_latency_single_peer_saturation_test_.
--define(MAX_PIPELINE_MS, 4000).
+-define(MAX_PIPELINE_MS, 5000).
 
 %% Grow productive demand by one quarter per tick from the cap retained after
-%% failure pressure. The measured pipeline ceiling remains the level bound.
+%% failure pressure. The same factor bounds queued plus fetching assignments,
+%% leaving at most one quarter of a saturated peer's cap queued for the future.
 -define(PRODUCTIVE_GROWTH_FACTOR, 1.25).
 
 %% Productive demand probes at least eight requests beyond the retained cap so
@@ -125,6 +127,11 @@
 %% slow delivery still replaces the old estimate promptly.
 -define(GOODPUT_DECREASE_ALPHA, 0.25).
 
+%% Smooth the aggregate of multiple active peers across five observations.
+%% This absorbs whole-second link-bucket boundaries without weakening each
+%% peer's faster scheduler response.
+-define(AGGREGATE_GOODPUT_ALPHA, 0.2).
+
 -record(observation, {
     total_bytes = 0,
     fetch_timing = #fetch_timing{}
@@ -141,6 +148,10 @@
     %% tick, used to derive realized goodput. Rebuilt from the active-peer set
     %% each tick, so peers that leave are evicted.
     delivery = #{},
+    %% {ActivePeers, DeliveryEntry} for their aggregate delivered bytes. This
+    %% bounds inflation when delivery moves between peers and their individual
+    %% increase/decrease EWMA weights differ.
+    aggregate_delivery = undefined,
     %% Peer => #observation{}: cumulative delivered bytes and fetch timing
     %% accumulated since the previous control tick.
     observations = #{}
@@ -150,14 +161,13 @@
 
 %% One local store's task load and target share of a peer during a dispatch.
 -record(store_load, {
-    active_task_count = 0,
-    non_footprint_task_count = 0,
+    assigned_task_count = 0,
     target_task_count = 0
 }).
 
 -record(peer_dispatch, {
-    inflight_count = 0,
-    non_footprint_task_count = 0,
+    fetching_count = 0,
+    assigned_task_count = 0,
     concurrency_cap = ?CONCURRENCY_CAP_MIN,
     stores = #{}
 }).
@@ -198,7 +208,6 @@ create_ets() ->
 
 %% @doc Clear the published rows (a freshly booted control plane).
 reset_rows() ->
-    catch ets:delete(?MODULE, concurrency_cap_total),
     catch ets:delete(?MODULE, cap_memory),
     ok.
 
@@ -206,16 +215,27 @@ reset_rows() ->
 new() ->
     #state{}.
 
-%% @doc Snapshot the active peer caps for one scheduler dispatch.
-start_dispatch(Tasks, #state{ caps = ConcurrencyCaps }) ->
-    record_tasks(Tasks, new_dispatch(ConcurrencyCaps)).
+%% @doc Snapshot peer caps and restore fetching and queued assignment load for
+%% one scheduler dispatch.
+start_dispatch(Tasks, QueuedTasks, #state{ caps = ConcurrencyCaps }) ->
+    Dispatches = record_tasks(Tasks, new_dispatch(ConcurrencyCaps)),
+    record_queued_tasks(QueuedTasks, Dispatches).
 
 record_tasks(Tasks, Dispatches) ->
     maps:fold(
-        fun(_TaskRef, #task{ state = TaskState, peer = Peer } = Task, Acc)
-                when TaskState =:= fetching; TaskState =:= writing ->
-                record_task(Peer, Task, Acc);
+        fun(_TaskRef, #task{ state = fetching, peer = Peer } = Task, Acc) ->
+                record_fetching_assignment(Peer, Task, Acc);
             (_TaskRef, _Task, Acc) ->
+                Acc
+        end,
+        Dispatches,
+        Tasks).
+
+record_queued_tasks(Tasks, Dispatches) ->
+    lists:foldl(
+        fun(#task{ peer = Peer } = Task, Acc) when Peer =/= undefined ->
+                record_assignment(Peer, Task, Acc);
+            (_Task, Acc) ->
                 Acc
         end,
         Dispatches,
@@ -236,62 +256,81 @@ test_dispatch(ConcurrencyCaps) ->
     new_dispatch(ConcurrencyCaps).
 -endif.
 
-%% @doc Count one existing or newly selected task. Fetching tasks consume both
-%% network concurrency and the peer's share of one store; writing tasks retain
-%% only the store share. Footprint tasks are counted through their footprint
-%% state rather than duplicated here.
-record_task(Peer, #task{ state = fetching } = Task, Dispatches) ->
-    PeerDispatch = peer_dispatch(Peer, Dispatches),
-    PeerDispatch2 = do_record_task(Task, PeerDispatch#peer_dispatch{
-        inflight_count = PeerDispatch#peer_dispatch.inflight_count + 1
-    }),
-    put_peer_dispatch(Peer, PeerDispatch2, Dispatches);
-record_task(Peer, #task{ state = writing } = Task, Dispatches) ->
-    PeerDispatch = peer_dispatch(Peer, Dispatches),
-    put_peer_dispatch(Peer,
-        do_record_task(Task, PeerDispatch), Dispatches).
+%% @doc Reserve peer horizon for a newly materialized footprint batch.
+enqueue_tasks(Peer, Tasks, Dispatches) ->
+    lists:foldl(
+        fun(Task, Acc) -> record_assignment(Peer, Task, Acc) end,
+        Dispatches,
+        Tasks).
 
-do_record_task(Task, #peer_dispatch{ stores = Stores } = PeerDispatch) ->
-    #task{ store_id = StoreID, footprint = Footprint } = Task,
-    NonFootprintIncrement = case Footprint of
-        none -> 1;
-        #footprint{} -> 0
-    end,
+%% @doc Start one selected task. A bound footprint child already occupies the
+%% peer assignment horizon; an unbound task becomes assigned here.
+start_task(Peer, #task{ footprint = #footprint{} }, Dispatches) ->
+    record_fetch(Peer, Dispatches);
+start_task(Peer, #task{} = Task, Dispatches) ->
+    record_fetching_assignment(Peer, Task, Dispatches).
+
+record_fetching_assignment(Peer, Task, Dispatches) ->
+    record_fetch(Peer, record_assignment(Peer, Task, Dispatches)).
+
+record_fetch(Peer, Dispatches) ->
+    PeerDispatch = peer_dispatch(Peer, Dispatches),
+    PeerDispatch2 = PeerDispatch#peer_dispatch{
+        fetching_count = PeerDispatch#peer_dispatch.fetching_count + 1
+    },
+    put_peer_dispatch(Peer, PeerDispatch2, Dispatches).
+
+record_assignment(Peer, Task, Dispatches) ->
+    PeerDispatch = peer_dispatch(Peer, Dispatches),
+    PeerDispatch2 = do_record_assignment(Task, PeerDispatch#peer_dispatch{
+        assigned_task_count = PeerDispatch#peer_dispatch.assigned_task_count + 1
+    }),
+    put_peer_dispatch(Peer, PeerDispatch2, Dispatches).
+
+do_record_assignment(#task{ store_id = StoreID },
+        #peer_dispatch{ stores = Stores } = PeerDispatch) ->
     StoreLoad = maps:get(StoreID, Stores, #store_load{}),
     StoreLoad2 = StoreLoad#store_load{
-        active_task_count = StoreLoad#store_load.active_task_count + 1,
-        non_footprint_task_count =
-            StoreLoad#store_load.non_footprint_task_count
-                + NonFootprintIncrement
+        assigned_task_count = StoreLoad#store_load.assigned_task_count + 1
     },
-    PeerDispatch#peer_dispatch{
-        non_footprint_task_count =
-            PeerDispatch#peer_dispatch.non_footprint_task_count
-                + NonFootprintIncrement,
-        stores = maps:put(StoreID, StoreLoad2, Stores)
-    }.
+    PeerDispatch#peer_dispatch{ stores = maps:put(StoreID, StoreLoad2, Stores) }.
 
 %% @doc Set local destination-store task targets for every peer with work.
-set_store_task_targets(StoresByPeer, Dispatches) ->
-    maps:fold(
-        fun(Peer, StoreIDs, Acc) ->
-            set_store_task_targets(Peer, StoreIDs, Acc)
+set_store_task_targets(StoresByPeer, #dispatch{ peers = Peers } = Dispatches) ->
+    Dispatches#dispatch{ peers = maps:map(
+        fun(Peer, PeerDispatch) ->
+            do_set_store_task_targets(
+                maps:get(Peer, StoresByPeer, []), PeerDispatch)
         end,
-        Dispatches,
-        StoresByPeer).
+        Peers) }.
 
-%% @doc Split one peer's concurrency cap across the supplied stores.
+%% @doc Split one peer's assignment limit across the supplied stores.
 set_store_task_targets(Peer, StoreIDs, Dispatches) ->
     PeerDispatch = peer_dispatch(Peer, Dispatches),
     PeerDispatch2 = do_set_store_task_targets(StoreIDs, PeerDispatch),
     put_peer_dispatch(Peer, PeerDispatch2, Dispatches).
 
-do_set_store_task_targets([], PeerDispatch) ->
-    clear_store_task_targets(PeerDispatch);
 do_set_store_task_targets(StoreIDs, PeerDispatch) ->
-    StoreCount = length(StoreIDs),
-    Target = max(1,
-        (peer_concurrency_cap(PeerDispatch) + StoreCount - 1) div StoreCount),
+    AssignedStoreIDs = assigned_store_ids(PeerDispatch),
+    set_store_task_targets_for_stores(
+        lists:usort(StoreIDs ++ AssignedStoreIDs), PeerDispatch).
+
+assigned_store_ids(#peer_dispatch{ stores = Stores }) ->
+    maps:fold(
+        fun(StoreID, #store_load{ assigned_task_count = Count }, Acc)
+                when Count > 0 ->
+                [StoreID | Acc];
+            (_StoreID, _StoreLoad, Acc) ->
+                Acc
+        end,
+        [],
+        Stores).
+
+set_store_task_targets_for_stores([], PeerDispatch) ->
+    clear_store_task_targets(PeerDispatch);
+set_store_task_targets_for_stores(StoreIDs, PeerDispatch) ->
+    AssignmentLimit = peer_assignment_limit(PeerDispatch),
+    Target = erlang:ceil(AssignmentLimit / length(StoreIDs)),
     PeerDispatch2 = clear_store_task_targets(PeerDispatch),
     lists:foldl(
         fun(StoreID, Acc) -> set_store_task_target(StoreID, Target, Acc) end,
@@ -318,47 +357,33 @@ concurrency_cap(Peer, Dispatches) ->
 peer_concurrency_cap(#peer_dispatch{ concurrency_cap = ConcurrencyCap }) ->
     ConcurrencyCap.
 
-%% @doc Return the fraction of this peer's concurrency cap in use.
+%% @doc Return the fraction of this peer's assignment limit in use.
 load(Peer, Dispatches) ->
     peer_load(peer_dispatch(Peer, Dispatches)).
 
-peer_load(#peer_dispatch{ inflight_count = InflightCount,
-        concurrency_cap = ConcurrencyCap }) ->
-    case ConcurrencyCap of
-        Cap when Cap > 0 -> InflightCount / Cap;
+peer_load(#peer_dispatch{ assigned_task_count = AssignedTaskCount } =
+        PeerDispatch) ->
+    case peer_assignment_limit(PeerDispatch) of
+        Limit when Limit > 0 -> AssignedTaskCount / Limit;
         _ -> 1.0
     end.
 
-%% @doc Return the fraction of this peer's store task target occupied by
-%% fetching or writing tasks.
+%% @doc Return the fraction of this peer's store target occupied by peer-bound
+%% queued or fetching tasks.
 store_load(Peer, StoreID, Dispatches) ->
     StoreLoad = store_load(StoreID, peer_dispatch(Peer, Dispatches)),
     case StoreLoad#store_load.target_task_count of
         Target when Target > 0 ->
-            StoreLoad#store_load.active_task_count / Target;
+            StoreLoad#store_load.assigned_task_count / Target;
         _ ->
             1.0
     end.
 
-%% @doc Number of additional footprint tasks allowed by both the peer-wide cap
-%% and this store's task target. Counts include queued footprint tasks.
-store_capacity(Peer, StoreID, FootprintDispatch, Dispatches) ->
-    {StoreFootprintTasks, PeerFootprintTasks} =
-        ar_sync_footprint:active_task_counts(Peer, StoreID, FootprintDispatch),
-    PeerDispatch = peer_dispatch(Peer, Dispatches),
-    PeerCap = PeerDispatch#peer_dispatch.concurrency_cap,
-    StoreLoad = store_load(StoreID, PeerDispatch),
-    StoreTaskCount = StoreFootprintTasks
-        + StoreLoad#store_load.non_footprint_task_count,
-    PeerTaskCount = PeerFootprintTasks
-        + PeerDispatch#peer_dispatch.non_footprint_task_count,
-    PairTarget = case StoreLoad#store_load.target_task_count of
-        0 -> PeerCap;
-        Target -> Target
-    end,
-    PairCapacity = max(0, PairTarget - StoreTaskCount),
-    PeerCapacity = max(0, PeerCap - PeerTaskCount),
-    min(PairCapacity, PeerCapacity).
+%% @doc Number of additional tasks allowed by this peer/store horizon. The
+%% peer's global fetch concurrency is enforced separately by has_capacity/2.
+store_capacity(Peer, StoreID, Dispatches) ->
+    store_capacity_for_dispatch(
+        StoreID, peer_dispatch(Peer, Dispatches)).
 
 %% @doc Return whether a peer or source may start another fetch.
 has_capacity(#task_source{ peer = Peer }, Dispatches) ->
@@ -366,9 +391,73 @@ has_capacity(#task_source{ peer = Peer }, Dispatches) ->
 has_capacity(Peer, Dispatches) ->
     has_capacity(peer_dispatch(Peer, Dispatches)).
 
-has_capacity(#peer_dispatch{ inflight_count = InflightCount,
+has_capacity(#peer_dispatch{ fetching_count = FetchingCount,
         concurrency_cap = ConcurrencyCap }) ->
-    InflightCount < ConcurrencyCap.
+    FetchingCount < ConcurrencyCap.
+
+%% @doc Return whether Item may consume another peer assignment.
+has_capacity(#task{ footprint = #footprint{} },
+        #task_source{} = Source, Dispatches) ->
+    has_capacity(Source, Dispatches);
+has_capacity(#task{ store_id = StoreID },
+        #task_source{ peer = Peer }, Dispatches) ->
+    has_capacity(Peer, Dispatches)
+        andalso assignment_has_capacity(
+            StoreID, peer_dispatch(Peer, Dispatches));
+has_capacity(#footprint_reservation{ store_id = StoreID },
+        #task_source{ peer = Peer }, Dispatches) ->
+    has_capacity(Peer, Dispatches)
+        andalso assignment_has_capacity(
+            StoreID, peer_dispatch(Peer, Dispatches)).
+
+assignment_has_capacity(StoreID, PeerDispatch) ->
+    peer_assignment_capacity(PeerDispatch) > 0
+        andalso store_capacity_for_dispatch(StoreID, PeerDispatch) > 0.
+
+store_capacity_for_dispatch(StoreID, PeerDispatch) ->
+    case store_is_explored(StoreID, PeerDispatch)
+            orelse store_exploration_available(PeerDispatch) of
+        true -> min(peer_assignment_capacity(PeerDispatch),
+            store_horizon_capacity_for_dispatch(StoreID, PeerDispatch));
+        false -> 0
+    end.
+
+store_horizon_capacity_for_dispatch(StoreID, PeerDispatch) ->
+    StoreLoad = store_load(StoreID, PeerDispatch),
+    max(0, store_target(StoreLoad, PeerDispatch)
+        - StoreLoad#store_load.assigned_task_count).
+
+store_target(#store_load{ target_task_count = 0 }, PeerDispatch) ->
+    peer_assignment_limit(PeerDispatch);
+store_target(#store_load{ target_task_count = Target }, _PeerDispatch) ->
+    Target.
+
+store_is_explored(StoreID, #peer_dispatch{ stores = Stores }) ->
+    (maps:get(StoreID, Stores, #store_load{}))#store_load.assigned_task_count > 0.
+
+%% @doc Bound speculative store breadth while letting a fast peer reveal
+%% independent source-store capacity before its measured cap has grown.
+store_exploration_available(#peer_dispatch{
+        concurrency_cap = ConcurrencyCap,
+        stores = Stores }) ->
+    ExploredStoreCount = maps:fold(
+        fun(_ID, #store_load{ assigned_task_count = Count }, Acc)
+                when Count > 0 ->
+                Acc + 1;
+            (_ID, #store_load{}, Acc) ->
+                Acc
+        end,
+        0,
+        Stores),
+    ExploredStoreCount < max(?CONCURRENCY_CAP_INITIAL, ConcurrencyCap).
+
+peer_assignment_capacity(#peer_dispatch{
+        assigned_task_count = AssignedTaskCount } = PeerDispatch) ->
+    max(0, peer_assignment_limit(PeerDispatch) - AssignedTaskCount).
+
+peer_assignment_limit(PeerDispatch) ->
+    erlang:ceil(peer_concurrency_cap(PeerDispatch)
+        * ?PRODUCTIVE_GROWTH_FACTOR).
 
 %% @doc Rank a peer. Runnable peers precede blocked peers, then lower load and
 %% higher capacity win.
@@ -408,7 +497,7 @@ put_peer_dispatch(Peer, PeerDispatch,
 store_load(StoreID, #peer_dispatch{ stores = Stores }) ->
     maps:get(StoreID, Stores, #store_load{}).
 
-%% @doc Add one completed fetch attempt to the peer controller's observations.
+%% @doc Add one completed fetch attempt to the scheduler's peer observations.
 record_result(Peer, DeliveredBytes, FetchTiming, State) ->
     #state{ observations = Observations } = State,
     Observation = maps:get(Peer, Observations, #observation{}),
@@ -417,7 +506,9 @@ record_result(Peer, DeliveredBytes, FetchTiming, State) ->
         fetch_timing = merge_fetch_timing(
             Observation#observation.fetch_timing, FetchTiming)
     },
-    State#state{ observations = maps:put(Peer, Observation2, Observations) }.
+    State#state{
+        observations = maps:put(Peer, Observation2, Observations)
+    }.
 
 merge_fetch_timing(#fetch_timing{} = A, #fetch_timing{} = B) ->
     #fetch_timing{
@@ -449,6 +540,7 @@ reset_fetch_timings(Observations) ->
 tick(Peers, InflightCounts, DemandPeers, NowMs, State) ->
     #state{
         delivery = Delivery,
+        aggregate_delivery = AggregateDelivery,
         cap_memory = Memory,
         observations = Observations
     } = State,
@@ -464,11 +556,14 @@ tick(Peers, InflightCounts, DemandPeers, NowMs, State) ->
     HasDemand = fun(Peer) ->
         maps:is_key(Peer, DemandPeers)
     end,
-    Goodput = delivery_goodput(Delivery2),
+    AggregateDelivery2 = update_aggregate_delivery(
+        Peers, Perfs, InflightCounts, NowMs, AggregateDelivery),
+    Goodput = bound_aggregate_goodput(
+        delivery_goodput(Delivery2), aggregate_goodput(AggregateDelivery2)),
     {Caps2, Memory2} = recompute(Peers, Goodput, FetchTimings,
         HasDemand, Memory),
     State2 = State#state{ cap_memory = Memory2, caps = Caps2,
-        delivery = Delivery2,
+        delivery = Delivery2, aggregate_delivery = AggregateDelivery2,
         observations = reset_fetch_timings(Observations) },
     publish(State2),
     State2.
@@ -480,7 +575,6 @@ tick(Peers, InflightCounts, DemandPeers, NowMs, State) ->
 publish(#state{ caps = Caps } = State) ->
     stash_cap_memory(State),
     TotalCap = lists:sum(maps:values(Caps)),
-    catch ets:insert(?MODULE, {concurrency_cap_total, TotalCap}),
     arweave_metrics:gauge_set(sync_total_concurrency_cap, TotalCap),
     Labels = [arweave_util:format_peer(Peer) || Peer <- maps:keys(Caps)],
     prune_stale_peer_metrics(Labels),
@@ -502,13 +596,6 @@ prune_stale_labels(Name, CurrentLabels) ->
     lists:foreach(
         fun(Label) -> arweave_metrics:gauge_remove(Name, [Label]) end,
         ExistingLabels -- CurrentLabels).
-
-%% @doc Sum of the latest active-peer concurrency caps.
-published_concurrency_cap_total() ->
-    try ets:lookup(?MODULE, concurrency_cap_total) of
-        [{concurrency_cap_total, Value}] -> Value;
-        _ -> 0
-    catch _:_ -> 0 end.
 
 %%%===================================================================
 %%% Goodput measurement.
@@ -580,6 +667,58 @@ goodput_rate(Rate) -> Rate.
 delivery_goodput(Delivery) ->
     maps:map(fun(_P, {_B, _T, R}) -> goodput_rate(R) end, Delivery).
 
+update_aggregate_delivery(Peers, Perfs, InflightCounts, Now,
+        AggregateDelivery) ->
+    ActivePeers = lists:sort(Peers),
+    TotalBytes = lists:sum([maps:get(Peer, Perfs, 0) || Peer <- Peers]),
+    TotalInflight = lists:sum([
+        maps:get(Peer, InflightCounts, 0) || Peer <- Peers
+    ]),
+    Previous = case AggregateDelivery of
+        {ActivePeers, Entry} -> Entry;
+        _ -> undefined
+    end,
+    Entry2 = aggregate_delivery_entry(
+        TotalBytes, TotalInflight, Now, Previous),
+    {ActivePeers, Entry2}.
+
+aggregate_delivery_entry(TotalBytes, TotalInflight, Now,
+        {PrevBytes, PrevTime, PrevRate})
+        when Now > PrevTime andalso TotalBytes >= PrevBytes ->
+    case TotalBytes == PrevBytes andalso TotalInflight == 0 of
+        true ->
+            {TotalBytes, Now, PrevRate};
+        false ->
+            ElapsedMs = Now - PrevTime,
+            Sample = (TotalBytes - PrevBytes) / ElapsedMs,
+            Rate = case PrevRate of
+                undefined -> Sample;
+                _ -> arweave_util:ema(
+                    PrevRate, Sample, ?AGGREGATE_GOODPUT_ALPHA)
+            end,
+            {TotalBytes, Now, snap_to_noise_floor(Rate, ElapsedMs)}
+    end;
+aggregate_delivery_entry(TotalBytes, _TotalInflight, Now, _Previous) ->
+    {float(TotalBytes), Now, undefined}.
+
+aggregate_goodput({[_SinglePeer], _Entry}) ->
+    undefined;
+aggregate_goodput({_ActivePeers, {_Bytes, _Time, Rate}}) ->
+    Rate;
+aggregate_goodput(_AggregateDelivery) ->
+    undefined.
+
+bound_aggregate_goodput(Goodput, undefined) ->
+    Goodput;
+bound_aggregate_goodput(Goodput, AggregateRate) ->
+    TotalRate = lists:sum(maps:values(Goodput)),
+    case TotalRate > AggregateRate andalso TotalRate > 0.0 of
+        true -> maps:map(
+            fun(_Peer, Rate) -> Rate * AggregateRate / TotalRate end,
+            Goodput);
+        false -> Goodput
+    end.
+
 %%%===================================================================
 %%% Derived cap.
 %%%===================================================================
@@ -596,7 +735,7 @@ recompute(Peers, Goodput, FetchTimings, HasDemand, State) ->
             FetchTiming = maps:get(Peer, FetchTimings, #fetch_timing{}),
             {Pressure, FailureMs} = failure_pressure(FetchTiming),
             ProductiveMs = FetchTiming#fetch_timing.productive_ms,
-            PipelineCeiling = pipeline_ceiling(Rate),
+            PipelineCeiling = pipeline_ceiling(Rate, PrevCap),
             ControlCeiling = cap_step(
                 PrevCap, ProductiveMs, Pressure, HasDemand(Peer)),
             Cap = max(?CONCURRENCY_CAP_MIN,
@@ -618,7 +757,7 @@ limiting_bound(_PipelineCeiling, _ControlCeiling) ->
     pipeline.
 
 %% @doc Record every input and bound used for a peer's cap decision. This is
-%% emitted once per active peer per control tick for live controller diagnosis.
+%% emitted once per active peer per scheduler tick for live scheduler diagnosis.
 log_cap_decision(Peer, PrevCap, Cap, LimitingBound, Rate,
         PipelineCeiling, ControlCeiling, Pressure,
         ProductiveMs, FailureMs, HasDemand, FetchTiming) ->
@@ -677,12 +816,14 @@ cap_step(PrevCap, ProductiveMs, Pressure, HasDemand) ->
             max(?CONCURRENCY_CAP_MIN, RetainedCap)
     end.
 
-%% @doc Bound the cap to four seconds of measured delivery, with an
-%% exploration floor.
-pipeline_ceiling(Rate) when Rate > 0.0 ->
-    max(?CONCURRENCY_CAP_INITIAL,
-        round(Rate * ?MAX_PIPELINE_MS / ?DATA_CHUNK_SIZE));
-pipeline_ceiling(_Rate) ->
+%% @doc Bound active requests to the measured horizon plus one exploration
+%% step. Applying another step to the previous cap here would compound the
+%% probe already included in MeasuredCeiling.
+pipeline_ceiling(Rate, _PrevCap) when Rate > 0.0 ->
+    max(?CONCURRENCY_CAP_INITIAL, round(
+        Rate * ?MAX_PIPELINE_MS * ?PRODUCTIVE_GROWTH_FACTOR
+            / ?DATA_CHUNK_SIZE));
+pipeline_ceiling(_Rate, _PrevCap) ->
     ?CONCURRENCY_CAP_INITIAL.
 
 %%%===================================================================
@@ -697,28 +838,109 @@ dispatch_tracks_fetch_capacity_test() ->
     Dispatches0 = test_dispatch(#{peer => 2}),
     ?assertEqual(0.0, load(peer, Dispatches0)),
     Task = #task{ state = fetching, store_id = StoreID },
-    Dispatches1 = record_task(peer, Task, Dispatches0),
-    ?assertEqual(0.5, load(peer, Dispatches1)),
+    Dispatches1 = start_task(peer, Task, Dispatches0),
+    %% The three-task assignment limit is ceil(2 * 1.25).
+    ?assertEqual(1 / 3, load(peer, Dispatches1)),
     ?assert(has_capacity(peer, Dispatches1)),
-    Dispatches2 = record_task(peer, Task, Dispatches1),
-    ?assertEqual(1.0, load(peer, Dispatches2)),
+    Dispatches2 = start_task(peer, Task, Dispatches1),
+    ?assertEqual(2 / 3, load(peer, Dispatches2)),
     ?assertNot(has_capacity(peer, Dispatches2)).
 
+queued_footprint_tasks_share_peer_horizon_with_fetches_test() ->
+    Peer = peer,
+    StoreID = store,
+    Footprint = #footprint{ store_id = StoreID },
+    Source = #task_source{ peer = Peer },
+    Task = #task{ state = queued, store_id = StoreID,
+        footprint = Footprint, sources = [Source] },
+    %% A two-fetch cap has a three-task assignment limit, leaving one queued
+    %% replacement beyond its concurrent fetches.
+    Dispatches0 = test_dispatch(#{Peer => 2}),
+    Dispatches1 = enqueue_tasks(Peer, [Task, Task, Task], Dispatches0),
+    ?assertEqual(1.0, load(Peer, Dispatches1)),
+    %% A new reservation cannot claim more peer horizon, but an already-queued
+    %% task may consume a fetch slot without increasing assigned work.
+    Reservation = #footprint_reservation{ store_id = StoreID },
+    ?assertNot(has_capacity(Reservation, Source, Dispatches1)),
+    ?assert(has_capacity(Task, Source, Dispatches1)),
+    Dispatches2 = start_task(Peer, Task, Dispatches1),
+    ?assertEqual(1.0, load(Peer, Dispatches2)),
+    ?assert(has_capacity(Task, Source, Dispatches2)),
+    Dispatches3 = start_task(Peer, Task, Dispatches2),
+    ?assertNot(has_capacity(Task, Source, Dispatches3)).
+
+start_dispatch_restores_queued_assignment_horizon_test() ->
+    Peer = peer,
+    StoreID = store,
+    Task = #task{ state = queued, peer = Peer, store_id = StoreID,
+        footprint = #footprint{ store_id = StoreID } },
+    %% A two-fetch cap has a three-task assignment horizon. Two persistent
+    %% queued footprint children therefore leave room for only one more task.
+    State = #state{ caps = #{Peer => 2} },
+    Dispatches = start_dispatch(#{}, [Task, Task], State),
+    ?assertEqual(2 / 3, load(Peer, Dispatches)),
+    ?assertEqual(1, store_capacity(Peer, StoreID, Dispatches)).
+
+assignment_horizon_preserves_bounded_store_exploration_test() ->
+    Peer = peer,
+    Source = #task_source{ peer = Peer },
+    %% A cap-one peer has a two-task assignment limit after rounding up its
+    %% one-quarter queue allowance. It may explore two stores, but not a third.
+    StoreIDs = lists:seq(1, 2),
+    Dispatches = lists:foldl(
+        fun(StoreID, Acc) ->
+            ?assert(assignment_has_capacity(
+                StoreID, peer_dispatch(Peer, Acc))),
+            Task = #task{ store_id = StoreID,
+                footprint = #footprint{ store_id = StoreID },
+                sources = [Source] },
+            enqueue_tasks(Peer, [Task], Acc)
+        end,
+        test_dispatch(#{Peer => 1}),
+        StoreIDs),
+    ExistingStoreID = hd(StoreIDs),
+    ThirdStoreID = 3,
+    ?assertNot(assignment_has_capacity(
+        ExistingStoreID, peer_dispatch(Peer, Dispatches))),
+    ?assertNot(assignment_has_capacity(
+        ThirdStoreID, peer_dispatch(Peer, Dispatches))).
+
 dispatch_splits_peer_capacity_across_stores_test() ->
-    %% A four-request cap split across two stores gives each a target of two.
+    %% A four-request cap has a five-task assignment limit. Splitting it across
+    %% two stores rounds each store target up to three; the peer-wide limit
+    %% prevents both rounded shares from being filled simultaneously.
     Dispatches0 = set_store_task_targets(peer, [store_a, store_b],
         test_dispatch(#{peer => 4})),
     Task = #task{ state = fetching, store_id = store_a },
-    Dispatches1 = record_task(peer, Task, Dispatches0),
-    ?assertEqual(0.5, store_load(peer, store_a, Dispatches1)),
+    Dispatches1 = start_task(peer, Task, Dispatches0),
+    ?assertEqual(1 / 3, store_load(peer, store_a, Dispatches1)),
     ?assertEqual(0.0, store_load(peer, store_b, Dispatches1)),
-    %% One ordinary task plus one reserved task fills store_a's two-task share.
-    Reservation = ar_sync_footprint:test_reservation(
-        store_a, #footprint{ store_id = store_a }, [], peer, 1, bound),
-    FootprintDispatch = ar_sync_footprint:test_dispatch(
-        ar_sync_footprint:test_state([Reservation]), 1),
+    %% One fetching task plus two queued tasks fills store_a's three-task share.
+    Footprint = #footprint{ store_id = store_a },
+    FootprintTask = #task{ state = queued, store_id = store_a,
+        footprint = Footprint },
+    Dispatches2 = enqueue_tasks(
+        peer, [FootprintTask, FootprintTask], Dispatches1),
     ?assertEqual(0,
-        store_capacity(peer, store_a, FootprintDispatch, Dispatches1)).
+        store_capacity(peer, store_a, Dispatches2)).
+
+assigned_stores_remain_in_target_split_test() ->
+    Peer = peer,
+    StoreA = store_a,
+    StoreB = store_b,
+    %% A four-fetch cap permits five assigned tasks. Filling store A while it is
+    %% the only ready store must not let its target reset when only B is ready.
+    Dispatches0 = set_store_task_targets(Peer, [StoreA],
+        test_dispatch(#{Peer => 4})),
+    Task = #task{ store_id = StoreA },
+    Dispatches1 = lists:foldl(
+        fun(_, Acc) -> start_task(Peer, Task, Acc) end,
+        Dispatches0,
+        lists:seq(1, 5)),
+    Dispatches2 = set_store_task_targets(
+        #{Peer => [StoreB]}, Dispatches1),
+    ?assertEqual(0, store_capacity(Peer, StoreA, Dispatches2)),
+    ?assertEqual(0, store_capacity(Peer, StoreB, Dispatches2)).
 
 source_capacity_filter_precedes_load_test() ->
     StoreID = store,
@@ -731,7 +953,7 @@ source_capacity_filter_precedes_load_test() ->
     %% The first peer has the lower tie-break value but its only slot is full.
     Dispatches0 = test_dispatch(#{BlockedPeer => 1, ReadyPeer => 2}),
     BlockedTask = #task{ state = fetching, store_id = StoreID },
-    Dispatches = record_task(BlockedPeer, BlockedTask, Dispatches0),
+    Dispatches = start_task(BlockedPeer, BlockedTask, Dispatches0),
     ReadySources = lists:filter(
         fun(Source) ->
             has_capacity(Source, Dispatches)
@@ -804,6 +1026,30 @@ update_delivery_test() ->
     ?assertEqual(0.0, goodput_rate(undefined)),
     ?assertEqual(1.5, goodput_rate(1.5)).
 
+aggregate_goodput_bounds_peer_sum_test() ->
+    PeerA = peer_a,
+    PeerB = peer_b,
+    %% Individual asymmetric estimates sum to five while the aggregate path
+    %% measured four. Scaling by four-fifths preserves peer proportions.
+    Goodput = bound_aggregate_goodput(#{PeerA => 3.0, PeerB => 2.0}, 4.0),
+    ?assertEqual(2.4, maps:get(PeerA, Goodput)),
+    ?assertEqual(1.6, maps:get(PeerB, Goodput)),
+    ?assertEqual(4.0, lists:sum(maps:values(Goodput))),
+    %% A single peer keeps its burst-tolerant per-peer estimate.
+    ?assertEqual(undefined,
+        aggregate_goodput({[PeerA], {0.0, 0, 1.0}})).
+
+aggregate_delivery_smooths_bucket_boundary_test() ->
+    CS = float(?DATA_CHUNK_SIZE),
+    Entry0 = aggregate_delivery_entry(0, 1, 0, undefined),
+    %% Ten chunks in one second seed a ten-chunk/s aggregate estimate.
+    Entry1 = aggregate_delivery_entry(10 * ?DATA_CHUNK_SIZE, 1, 1000, Entry0),
+    ?assertEqual(10 * CS / 1000, element(3, Entry1)),
+    %% A driven empty second retains four-fifths under the five-sample EWMA.
+    Entry2 = aggregate_delivery_entry(
+        10 * ?DATA_CHUNK_SIZE, 1, 2000, Entry1),
+    ?assertEqual(8 * CS / 1000, element(3, Entry2)).
+
 %% Productive demand probes upward from the cap retained after failure
 %% pressure. Demand without useful delivery only applies the cut.
 cap_step_test() ->
@@ -836,16 +1082,29 @@ cap_step_test() ->
     {FastRejectPressure, 250} = failure_pressure(FastRejectTiming),
     ?assertEqual(123, cap_step(100, 18000, FastRejectPressure, true)).
 
+pipeline_ceiling_tracks_measured_delivery_test() ->
+    CurrentCap = 100,
+    CurrentRate = CurrentCap * ?DATA_CHUNK_SIZE / ?MAX_PIPELINE_MS,
+    SlowRate = 80 * ?DATA_CHUNK_SIZE / ?MAX_PIPELINE_MS,
+    %% The five-second delivery horizon includes one quarter of exploration.
+    ?assertEqual(125, pipeline_ceiling(CurrentRate, CurrentCap)),
+    %% The probe is applied once to the measured eighty-request horizon.
+    ?assertEqual(100, pipeline_ceiling(SlowRate, CurrentCap)),
+    SevereRate = 60 * ?DATA_CHUNK_SIZE / ?MAX_PIPELINE_MS,
+    ?assertEqual(75, pipeline_ceiling(SevereRate, CurrentCap)).
+
 %% Caps cover exactly the active peers, retain per-peer control memory when a
 %% peer leaves, and remain bounded by measured delivery.
 recompute_test() ->
     A = {1, 1, 1, 1, 1}, B = {2, 2, 2, 2, 2},
     No = fun(_) -> false end,
     Yes = fun(_) -> true end,
-    %% About 100 MiB/s in bytes/ms derives the capped 1600-request,
-    %% four-second pipeline ceiling.
+    %% About 100 MiB/s in bytes/ms derives a 2500-request pipeline ceiling:
+    %% 400 chunks/s * 5 seconds * the 1.25 probe factor.
     Rate = 104857.6,
-    Ceiling = round(Rate * ?MAX_PIPELINE_MS / ?DATA_CHUNK_SIZE),
+    MeasuredHorizon = round(Rate * ?MAX_PIPELINE_MS
+        * ?PRODUCTIVE_GROWTH_FACTOR / ?DATA_CHUNK_SIZE),
+    Ceiling = MeasuredHorizon,
     G = #{ A => Rate, B => Rate },
     InitialState = #{
         A => 100,
@@ -872,16 +1131,17 @@ recompute_test() ->
     {Caps3, _S3} = recompute([A, B], G, Timings0, Yes, S2),
     ?assertEqual(99, maps:get(B, Caps3)),
     %% Pipeline ceiling: a peer whose measured delivery collapses is clamped
-    %% to four seconds of its 5242.88 B/ms measured rate.
+    %% to its measured delivery horizon.
     LowRateCeiling =
-        round(5242.88 * ?MAX_PIPELINE_MS / ?DATA_CHUNK_SIZE),
+        round(5242.88 * ?MAX_PIPELINE_MS
+            * ?PRODUCTIVE_GROWTH_FACTOR / ?DATA_CHUNK_SIZE),
     {Caps4, _} = recompute([A], #{ A => 5242.88 },
-        #{ A => Productive }, No, #{ A => 100 }),
+        #{ A => Productive }, No, #{ A => 200 }),
     ?assertEqual(LowRateCeiling, maps:get(A, Caps4)),
     %% Unmeasured peers retain the eight-request exploration seed.
     {Caps5, _} = recompute([A], #{}, #{}, No, #{}),
     ?assertEqual(?CONCURRENCY_CAP_INITIAL, maps:get(A, Caps5)),
-    ?assertEqual(1600, Ceiling),
+    ?assertEqual(2500, Ceiling),
     ok.
 
 %% Worker-time pressure is isolated by peer and clean productive queued work
@@ -916,7 +1176,7 @@ fast_peer_turns_slow_test() ->
     TickMs = 1000,
     RTTMs = 250,
     %% Twenty-four productive queued ticks grow the eight-request seed to the
-    %% 1600-request pipeline ceiling.
+    %% 2500-request measured ceiling.
     WarmTicks = 24,
     %% Ten EWMA updates move 400 cps close enough to 10 cps for the
     %% response-time ceiling to reduce the cap to roughly one-eighth of its
@@ -926,24 +1186,25 @@ fast_peer_turns_slow_test() ->
         RTTMs, TickMs),
     FastCap = lists:nth(WarmTicks, Caps),
     SlowCaps = lists:nthtail(WarmTicks, Caps),
-    ?assertEqual(1600, FastCap),
+    ?assertEqual(2500, FastCap),
     %% The stale goodput estimate may briefly retain the old cap, but the
     %% measured-delivery ceiling must then drain it substantially.
     ?assert(lists:last(SlowCaps) =< FastCap div 8).
 
-%% A serve-rate step may raise the cap only to the configured maximum delivery
-%% horizon, and clean growth approaches that ceiling by one quarter per tick.
+%% A serve-rate step remains bounded by one probe above the measured delivery
+%% horizon, and clean growth approaches it by one quarter per tick.
 rate_step_cap_bounded_test() ->
     Peer = {7, 7, 7, 7, 7},
     TickMs = 1000,
     RTTMs = 250,
-    %% Twenty ticks approach the old 400-request ceiling; ten ticks at the
-    %% higher rate continue toward the new 1600-request ceiling.
+    %% Twenty ticks approach the 625-request ceiling; ten ticks at the higher
+    %% rate continue toward the new 2500-request ceiling.
     WarmRates = lists:duplicate(20, 100),
     StepRates = lists:duplicate(10, 400),
     Caps = delivery_caps(Peer, WarmRates ++ StepRates, RTTMs, TickMs),
     StepCaps = lists:nthtail(length(WarmRates), Caps),
-    NewPipeline = round(400 * ?MAX_PIPELINE_MS / TickMs),
+    NewPipeline = round(400 * ?MAX_PIPELINE_MS
+        * ?PRODUCTIVE_GROWTH_FACTOR / TickMs),
     ?assert(lists:max(StepCaps) =< NewPipeline),
     %% Every clean tick is bounded by one quarter of the previous cap; the cap
     %% still rises after useful capacity increases.

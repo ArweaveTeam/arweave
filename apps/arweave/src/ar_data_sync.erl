@@ -816,9 +816,9 @@ is_footprint_record_initialized(StoreID) ->
 migration_db(StoreID) ->
     {migrations_index, StoreID}.
 
-%% @doc Update the weave-size snapshot in #data_sync_state{} and forward
-%% to the matching ar_sync_store_sweeper gen_server so its sweep loop's range
-%% clamp follows the chain tip.
+%% @doc Update the weave-size snapshot in #data_sync_state{} and forward it to
+%% the matching sync sweeper. The sweeper caches the current disk-pool threshold
+%% alongside the weave size when it handles the cast.
 set_weave_size(WeaveSize, #data_sync_state{ store_id = StoreID } = State) ->
     ar_sync:set_weave_size(StoreID, WeaveSize),
     State#data_sync_state{ weave_size = WeaveSize }.
@@ -845,9 +845,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
     ar_disk_pool:populate_data_roots(
       maps:get(disk_pool_data_roots, StateMap), StoreID),
     WeaveSize = maps:get(weave_size, StateMap),
-    %% Push the loaded weave_size into the sync sweeper (already started by
-    %% the supervisor before us); its init's range/sync_status are set
-    %% locally, but it has no chain context until we forward it.
+    %% Initialize the threshold before asking the sweeper to cache both bounds.
     ar_sync:set_weave_size(StoreID, WeaveSize),
     %% Called for its side effect: publish the initial device-lock sync metric.
     init_sync_status(StoreID),
@@ -882,8 +880,7 @@ init({StoreID, RepackInPlacePacking}) ->
                 store_id = StoreID,
                 range_start = RangeStart2,
                 range_end = RangeEnd2,
-        %% weave_size will be set on join (and forwarded to ar_sync_store_sweeper
-                %% by set_weave_size/2).
+        %% weave_size will be set on join and forwarded to the sync sweeper.
                 weave_size = 0
                },
     State1 = init_kv(State0, StoreID),

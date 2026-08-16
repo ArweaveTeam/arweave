@@ -11,7 +11,7 @@
         sources/1, sort_key/1, queue_rank/1,
         claim_size/1,
         admit/2, reservation/2, build_batch/5,
-        active_task_counts/3, has_entropy_capacity/3,
+        has_entropy_capacity/3,
         compete_for_entropy_capacity/4, bound_candidates/1,
         is_source_compatible/3,
         pending_reservations/1,
@@ -121,14 +121,17 @@ claim_size(#footprint_reservation{}) ->
 %%% Binding and batching.
 %%%===================================================================
 
-%% @doc Add a reservation when its footprint is not already tracked. Store
-%% admission is coordinated separately by the scheduler.
+%% @doc Add a reservation or refresh the same unbound footprint. Store
+%% admission is coordinated separately by the scheduler. A zero claim means
+%% the reservation refreshed or matched an existing footprint.
 admit(Reservation, Reservations) ->
     Footprint = key(Reservation),
-    case maps:is_key(Footprint, Reservations) of
-        true ->
-            rejected;
-        false ->
+    case maps:get(Footprint, Reservations, none) of
+        #footprint_reservation{ state = queued } ->
+            {ok, 0, maps:put(Footprint, Reservation, Reservations)};
+        #footprint_reservation{} ->
+            {ok, 0, Reservations};
+        none ->
             {ok, claim_size(Reservation),
                 maps:put(Footprint, Reservation, Reservations)}
     end.
@@ -177,29 +180,6 @@ build_batch(Reservation, Source, AvailableIntervals, Limit, Dispatch) ->
     FootprintKey = key(Reservation),
     Dispatch2 = put_reservation(FootprintKey, BoundReservation, Dispatch),
     {Dispatch2, Tasks, BoundReservation}.
-
-%% @doc Return active footprint tasks for one peer/store pair and peer.
-active_task_counts(Peer, StoreID, Dispatch) ->
-    maps:fold(
-        fun(_Footprint, Reservation, {StoreTasks, PeerTasks} = Counts) ->
-            #footprint_reservation{
-                state = State,
-                peer = OwnerPeer,
-                store_id = OwnerStoreID,
-                active_tasks = ActiveTasks
-            } = Reservation,
-            case OwnerPeer =:= Peer
-                    andalso (State =:= bound orelse State =:= draining) of
-                false ->
-                    Counts;
-                true when OwnerStoreID =:= StoreID ->
-                    {StoreTasks + ActiveTasks, PeerTasks + ActiveTasks};
-                true ->
-                    {StoreTasks, PeerTasks + ActiveTasks}
-            end
-        end,
-        {0, 0},
-        reservations(Dispatch)).
 
 split_intervals(Intervals, Limit) ->
     {_Remaining, Batch, Rest} = ar_intervals:fold(
@@ -412,27 +392,10 @@ compare_load_with_margin(_Candidate, _Incumbent) ->
 %%% Release.
 %%%===================================================================
 
-%% @doc Release one footprint reservation and notify discovery.
+%% @doc Release one footprint reservation. Any remaining local need is found
+%% by the store sweeper's next complete pass.
 release(Footprint, Reservations) ->
-    case maps:is_key(Footprint, Reservations) of
-        true ->
-            notify_released([Footprint]),
-            maps:remove(Footprint, Reservations);
-        false ->
-            Reservations
-    end.
-
-notify_released(Footprints) ->
-    lists:foreach(
-        fun(Footprint) ->
-            #footprint{ store_id = StoreID, partition = Partition,
-                footprint = FootprintIndex } = Footprint,
-            Offset = Partition * ar_block:partition_size()
-                + FootprintIndex * ?DATA_CHUNK_SIZE,
-            ar_events:send(sync_discovery,
-                {footprint_reservation_released, StoreID, Offset})
-        end,
-        Footprints).
+    maps:remove(Footprint, Reservations).
 
 %%%===================================================================
 %%% Queries.
@@ -631,6 +594,29 @@ test_get(Footprint, Footprints) ->
 set_max_active(MaxActive, Dispatch) ->
     Dispatch#dispatch{ max_active = MaxActive }.
 
+admit_replaces_unbound_source_snapshot_test() ->
+    StoreID = store,
+    Footprint = #footprint{ store_id = StoreID, partition = 1, footprint = 2 },
+    Original = new_reservation(StoreID, Footprint,
+        [#task_source{ peer = old_peer, footprint = Footprint }]),
+    {ok, _ClaimedChunks, Reservations} = admit(Original, new()),
+    Updated = new_reservation(StoreID, Footprint,
+        [#task_source{ peer = new_peer, footprint = Footprint }]),
+    {ok, 0, Reservations2} = admit(Updated, Reservations),
+    ?assertEqual(sources(Updated),
+        sources(maps:get(Footprint, Reservations2))).
+
+queued_reservation_avoids_peer_with_bound_store_footprint_test() ->
+    StoreID = store,
+    Peer = peer,
+    BoundFootprint = footprint(StoreID, 1),
+    QueuedFootprint = footprint(StoreID, 2),
+    Bound = bound_reservation(Peer, BoundFootprint, 1),
+    Queued = queued_reservation(Peer, QueuedFootprint),
+    Dispatch = test_dispatch(test_state([Bound, Queued]), 2),
+    [Source] = sources(Queued),
+    ?assertNot(is_source_compatible(Queued, Source, Dispatch)).
+
 build_batches_test() ->
     Peer = peer,
     Footprint = #footprint{ store_id = store, partition = 1, footprint = 2 },
@@ -713,22 +699,6 @@ task_completed_test() ->
     Reservation2 = task_completed(Reservation),
     ?assertEqual(1, Reservation2#footprint_reservation.active_tasks),
     ?assertEqual(release, task_completed(Reservation2)).
-
-active_task_counts_filter_peer_and_store_test() ->
-    Peer = peer,
-    StoreA = store_a,
-    StoreB = store_b,
-    %% Two bound tasks belong to the requested peer/store. Three draining
-    %% tasks belong to the same peer on another store. Queued work and another
-    %% peer's five tasks do not contribute to either result.
-    Reservations = [
-        test_reservation(StoreA, footprint(StoreA, 1), [], Peer, 2, bound),
-        test_reservation(StoreB, footprint(StoreB, 2), [], Peer, 3, draining),
-        test_reservation(StoreA, footprint(StoreA, 3), [], Peer, 4, queued),
-        test_reservation(StoreA, footprint(StoreA, 4), [], other_peer, 5, bound)
-    ],
-    Dispatch = test_dispatch(test_state(Reservations), length(Reservations)),
-    ?assertEqual({2, 5}, active_task_counts(Peer, StoreA, Dispatch)).
 
 competition_releases_idle_incumbent_test() ->
     IdlePeer = idle,

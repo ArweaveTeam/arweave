@@ -3,8 +3,7 @@
 -module(ar_sync_deps_mainnet).
 -behaviour(ar_sync_deps).
 
--export([get_peers_for_offset/1, pick_peers/2, is_throttled/2,
-        get_peer_ranges_for_peers/5,
+-export([pick_peers/2, is_throttled/2,
         rate_fetched_data/5, get_chunk_binary/3,
         is_chunk_cache_full/0, chunk_cache_size/0, chunk_cache_size/1,
         chunk_cache_size_limit/0,
@@ -16,18 +15,11 @@
         get_peer_release/1, get_peers/1, is_joined/0, get_weave_size/0,
         get_sync_buckets/2, fetch_chunk_intervals/2]).
 
-get_peers_for_offset(Offset) ->
-    ar_sync_discovery:get_peers_for_offset(Offset).
-
 pick_peers(Peers, Count) ->
     ar_peers:pick_peers(Peers, Count).
 
 is_throttled(Peer, Path) ->
     arweave_throttling:is_throttled(Peer, Path).
-
-get_peer_ranges_for_peers(StoreID, Peers, Offset, RangeStart, RangeEnd) ->
-    ar_sync_discovery:get_peer_ranges_for_peers(
-        StoreID, Peers, Offset, RangeStart, RangeEnd).
 
 rate_fetched_data(Peer, DataType, Result, ElapsedUs, Bytes) ->
     ar_peers:rate_fetched_data(Peer, DataType, Result, ElapsedUs, Bytes).

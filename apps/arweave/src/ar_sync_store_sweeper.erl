@@ -27,6 +27,25 @@
 %% a chunk interval job, but it is not speculative local work.
 %% The shared #unsynced_range{} contract is defined in ar_sync.hrl.
 
+%% One queued sweep range. `unsynced_range = none' records cursor progress that
+%% found no local need; otherwise the range tracks the metadata request and any
+%% partially claimed remainder for one actual #unsynced_range{}.
+%%
+%% A non-empty sweep range contains exactly one unsynced range. Byte mode initially
+%% examines at most one query-range grid step (?QUERY_RANGE_STEP_SIZE in
+%% production), but may add missing chunks from the containing footprint so
+%% byte and footprint peers can share the work; its total intervals are therefore
+%% not strictly capped to that step. Footprint mode examines one footprint-cadence
+%% step per queued range.
+-record(sweep_range, {
+    mode,
+    offset,
+    next_offset,
+    unsynced_range = none,
+    requested_at,
+    next_claim_offset = undefined
+}).
+
 -record(state, {
     %% Storage module identifier this state belongs to.
     store_id,
@@ -34,32 +53,41 @@
     range_start = -1 :: integer(),
     %% End offset of the storage module's range.
     range_end = -1 :: integer(),
-    %% Latest known weave size (chain tip). Updated via set_weave_size/2.
+    %% Byte and footprint bounds refreshed together on each chain-tip update.
     weave_size :: undefined | non_neg_integer(),
+    disk_pool_threshold :: undefined | non_neg_integer(),
     %% Mirror of ar_device_lock's view of this module's sync-mode lock.
     sync_status = undefined,
     %% Cursor for the in-progress sweep. `undefined' means the loop hasn't
     %% started its first sweep yet.
     cursor = undefined :: undefined | ar_sync_cursor:t(),
-    %% Offsets whose newly cached peer ranges still need to be offered to the
-    %% task generator. A map deduplicates concurrent peer discoveries.
-    pending_revisits = gb_sets:new(),
+    %% Cursor at the end of the unsynced ranges already in the sweep queues.
+    readahead_cursor = undefined,
+    %% Bounded FIFO sweep ranges, keyed by cursor mode.
+    sweep_queues = #{
+        byte => queue:new(),
+        footprint => queue:new()
+    },
+    next_mode = byte,
     %% Due time and token for the next scheduled sweep. An earlier request
     %% replaces the token; the superseded timer is ignored when it arrives.
     next_sweep = undefined :: undefined | {integer(), reference()}
 }).
 
-%% Peer selection (get_hot_peers / the chunk2 throttle) moved to ar_sync_chunk_picker.
-
 %% Delay before retrying a range claim that could not be processed.
 -define(BLOCKED_RETRY_DELAY_MS, 200).
-%% Pace cursor progress when local need produced no tasks. Two seconds keeps
-%% metadata discovery moving without letting a cold store race across its range.
--define(NO_TASK_ADVANCE_DELAY_MS, 2_000).
-%% Fixed delay between sweeps. The sweep loop does not issue HTTP (that
-%% lives in ar_sync_discovery's metadata job queues, which have their
-%% own pacing), so this only prevents tight-loop log spam and CPU spin
-%% on fully-synced modules.
+%% Keep roughly 8 GiB of readahead in each mode: eight 1 GB byte query steps,
+%% or thirty-two 256 MiB footprints. Each queue includes its active head.
+-define(BYTE_SWEEP_QUEUE_MAX_LENGTH, 8).
+-define(FOOTPRINT_SWEEP_QUEUE_MAX_LENGTH, 32).
+%% Give discovery ten seconds to warm a non-empty queued range. Once this fixed
+%% minimum age is reached, use whatever peer metadata is currently cached;
+%% slower responses can populate the cache for a later sweep.
+-define(SWEEP_RANGE_WARM_WAIT_MS, 10_000).
+-define(CHUNK_PATH, "/chunk2").
+%% Fixed delay between sweeps. The sweep loop does not issue HTTP; discovery's
+%% HTTP workers have their own pacing. This delay only prevents tight-loop log
+%% spam and CPU spin on fully-synced modules.
 -ifdef(AR_TEST).
 -define(SWEEP_RESTART_DELAY_MS, 1_000).
 -else.
@@ -94,12 +122,11 @@ start(StoreID) ->
 %% The default store handles transient data and does not participate in network
 %% sync admission, dispatch, or metrics.
 store_ids() ->
-    StorageModules = [arweave_config:config_to_storage_module(M)
-        || M <- arweave_config:get([storage_modules])],
-    [ar_storage_module:id(SM) || SM <- StorageModules].
+    [ar_storage_module:id(Module)
+        || Module <- arweave_config:storage_modules()].
 
-%% @doc Update the weave-size snapshot. Called by ar_data_sync on chain-tip
-%% moves so the sweep loop's range clamp follows the tip.
+%% @doc Update the chain-tip snapshot. The sweeper reads the corresponding
+%% disk-pool threshold when it processes this asynchronous update.
 set_weave_size(StoreID, WeaveSize) ->
     gen_server:cast(name(StoreID), {set_weave_size, WeaveSize}).
 
@@ -109,7 +136,6 @@ set_weave_size(StoreID, WeaveSize) ->
 
 init(StoreID) ->
     {RangeStart, RangeEnd} = ar_storage_module:get_padded_range(StoreID),
-    ok = ar_events:subscribe(sync_discovery),
     ?LOG_INFO([{event, init}, {module, ?MODULE}, {store_id, StoreID},
         {range_start, RangeStart}, {range_end, RangeEnd}]),
     {ok, #state{
@@ -130,14 +156,19 @@ handle_call(Request, _From, State) ->
 %% Request an immediate sweep. Kicked by ar_data_sync after the chunk-copy
 %% phase; subsequent sweeps are self-perpetuating.
 handle_cast(start, State) ->
+    %% An early wake is harmless: a queued range recomputes its remaining warm
+    %% wait before it is used.
     {noreply, schedule_sweep(0, State)};
 
-%% Chain-tip update from ar_data_sync. A decrease (reorg) needs no special
-%% handling: the smaller tip takes effect via the live cursor bounds in the
-%% sweep loop; tasks already submitted past the shrunk tip simply fail to fetch
-%% and have their ranges released.
+%% A decrease (reorg) needs no special handling: the smaller bounds take
+%% effect through the live cursor ends. Work already submitted past them fails
+%% to fetch and releases its ranges normally.
 handle_cast({set_weave_size, WeaveSize}, State) ->
-    {noreply, State#state{ weave_size = WeaveSize }};
+    DiskPoolThreshold = ar_disk_pool:get_threshold(),
+    {noreply, State#state{
+        weave_size = WeaveSize,
+        disk_pool_threshold = DiskPoolThreshold
+    }};
 
 handle_cast(Cast, State) ->
     ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -148,27 +179,6 @@ handle_info({sweep, Token},
     do_sweep(State#state{ next_sweep = undefined });
 handle_info({sweep, _StaleToken}, State) ->
     {noreply, State};
-
-handle_info({event, sync_discovery,
-        {chunk_intervals_updated, StoreID, Offset}},
-        #state{ store_id = StoreID, cursor = Cursor } = State)
-        when Cursor =/= undefined ->
-    %% Byte and footprint describe peer source representations, not the local
-    %% need lane that requested them. Recheck both lanes that have already
-    %% reached this offset; the revisit map deduplicates notifications.
-    State2 = maybe_queue_revisit(byte, Offset, Cursor, State),
-    State3 = maybe_queue_revisit(footprint, Offset, Cursor, State2),
-    {noreply, State3};
-
-handle_info({event, sync_discovery,
-        {footprint_reservation_released, StoreID, Offset}},
-        #state{ store_id = StoreID } = State) ->
-    %% The released reservation proves this footprint was already offered.
-    %% Revisit it even if a new sweep pass has since restarted behind it.
-    {noreply, queue_revisit(footprint, Offset, State)};
-
-handle_info({event, sync_discovery, _Event}, State) ->
-    {noreply, State};
 handle_info(Info, State) ->
     ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
     {noreply, State}.
@@ -177,49 +187,6 @@ terminate(Reason, _State) ->
     ?LOG_INFO([{event, terminate}, {module, ?MODULE},
         {reason, io_lib:format("~p", [Reason])}]),
     ok.
-
-%%%===================================================================
-%%% Pending revisit queue.
-%%%===================================================================
-
-maybe_queue_revisit(Mode, Offset, Cursor, State) ->
-    case Offset =< ar_sync_cursor:current(Mode, Cursor) of
-        true -> queue_revisit(Mode, Offset, State);
-        false -> State
-    end.
-
-queue_revisit(Mode, Offset, State) ->
-    PendingRevisits = State#state.pending_revisits,
-    State2 = State#state{
-        pending_revisits = gb_sets:add_element({Offset, Mode}, PendingRevisits)
-    },
-    schedule_sweep(0, State2).
-
-sweep_pending_revisit(State, DiskPoolThreshold) ->
-    {Offset, Mode} = gb_sets:smallest(State#state.pending_revisits),
-    {Delay, State2} =
-        retry_pending_revisit(Mode, Offset, DiskPoolThreshold, State),
-    {noreply, schedule_sweep(Delay, State2)}.
-
-retry_pending_revisit(Mode, Offset, DiskPoolThreshold, State) ->
-    case revisit_range(Mode, Offset, DiskPoolThreshold, State) of
-        blocked ->
-            {?BLOCKED_RETRY_DELAY_MS, State};
-        {ok, _TasksProduced} ->
-            PendingRevisits = gb_sets:del_element(
-                {Offset, Mode}, State#state.pending_revisits),
-            {0, State#state{ pending_revisits = PendingRevisits }}
-    end.
-
-%% @doc Recompute local need at Offset after peer ranges are discovered and
-%% offer it for admission without moving the active sweep cursor.
-revisit_range(Mode, Offset, DiskPoolThreshold, State) ->
-    #state{ cursor = Cursor } = State,
-    Start = ar_sync_cursor:start(Mode, Cursor),
-    RevisitCursor = ar_sync_cursor:set(Mode, max(Offset, Start), Cursor),
-    {Result, _UnsyncedRanges, _Cursor2} = find_and_claim_unsynced_ranges(
-        [Mode], RevisitCursor, DiskPoolThreshold, State),
-    Result.
 
 %%%===================================================================
 %%% Sweep loop.
@@ -241,143 +208,103 @@ do_sweep(State) ->
     end.
 
 sweep(#state{ cursor = undefined } = State) ->
-    case start_sweep(State) of
-        {ok, Cursor} ->
-            State2 = State#state{ cursor = Cursor },
-            {noreply, schedule_sweep(0, State2)};
-        blocked ->
-            %% Node not joined yet, or footprint migration in flight.
-            {noreply, schedule_sweep(?NODE_JOIN_RETRY_DELAY_MS, State)}
+    State2 = initialize_sweep(State),
+    case can_sweep(State2) of
+        {blocked, Delay} ->
+            {noreply, schedule_sweep(Delay, State)};
+        complete ->
+            %% The module begins above both live bounds, so there is no active
+            %% sweep to complete. Retry when chain state may have advanced.
+            {noreply, schedule_sweep(?NODE_JOIN_RETRY_DELAY_MS, State)};
+        ready ->
+            ?LOG_DEBUG([{event, sync_network}, {stage, sweep_started},
+                {store_id, State#state.store_id},
+                {range_start, State#state.range_start},
+                {range_end, State#state.range_end}]),
+            sweep_ready(State2)
     end;
 sweep(State) ->
     publish_sweep_metrics(State),
-    DiskPoolThreshold = ar_disk_pool:get_threshold(),
-    PendingRevisits = State#state.pending_revisits,
-    case {can_sweep(State, DiskPoolThreshold),
-            gb_sets:is_empty(PendingRevisits)} of
-        {{blocked, Delay}, _} ->
+    case can_sweep(State) of
+        {blocked, Delay} ->
             {noreply, schedule_sweep(Delay, State)};
-        {_, false} ->
-            sweep_pending_revisit(State, DiskPoolThreshold);
-        {complete, true} ->
-            %% Both cursors reached their live bounds. This is the sole
-            %% completion trigger, so the sweep tracks a shrinking or
-            %% growing weave tip without rewriting its static bounds.
+        complete ->
             complete_sweep(State);
-        {ready, true} ->
-            {Delay, NewState} = sweep_next_range(State, DiskPoolThreshold),
-            {noreply, schedule_sweep(Delay, NewState)}
+        ready ->
+            sweep_ready(State)
     end.
 
-%% @doc Build a new sweep.
-start_sweep(State) ->
-    #state{
-        store_id = StoreID,
-        range_start = Start,
-        range_end = End,
-        weave_size = WeaveSize
-    } = State,
-    case ready_to_start(StoreID, WeaveSize) of
-        false ->
-            blocked;
-        true ->
-            %% The live weave tip and disk-pool threshold are applied at each
-            %% sweep/completion check, so the sweep tracks them without
-            %% rewriting its static bounds.
-            Cursor = ar_sync_cursor:new(Start, End),
-            DiskPoolThreshold = ar_disk_pool:get_threshold(),
-            case ar_sync_cursor:is_complete(Cursor, WeaveSize, DiskPoolThreshold) of
-                true ->
-                    %% Storage module's range is entirely above the current weave
-                    %% tip; nothing to sync yet. The caller retries after a delay.
-                    blocked;
-                false ->
-                    ?LOG_DEBUG([{event, sync_network}, {stage, sweep_started},
-                        {store_id, StoreID}, {range_start, Start}, {range_end, End}]),
-                    {ok, Cursor}
-            end
-    end.
+%% @doc Initialize the traversal state for a new sweep.
+initialize_sweep(State) ->
+    Cursor = ar_sync_cursor:new(State#state.range_start, State#state.range_end),
+    State#state{
+        cursor = Cursor,
+        readahead_cursor = Cursor,
+        sweep_queues = new_sweep_queues(),
+        next_mode = byte
+    }.
 
-ready_to_start(_StoreID, undefined) ->
-    false;
-ready_to_start(StoreID, _WeaveSize) ->
-    case ar_sync_deps:is_joined() of
-        false -> false;
-        true -> ar_sync_deps:is_footprint_record_initialized(StoreID)
-    end.
-
-can_sweep(State, DiskPoolThreshold) ->
+%% @doc Gate an initialized sweep on node, store, disk, and live-bound checks.
+can_sweep(State) ->
     #state{
         store_id = StoreID,
         weave_size = WeaveSize,
+        disk_pool_threshold = DiskPoolThreshold,
         cursor = Cursor
     } = State,
-    case ar_sync_deps:is_disk_space_sufficient(StoreID) of
+    Ready = WeaveSize =/= undefined
+        andalso DiskPoolThreshold =/= undefined
+        andalso ar_sync_deps:is_joined()
+        andalso ar_sync_deps:is_footprint_record_initialized(StoreID),
+    case Ready of
         false ->
-            {blocked, 30_000};
-        not_initialized ->
-            {blocked, 1_000};
+            {blocked, ?NODE_JOIN_RETRY_DELAY_MS};
         true ->
-            case ar_sync_cursor:is_complete(Cursor, WeaveSize, DiskPoolThreshold) of
-                true ->
-                    complete;
+            case ar_sync_deps:is_disk_space_sufficient(StoreID) of
                 false ->
-                    ready
+                    {blocked, 30_000};
+                not_initialized ->
+                    {blocked, 1_000};
+                true ->
+                    case ar_sync_cursor:is_complete(
+                            Cursor, WeaveSize, DiskPoolThreshold) of
+                        true -> complete;
+                        false -> ready
+                    end
             end
     end.
 
-%% @doc Find the next locally-needed window on each lane, offer it to
-%% ar_sync_chunk_picker:claim_ranges/2, and advance past it. The cursor stays
-%% put while the store has no claim headroom. A range that produces no tasks
-%% advances at a fixed pace; discovery queues a revisit when newly fetched
-%% chunk intervals become available. Only a step that produced tasks is
-%% unpaced.
-sweep_next_range(State, DiskPoolThreshold) ->
-    #state{ cursor = Cursor } = State,
-    {Result, UnsyncedRanges, Cursor2} = find_and_claim_unsynced_ranges(
-        ar_sync_cursor:kinds(), Cursor, DiskPoolThreshold, State),
-    {Delay, Cursor3} =
-        case Result of
-            blocked ->
-                {?BLOCKED_RETRY_DELAY_MS, Cursor2};
-            {ok, 0} when UnsyncedRanges =/= [] ->
-                {?NO_TASK_ADVANCE_DELAY_MS,
-                    advance_cursor(Cursor2, UnsyncedRanges)};
-            {ok, _TasksProduced} ->
-                {0, advance_cursor(Cursor2, UnsyncedRanges)}
-        end,
-    {Delay, State#state{ cursor = Cursor3 }}.
-
-find_and_claim_unsynced_ranges(Modes, Cursor, DiskPoolThreshold, State) ->
-    #state{ store_id = StoreID, weave_size = WeaveSize } = State,
-    {UnsyncedRanges, Cursor2} = next_unsynced_ranges(
-        Modes, StoreID, Cursor, WeaveSize, DiskPoolThreshold),
-    Result = ar_sync_chunk_picker:claim_ranges(StoreID, UnsyncedRanges),
-    {Result, UnsyncedRanges, Cursor2}.
-
-advance_cursor(Cursor, UnsyncedRanges) ->
-    lists:foldl(
-        fun(UnsyncedRange, CursorAcc) ->
-            ar_sync_cursor:advance(UnsyncedRange, CursorAcc)
-        end,
-        Cursor,
-        UnsyncedRanges).
+sweep_ready(State) ->
+    State2 = fill_sweep_queues(State),
+    case process_sweep_queues(State2) of
+        {ok, State3} ->
+            {noreply, schedule_sweep(0, State3)};
+        {blocked, Delay, State3} ->
+            NextDelay = case can_extend_sweep_queue(State3) of
+                true -> 0;
+                false -> Delay
+            end,
+            {noreply, schedule_sweep(NextDelay, State3)};
+        done ->
+            %% Both mode queues reached the end of their queued readahead.
+            %% Completion is observed after the final queued range is processed.
+            {noreply, schedule_sweep(0, State2)}
+    end.
 
 %% @doc Start the next sweep once both cursors reached their live bounds.
 complete_sweep(#state{ store_id = StoreID } = State) ->
     ?LOG_DEBUG([{event, sync_network}, {stage, sweep_complete},
         {store_id, StoreID}]),
-    case start_sweep(State) of
-        {ok, Cursor2} ->
-            State2 = State#state{ cursor = Cursor2 },
-            {noreply, schedule_sweep(?SWEEP_RESTART_DELAY_MS, State2)};
-        blocked ->
-            %% Clear the cursor so later sweep casts start a new sweep
-            %% (silent retry) instead of re-logging sweep_complete every second.
-            State2 = State#state{ cursor = undefined },
-            {noreply, schedule_sweep(?NODE_JOIN_RETRY_DELAY_MS, State2)}
-    end.
+    State2 = State#state{
+        cursor = undefined,
+        readahead_cursor = undefined,
+        sweep_queues = new_sweep_queues()
+    },
+    {noreply, schedule_sweep(?SWEEP_RESTART_DELAY_MS, State2)}.
 
+%% @doc Schedule a sweep for Delay milliseconds from now - unless
+%% there's already an earlier sweep scheduled. This ensures there's always
+%% only a single scheduled sweep at a time.
 schedule_sweep(Delay, State) ->
     #state{ next_sweep = NextSweep } = State,
     DueMs = ar_timer:monotonic_ms() + Delay,
@@ -394,28 +321,14 @@ schedule_sweep(Delay, State) ->
 %%% Unsynced range discovery.
 %%%===================================================================
 
-next_unsynced_ranges(Modes, StoreID, Cursor, WeaveSize, DiskPoolThreshold) ->
-    {UnsyncedRanges, Cursor3} = lists:foldl(
-        fun(Kind, {Acc, CursorAcc}) ->
-            case next_unsynced_range(Kind, StoreID, CursorAcc, WeaveSize,
-                    DiskPoolThreshold) of
-                {none, Cursor2Acc} -> {Acc, Cursor2Acc};
-                {UnsyncedRange, Cursor2Acc} ->
-                    {[UnsyncedRange | Acc], Cursor2Acc}
-            end
-        end,
-        {[], Cursor},
-        Modes),
-    {lists:reverse(UnsyncedRanges), Cursor3}.
-
-next_unsynced_range(Kind, StoreID, Cursor, WeaveSize, DiskPoolThreshold) ->
-    Offset = ar_sync_cursor:current(Kind, Cursor),
-    case find_unsynced_range(Kind, Offset, StoreID, Cursor, WeaveSize,
+next_unsynced_range(Mode, StoreID, Cursor, WeaveSize, DiskPoolThreshold) ->
+    Offset = ar_sync_cursor:current(Mode, Cursor),
+    case find_unsynced_range(Mode, Offset, StoreID, Cursor, WeaveSize,
             DiskPoolThreshold) of
         done ->
             {none, Cursor};
         {no_need, NextOffset} ->
-            {none, ar_sync_cursor:set(Kind, NextOffset, Cursor)};
+            {none, ar_sync_cursor:set(Mode, NextOffset, Cursor)};
         {need, UnsyncedRange} ->
             {UnsyncedRange, Cursor}
     end.
@@ -428,7 +341,7 @@ find_unsynced_range(byte, Offset, StoreID, Cursor, WeaveSize,
         true ->
             done;
         false ->
-            End2 = min(Offset + ar_sync_cursor:query_range_step_size(), LiveEnd),
+            End2 = byte_range_end(Offset, LiveEnd),
             UnsyncedIntervals = ar_sync_deps:unsynced_intervals(Offset, End2, StoreID),
             case ar_intervals:is_empty(UnsyncedIntervals) of
                 true ->
@@ -436,11 +349,11 @@ find_unsynced_range(byte, Offset, StoreID, Cursor, WeaveSize,
                 false ->
                     %% Align the peer-interval lookup + warming to the first UNSYNCED
                     %% byte, not the raw sweep offset. The offset can lag in the synced
-                    %% tail of a QUERY_RANGE_STEP_SIZE window while the unsynced data
-                    %% (and its warmed cache) live in the NEXT window;
-                    %% get_peer_ranges_for_peers
-                    %% aligns DOWN to the grid, so a lookup from the raw offset checks
-                    %% the wrong (synced, empty) window and nothing is ever fetchable.
+                    %% tail of a QUERY_RANGE_STEP_SIZE step while the unsynced data
+                    %% (and its cached metadata) live in the following step;
+                    %% Discovery aligns byte cache keys down to the grid, so a
+                    %% lookup from the raw offset checks
+                    %% the wrong synced, empty step and nothing is ever fetchable.
                     QueryOffset = frontier_offset(Offset, UnsyncedIntervals),
                     UnsyncedFootprintBytes = unsynced_bytes_in_footprint(
                         StoreID, QueryOffset, RangeStart, LiveEnd),
@@ -483,6 +396,13 @@ find_unsynced_range(footprint, Offset, StoreID, Cursor, WeaveSize,
             end
     end.
 
+%% @doc End the byte sweep at the next global metadata-query boundary. Storage
+%% module padded starts are not query-grid aligned; adding one step to such a
+%% start would permanently skip the beginning of every following grid range.
+byte_range_end(Offset, LiveEnd) ->
+    Step = ar_sync_cursor:query_range_step_size(),
+    min(((Offset div Step) + 1) * Step, LiveEnd).
+
 %% @doc Return locally missing chunks from the footprint at Offset as byte
 %% intervals, clipped to the store's active range.
 unsynced_bytes_in_footprint(StoreID, Offset, RangeStart, RangeEnd) ->
@@ -505,12 +425,250 @@ frontier_offset(Offset, UnsyncedIntervals) ->
     end.
 
 %%%===================================================================
+%%% Sweep queues.
+%%%===================================================================
+
+fill_sweep_queues(State) ->
+    State2 = fill_sweep_queue(byte, State),
+    fill_sweep_queue(footprint, State2).
+
+fill_sweep_queue(Mode, State) ->
+    Queue = sweep_queue(Mode, State),
+    ReadaheadCursor = State#state.readahead_cursor,
+    LiveEnd = ar_sync_cursor:live_end(
+        Mode, ReadaheadCursor, State#state.weave_size,
+        State#state.disk_pool_threshold),
+    Offset = ar_sync_cursor:current(Mode, ReadaheadCursor),
+    case queue:len(Queue) >= sweep_queue_max_length(Mode)
+            orelse Offset >= LiveEnd of
+        true ->
+            State;
+        false ->
+            {UnsyncedRange, ReadaheadCursor2} = next_unsynced_range(
+                Mode, State#state.store_id, ReadaheadCursor,
+                State#state.weave_size, State#state.disk_pool_threshold),
+            enqueue_sweep_range(
+                Mode, Offset, UnsyncedRange, ReadaheadCursor2, State)
+    end.
+
+enqueue_sweep_range(Mode, Offset, none, ReadaheadCursor, State) ->
+    %% `none' means the complete byte query-range or footprint-cadence step
+    %% contains no unsynced range. Keep a queue placeholder so its cursor
+    %% advance remains ordered behind any earlier pending ranges.
+    do_enqueue_sweep_range(#sweep_range{
+        mode = Mode,
+        offset = Offset,
+        next_offset = ar_sync_cursor:current(Mode, ReadaheadCursor),
+        requested_at = ar_timer:monotonic_ms()
+    }, ReadaheadCursor, State);
+enqueue_sweep_range(Mode, Offset, UnsyncedRange, ReadaheadCursor, State) ->
+    #unsynced_range{ query_offset = QueryOffset } = UnsyncedRange,
+    Peers = candidate_peers(QueryOffset),
+    %% Tell discovery to begin fetching availability so it is likely cached
+    %% before this sweep range is processed.
+    ok = ar_sync_discovery:warm_peer_ranges(
+        State#state.store_id, Peers, QueryOffset),
+    %% Reserve this range as readahead; the processed cursor advances later.
+    ReadaheadCursor2 = ar_sync_cursor:advance(UnsyncedRange, ReadaheadCursor),
+    do_enqueue_sweep_range(#sweep_range{
+        mode = Mode,
+        offset = Offset,
+        next_offset = ar_sync_cursor:current(Mode, ReadaheadCursor2),
+        unsynced_range = UnsyncedRange,
+        requested_at = ar_timer:monotonic_ms()
+    }, ReadaheadCursor2, State).
+
+do_enqueue_sweep_range(SweepRange, ReadaheadCursor, State) ->
+    Mode = SweepRange#sweep_range.mode,
+    Queue = sweep_queue(Mode, State),
+    Queue2 = queue:in(SweepRange, Queue),
+    set_sweep_queue(Mode, Queue2,
+        State#state{ readahead_cursor = ReadaheadCursor }).
+
+candidate_peers(Offset) ->
+    AllPeers = case arweave_config:get([sync, local_peers_only]) of
+        true -> arweave_config:get([peers, local]);
+        false -> ar_sync_discovery:get_peers_for_offset(Offset)
+    end,
+    UnthrottledPeers = lists:filter(
+        fun(Peer) ->
+            not ar_sync_deps:is_throttled(Peer, ?CHUNK_PATH)
+        end,
+        AllPeers),
+    HotPeers = case UnthrottledPeers of
+        [] -> AllPeers;
+        _ -> UnthrottledPeers
+    end,
+    ar_sync_deps:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT).
+
+%% @doc Maintain separate byte and footprint sweep-range queues. Give the
+%% round-robin preferred head the first chance to advance, falling back to the
+%% other when it is blocked or its queue is done. Advance at most one head per
+%% call, and delay only when neither can advance.
+process_sweep_queues(State) ->
+    FirstMode = State#state.next_mode,
+    SecondMode = other_mode(FirstMode),
+    case process_next_sweep_range(FirstMode, State) of
+        {ok, State2} ->
+            {ok, State2#state{ next_mode = SecondMode }};
+        {FirstResult, StateAfterFirst} ->
+            case process_next_sweep_range(SecondMode, StateAfterFirst) of
+                {ok, State2} ->
+                    {ok, State2#state{ next_mode = FirstMode }};
+                {SecondResult, State2} ->
+                    block_if_either_mode_blocked(
+                        FirstResult, SecondResult, State2)
+            end
+    end.
+
+other_mode(byte) -> footprint;
+other_mode(footprint) -> byte.
+
+block_if_either_mode_blocked(done, done, _State) ->
+    done;
+block_if_either_mode_blocked({blocked, Delay}, done, State) ->
+    {blocked, Delay, State};
+block_if_either_mode_blocked(done, {blocked, Delay}, State) ->
+    {blocked, Delay, State};
+block_if_either_mode_blocked(
+        {blocked, Delay1}, {blocked, Delay2}, State) ->
+    {blocked, min(Delay1, Delay2), State}.
+
+process_next_sweep_range(Mode, State) ->
+    case queue:peek(sweep_queue(Mode, State)) of
+        empty ->
+            {done, State};
+        {value, #sweep_range{ unsynced_range = none } = SweepRange} ->
+            {ok, finish_sweep_range(SweepRange, State)};
+        {value, SweepRange} ->
+            process_sweep_range(SweepRange, State)
+    end.
+
+process_sweep_range(
+        #sweep_range{ requested_at = RequestedAt } = SweepRange, State) ->
+    %% Wait until discovery has had the full warming interval for this range.
+    WarmDelay = max(0, RequestedAt + ?SWEEP_RANGE_WARM_WAIT_MS
+        - ar_timer:monotonic_ms()),
+    maybe
+        0 ?= WarmDelay,
+        do_process_sweep_range(SweepRange, State)
+    else
+        _ -> {{blocked, WarmDelay}, State}
+    end.
+
+do_process_sweep_range(SweepRange, State) ->
+    #sweep_range{ unsynced_range = UnsyncedRange } = SweepRange,
+    #unsynced_range{
+        query_offset = QueryOffset,
+        range_start = RangeStart,
+        range_end = RangeEnd
+    } = UnsyncedRange,
+    Peers = candidate_peers(QueryOffset),
+    %% Start warming candidates discovered since enqueue, but do not extend this
+    %% range's fixed wait; the claim below uses only metadata already cached.
+    ok = ar_sync_discovery:warm_peer_ranges(
+        State#state.store_id, Peers, QueryOffset),
+    {PeerRanges, _CacheStatus} = ar_sync_discovery:cached_peer_ranges(
+        State#state.store_id, Peers, QueryOffset, RangeStart, RangeEnd),
+    revalidate_and_claim(SweepRange, PeerRanges, State).
+
+revalidate_and_claim(SweepRange, PeerRanges, State) ->
+    #sweep_range{ mode = Mode, offset = Offset } = SweepRange,
+    case find_unsynced_range(Mode, Offset, State#state.store_id,
+            State#state.cursor, State#state.weave_size,
+            State#state.disk_pool_threshold) of
+        {need, UnsyncedRange} ->
+            UnsyncedRange2 = resume_unsynced_range(SweepRange, UnsyncedRange),
+            case ar_intervals:is_empty(
+                    UnsyncedRange2#unsynced_range.intervals) of
+                true ->
+                    {ok, finish_sweep_range(SweepRange, State)};
+                false ->
+                    claim_range(SweepRange, UnsyncedRange2, PeerRanges, State)
+            end;
+        _NoLongerNeeded ->
+            {ok, finish_sweep_range(SweepRange, State)}
+    end.
+
+claim_range(SweepRange, UnsyncedRange, PeerRanges, State) ->
+    case ar_sync_chunk_picker:claim_ranges(
+            State#state.store_id, [UnsyncedRange], PeerRanges) of
+        blocked ->
+            {{blocked, ?BLOCKED_RETRY_DELAY_MS}, State};
+        {ok, _TasksProduced, NextClaimOffset} ->
+            {ok, resume_sweep_range(SweepRange, NextClaimOffset, State)};
+        {ok, _TasksProduced} ->
+            {ok, finish_sweep_range(SweepRange, State)}
+    end.
+
+resume_unsynced_range(
+        #sweep_range{ next_claim_offset = undefined }, UnsyncedRange) ->
+    UnsyncedRange;
+resume_unsynced_range(#sweep_range{ next_claim_offset = NextClaimOffset },
+        UnsyncedRange) ->
+    #unsynced_range{ intervals = Intervals, range_end = RangeEnd } =
+        UnsyncedRange,
+    Remaining = ar_intervals:from_list([{RangeEnd, NextClaimOffset}]),
+    UnsyncedRange#unsynced_range{
+        intervals = ar_intervals:intersection(Intervals, Remaining)
+    }.
+
+resume_sweep_range(SweepRange, NextClaimOffset, State) ->
+    Mode = SweepRange#sweep_range.mode,
+    {{value, SweepRange}, Queue2} = queue:out(sweep_queue(Mode, State)),
+    SweepRange2 = SweepRange#sweep_range{
+        next_claim_offset = NextClaimOffset
+    },
+    set_sweep_queue(Mode, queue:in_r(SweepRange2, Queue2), State).
+
+finish_sweep_range(SweepRange, State) ->
+    #sweep_range{ mode = Mode, next_offset = NextOffset } = SweepRange,
+    {{value, SweepRange}, Queue2} = queue:out(sweep_queue(Mode, State)),
+    State2 = set_sweep_queue(Mode, Queue2, State),
+    State3 = case NextOffset of
+        undefined ->
+            State2;
+        _ ->
+            Cursor2 = ar_sync_cursor:set(
+                Mode, NextOffset, State#state.cursor),
+            State2#state{ cursor = Cursor2 }
+    end,
+    State3.
+
+new_sweep_queues() ->
+    #{byte => queue:new(), footprint => queue:new()}.
+
+sweep_queue(Mode, State) ->
+    maps:get(Mode, State#state.sweep_queues).
+
+set_sweep_queue(Mode, Queue, State) ->
+    SweepQueues = maps:update(Mode, Queue, State#state.sweep_queues),
+    State#state{ sweep_queues = SweepQueues }.
+
+sweep_queue_max_length(byte) ->
+    ?BYTE_SWEEP_QUEUE_MAX_LENGTH;
+sweep_queue_max_length(footprint) ->
+    ?FOOTPRINT_SWEEP_QUEUE_MAX_LENGTH.
+
+can_extend_sweep_queue(Mode, State) ->
+    ReadaheadCursor = State#state.readahead_cursor,
+    queue:len(sweep_queue(Mode, State)) < sweep_queue_max_length(Mode)
+        andalso ar_sync_cursor:current(Mode, ReadaheadCursor)
+            < ar_sync_cursor:live_end(
+                Mode, ReadaheadCursor, State#state.weave_size,
+                State#state.disk_pool_threshold).
+
+can_extend_sweep_queue(State) ->
+    can_extend_sweep_queue(byte, State)
+        orelse can_extend_sweep_queue(footprint, State).
+
+%%%===================================================================
 %%% Metrics.
 %%%===================================================================
 
-%% @doc Publish bytes swept per lane, normalized to 0..range size so both
-%% lanes and every store share one scale. The byte lane's cursor offset IS its
-%% bytes swept; the footprint lane's cursor steps one chunk per footprint
+%% @doc Publish bytes swept per mode, normalized to 0..range size so both
+%% modes and every store share one scale. The byte mode's cursor offset IS its
+%% bytes swept; the footprint mode's cursor steps one chunk per footprint
 %% (each step covering a whole footprint scattered across the partition), so
 %% its progress is chunk-steps scaled by the footprint size. Flat while the
 %% store has unsynced data = a stalled sweep; repeating passes = a sawtooth.
@@ -553,170 +711,235 @@ frontier_offset_test() ->
     ?assertEqual(260, frontier_offset(260, Intervals)),
     ?assertEqual(450, frontier_offset(450, Intervals)).
 
-byte_cursor_advances_to_end_of_successful_range_test() ->
-    Cursor = ar_sync_cursor:new(0, 100),
-    UnsyncedRange = #unsynced_range{ kind = byte, advance = 50 },
-    Cursor2 = advance_cursor(Cursor, [UnsyncedRange]),
-    ?assertEqual(50, ar_sync_cursor:current(byte, Cursor2)).
+byte_range_end_aligns_padded_store_start_test() ->
+    Step = ar_sync_cursor:query_range_step_size(),
+    %% A start 122,880 bytes before the grid must stop at the next boundary,
+    %% not one full step after the unaligned start.
+    Offset = 10 * Step - 122_880,
+    ?assertEqual(10 * Step, byte_range_end(Offset, 12 * Step)),
+    ?assertEqual(11 * Step, byte_range_end(10 * Step, 12 * Step)).
 
-zero_task_step_advances_after_metadata_pace_test_() ->
-    RangeEnd = ?DATA_CHUNK_SIZE,
+fresh_sweep_range_waits_test() ->
+    SweepRange = #sweep_range{ requested_at = ar_timer:monotonic_ms() },
+    State = #state{},
+    {{blocked, WarmDelay}, State} = process_sweep_range(SweepRange, State),
+    ?assert(WarmDelay > 0),
+    ?assert(WarmDelay =< ?SWEEP_RANGE_WARM_WAIT_MS).
+
+warmed_sweep_range_proceeds_test_() ->
     ar_test_util:with_mocked([
+        {ar_sync_discovery, get_peers_for_offset, fun(0) -> [] end},
+        {ar_sync_discovery, warm_peer_ranges,
+            fun(test_store, [], 0) -> ok end},
+        {ar_sync_discovery, cached_peer_ranges,
+            fun(test_store, [], 0, 0, 100) -> {[], ok} end},
+        {ar_sync_deps, pick_peers, fun([], _Limit) -> [] end},
         {ar_sync_deps, unsynced_intervals,
-            fun(0, RangeEnd2, test_store) ->
-                ar_intervals:from_list([{RangeEnd2, 0}])
-            end},
-        {ar_sync_deps, unsynced_footprint_intervals,
-            fun(_Partition, _Footprint, test_store) -> ar_intervals:new() end},
-        {ar_footprint_record, get_location, fun(_) -> {0, 0} end},
-        {ar_sync_chunk_picker, claim_ranges,
-            fun(test_store, [_UnsyncedRange]) -> {ok, 0} end}
+            fun(0, 100, test_store) -> ar_intervals:new() end}
     ], fun() ->
+        Cursor = ar_sync_cursor:new(0, 100),
+        UnsyncedRange = #unsynced_range{
+            kind = byte,
+            query_offset = 0,
+            intervals = ar_intervals:from_list([{100, 0}]),
+            range_start = 0,
+            range_end = 100,
+            advance = 100
+        },
+        %% Ten seconds is a minimum age, independent of metadata completeness.
+        RequestedAt = ar_timer:monotonic_ms() - ?SWEEP_RANGE_WARM_WAIT_MS,
+        SweepRange = #sweep_range{
+            mode = byte,
+            offset = 0,
+            next_offset = 100,
+            unsynced_range = UnsyncedRange,
+            requested_at = RequestedAt
+        },
         State = #state{
             store_id = test_store,
-            range_start = 0,
-            range_end = RangeEnd,
-            weave_size = RangeEnd,
-            cursor = ar_sync_cursor:new(0, RangeEnd)
+            weave_size = 100,
+            disk_pool_threshold = 100,
+            cursor = Cursor,
+            readahead_cursor = Cursor,
+            sweep_queues = #{
+                byte => queue:in(SweepRange, queue:new()),
+                footprint => queue:new()
+            }
         },
-        {Delay, State2} = sweep_next_range(State, RangeEnd),
-        %% A zero-task step advances after the configured two-second pace.
-        ?assertEqual(2_000, Delay),
-        ?assertEqual(RangeEnd,
-            ar_sync_cursor:current(byte, State2#state.cursor))
+        {ok, State2} = process_sweep_range(SweepRange, State),
+        ?assert(queue:is_empty(sweep_queue(byte, State2))),
+        ?assertEqual(100, ar_sync_cursor:current(byte, State2#state.cursor))
     end, 30).
 
-set_weave_size_decrease_keeps_sweep_test() ->
+empty_sweep_range_has_no_metadata_wait_test() ->
+    Now = ar_timer:monotonic_ms(),
+    Cursor = ar_sync_cursor:new(0, ?DATA_CHUNK_SIZE),
+    Empty = #sweep_range{
+        mode = byte,
+        next_offset = ?DATA_CHUNK_SIZE,
+        requested_at = Now
+    },
+    State = #state{ cursor = Cursor, readahead_cursor = Cursor },
+    State2 = do_enqueue_sweep_range(Empty, Cursor, State),
+    {ok, State3} = process_next_sweep_range(byte, State2),
+    ?assert(queue:is_empty(sweep_queue(byte, State3))).
+
+waiting_metadata_allows_other_mode_progress_test_() ->
+    ar_test_util:with_mocked([
+        {ar_sync_discovery, get_peers_for_offset,
+            fun(0) -> [test_peer] end},
+        {ar_sync_discovery, warm_peer_ranges,
+            fun(test_store, [test_peer], 0) -> ok end},
+        {ar_sync_discovery, cached_peer_ranges,
+            fun(test_store, [test_peer], 0, 0, 100) ->
+                {[], cache_miss}
+            end},
+        {ar_sync_deps, is_throttled,
+            fun(test_peer, ?CHUNK_PATH) -> false end},
+        {ar_sync_deps, pick_peers,
+            fun([test_peer], _Limit) -> [test_peer] end}
+    ], fun() ->
+        Cursor = ar_sync_cursor:new(0, 100),
+        UnsyncedRange = #unsynced_range{
+            kind = byte,
+            query_offset = 0,
+            intervals = ar_intervals:from_list([{100, 0}]),
+            range_start = 0,
+            range_end = 100,
+            advance = 100
+        },
+        ByteSweepRange = #sweep_range{
+            mode = byte,
+            offset = 0,
+            next_offset = 100,
+            unsynced_range = UnsyncedRange,
+            requested_at = ar_timer:monotonic_ms()
+        },
+        FootprintSweepRange = #sweep_range{
+            mode = footprint,
+            offset = 0,
+            next_offset = 100,
+            requested_at = ar_timer:monotonic_ms()
+        },
+        State = #state{
+            store_id = test_store,
+            weave_size = 100,
+            disk_pool_threshold = 100,
+            cursor = Cursor,
+            readahead_cursor = set_test_cursors(Cursor, 100, 100),
+            sweep_queues = #{
+                byte => queue:in(ByteSweepRange, queue:new()),
+                footprint => queue:in(FootprintSweepRange, queue:new())
+            }
+        },
+        {ok, State2} = process_sweep_queues(State),
+        ?assertEqual(0, ar_sync_cursor:current(byte, State2#state.cursor)),
+        ?assertEqual(100,
+            ar_sync_cursor:current(footprint, State2#state.cursor)),
+        ?assertEqual(1, queue:len(sweep_queue(byte, State2))),
+        ?assert(queue:is_empty(sweep_queue(footprint, State2)))
+    end, 30).
+
+sync_bounds_decrease_keeps_sweep_test_() ->
+    %% Half a chunk makes the footprint bound observably distinct from the
+    %% one-chunk weave bound supplied by the cast.
+    DiskPoolThreshold = ?DATA_CHUNK_SIZE div 2,
+    ar_test_util:with_mocked([
+        {ar_disk_pool, get_threshold, fun() -> DiskPoolThreshold end}
+    ], fun() -> test_sync_bounds_decrease(DiskPoolThreshold) end, 30).
+
+test_sync_bounds_decrease(DiskPoolThreshold) ->
     Cursor = ar_sync_cursor:set(footprint, ?DATA_CHUNK_SIZE,
         ar_sync_cursor:set(byte, ?DATA_CHUNK_SIZE,
             ar_sync_cursor:new(0, 2 * ?DATA_CHUNK_SIZE))),
     State = #state{
         store_id = test_store,
         weave_size = 2 * ?DATA_CHUNK_SIZE,
+        disk_pool_threshold = 2 * ?DATA_CHUNK_SIZE,
         cursor = Cursor
     },
-    {noreply, State2} = handle_cast({set_weave_size, ?DATA_CHUNK_SIZE}, State),
-    %% The decrease updates the cached size and leaves the sweep intact; the shrunk
-    %% tip takes effect via live cursor bounds downstream.
+    {noreply, State2} = handle_cast(
+        {set_weave_size, ?DATA_CHUNK_SIZE}, State),
     ?assertEqual(?DATA_CHUNK_SIZE, State2#state.weave_size),
-    ?assertEqual(2 * ?DATA_CHUNK_SIZE,
+    ?assertEqual(DiskPoolThreshold, State2#state.disk_pool_threshold),
+    ?assertEqual(Cursor, State2#state.cursor),
+    ?assertEqual(?DATA_CHUNK_SIZE,
         ar_sync_cursor:live_end(byte, State2#state.cursor,
-            2 * ?DATA_CHUNK_SIZE, 2 * ?DATA_CHUNK_SIZE)),
-    ?assertEqual(2 * ?DATA_CHUNK_SIZE,
+            State2#state.weave_size, State2#state.disk_pool_threshold)),
+    ?assertEqual(DiskPoolThreshold,
         ar_sync_cursor:live_end(footprint, State2#state.cursor,
-            2 * ?DATA_CHUNK_SIZE, 2 * ?DATA_CHUNK_SIZE)).
-
-chunk_intervals_updated_revisits_without_moving_cursor_test_() ->
-    Offset = ?DATA_CHUNK_SIZE,
-    %% Four chunks keep the test range small while leaving both cursors ahead
-    %% of the completed metadata range.
-    RangeEnd = 4 * Offset,
-    ar_test_util:with_mocked([
-        {ar_disk_pool, get_threshold, fun() -> RangeEnd end},
-        {ar_sync_deps, is_disk_space_sufficient, fun(test_store) -> true end},
-        {ar_sync_deps, unsynced_intervals,
-            fun(Start, End, test_store) ->
-                ar_intervals:from_list([{End, Start}])
-            end},
-        {ar_footprint_record, get_location, fun(_) -> {0, 0} end},
-        {ar_footprint_record, get_unsynced_intervals,
-            fun(0, 0, test_store) -> ar_intervals:new() end},
-        {ar_sync_chunk_picker, claim_ranges,
-            fun(test_store, UnsyncedRanges) ->
-                put(revisited_ranges, UnsyncedRanges),
-                {ok, 0}
-            end}
-    ], fun() ->
-        erase(revisited_ranges),
-        Cursor = ar_sync_cursor:set(footprint, 3 * Offset,
-            ar_sync_cursor:set(byte, 2 * Offset,
-                ar_sync_cursor:new(0, RangeEnd))),
-        NextSweep = {Offset, make_ref()},
-        State = #state{
-            store_id = test_store,
-            range_start = 0,
-            range_end = RangeEnd,
-            weave_size = RangeEnd,
-            cursor = Cursor,
-            next_sweep = NextSweep
-        },
-        {noreply, State2} = handle_info(
-            {event, sync_discovery,
-                {chunk_intervals_updated, test_store, Offset}}, State),
-        ?assertEqual(Cursor, State2#state.cursor),
-        ?assert(gb_sets:is_element(
-            {Offset, byte}, State2#state.pending_revisits)),
-        ?assert(gb_sets:is_element(
-            {Offset, footprint}, State2#state.pending_revisits)),
-        {0, State3} = retry_pending_revisit(
-            byte, Offset, RangeEnd, State2),
-        ?assertNot(gb_sets:is_element(
-            {Offset, byte}, State3#state.pending_revisits)),
-        ?assert(gb_sets:is_element(
-            {Offset, footprint}, State3#state.pending_revisits)),
-        [UnsyncedRange] = get(revisited_ranges),
-        ?assertEqual(byte, UnsyncedRange#unsynced_range.kind),
-        ?assertEqual(Offset, UnsyncedRange#unsynced_range.query_offset),
-        {0, State4} = retry_pending_revisit(
-            footprint, Offset, RangeEnd, State3),
-        ?assert(gb_sets:is_empty(State4#state.pending_revisits)),
-        {noreply, State5} = handle_info(
-            {event, sync_discovery,
-                {chunk_intervals_updated, test_store, RangeEnd}}, State4),
-        ?assert(gb_sets:is_empty(State5#state.pending_revisits))
-    end, 30).
+            State2#state.weave_size, State2#state.disk_pool_threshold)).
 
 %% can_sweep gates range generation on disk space and the tip.
 can_sweep_test_() ->
     ar_test_util:with_mocked([
+        {ar_node, is_joined, fun() -> true end},
+        {ar_data_sync, is_footprint_record_initialized, fun(_) -> true end},
         {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end}
     ], fun test_can_sweep/0, 30).
 
 test_can_sweep() ->
-    Cursor = ar_sync_cursor:new(0, 1000),
-    State = #state{ store_id = store1, range_end = 1000, weave_size = 1000,
-        cursor = Cursor },
-    %% Disk ok and at least one cursor below the tip -> ready.
-    ?assertEqual(ready, can_sweep(State, 1000)),
-    %% Both cursors reached their live bounds -> sweep done.
-    ?assertEqual(complete,
-        can_sweep(State#state{ cursor = set_test_cursors(Cursor, 1000, 1000) }, 1000)),
-    %% One cursor can finish early while the other keeps the sweep active.
-    ?assertEqual(ready,
-        can_sweep(State#state{ cursor = set_test_cursors(Cursor, 1000, 0) }, 1000)),
-    %% The footprint cursor is complete at the disk-pool threshold even when the
-    %% storage module range extends further.
-    ?assertEqual(complete,
-        can_sweep(State#state{ cursor = set_test_cursors(Cursor, 1000, 500) }, 500)),
-    %% Weave tip below both cursors -> sweep done.
-    ?assertEqual(complete, can_sweep(State#state{ weave_size = 0 }, 500)),
-    %% Disk state gates need identification.
-    meck:expect(ar_data_sync, is_disk_space_sufficient, fun(_) -> false end),
-    ?assertEqual({blocked, 30_000}, can_sweep(State, 500)),
-    meck:expect(ar_data_sync, is_disk_space_sufficient, fun(_) -> not_initialized end),
-    ?assertEqual({blocked, 1_000}, can_sweep(State, 500)).
-
-%% start_sweep builds a sweep over the module range once the node is joined and
-%% the migration complete.
-start_sweep_test_() ->
-    ar_test_util:with_mocked([
-        {ar_node, is_joined, fun() -> true end},
-        {ar_data_sync, is_footprint_record_initialized, fun(_) -> true end},
-        {ar_disk_pool, get_threshold, fun() -> 1000 end}
-    ], fun test_start_sweep/0, 30).
-
-test_start_sweep() ->
-    State = #state{ store_id = store1, range_start = 0, range_end = 1000,
-        weave_size = 1000 },
-    {ok, Cursor} = start_sweep(State),
+    InitialState = #state{
+        store_id = store1,
+        range_start = 0,
+        range_end = 1000,
+        weave_size = 1000,
+        disk_pool_threshold = 1000
+    },
+    %% Cursor initialization starts both traversals at the module start.
+    StartedState = initialize_sweep(InitialState),
+    Cursor = StartedState#state.cursor,
     ?assertEqual(0, ar_sync_cursor:current(byte, Cursor)),
     ?assertEqual(0, ar_sync_cursor:current(footprint, Cursor)),
-    ?assertEqual(1000, ar_sync_cursor:live_end(byte, Cursor, 1000, 1000)),
-    ?assertEqual(1000, ar_sync_cursor:live_end(footprint, Cursor, 1000, 1000)),
-    %% Range entirely above the weave tip -> blocked.
-    ?assertEqual(blocked, start_sweep(State#state{ range_start = 1000 })),
-    %% Weave size not known yet -> blocked.
-    ?assertEqual(blocked, start_sweep(State#state{ weave_size = undefined })).
+    ?assertEqual(Cursor, StartedState#state.readahead_cursor),
+    ?assertEqual(ready, can_sweep(StartedState)),
+    %% A module starting at the live end has no work in this sweep.
+    ?assertEqual(complete,
+        can_sweep(initialize_sweep(
+            InitialState#state{ range_start = 1000 }))),
+    %% Both live bounds must be known before a sweep is ready.
+    ?assertEqual({blocked, ?NODE_JOIN_RETRY_DELAY_MS},
+        can_sweep(StartedState#state{ weave_size = undefined })),
+    ?assertEqual({blocked, ?NODE_JOIN_RETRY_DELAY_MS},
+        can_sweep(StartedState#state{ disk_pool_threshold = undefined })),
+    %% Joining and footprint migration completion gate the initialized sweep.
+    meck:expect(ar_node, is_joined, fun() -> false end),
+    ?assertEqual({blocked, ?NODE_JOIN_RETRY_DELAY_MS}, can_sweep(StartedState)),
+    meck:expect(ar_node, is_joined, fun() -> true end),
+    meck:expect(ar_data_sync, is_footprint_record_initialized,
+        fun(_) -> false end),
+    ?assertEqual({blocked, ?NODE_JOIN_RETRY_DELAY_MS}, can_sweep(StartedState)),
+    meck:expect(ar_data_sync, is_footprint_record_initialized,
+        fun(_) -> true end),
+
+    State = StartedState,
+    %% Disk ok and at least one cursor below the tip -> ready.
+    ?assertEqual(ready, can_sweep(State)),
+    %% Both cursors reached their live bounds -> sweep done.
+    CompleteState = State#state{
+        cursor = set_test_cursors(Cursor, 1000, 1000)
+    },
+    ?assertEqual(complete, can_sweep(CompleteState)),
+    %% One cursor can finish early while the other keeps the sweep active.
+    ActiveState = State#state{
+        cursor = set_test_cursors(Cursor, 1000, 0)
+    },
+    ?assertEqual(ready, can_sweep(ActiveState)),
+    %% The footprint cursor is complete at the disk-pool threshold even when the
+    %% storage module range extends further.
+    ThresholdState = State#state{
+        disk_pool_threshold = 500,
+        cursor = set_test_cursors(Cursor, 1000, 500)
+    },
+    ?assertEqual(complete, can_sweep(ThresholdState)),
+    %% Both live bounds below their cursors -> sweep done.
+    EmptyState = State#state{ weave_size = 0, disk_pool_threshold = 0 },
+    ?assertEqual(complete, can_sweep(EmptyState)),
+    %% Disk state gates need identification.
+    meck:expect(ar_data_sync, is_disk_space_sufficient, fun(_) -> false end),
+    ?assertEqual({blocked, 30_000}, can_sweep(State)),
+    meck:expect(ar_data_sync, is_disk_space_sufficient, fun(_) -> not_initialized end),
+    ?assertEqual({blocked, 1_000}, can_sweep(State)).
 
 set_test_cursors(Cursor, Byte, Footprint) ->
     ar_sync_cursor:set(footprint, Footprint,

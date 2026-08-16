@@ -33,16 +33,6 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [sync, max_concurrent_sync_bucket_jobs],
-            runtime => true,
-            default => ?DEFAULT_SYNC_MAX_CONCURRENT_SYNC_BUCKET_JOBS,
-            type => pos_integer,
-            legacy => data_discovery_max_concurrent_peer_scans,
-            short_description =>
-                <<"Maximum concurrent sync bucket jobs.">>
-        },
-        #{
-            enabled => true,
             option_key => [sync, request_packed_chunks],
             runtime => true,
             default => false,
