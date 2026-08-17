@@ -2,32 +2,36 @@
 
 ## Configuration
 
-Node configuration can now be inspected and changed directly from the
-`arweave` command, on top of the `arweave_config` system.
+Arweave node configuration has been completely rewritten. For details please
+see the update docs: https://docs.arweave.org/developers/mining/readme/configuration
+
+### New Option Names
+
+All configuration options have been renamed to allow grouping, and reflect their hierarchy.
+Legacy options are still supported.
+
+The new option names and their descriptions can be seen through an updated `arweave config help`.
+
+### New Option Formats
+
+New ways of supplying configuration to arweave have been implemented.
+
+- New, hierachic JSON and YAML config files
+- `--config_param` Command line flags with double-dash allow access to the renamed
+  configuration parameters.
+- `AR_CONFIG_PARAM=VALUE` Every configuration option can be set through an environment variable.
+- Legacy command line flags and config.json format are still supported.
+
+### Dynamic Set/Get
+
+All options can now be queried directly from a running node, and many options can be changed
+without needing to restart the node.
 
 - `arweave config get [option]` — print the current value of an option (or the
   whole config). Values are returned as flattened strings, and the output of
   `config get` can be fed straight back into `config set`.
 - `arweave config set <option> <value>` — set an option, including list options
-  such as `peers.local`. Arbitrary quoting in values is handled correctly, and
-  IPs are formatted in dotted notation.
-- `arweave config help [group]` — show help for a configuration group. `config
-  help` runs even while the node is running.
-
-To support this feature, configuration parameters have been renamed to allow
-grouping, and reflect their hierarchy.
-
-New ways of supplying configuration to arweave have been implemented.
-
-- New, hiearchic JSON and YAML config files
-- `--config_param` Command line flags with double-dash allow access to the renamed
-  configuration parameters when calling start scripts.
-- `AR_CONFIG_PARAM=VALUE` Every configuration option can be set through an environment variable.
-
-Both new and legacy configuration options are available to allow users time to adapt.
-
-Please, see the following link to learn more about configuring your arweave node:
-https://docs.arweave.org/developers/mining/readme/configuration
+  such as `peers.local`. 
 
 ### Configuration migration tool
 
@@ -80,36 +84,44 @@ have been introduced in this release.
 
 Peer configured as `local_peers` are not throttled.
 
-## Account tree rewritten (ETS-based)
+## Account Tree Performance Improvements
 
-The account (wallet) tree has a new ETS-based implementation with a shared
-Patricia-tree core, alongside the retained legacy implementation for reference
-and data compatibility.
-- **Streamed initialization** of the account tree, with garbage collection and
-  hibernation after initialization to reduce memory pressure.
-- More resilient persistence: transient RocksDB errors during node persistence
-  and batch account storage are retried.
-- A bug was fixed where a stale `ar_account_tree` could prevent a node from
-  restarting after a crash.
-- Extensive new metrics for observability, including
-  `account_tree_call_duration_milliseconds`, `account_tree_sink_move_hops`,
-  `account_tree_rehashed_nodes`, `ar_wallets_bytes_total`,
-  `account_tree_ets_bytes`, and `ar_storage_queue_len`.
-- New `logging.patricia` dynamic option to track account-tree hashing progress.
+The account (wallet) tree has been re-implemented to improve tree initialization and
+update times by an order of magnitude. These improvements are visible now via slightly
+faster node launch and block processing times, and ensure efficient scalability as
+the number of accounts grow in the future.
 
 ## Faster metrics endpoint
 
-Prometheus metrics were extracted into a dedicated `arweave_metrics`
-application, and `GET /metrics` now serves from a cache. The endpoint stays fast
+`GET /metrics` now serves from a cache. The endpoint stays fast
 regardless of node load or the number of metrics.
 
-## Stability and validation fixes
+## Additional Fixes
 
-Several input validation steps could crash on invalid values, in some cases halting the arweave node.
+- Several input validation steps could crash on invalid values, in some cases halting the arweave node.
 The patch includes graceful validation of certain inputs and defensive deserialization of local binaries.
+- Previously repack-in-place from `replica.2.9` to `unpacked` would occasionally stall with only a few
+GB left in the storage module. This has been fixed.
+- In order to simplify repack-in-place we've removed the `repack_cache_size_mb` option. Repack-in-place
+can now be tuned almost entirely via the `[packing, entropy, cache_size]` option
+(legacy: `replica_2_9_entropy_cache_size_mb`). Allocating more memory to the entropy cache should speed up
+repack-in-place performance. 
+- A collection of sync performance improvements have been implemented (including a fix for a stall that
+could occur with `take_one_timeout` warnings).
+- Performance improvements for `GET /sync_buckets`
 
 ## Community involvement
 
 A huge thank you to all the Mining community members who contributed to this release by identifying and investigating bugs, sharing debug logs and node metrics, and providing guidance on performance tuning!
 
 Discord users (alphabetical order):
+- Butcher_
+- Evalcast
+- JF
+- lawso2517
+- smash
+- timothynode
+
+And a further huge thank you to the following researchers who identified and helped to patch issues addressed in this release!
+
+- bbl4de (https://github.com/bbl4de)
