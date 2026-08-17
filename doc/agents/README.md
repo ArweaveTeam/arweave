@@ -37,14 +37,17 @@ resolve identically whichever way an agent reaches the file. Skills are named
 
 Invoke a skill explicitly with the tool's native prefix:
 
-- Codex: `$ar-code-review`, `$ar-fix-issue <issue-url>`, or
-  `$ar-security-triage <issue-url>`.
-- Claude Code: `/ar-code-review`, `/ar-fix-issue <issue-url>`, or
-  `/ar-security-triage <issue-url>`.
+- Codex: `$ar-code-review`, `$ar-fix-issue <issue-url>`,
+  `$ar-security-triage-external <issue-url>`, or
+  `$ar-security-triage-internal <report>`.
+- Claude Code: `/ar-code-review`, `/ar-fix-issue <issue-url>`,
+  `/ar-security-triage-external <issue-url>`, or
+  `/ar-security-triage-internal <report>`.
 
 Codex may also invoke a skill implicitly when its policy allows it, and Claude
 Code may load a skill automatically when its description matches the request.
-`ar-security-triage` is explicit-only because it writes to an external issue.
+Both triage skills are explicit-only because they write outside the working
+tree — an assessment on someone else's issue, or new issues on the tracker.
 
 Adding a skill means creating `.agents/skills/ar-<name>/SKILL.md`. There is no
 Claude Code step — the directory symlink picks it up.
@@ -52,10 +55,11 @@ Claude Code step — the directory symlink picks it up.
 Keep descriptions tool-neutral — one file serves every agent, so a description
 naming one tool's features is wrong for the others reading it.
 
-**Only user-invoked procedures get a skill** — `ar-security-triage`,
-`ar-fix-issue`, and `ar-code-review`. Security triage must be invoked by name;
-the other two may also activate when a person asks for their task. Reference
-documents get none. The "Read before you act" table in `AGENTS.md` is always in
+**Only user-invoked procedures get a skill** — `ar-security-triage-external`,
+`ar-security-triage-internal`, `ar-fix-issue`, and `ar-code-review`. The triage
+skills must be invoked by name; the other two may also activate when a person
+asks for their task. Reference documents get none, including
+`security-threat-model.md`, which the triage documents link. The "Read before you act" table in `AGENTS.md` is always in
 context and already routes them, so another skill would duplicate that routing.
 Keep the routing keywords in the table, where every agent sees them.
 

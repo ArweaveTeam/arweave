@@ -1,10 +1,14 @@
-# Evaluating a reported security issue
+# Evaluating an externally reported security issue
 
 Follow this procedure only when the user explicitly invokes the skill with a
 security-tracker issue URL:
 
-- Codex: `$ar-security-triage <issue-url>`
-- Claude Code: `/ar-security-triage <issue-url>`
+- Codex: `$ar-security-triage-external <issue-url>`
+- Claude Code: `/ar-security-triage-external <issue-url>`
+
+The report is the issue itself, written by someone outside the team. For
+findings from an internal review, use
+[security-triage-internal.md](security-triage-internal.md) instead.
 
 The invocation authorizes reformatting that issue, evaluating it, and posting
 the assessment; it does not authorize code changes.
@@ -31,37 +35,9 @@ right repository without one being named here.
 
 ## Threat model and severity
 
-Apply these trust assumptions when rating a finding:
-
-- Assume the attacker has no access to the host machine or the Erlang VM. A
-  finding contingent on either form of access is non-exploitable.
-- Treat the following actors as trusted and non-malicious while they serve the
-  named role: peers used to join the network, configured trusted peers,
-  coordinated-mining peers and exit nodes, VDF servers, and local peers. This
-  assumption does not apply to pool mining.
-- A denial of service caused by a trusted actor is not critical. Receiving the
-  wrong version of the chain from a peer used to join the network is also an
-  accepted risk.
-- Exception: even a trusted peer must not be able to take remote control of the
-  machine or steal funds; those findings remain in scope. Peers used to join the
-  network must retain no trust of any kind after the node has joined.
-
-Unexpected input from a trusted actor should still be rejected cleanly rather
-than crashing. [`AI: Reject mismatched coordinated-mining publish preimage
-instead of crashing` (#1320)][pr-1320] is the model for this case: the denial
-of service is non-critical because the coordinated-mining peer is trusted, but
-the input should be handled safely.
-
-The following are examples of non-critical robustness issues:
-
-- [`AI: Fix new CLI parser aborting boot on type-less options`
-  (#1316)][pr-1316].
-- [`AI: Release entropy semaphore on exception in record_chunk`
-  (#1319)][pr-1319], because the race is very difficult to reproduce.
-
-Very unlikely race conditions are generally not security-triage targets unless
-an attacker can trigger them with practical reliability or their impact crosses
-a trust boundary described above.
+Rate the finding against
+[security-threat-model.md](security-threat-model.md) — the trust assumptions
+and the bar a finding has to clear.
 
 ## Repository and comparison refs
 
@@ -153,6 +129,3 @@ reachability, per-version breakdown, fix-commit links.
 Refer to the branch as `arweave-dev/master`, not merely `master`.
 
 [assessment-example]: https://github.com/ArweaveTeam/avde/issues/29#issuecomment-5268223438
-[pr-1316]: https://github.com/ArweaveTeam/arweave-dev/pull/1316
-[pr-1319]: https://github.com/ArweaveTeam/arweave-dev/pull/1319
-[pr-1320]: https://github.com/ArweaveTeam/arweave-dev/pull/1320

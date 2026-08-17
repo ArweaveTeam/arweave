@@ -1,0 +1,7 @@
+interface:
+  display_name: "Arweave Internal Security Triage"
+  short_description: "Verify and file internal security review findings"
+  default_prompt: "Use $ar-security-triage-internal to verify the findings in this report and file the validated ones as issues."
+
+policy:
+  allow_implicit_invocation: false

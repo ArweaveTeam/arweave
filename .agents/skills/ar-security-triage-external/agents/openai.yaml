@@ -1,0 +1,7 @@
+interface:
+  display_name: "Arweave External Security Triage"
+  short_description: "Evaluate an externally reported Arweave security issue"
+  default_prompt: "Use $ar-security-triage-external to reformat, evaluate, and post an assessment on this security issue."
+
+policy:
+  allow_implicit_invocation: false

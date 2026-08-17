@@ -1,7 +1,0 @@
-interface:
-  display_name: "Arweave Security Triage"
-  short_description: "Evaluate an Arweave security report"
-  default_prompt: "Use $ar-security-triage to reformat, evaluate, and post an assessment on this security issue."
-
-policy:
-  allow_implicit_invocation: false

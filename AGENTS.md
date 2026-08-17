@@ -20,7 +20,9 @@ their tools to the shared documents.
 | [doc/agents/configuration.md](doc/agents/configuration.md) | Adding or reading a node configuration option |
 | [doc/agents/protocol.md](doc/agents/protocol.md) | Working on mining, packing, or recall-range code |
 | [doc/agents/code-review.md](doc/agents/code-review.md) | Reviewing a pull request, branch, or diff |
-| [doc/agents/security-triage.md](doc/agents/security-triage.md) | Explicitly invoking the `ar-security-triage` skill for a security-tracker issue |
+| [doc/agents/security-threat-model.md](doc/agents/security-threat-model.md) | Rating the severity or exploitability of any security finding |
+| [doc/agents/security-triage-external.md](doc/agents/security-triage-external.md) | Explicitly invoking the `ar-security-triage-external` skill for a security-tracker issue |
+| [doc/agents/security-triage-internal.md](doc/agents/security-triage-internal.md) | Explicitly invoking the `ar-security-triage-internal` skill for an internal review report |
 | [doc/agents/issue-fixing.md](doc/agents/issue-fixing.md) | Fixing or resolving any tracker issue |
 
 ## Agent operating rules
