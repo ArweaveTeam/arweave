@@ -2346,6 +2346,65 @@ test_overlapping_peer_metadata_preserves_store_throughput() ->
         end,
         ChunksStoredByStore).
 
+%% Contract: metadata readahead across many peers and both representations
+%% must not accumulate enough obsolete work to starve current store frontiers.
+%% Detailed metadata must continuously supply every store at its write rate.
+discovery_backlog_preserves_store_throughput_test_() ->
+    ar_sync_sim_runner:setup_sim(
+        fun test_discovery_backlog_preserves_store_throughput/0, 600).
+
+test_discovery_backlog_preserves_store_throughput() ->
+    PeerCount = 30,
+    StoreCPS = 20,
+    ChunksPerRange = 64,
+    %% Two hundred and fifty-six sparse ranges per store contain
+    %% 256 * 64 = 16384 chunks, well above the 50 seconds * 20 chunks/s
+    %% that any one store can write during this scenario.
+    RangeCount = 256,
+    SharedIntervals = [
+        {StoreStart + RangeIndex * ?QUERY_RANGE_STEP_SIZE
+                + ChunksPerRange * ?DATA_CHUNK_SIZE,
+            StoreStart + RangeIndex * ?QUERY_RANGE_STEP_SIZE}
+        || {_StoreID, {StoreStart, _StoreEnd}}
+                <- ar_sync_sim_world:store_ranges(),
+            RangeIndex <- lists:seq(0, RangeCount - 1)
+    ],
+    Peers = maps:from_list([
+        {{10, 5, 1, ID, 1984}, #sim_peer{
+            %% Thirty peers can serve 30 * 20 = 600 chunks/s, five times the
+            %% six stores * 20 chunks/s = 120 chunks/s write ceiling.
+            max_serve_cps = StoreCPS,
+            sync_kinds = [byte, footprint],
+            sync_availability = {intervals, SharedIntervals},
+            footprint_coverage = exact,
+            %% Two simulated seconds keep metadata asynchronous and make
+            %% readahead offer work faster than the 200 workers can finish it.
+            chunk_interval_latency_ms = 2_000
+        }}
+        || ID <- lists:seq(1, PeerCount)
+    ]),
+    ar_sync_sim_runner:start_sim(#sim_world{
+        peers = Peers,
+        store_write_cps = StoreCPS,
+        node_config = #{
+            %% 32768 chunks hold over 270 seconds at the aggregate 120
+            %% chunks/s write ceiling, so cache pressure cannot set throughput.
+            [sync, cache_size] => 32768,
+            %% Sixty-four mainnet-sized entropy entries keep footprint work
+            %% from making entropy availability the limiting resource.
+            [packing, entropy, cache_size] => 16384
+        }
+    }),
+    %% Twenty seconds fill the forty-entry byte/footprint readahead queues and
+    %% create metadata pressure before the sustained interval is measured.
+    ar_sync_sim_runner:run_for(20),
+    Measurement = ar_sync_sim_runner:run_for(30),
+    %% Six stores * 20 chunks/s = 120 chunks/s. The default 90% spread helper
+    %% permits scheduler boundaries while rejecting a starved store frontier.
+    ExpectedCPS = ?SIM_STORES * StoreCPS,
+    assert_metric_utilization(stored_cps, ExpectedCPS, Measurement),
+    assert_chunks_spread_across_stores(Measurement).
+
 %% Contract: discovery can sustain sync when each store's needed data is held
 %% by a different peer. This prevents metadata work for one peer or store from
 %% delaying all other usable peer-store paths.
