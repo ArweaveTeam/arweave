@@ -120,6 +120,8 @@
 %% HTTP requests after posting an invalid block.
 -define(BAD_BLOCK_BAN_TIME, 24 * 60 * 60).
 
+-define(BAD_HASH_PREIMAGE_BAN_TIME, 30).
+
 %% A part of transaction propagation delay independent from the size, in seconds.
 -ifdef(AR_TEST).
 -define(BASE_TX_PROPAGATION_DELAY, 0).

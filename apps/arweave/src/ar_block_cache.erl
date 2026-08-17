@@ -11,7 +11,8 @@
          get_by_solution_hash/5, is_known_solution_hash/2,
          get_siblings/2, get_fork_blocks/2, update_timestamp/3,
          get_blocks_by_miner/2,
-         get_oldest_block_start/1, tx_id/1]).
+         get_oldest_block_start/1, tx_id/1,
+         rejects_resigned_relative_solution/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -19,6 +20,8 @@
 %% The expiration time in seconds for every "alternative" block (a block with non-unique
 %% solution).
 -define(ALTERNATIVE_BLOCK_EXPIRATION_TIME_SECONDS, 10).
+
+-define(RESIGNED_SOLUTION_RELATIVE_VALIDATION_START, 2056500).
 
 %% @doc Block validation status
 %% on_chain: block is validated and belongs to the tip fork
@@ -693,6 +696,9 @@ maybe_increase_max_cdiff(Tab, B, Status, {MaxCDiff, _H} = C) ->
         false ->
             C
     end.
+
+rejects_resigned_relative_solution(Height) ->
+    Height >= ?RESIGNED_SOLUTION_RELATIVE_VALIDATION_START.
 
 find_max_cdiff(Tab, TipHeight) ->
     CheckpointHeight = get_checkpoint_height(TipHeight),
@@ -1771,6 +1777,11 @@ block_cache_test() ->
     assert_is_valid_fork(true, not_validated, B16),
 
     ets:delete(bcache_test).
+
+rejects_resigned_relative_solution_test() ->
+    Start = ?RESIGNED_SOLUTION_RELATIVE_VALIDATION_START,
+    ?assertNot(rejects_resigned_relative_solution(Start - 1)),
+    ?assert(rejects_resigned_relative_solution(Start)).
 
 assert_longest_chain(Chain, NotOnChainCount) ->
     ExpectedPairs =  [{B#block.indep_hash, []} || B <- Chain],

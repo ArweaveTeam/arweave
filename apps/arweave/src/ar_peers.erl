@@ -132,6 +132,7 @@
                               invalid_difficulty,
                               invalid_cumulative_difficulty,
                               invalid_hash_preimage,
+                              invalid_hash_preimage_relative,
                               invalid_nonce_limiter_seed_data,
                               invalid_partition_number,
                               invalid_nonce,
@@ -655,7 +656,7 @@ handle_info({event, block, {rejected, Reason, _H, Peer}}, State) when Peer /= no
 
     case {IssueBan, IssueWarning, Ignore} of
         {true, false, false} ->
-            ar_blacklist_middleware:ban_peer(Peer, ?BAD_BLOCK_BAN_TIME),
+            ar_blacklist_middleware:ban_peer(Peer, ban_time(Reason)),
             remove_peer(banned, Peer);
         {false, true, false} ->
             issue_warning(Peer, block_rejected, Reason);
@@ -1136,6 +1137,12 @@ maybe_add_peer(Peer, Release) ->
                     ok
             end
     end.
+
+%% @doc Return the ban duration for the given block rejection reason.
+ban_time(invalid_hash_preimage_relative) ->
+    ?BAD_HASH_PREIMAGE_BAN_TIME;
+ban_time(_Reason) ->
+    ?BAD_BLOCK_BAN_TIME.
 
 remove_peer(Reason, RemovedPeer) ->
     case Reason of

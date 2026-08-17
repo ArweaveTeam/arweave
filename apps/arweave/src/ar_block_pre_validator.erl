@@ -1,4 +1,5 @@
 -module(ar_block_pre_validator).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
@@ -7,6 +8,10 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+
+-ifdef(AR_TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 
 -record(state, {
@@ -487,12 +492,7 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
             pre_validate_nonce_limiter_global_step_number(B, PrevB, false, Peer);
         {invalid, ExtraData2} ->
             Code = maps:get(code, ExtraData2, check_resigned_solution_hash),
-            case arweave_config:get([features, extended_block_validation_trace]) of
-                true ->
-                    post_block_reject_warn_and_error_dump(B, Code, Peer, ExtraData2);
-                false ->
-                    post_block_reject_warn(B, Code, Peer)
-            end,
+            post_block_reject_warn_and_error_dump(B, Code, Peer, ExtraData2),
             ar_events:send(block, {rejected, invalid_resigned_solution_hash,
                                    B#block.indep_hash, Peer}),
             invalid;
@@ -628,12 +628,21 @@ pre_validate_packing_difficulty(B, PrevB, SolutionResigned, Peer) ->
         true ->
             case SolutionResigned of
                 true ->
-                    Ref = erlang:get(ignore_registry_ref),
-                    gen_server:cast(?MODULE, {enqueue, {B, PrevB, true, Peer, Ref}}),
-                    enqueued;
+                    pre_validate_resigned_solution(B, PrevB, Peer);
                 false ->
                     pre_validate_quick_pow(B, PrevB, false, Peer)
             end
+    end.
+
+pre_validate_resigned_solution(B, PrevB, Peer) ->
+    case is_resigned_relative_solution(B, PrevB) of
+        true ->
+            reject_hash_preimage(B, Peer),
+            invalid;
+        false ->
+            Ref = erlang:get(ignore_registry_ref),
+            gen_server:cast(?MODULE, {enqueue, {B, PrevB, true, Peer, Ref}}),
+            enqueued
     end.
 
 pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
@@ -642,14 +651,52 @@ pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
     SolutionHash = ar_block:compute_solution_h(H0, HashPreimage),
     case ar_node_utils:block_passes_diff_check(SolutionHash, B) of
         false ->
-            post_block_reject_warn_and_error_dump(B, check_hash_preimage, Peer),
-            ar_events:send(block, {rejected, invalid_hash_preimage,
-                                   B#block.indep_hash, Peer}),
+            reject_hash_preimage(B, Peer),
             invalid;
         true ->
             Ref = erlang:get(ignore_registry_ref),
             gen_server:cast(?MODULE, {enqueue, {B, PrevB, SolutionResigned, Peer, Ref}}),
             enqueued
+    end.
+
+reject_hash_preimage(B, Peer) ->
+    post_block_reject_warn_and_error_dump(B, check_hash_preimage, Peer),
+    ar_events:send(block, {rejected, hash_preimage_rejection(B#block.height),
+                           B#block.indep_hash, Peer}).
+
+hash_preimage_rejection(Height) ->
+    case ar_block_cache:rejects_resigned_relative_solution(Height) of
+        true ->
+            invalid_hash_preimage;
+        false ->
+            invalid_hash_preimage_relative
+    end.
+
+is_resigned_relative_solution(B, PrevB) ->
+    H0 = ar_block:compute_h0(B, PrevB),
+    not (ar_block:compute_solution_h(H0, B#block.hash_preimage) == B#block.hash
+        andalso poa_cache_reconciles(B#block.recall_byte, B#block.poa_cache,
+            PrevB)
+        andalso poa_cache_reconciles(B#block.recall_byte2, B#block.poa2_cache,
+            PrevB)).
+
+poa_cache_reconciles(undefined, _Cache, _PrevB) ->
+    true;
+poa_cache_reconciles(_RecallByte, undefined, _PrevB) ->
+    false;
+poa_cache_reconciles(RecallByte,
+        {{BlockStart, _RecallByte, TXRoot, BlockSize, _Packing,
+            _SubChunkIndex}, _ChunkID},
+        PrevB) ->
+    case ar_block:get_block_bounds(RecallByte, PrevB) of
+        {BlockStart, BlockEnd, TXRoot} ->
+            BlockEnd == BlockStart + BlockSize;
+        {_OtherStart, _OtherEnd, _OtherTXRoot} ->
+            false;
+        {error, invalid_recall_byte} ->
+            false;
+        not_found ->
+            false
     end.
 
 pre_validate_nonce_limiter_seed_data(B, PrevB, SolutionResigned, Peer) ->
@@ -868,16 +915,21 @@ post_block_reject_warn_and_error_dump(B, Step, Peer) ->
     post_block_reject_warn_and_error_dump(B, Step, Peer, #{}).
 
 post_block_reject_warn_and_error_dump(B, Step, Peer, ExtraData) ->
-    DataDir = arweave_config:get([data_dir]),
-    ID = binary_to_list(arweave_lib_util:encode(crypto:strong_rand_bytes(16))),
-    File = filename:join(DataDir, "invalid_block_dump_" ++ ID),
-    file:write_file(File, term_to_binary({B, ExtraData})),
-    post_block_reject_warn(B, Step, Peer),
-    ?LOG_WARNING([{event, post_block_rejected},
-                  {hash, arweave_lib_util:encode(B#block.indep_hash)},
-                  {step, Step},
-                  {peer, arweave_lib_util:format_peer(Peer)},
-                  {error_dump, File}]).
+    case arweave_config:get([features, extended_block_validation_trace]) of
+        false ->
+            post_block_reject_warn(B, Step, Peer);
+        true ->
+            DataDir = arweave_config:get([data_dir]),
+            ID = binary_to_list(
+                    arweave_lib_util:encode(crypto:strong_rand_bytes(16))),
+            File = filename:join(DataDir, "invalid_block_dump_" ++ ID),
+            file:write_file(File, term_to_binary({B, ExtraData})),
+            ?LOG_WARNING([{event, post_block_rejected},
+                          {hash, arweave_lib_util:encode(B#block.indep_hash)},
+                          {step, Step},
+                          {peer, arweave_lib_util:format_peer(Peer)},
+                          {error_dump, File}])
+    end.
 
 post_block_reject_warn(B, Step, Peer) ->
     ?LOG_WARNING([{event, post_block_rejected},
@@ -944,3 +996,37 @@ throttle_by_solution_hash(H, Timestamps, ThrottleInterval) ->
         _ ->
             false
     end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+-ifdef(AR_TEST).
+poa_cache_reconciles_test_() ->
+    Root = <<"root">>,
+    PrevB = #block{},
+    Cache = fun(Start, TXRoot, Size) ->
+        {{Start, 150, TXRoot, Size, unpacked, 0}, <<"chunk_id">>}
+    end,
+    Bounds = fun(Result) ->
+        [{ar_block, get_block_bounds, fun(_RecallByte, _PrevB) -> Result end}]
+    end,
+    [
+        ?_assert(poa_cache_reconciles(undefined, undefined, PrevB)),
+        ?_assert(poa_cache_reconciles(undefined, Cache(100, Root, 200), PrevB)),
+        ?_assertNot(poa_cache_reconciles(150, undefined, PrevB)),
+        ar_test_util:with_mocked(Bounds({100, 300, Root}), fun() ->
+            ?assert(poa_cache_reconciles(150, Cache(100, Root, 200), PrevB)),
+            ?assertNot(poa_cache_reconciles(150, Cache(100, <<"other">>, 200),
+                PrevB)),
+            ?assertNot(poa_cache_reconciles(150, Cache(50, Root, 250), PrevB)),
+            ?assertNot(poa_cache_reconciles(150, Cache(100, Root, 100), PrevB))
+        end),
+        ar_test_util:with_mocked(Bounds(not_found), fun() ->
+            ?assertNot(poa_cache_reconciles(150, Cache(100, Root, 200), PrevB))
+        end),
+        ar_test_util:with_mocked(Bounds({error, invalid_recall_byte}), fun() ->
+            ?assertNot(poa_cache_reconciles(150, Cache(100, Root, 200), PrevB))
+        end)
+    ].
+-endif.
