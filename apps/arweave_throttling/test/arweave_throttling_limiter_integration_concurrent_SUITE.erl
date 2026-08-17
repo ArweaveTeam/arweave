@@ -48,16 +48,16 @@ limiter_config(do_10_10_none_throttled) ->
         concurrency_limit       => 1000000}.
 
 base_config() ->
-    #{number_of_workers            => 1,
-      no_limit                     => false,
-      is_manual_reduction_disabled => false,
+    #{number_of_workers => 1,
+      no_limit => false,
+      is_external_reduction_enabled => true,
       %% Disable the automatic leaky/cleanup ticks: the run is driven
       %% purely by the simulated clock, so the leaky bucket behaves as a
       %% fixed-capacity burst (no background drain) over the test window.
-      leaky_tick_ms                => 3600000,
-      timestamp_cleanup_tick_ms    => 3600000,
-      timestamp_cleanup_expiry     => 3600000,
-      tick_reduction               => 1}.
+      leaky_tick_ms => 3600000,
+      timestamp_cleanup_tick_ms => 3600000,
+      timestamp_cleanup_expiry => 3600000,
+      tick_reduction => 1}.
 
 
 init_per_testcase(TestCase, Config) ->
