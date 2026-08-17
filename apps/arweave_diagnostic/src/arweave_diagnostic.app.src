@@ -1,7 +1,7 @@
 {application, arweave_diagnostic, [
                                    {id, "arweave_diagnostic"},
                                    {description, "Arweave Diagnostic Tool"},
-                                   {vsn, "0.0.1"},
+                                   {vsn, "2.9.6-alpha3"},
                                    {mod, {arweave_diagnostic, []}},
                                    {env, []},
                                    {applications, [
