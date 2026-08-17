@@ -47,6 +47,13 @@
 %% request path and starve chunk fetching.
 -define(MAX_DISCOVERY_JOBS_PER_KIND, 200).
 
+%% Peer collection considers at most one thousand current peers per cycle.
+-define(MAX_DISCOVERY_PEERS, 1000).
+
+%% A bounded queue keeps detailed metadata close enough to the sweep frontier
+%% to be useful within its fixed warming interval.
+-define(MAX_PENDING_CHUNK_INTERVAL_JOBS, 1024).
+
 %% A normal query range needs about four pages. Sixteen bounds malformed
 %% or unusually fragmented responses without constraining expected peers.
 -define(MAX_CHUNK_INTERVAL_PAGES, 16).
@@ -92,14 +99,14 @@
 
 %% Shared state for sync bucket and chunk interval jobs.
 -record(discovery_jobs, {
-    %% Exact job key => #discovery_job{}. Distinct chunk interval locations
-    %% remain pending independently while peer_store_mode_key/1 limits
-    %% concurrent work for each peer, store, and mode.
+    %% Exact job key => #discovery_job{}.
     pending = #{},
     %% Key => #discovery_job{ pid = pid() }.
     inflight = #{},
     %% Maximum concurrent jobs in this collection.
-    max_inflight = ?MAX_DISCOVERY_JOBS_PER_KIND
+    max_inflight = ?MAX_DISCOVERY_JOBS_PER_KIND,
+    %% Maximum queued jobs; sync bucket work has one exact job per peer.
+    max_pending = ?MAX_DISCOVERY_PEERS
 }).
 
 -record(state, {
@@ -116,7 +123,9 @@
         %% bounded span beginning at a store's sweep frontier. Concurrency is
         %% limited so discovery cannot saturate the shared request path and
         %% starve /chunk2 fetching.
-        chunk_interval => #discovery_jobs{}
+        chunk_interval => #discovery_jobs{
+            max_pending = ?MAX_PENDING_CHUNK_INTERVAL_JOBS
+        }
     }
 }).
 
@@ -459,9 +468,6 @@ collect_peers() ->
         false ->
             ok;
         true ->
-            %% A thousand is above the expected known-peer population while still
-            %% bounding the work submitted in one collection cycle.
-            MaxPeers = 1000,
             LocalOnly = arweave_config:get([sync, local_peers_only]),
             Peers =
                 case LocalOnly of
@@ -472,7 +478,8 @@ collect_peers() ->
                         %% recent throughput performance
                         ar_sync_deps:get_peers(current)
                 end,
-            gen_server:cast(?MODULE, {add_peers, lists:sublist(Peers, MaxPeers)})
+            gen_server:cast(?MODULE,
+                {add_peers, lists:sublist(Peers, ?MAX_DISCOVERY_PEERS)})
     end.
 
 do_remove_peer(Peer, Reason, State) ->
@@ -535,10 +542,9 @@ peer_store_mode_key({chunk_interval, Peer, StoreID, Mode, _Start}) ->
 peer_store_mode_key(Key) ->
     Key.
 
-%% @doc Add Job when its peer is tracked and its exact location is not already
-%% active. Locations for the same peer, store, and mode remain pending
-%% independently but run serially, so bounded readahead cannot expire before
-%% it starts.
+%% @doc Add Job when its peer is tracked, its exact location is not active,
+%% and the bounded pending queue has capacity. A discarded location can be
+%% offered again when its sweep range is processed or on the next sweep.
 enqueue_job(Job, State) ->
     #discovery_job{ key = Key, kind = Kind, peer = Peer } = Job,
     #state{ jobs = JobsByKind } = State,
@@ -546,18 +552,27 @@ enqueue_job(Job, State) ->
     #discovery_jobs{ pending = Pending } = Jobs,
     Jobs2 = case {
         is_peer_tracked(Peer, State),
-        job_exists(Key, State)
+        job_exists(Key, State),
+        has_pending_capacity(Jobs)
     } of
-        {false, _} -> %% Untracked peer.
+        {false, _, _} -> %% Untracked peer.
             Jobs;
-        {true, true} -> %% Duplicate job.
+        {true, true, _} -> %% Duplicate job.
             Jobs;
-        {true, false} -> %% Enqueue new job.
+        {true, false, false} -> %% Pending queue is full.
+            Jobs;
+        {true, false, true} -> %% Enqueue new job.
             Jobs#discovery_jobs{
                 pending = maps:put(Key, Job, Pending)
             }
     end,
     State#state{ jobs = JobsByKind#{Kind := Jobs2} }.
+
+has_pending_capacity(#discovery_jobs{
+        pending = Pending,
+        max_pending = MaxPending
+    }) ->
+    map_size(Pending) < MaxPending.
 
 %% @doc Spawn Job and track its process PID on the inflight job.
 start_job(Job, Jobs) ->
@@ -1379,9 +1394,8 @@ enqueue_job_keeps_distinct_pending_locations_test() ->
     TrackedPeers = sets:from_list([peer]),
     State = #state{ tracked_peers = TrackedPeers },
     JobsByKind = State#state.jobs,
-    %% Three locations for one peer, store, and mode must remain pending
-    %% independently; otherwise a sweep range can reach its deadline before
-    %% its discarded location is retried.
+    %% Distinct active readahead locations remain independent while the global
+    %% pending ceiling bounds their aggregate queue.
     State2 = State#state{ jobs = JobsByKind#{
         chunk_interval := #discovery_jobs{} } },
     State3 = enqueue_job(Later, State2),
@@ -1392,6 +1406,19 @@ enqueue_job_keeps_distinct_pending_locations_test() ->
     ?assert(job_exists(Earlier#discovery_job.key, State5)),
     ?assert(job_exists(Later#discovery_job.key, State5)),
     ?assert(job_exists(Latest#discovery_job.key, State5)).
+
+enqueue_job_discards_when_pending_limit_reached_test() ->
+    Existing = chunk_interval_job_for_test(peer, store, 0),
+    Incoming = chunk_interval_job_for_test(peer2, store2, 0),
+    TrackedPeers = sets:from_list([peer, peer2]),
+    State = #state{ tracked_peers = TrackedPeers },
+    JobsByKind = State#state.jobs,
+    %% A one-job test ceiling makes the second distinct location exceed it.
+    ChunkIntervalJobs = #discovery_jobs{ max_pending = 1 },
+    State2 = State#state{ jobs = JobsByKind#{
+        chunk_interval := ChunkIntervalJobs } },
+    State3 = enqueue_job(Existing, State2),
+    ?assertEqual(State3, enqueue_job(Incoming, State3)).
 
 %% @doc Completing a chunk interval job leaves sync bucket job state unchanged.
 finish_job_updates_matching_kind_test() ->
@@ -1555,7 +1582,9 @@ take_next_job_limits_peer_store_mode_test() ->
     {PeerLoad, StoreLoad} = compute_job_load(Jobs),
     Counts = inflight_peer_store_mode_counts(Jobs),
     SameCombinationJobs = Jobs#discovery_jobs{
-        pending = #{SamePendingKey#discovery_job.key => SamePendingKey}
+        pending = #{
+            SamePendingKey#discovery_job.key => SamePendingKey
+        }
     },
     ?assertEqual(none, take_next_job(
         SameCombinationJobs, PeerLoad, StoreLoad, Counts)),
@@ -1582,8 +1611,12 @@ start_jobs_respects_inflight_limit_test() ->
     DefaultJobsByKind = (#state{})#state.jobs,
     DefaultSyncBucketJobs = maps:get(sync_bucket, DefaultJobsByKind),
     ?assertEqual(Limit, DefaultSyncBucketJobs#discovery_jobs.max_inflight),
+    ?assertEqual(?MAX_DISCOVERY_PEERS,
+        DefaultSyncBucketJobs#discovery_jobs.max_pending),
     DefaultJobs = maps:get(chunk_interval, DefaultJobsByKind),
     ?assertEqual(Limit, DefaultJobs#discovery_jobs.max_inflight),
+    ?assertEqual(?MAX_PENDING_CHUNK_INTERVAL_JOBS,
+        DefaultJobs#discovery_jobs.max_pending),
     Jobs = DefaultJobs#discovery_jobs{
         inflight = Inflight,
         pending = #{PendingJob#discovery_job.key => PendingJob}
