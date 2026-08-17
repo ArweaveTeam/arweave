@@ -70,12 +70,25 @@ Prefix the title with `AI: `. Keep the body short — what happens, why it
 matters, then the fix — with no severity or area headings. Name the confirmed
 triggering condition, so whoever picks the issue up can reproduce it.
 
-Close the body with the model that produced the report and the date it was run,
-taken from the report itself:
+Follow the summary with the model that produced the report and the date it was
+run, taken from the report itself, then the report's own text for this finding,
+copied verbatim as the last section:
 
 ```markdown
+<What happens, why it matters, then the fix.>
+
 Found by Claude Opus 5 security review, 2026-08-14.
+
+## Original finding
+
+<The report's text for this finding, verbatim.>
 ```
+
+Copy only the part of the report covering this finding, not the whole report,
+and do not correct it — the drifted line numbers and any claims you disproved
+are part of what the addendum records. Keep the summary above it understated
+even where the verbatim text is blunter, and check the destination repository's
+visibility before pasting text that contains a working exploit.
 
 If the report does not say which model was run, or when, ask before filing.
 
