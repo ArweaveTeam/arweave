@@ -202,6 +202,7 @@ handle_call({register_or_reject, _Peer}, {_FromPid, _},
     HeadersInfo = #{expiring_limit => ConcurrencyLimit,
                     remaining      => 0,
                     reset_seconds  => 1,
+                    reset_amount   => ConcurrencyLimit,
                     policies       => Policies},
     {reply, {reject, concurrency, HeadersInfo}, State};
 handle_call({register_or_reject, Peer}, {FromPid, _},

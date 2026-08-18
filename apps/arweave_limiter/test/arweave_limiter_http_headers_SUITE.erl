@@ -82,6 +82,26 @@ reject(_Config) ->
                              reset_amount   => 123,
                              policies => ?POLICIES}
                           })),
+    %% A real life policy
+    ?assertEqual(
+       #{<<"RateLimit-Limit">> =>
+             <<"200, 7000;policy=\"test_limiter usage\", 200;policy=\"test_limiter concurrency\" ">>,
+         <<"RateLimit-Remaining">> => <<"0">>,
+         <<"RateLimit-Reset">> => <<"1">>,
+         <<"RateLimit-Reset-Amount">> => <<"200">>,
+         <<"Retry-After">> => <<"1">>},
+         ?M:to_http_headers(
+              {reject,  concurrency,
+               #{expiring_limit => 200,
+                 reset_amount => 200,
+                 reset_seconds => 1,
+                 remaining => 0,
+                 policies =>
+                     #{id => "test_limiter",
+                       sliding_window => #{limit => 1000,window_seconds => 1},
+                       leaky_bucket => #{tick_reduction => 6000,burst => 6000,tick_ms => 30000},
+                       concurrency => #{limit => 200}}}
+              })),
     ?assertEqual(
        #{<<"RateLimit-Limit">> =>
              <<"460, 460;policy=\"test_limiter usage\", 500;policy=\"test_limiter concurrency\" ">>,
