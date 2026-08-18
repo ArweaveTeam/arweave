@@ -52,10 +52,9 @@
 %% 6 my_fun(BoolExpr) -> ?assert(BoolExpr).
 %% would always fail with `{assert, [..., {line, 6}, ...]}` regardless what
 %% line `my_call` is called from.
-
-%% Synonym for assert
--define(assertShouldFindThrottlingGroup(BoolExpr), ?assert(BoolExpr)).
-
+%%
+%% ON THIS SPECIFIC assertRequestRoundtripDetails MACRO:
+%%
 %% Simulate a complete roundtrip of a request: 1) throttling (client)
 %% 2) limiting (server) 3) update_quota (client.
 %% We use the appropriate functions to generate headers, and parse them
@@ -98,7 +97,12 @@
                                    {ok, GroupID} ->
                                        %% This means throttling group should exist, we can translate
                                        %% path into a group ID.
-                                       ?assert(ShouldFindThrottlingGroup),
+                                       %% NOTE: this is a trick to reveal more information than what
+                                       %%       ?assert(Bool) would reveal. It's a bit counter intuitive:
+                                       %%       - when we set ShouldFindThrottlingGroup false, and
+                                       %%         we end up here, it's an error. false orelse any -> any,
+                                       %%         true orelse any -> true. so this
+                                       ShouldFindThrottlingGroup orelse erlang:error(shouldnt_find_group_and_did),
 
                                        %% By doing all this, now we can use assert to validate the
                                        %% actual return value from the throttling call. It normally
@@ -111,7 +115,12 @@
                                        %% This means, we didn't find the group for a Path, the throttling
                                        %% process is not ready. If our expectations haven't been met
                                        %% we stop the test here, with this macro.
-                                       ?assertNot(ShouldFindThrottlingGroup),
+                                       %% NOTE: this is a trick to reveal more information than what
+                                       %%       ?assert(Bool) would reveal. It's a bit counter intuitive:
+                                       %%       - when we set ShouldFindThrottlingGroup true, and
+                                       %%         we end up here, it's an error. true andalso any -> any,
+                                       %%         false andalso any -> false.
+                                       ShouldFindThrottlingGroup andalso erlang:error(should_find_group_and_didnt),
                                        ok
                                end,
                                %% Calling the limiter - please note there is no connection
@@ -168,7 +177,8 @@ end_per_suite(_Config) -> ok.
 
 all() ->
     [
-     no_throttling_under_sliding_overflow_with_large_burst
+     no_throttling_under_sliding_overflow_with_large_burst,
+     concurrency_limit_has_been_hit
     ].
 
 %%% Per-testcase limiter configuration.
@@ -178,7 +188,14 @@ limiter_config(no_throttling_under_sliding_overflow_with_large_burst) ->
         sliding_window_limit => 3,
         sliding_window_duration => 2000,
         leaky_rate_limit => 45000,
-        concurrency_limit => 500000}.
+        concurrency_limit => 500000};
+limiter_config(concurrency_limit_has_been_hit) ->
+    BaseConfig = base_config(),
+    BaseConfig#{
+        sliding_window_limit => 4000,
+        sliding_window_duration => 1000,
+        leaky_rate_limit => 45000,
+        concurrency_limit => 3}.
 
 base_config() ->
     #{number_of_workers => 1,
@@ -279,6 +296,83 @@ no_throttling_under_sliding_overflow_with_large_burst(_Config) ->
               ?PEER, 3, accepted, true),
     Pid4 ! done,
 
+    ok.
+
+%% Concurrency limit is exhausted, before anything else.
+concurrency_limit_has_been_hit(_Config) ->
+    Policies =
+        #{id => "test_limiter",
+          concurrency => #{limit => 3},
+          leaky_bucket =>
+              #{tick_reduction => 1,burst => 45000,
+                tick_ms => 3600000},
+          sliding_window => #{limit => 4000, window_seconds => 1}},
+
+    Pid0 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register,sliding,
+              #{remaining := 48999,
+                reset_seconds := 0,
+                reset_amount := 1,
+                expiring_limit := 49000,
+                policies := Policies}},
+              ?PEER, 0, accepted, false),
+    Pid1 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register,sliding,
+              #{remaining := 48998,
+                reset_seconds := 1,
+                reset_amount := 2,
+                expiring_limit := 49000,
+                policies := Policies}},
+              ?PEER, 100, accepted, true),
+    Pid2 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register,sliding,
+              #{remaining := 48997, reset_seconds := 1, expiring_limit := 49000,
+                policies := Policies}},
+              ?PEER, 200, accepted, true),
+
+    %% Request is rejected, but throttling accepts it.
+    Pid3 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {reject,concurrency,
+              #{remaining := 0,
+                reset_seconds := 1,
+                reset_amount := 3,
+                expiring_limit := 3,
+                policies := Policies}},
+              ?PEER, 300, accepted, true),
+
+    Pid0 ! done,
+    Pid1 ! done,
+    Pid2 ! done,
+    Pid3 ! done,
+
+    %% Concurrency has reduced. However the client is not aware of it yet, and timer hasn't
+    %% expired yet, so the client will throttle the request (queued)
+    Pid4 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register,sliding,
+              #{remaining := 48996,
+                reset_seconds := 1,
+                reset_amount := 4,
+                expiring_limit := 49000,
+                policies := Policies}},
+              ?PEER, 400, {queued, _}, true),
+
+    Pid4 ! done,
+
+    Pid5 = ?assertRequestRoundtripDetails(
+                ?GROUP_ID,
+                {register,sliding,
+                 #{remaining := 48995, reset_seconds := 1, expiring_limit := 49000,
+                   policies := Policies}},
+                ?PEER, 400, accepted, true),
+
+    Pid5 ! done,
+
+    timer:sleep(400),
     ok.
 
 only_leaky_until_throttles(_Config) ->
