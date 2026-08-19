@@ -2,10 +2,12 @@
 %%%
 %%% ar_sync_store_sweeper resolves local need through ar_sync_chunk_picker,
 %%% and pushes tasks and footprint work here, bounded by the
-%%% store's measured work horizon.
-%%% This server owns task selection and dispatch: it spawn_monitors one transient
-%%% `ar_sync_fetch_worker' per task and tracks the task through fetch and
-%%% asynchronous storage completion.
+%%% store's measured queue target.
+%%% This server owns task selection and dispatch. Tasks first bind into a
+%%% bounded runnable queue for one peer, then enter active fetching up to that
+%%% peer's concurrency cap. It spawn_monitors one transient
+%%% `ar_sync_fetch_worker' per active task and tracks the task through fetch
+%%% and asynchronous storage completion.
 %%%
 %%% Worker liveness is network-concurrency accounting: inflight worker count is
 %%% `map_size(monitor_index)'. Task state is backpressure accounting: claimed
@@ -51,6 +53,11 @@
     monitor_index = #{},
     %% Opaque footprint state.
     footprints = #{},
+    %% Peer => FIFO of peer-bound tasks waiting for an active fetch slot.
+    peer_queues = #{},
+    %% Peer => true once any dispatch in the current scheduler interval sees
+    %% runnable work held behind that peer's full active cap.
+    driven_peers = #{},
     %% ar_sync_peer's opaque state, evolved on the scheduler tick.
     peer_state = ar_sync_peer:new(),
     %% Debounce flag: a dispatch self-cast is already queued. enqueue and
@@ -73,6 +80,7 @@
     worker_count,        %% live plus selected worker count for this pass
     peers,               %% ar_sync_peer:dispatch()
     footprints,          %% ar_sync_footprint:dispatch()
+    peer_queues,          %% Peer => queue of bound runnable #task{}
     tasks_to_start = []  %% [#task{}] selected this pass (task_ref minted at spawn)
 }).
 
@@ -209,7 +217,7 @@ terminate_workers(MonitorIndex) ->
 %%% Admission.
 %%%===================================================================
 
-%% Admit candidates in order until the horizon is reached. A chunk already
+%% Admit candidates in order until the store queue limit is reached. A chunk already
 %% claimed is dropped because another peer's copy is already queued; the picker
 %% will offer it again if that claim is released.
 admit_tasks(StoreID, Candidates, State) ->
@@ -281,22 +289,23 @@ schedule_dispatch(State) ->
     gen_server:cast(self(), dispatch),
     State#state{ dispatch_scheduled = true }.
 
-%% @doc One dispatch pass: select startable tasks, register them as
-%% running, and spawn a fetch worker for each.
+%% @doc One dispatch pass: fill bounded peer queues, activate queued tasks up
+%% to peer/global/store limits, refill the vacated queue slots, and spawn the
+%% selected fetch workers.
 dispatch(State0) ->
     DownloadLimit = ar_sync_download_limit:refill(State0#state.download_limit),
     State1 = State0#state{ download_limit = DownloadLimit },
-    Dispatch = start_dispatch(State1),
-    State5 = maybe
-        false ?= is_chunk_cache_full(Dispatch),
-        true ?= ar_sync_download_limit:has_capacity(DownloadLimit),
-        {State2, Dispatch2} = dispatch_tasks(State1, Dispatch),
-        State3 = start_tasks(State2, Dispatch2),
-        finish_dispatch(State3, Dispatch2)
-    else
-        _ -> State1
-    end,
-    maybe_schedule_download_limit_wakeup(State5).
+    Dispatch0 = start_dispatch(State1),
+    {State2, Dispatch1} = bind_tasks(State1, Dispatch0),
+    State2A = record_driven_peers(State2, Dispatch1),
+    {State3, Dispatch2} = activate_tasks(State2A, Dispatch1),
+    Dispatch2A = Dispatch2#dispatch{ stores = ar_sync_store:refresh_work(
+        Dispatch2#dispatch.footprints, Dispatch2#dispatch.stores) },
+    {State4, Dispatch3} = bind_tasks(State3, Dispatch2A),
+    State4A = record_driven_peers(State4, Dispatch3),
+    State5 = start_tasks(State4A, Dispatch3),
+    maybe_schedule_download_limit_wakeup(
+        finish_dispatch(State5, Dispatch3)).
 
 %% @doc Return whether starting another fetch would fill the chunk cache. The
 %% projected size includes chunks currently held by in-flight fetch workers.
@@ -321,11 +330,13 @@ start_tasks(State, Dispatch) ->
 finish_dispatch(State, Dispatch) ->
     #dispatch{
         stores = StoreDispatches,
-        footprints = FootprintDispatch
+        footprints = FootprintDispatch,
+        peer_queues = PeerQueues
     } = Dispatch,
     State#state{
         stores = ar_sync_store:finish_dispatch(StoreDispatches),
-        footprints = ar_sync_footprint:finish_dispatch(FootprintDispatch)
+        footprints = ar_sync_footprint:finish_dispatch(FootprintDispatch),
+        peer_queues = PeerQueues
     }.
 
 %% @doc Arm the limiter's short retry when queued work is held only by the
@@ -334,10 +345,12 @@ maybe_schedule_download_limit_wakeup(State) ->
     #state{
         stores = StoreStates,
         footprints = Footprints,
+        peer_queues = PeerQueues,
         download_limit = DownloadLimit
     } = State,
     HasWork = not ar_sync_store:queues_empty(StoreStates)
-        orelse ar_sync_footprint:has_bound_work(Footprints),
+        orelse ar_sync_footprint:has_bound_work(Footprints)
+        orelse not peer_queues_empty(PeerQueues),
     DownloadLimit2 = ar_sync_download_limit:maybe_schedule_wakeup(
         DownloadLimit, HasWork, tick_interval_ms()),
     State#state{ download_limit = DownloadLimit2 }.
@@ -355,37 +368,35 @@ spawn_worker(Task) ->
 %% during this pass. Store snapshots and footprint state are also
 %% updated as tasks are selected.
 start_dispatch(State) ->
+    BoundTasks = peer_queued_tasks(State#state.peer_queues),
     Dispatch0 = #dispatch{
             stores = ar_sync_store:start_dispatch(
-                State#state.footprints, State#state.tasks, State#state.stores),
+                State#state.footprints, State#state.tasks,
+                BoundTasks, State#state.stores),
             worker_count = map_size(State#state.monitor_index),
             footprints = ar_sync_footprint:start_dispatch(State#state.footprints),
+            peer_queues = State#state.peer_queues,
             peers = ar_sync_peer:start_dispatch(
-                State#state.tasks,
-                ar_sync_store:queued_tasks(State#state.stores),
+                State#state.tasks, BoundTasks,
                 State#state.peer_state) },
     StoresByPeer = ar_sync_store:stores_by_peer(Dispatch0#dispatch.stores),
     PeerDispatches = ar_sync_peer:set_store_task_targets(
         StoresByPeer, Dispatch0#dispatch.peers),
     Dispatch0#dispatch{ peers = PeerDispatches }.
 
-%% @doc Build one dispatch batch. Each iteration finds one candidate from the
-%% least-loaded startable store and applies it. Chunk candidates consume download
-%% capacity; footprint candidates materialize finite chunk batches and let the
-%% next iteration select from the updated queues.
-dispatch_tasks(State, Dispatch) ->
-    #state{ download_limit = DownloadLimit } = State,
+%% @doc Fill peer queues from the least-loaded eligible stores. Concrete tasks
+%% bind to one source; footprint reservations materialize one finite bound
+%% batch. Neither operation starts network work or consumes download tokens.
+bind_tasks(State, Dispatch) ->
     maybe
-        true ?= ar_sync_download_limit:has_capacity(DownloadLimit),
         {ok, StoreID} ?= ar_sync_store:best_store(Dispatch#dispatch.stores),
         {QueuedWork, StoreDispatches} ?= ar_sync_store:pop_work(
             StoreID, Dispatch#dispatch.stores),
         Dispatch2 = Dispatch#dispatch{ stores = StoreDispatches },
         Work = resolve_work(QueuedWork, Dispatch2),
         {State2, Dispatch3} = dispatch_work(Work, State, Dispatch2),
-        dispatch_tasks(State2, Dispatch3)
+        bind_tasks(State2, Dispatch3)
     else
-        false -> {State, Dispatch};
         none -> {State, Dispatch}
     end.
 
@@ -488,8 +499,13 @@ bound_footprint_priorities(Dispatch) ->
 
 peer_priority(Peer, StoreID, Dispatch) ->
     Runnable = ar_sync_store:has_capacity(StoreID, Dispatch#dispatch.stores)
-        andalso ar_sync_peer:has_capacity(Peer, Dispatch#dispatch.peers),
-    ar_sync_peer:priority(Peer, Runnable, Dispatch#dispatch.peers).
+        andalso ar_sync_peer:store_capacity(
+            Peer, StoreID, Dispatch#dispatch.peers) > 0,
+    {AvailabilityRank, PeerLoad, NegativeCap} = ar_sync_peer:priority(
+        Peer, Runnable, Dispatch#dispatch.peers),
+    StoreFootprintCount = ar_sync_footprint:bound_count(
+        StoreID, Dispatch#dispatch.footprints),
+    {StoreFootprintCount, AvailabilityRank, PeerLoad, NegativeCap}.
 
 build_footprint_batch(Reservation, Source, Dispatch) ->
     StoreID = ar_sync_footprint:store_id(Reservation),
@@ -509,33 +525,188 @@ build_footprint_batch(Reservation, Source, Dispatch) ->
         bound ->
             Dispatch#dispatch.stores
     end,
-    StoreDispatches3 = ar_sync_store:enqueue_tasks(Tasks, StoreDispatches2),
+    BoundTasks = [Task#task{ peer = Peer } || Task <- Tasks],
+    StoreDispatches3 = ar_sync_store:enqueue_bound_tasks(
+        BoundTasks, StoreDispatches2),
     StoreDispatches4 = ar_sync_store:add_reservations(
         [BoundReservation], StoreDispatches3),
     PeerDispatches = ar_sync_peer:enqueue_tasks(
-        Peer, Tasks, Dispatch#dispatch.peers),
+        Peer, BoundTasks, Dispatch#dispatch.peers),
+    PeerQueues = enqueue_peer_tasks(
+        Peer, BoundTasks, Dispatch#dispatch.peer_queues),
     Dispatch#dispatch{ footprints = FootprintDispatch2,
-        stores = StoreDispatches4, peers = PeerDispatches }.
+        stores = StoreDispatches4, peers = PeerDispatches,
+        peer_queues = PeerQueues }.
 
-%% @doc Commit a selected task: remove it from its store queue, bind its
-%% source, consume download capacity, and update the dispatch-pass counts.
+%% @doc Commit a selected task to its peer queue without starting its fetch.
 dispatch_task(Task0, Source, State, Dispatch) ->
     #task_source{ peer = Peer, footprint = Footprint } = Source,
-    #dispatch{ worker_count = WorkerCount,
-        tasks_to_start = TasksToStart } = Dispatch,
     Task = Task0#task{ peer = Peer, footprint = Footprint },
-    StoreDispatches = ar_sync_store:start_task(Task0, Dispatch#dispatch.stores),
-    Dispatch2 = Dispatch#dispatch{ stores = StoreDispatches },
+    StoreDispatches = ar_sync_store:bind_task(
+        Task0, Dispatch#dispatch.stores),
+    PeerDispatches = ar_sync_peer:enqueue_tasks(
+        Peer, [Task], Dispatch#dispatch.peers),
+    PeerQueues = enqueue_peer_tasks(
+        Peer, [Task], Dispatch#dispatch.peer_queues),
+    Dispatch2 = Dispatch#dispatch{
+        stores = StoreDispatches,
+        peers = PeerDispatches,
+        peer_queues = PeerQueues },
+    {State, Dispatch2}.
+
+%% @doc Start peer-bound tasks while peer caps and shared resource gates allow.
+activate_tasks(State, Dispatch) ->
+    #state{ download_limit = DownloadLimit } = State,
+    maybe
+        false ?= is_chunk_cache_full(Dispatch),
+        true ?= ar_sync_download_limit:has_capacity(DownloadLimit),
+        {Task, Dispatch2} ?= pop_startable_peer_task(Dispatch),
+        {State2, Dispatch3} = activate_task(Task, State, Dispatch2),
+        activate_tasks(State2, Dispatch3)
+    else
+        _ -> {State, Dispatch}
+    end.
+
+activate_task(#task{ peer = Peer } = Task, State, Dispatch) ->
+    #dispatch{
+        worker_count = WorkerCount,
+        tasks_to_start = TasksToStart
+    } = Dispatch,
+    StoreDispatches = ar_sync_store:start_bound_task(
+        Task, Dispatch#dispatch.stores),
     PeerDispatches = ar_sync_peer:start_task(
-        Peer, Task#task{ state = fetching }, Dispatch2#dispatch.peers),
-    Dispatch3 = Dispatch2#dispatch{
+        Peer, Task#task{ state = fetching }, Dispatch#dispatch.peers),
+    Dispatch2 = Dispatch#dispatch{
+        stores = StoreDispatches,
         peers = PeerDispatches,
         worker_count = WorkerCount + 1,
-        tasks_to_start = [Task | TasksToStart] },
-    #state{ download_limit = DownloadLimit } = State,
+        tasks_to_start = [Task | TasksToStart]
+    },
     State2 = State#state{ download_limit =
-        ar_sync_download_limit:consume(DownloadLimit, ?DATA_CHUNK_SIZE) },
-    {State2, Dispatch3}.
+        ar_sync_download_limit:consume(
+            State#state.download_limit, ?DATA_CHUNK_SIZE) },
+    {State2, Dispatch2}.
+
+pop_startable_peer_task(#dispatch{
+        peer_queues = PeerQueues,
+        stores = StoreDispatches,
+        peers = PeerDispatches
+    } = Dispatch) ->
+    Candidates = maps:fold(
+        fun(Peer, Queue, Acc) ->
+            case ar_sync_peer:has_capacity(Peer, PeerDispatches) of
+                false ->
+                    Acc;
+                true ->
+                    case take_startable_task(Queue, StoreDispatches) of
+                        none ->
+                            Acc;
+                        {Task, Queue2} ->
+                            Priority = {
+                                ar_sync_peer:fetching_count(
+                                    Peer, PeerDispatches),
+                                Peer
+                            },
+                            [{Priority, Peer, Task, Queue2} | Acc]
+                    end
+            end
+        end,
+        [],
+        PeerQueues),
+    case Candidates of
+        [] ->
+            none;
+        _ ->
+            {_Priority, Peer, Task, Queue2} = lists:min(Candidates),
+            PeerQueues2 = put_peer_queue(Peer, Queue2, PeerQueues),
+            {Task, Dispatch#dispatch{ peer_queues = PeerQueues2 }}
+    end.
+
+take_startable_task(Queue, StoreDispatches) ->
+    Tasks = queue:to_list(Queue),
+    case best_startable_task(Tasks, StoreDispatches, 0, none) of
+        none ->
+            none;
+        {_Priority, Index} ->
+            {Task, Remaining} = take_list_task(Index, Tasks, []),
+            {Task, queue:from_list(Remaining)}
+    end.
+
+best_startable_task([], _StoreDispatches, _Index, Best) ->
+    Best;
+best_startable_task([#task{ store_id = StoreID } | Rest],
+        StoreDispatches, Index, Best) ->
+    Best2 = case ar_sync_store:can_start_bound_task(
+            StoreID, StoreDispatches) of
+        false ->
+            Best;
+        true ->
+            Priority = {ar_sync_store:fetching_count(
+                StoreID, StoreDispatches), Index},
+            case Best of
+                none -> {Priority, Index};
+                {BestPriority, _BestIndex} when Priority < BestPriority ->
+                    {Priority, Index};
+                _ -> Best
+            end
+    end,
+    best_startable_task(Rest, StoreDispatches, Index + 1, Best2).
+
+take_list_task(0, [Task | Rest], Prefix) ->
+    {Task, lists:reverse(Prefix, Rest)};
+take_list_task(Index, [Task | Rest], Prefix) ->
+    take_list_task(Index - 1, Rest, [Task | Prefix]).
+
+enqueue_peer_tasks(Peer, Tasks, PeerQueues) ->
+    Queue = maps:get(Peer, PeerQueues, queue:new()),
+    Queue2 = lists:foldl(
+        fun(Task, Acc) -> queue:in(Task, Acc) end,
+        Queue,
+        Tasks),
+    maps:put(Peer, Queue2, PeerQueues).
+
+put_peer_queue(Peer, Queue, PeerQueues) ->
+    case queue:is_empty(Queue) of
+        true -> maps:remove(Peer, PeerQueues);
+        false -> maps:put(Peer, Queue, PeerQueues)
+    end.
+
+peer_queued_tasks(PeerQueues) ->
+    maps:fold(
+        fun(_Peer, Queue, Acc) -> queue:to_list(Queue) ++ Acc end,
+        [],
+        PeerQueues).
+
+peer_queue_counts(PeerQueues) ->
+    maps:map(fun(_Peer, Queue) -> queue:len(Queue) end, PeerQueues).
+
+peer_queues_empty(PeerQueues) ->
+    maps:size(PeerQueues) =:= 0.
+
+%% @doc Latch peers whose runnable queues are held behind full active caps while
+%% shared download and cache gates are open. Sampling every dispatch avoids
+%% classifying completion waves by their phase at the scheduler tick.
+record_driven_peers(State, Dispatch) ->
+    SharedCapacity = ar_sync_download_limit:has_capacity(
+        State#state.download_limit)
+        andalso not is_chunk_cache_full(Dispatch),
+    case SharedCapacity of
+        false ->
+            State;
+        true ->
+            DrivenPeers = maps:fold(
+                fun(Peer, Queue, Acc) ->
+                    case not queue:is_empty(Queue)
+                            andalso not ar_sync_peer:has_capacity(
+                                Peer, Dispatch#dispatch.peers) of
+                        true -> maps:put(Peer, true, Acc);
+                        false -> Acc
+                    end
+                end,
+                State#state.driven_peers,
+                Dispatch#dispatch.peer_queues),
+            State#state{ driven_peers = DrivenPeers }
+    end.
 
 %% @doc Register the bytes fetched by the worker and the network-attempt time
 %% consumed by the task.
@@ -555,24 +726,24 @@ task_write_completed(TaskRef) ->
     catch gen_server:cast(?MODULE, {task_write_completed, TaskRef}),
     ok.
 
-%% @doc Evolve peer control from the scheduler's active, inflight, and demand
+%% @doc Evolve peer control from the scheduler's active, inflight, and driven
 %% views. ar_sync_peer owns delivery observations and cap publication.
 tick(State, NowMs) ->
     State2 = sample_store_drain_rates(State, NowMs),
     #state{ tasks = Tasks,
         peer_state = PeerState, stores = StoreStates,
-        footprints = Footprints } = State2,
+        footprints = Footprints,
+        peer_queues = PeerQueues,
+        driven_peers = DrivenPeers } = State2,
     InflightCounts = inflight_counts(Tasks),
-    DemandPeers = demand_peers(
-        StoreStates, InflightCounts, State2#state.download_limit),
-    arweave_metrics:gauge_set(sync_controller_demand_peers,
-        map_size(DemandPeers)),
+    arweave_metrics:gauge_set(sync_scheduler_driven_peers,
+        map_size(DrivenPeers)),
     Peers = lists:usort(
-        active_peers(StoreStates, Tasks, Footprints)
-            ++ maps:keys(DemandPeers)),
+        active_peers(StoreStates, Tasks, Footprints, PeerQueues)
+            ++ maps:keys(DrivenPeers)),
     PeerState2 = ar_sync_peer:tick(
-        Peers, InflightCounts, DemandPeers, NowMs, PeerState),
-    State2#state{ peer_state = PeerState2 }.
+        Peers, InflightCounts, DrivenPeers, NowMs, PeerState),
+    State2#state{ peer_state = PeerState2, driven_peers = #{} }.
 
 %% @doc Sample each store's drain capacity. ar_sync_store owns the actual
 %% chunk-cache backlog signal, sampling window, and capacity estimate.
@@ -589,23 +760,6 @@ inflight_counts(Tasks) ->
             (_TaskRef, _Task, Acc) ->
                 Acc
         end, #{}, Tasks).
-
-%% @doc Return peers that currently offer queued work or have a running fetch.
-%% Local writes are deliberately absent: disk latency must not retain or grow a
-%% peer's network-concurrency cap. Suppress demand while the node-wide
-%% download-rate gate is holding work.
-demand_peers(StoreStates, InflightCounts, DownloadLimit) ->
-    case ar_sync_download_limit:has_capacity(DownloadLimit) of
-        false ->
-            #{};
-        true ->
-            QueuedPeers = maps:from_keys(
-                ar_sync_store:peers(StoreStates), true),
-            maps:fold(
-                fun(Peer, _Count, Acc) -> maps:put(Peer, true, Acc) end,
-                QueuedPeers,
-                InflightCounts)
-    end.
 
 register_started([], Started, Tasks) ->
     {lists:reverse(Started), Tasks};
@@ -657,7 +811,13 @@ on_task_fetch_completed(TaskRef, BytesFetched, FetchTiming, State) ->
                 {0, _} ->
                     finish_task(Task, State3);
                 {_, fetching} ->
-                    put_task(Task#task{ state = writing }, State3);
+                    %% Entropy is no longer needed after the fetch worker hands
+                    %% off the chunk. Keep the exact store claim through the
+                    %% asynchronous write, but release its footprint slot now.
+                    Footprints2 = ar_sync_footprint:task_completed(
+                        Task, State3#state.footprints),
+                    put_task(Task#task{ state = writing, footprint = none },
+                        State3#state{ footprints = Footprints2 });
                 {_, write_complete} ->
                     finish_task(Task, State3);
                 {_, writing} ->
@@ -762,10 +922,12 @@ emit_sync_metrics(State) ->
         tasks = Tasks,
         monitor_index = MonitorIndex,
         stores = StoreStates,
-        footprints = Footprints
+        footprints = Footprints,
+        peer_queues = PeerQueues
     } = State,
     StoreIDs = ar_sync_store_sweeper:store_ids(),
     {TasksByStore, TasksByPeer} = task_counts_by_stage(Tasks),
+    QueuedByPeer = peer_queue_counts(PeerQueues),
     lists:foreach(
         fun(StoreID) ->
             emit_claim_metrics(StoreID, State),
@@ -781,19 +943,22 @@ emit_sync_metrics(State) ->
         StoreIDs),
     emit_store_capacity_metrics(StoreIDs, State),
     ar_sync_footprint:emit_metrics(Footprints),
-    ClaimedByPeerStore = claimed_chunks_by_peer_store(Tasks),
+    ClaimedByPeerStore = claimed_chunks_by_peer_store(Tasks, PeerQueues),
     emit_claim_ownership_metrics(ClaimedByPeerStore, StoreIDs),
-    Peers = active_peers(StoreStates, Tasks, Footprints),
+    Peers = active_peers(StoreStates, Tasks, Footprints, PeerQueues),
     CurLabels = lists:flatmap(
         fun(Peer) ->
             Label = arweave_util:format_peer(Peer),
+            QueuedLabels = [queued, Label],
             FetchingLabels = [fetching, Label],
             WritingLabels = [writing, Label],
+            arweave_metrics:gauge_set(sync_tasks_by_peer, QueuedLabels,
+                maps:get(Peer, QueuedByPeer, 0)),
             arweave_metrics:gauge_set(sync_tasks_by_peer, FetchingLabels,
                 maps:get({fetching, Peer}, TasksByPeer, 0)),
             arweave_metrics:gauge_set(sync_tasks_by_peer, WritingLabels,
                 maps:get({writing, Peer}, TasksByPeer, 0)),
-            [FetchingLabels, WritingLabels]
+            [QueuedLabels, FetchingLabels, WritingLabels]
         end,
         Peers),
     arweave_metrics:gauge_set(sync_active_peers, length(Peers)),
@@ -846,24 +1011,31 @@ task_counts_by_stage(Tasks) ->
         {#{}, #{}},
         Tasks).
 
-%% Only dispatched tasks have a bound peer. Queued chunks are peer-neutral and
-%% so cannot be attributed to one.
-claimed_chunks_by_peer_store(Tasks) ->
-    maps:fold(
+%% Include both runnable peer-queue claims and nonterminal active tasks.
+claimed_chunks_by_peer_store(Tasks, PeerQueues) ->
+    Active = maps:fold(
         fun(_TaskRef, Task, Acc) ->
             Key = {Task#task.peer, Task#task.store_id},
             arweave_util:increment_map_value(Key, Acc)
         end,
         #{},
-        Tasks).
+        Tasks),
+    lists:foldl(
+        fun(Task, Acc) ->
+            Key = {Task#task.peer, Task#task.store_id},
+            arweave_util:increment_map_value(Key, Acc)
+        end,
+        Active,
+        peer_queued_tasks(PeerQueues)).
 
 %% @doc Distinct peers across queued, nonterminal, and bound footprint work.
 %% This is the active-peer set used to allocate caps and emit per-peer metrics.
-active_peers(StoreStates, Tasks, Footprints) ->
+active_peers(StoreStates, Tasks, Footprints, PeerQueues) ->
     FromQueues = ar_sync_store:peers(StoreStates),
     FromTasks = [Task#task.peer || Task <- maps:values(Tasks)],
     FromFootprints = ar_sync_footprint:peers(Footprints),
-    lists:usort(FromQueues ++ FromTasks ++ FromFootprints).
+    lists:usort(FromQueues ++ FromTasks ++ FromFootprints
+        ++ maps:keys(PeerQueues)).
 
 emit_claim_ownership_metrics(ClaimedByPeerStore, StoreIDs) ->
     PeersByStore = maps:fold(
@@ -912,6 +1084,12 @@ prune_stale_labels(Name, CurLabels) ->
 -ifdef(AR_TEST).
 -include_lib("eunit/include/eunit.hrl").
 
+%% Focused selection tests exercise binding and activation without spawning
+%% workers; production registers and spawns Dispatch#dispatch.tasks_to_start.
+dispatch_tasks(State, Dispatch) ->
+    {State2, Dispatch2} = bind_tasks(State, Dispatch),
+    activate_tasks(State2, Dispatch2).
+
 %% @doc The number of running fetch workers.
 inflight_count() ->
     gen_server:call(?MODULE, inflight_count).
@@ -934,28 +1112,88 @@ local_writes_do_not_consume_peer_capacity_test() ->
             store_id = StoreID }
     },
     StoreDispatches = ar_sync_store:start_dispatch(
-        ar_sync_footprint:new(), Tasks, ar_sync_store:new()),
+        ar_sync_footprint:new(), Tasks, [], ar_sync_store:new()),
     PeerDispatches0 = ar_sync_peer:start_dispatch(
         Tasks, [], ar_sync_peer:new()),
     PeerDispatches = ar_sync_peer:set_store_task_targets(
         Peer, [StoreID], PeerDispatches0),
     Dispatch = #dispatch{ stores = StoreDispatches, peers = PeerDispatches },
     %% One task exists in each local stage, but only the fetching task occupies
-    %% the peer's single network slot. One of the two assignment slots is used.
-    ?assertEqual(0.5,
+    %% the peer's single network slot. The default peer has one active slot and
+    %% an eight-task queued-work bootstrap, so one of nine assignments is used.
+    ?assertEqual(1 / 9,
         ar_sync_peer:load(Peer, Dispatch#dispatch.peers)),
     ?assertNot(ar_sync_peer:has_capacity(Peer, Dispatch#dispatch.peers)),
     %% Local writes are accounted only by the destination store.
-    ?assertEqual(0.5,
+    ?assertEqual(1 / 9,
         ar_sync_peer:store_load(Peer, StoreID, Dispatch#dispatch.peers)),
     ?assertEqual(#{Peer => 1}, inflight_counts(Tasks)).
+
+startable_task_prefers_less_active_store_test_() ->
+    ar_test_util:with_mocked([
+        {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end}
+    ], fun test_startable_task_prefers_less_active_store/0, 30).
+
+test_startable_task_prefers_less_active_store() ->
+    StoreA = store_a,
+    StoreB = store_b,
+    FetchingTasks = maps:from_list([
+        {make_ref(), #task{ state = fetching, store_id = StoreA }},
+        {make_ref(), #task{ state = fetching, store_id = StoreA }}
+    ]),
+    TaskA = #task{ offset = 0, store_id = StoreA },
+    TaskB = #task{ offset = ?DATA_CHUNK_SIZE, store_id = StoreB },
+    StoreDispatches = ar_sync_store:start_dispatch(
+        ar_sync_footprint:new(), FetchingTasks,
+        [TaskA, TaskB], ar_sync_store:new()),
+    %% Store A has two active fetches and appears first in the peer queue;
+    %% store B has none, so activation selects B without reordering A.
+    {TaskB, Remaining} = take_startable_task(
+        queue:from_list([TaskA, TaskB]), StoreDispatches),
+    ?assertEqual([TaskA], queue:to_list(Remaining)).
+
+peer_queue_stays_full_behind_active_cap_test_() ->
+    ar_test_util:with_mocked([
+        {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end}
+    ], fun test_peer_queue_stays_full_behind_active_cap/0, 30).
+
+test_peer_queue_stays_full_behind_active_cap() ->
+    Peer = peer1,
+    StoreID = store1,
+    %% Ten candidates exceed the two active plus four queued tasks that this
+    %% test dispatch may hold, leaving work in the unbound store queue.
+    Tasks = [#task{ store_id = StoreID,
+            sources = [#task_source{ peer = Peer }],
+            offset = Index * ?DATA_CHUNK_SIZE }
+        || Index <- lists:seq(0, 9)],
+    PeerDispatches = ar_sync_peer:set_store_task_targets(
+        Peer, [StoreID], ar_sync_peer:test_dispatch(
+            #{Peer => 2}, #{Peer => 4})),
+    Dispatch0 = (seed(Tasks))#dispatch{ peers = PeerDispatches },
+    {State1, Dispatch1} = bind_tasks(#state{}, Dispatch0),
+    ?assertEqual(4, queue:len(maps:get(
+        Peer, Dispatch1#dispatch.peer_queues))),
+    ?assertEqual([], Dispatch1#dispatch.tasks_to_start),
+    {State2, Dispatch2} = activate_tasks(State1, Dispatch1),
+    %% The active cap starts two tasks and temporarily leaves two queued.
+    ?assertEqual(2, length(Dispatch2#dispatch.tasks_to_start)),
+    ?assertEqual(2, queue:len(maps:get(
+        Peer, Dispatch2#dispatch.peer_queues))),
+    State2A = record_driven_peers(State2, Dispatch2),
+    ?assertEqual(#{Peer => true}, State2A#state.driven_peers),
+    Dispatch2A = Dispatch2#dispatch{ stores = ar_sync_store:refresh_work(
+        Dispatch2#dispatch.footprints, Dispatch2#dispatch.stores) },
+    {_State3, Dispatch3} = bind_tasks(State2A, Dispatch2A),
+    %% Refilling the two vacated places restores the four-task peer queue.
+    ?assertEqual(4, queue:len(maps:get(
+        Peer, Dispatch3#dispatch.peer_queues))).
 
 bound_footprint_owner_is_an_active_peer_test() ->
     Footprint = #footprint{ store_id = store1, partition = 0, footprint = 1 },
     Reservation = ar_sync_footprint:test_reservation(
         store1, Footprint, [], peer1, 0, bound),
     Footprints = ar_sync_footprint:test_state([Reservation]),
-    ?assertEqual([peer1], active_peers(#{}, #{}, Footprints)).
+    ?assertEqual([peer1], active_peers(#{}, #{}, Footprints, #{})).
 
 reservation_binding_claims_only_enqueued_tasks_test() ->
     Peer = {1, 1, 1, 1, 9},
@@ -981,11 +1219,13 @@ reservation_binding_claims_only_enqueued_tasks_test() ->
     Work = resolve_work(Footprint, DispatchA),
     {_State, Dispatch1} = dispatch_work(Work, #state{}, DispatchA),
     StoreStates1 = ar_sync_store:finish_dispatch(Dispatch1#dispatch.stores),
-    %% Binding releases the whole-footprint reservation. The cap-eight peer's
-    %% ten-task assignment limit remains claimed; retained intervals are future
+    %% Binding releases the whole-footprint reservation. The unmeasured peer's
+    %% eight-task queue limit remains claimed; retained intervals are future
     %% work.
-    ?assertEqual(10, ar_sync_store:claimed_chunks(store1, StoreStates1)),
-    ?assertEqual(10, ar_sync_store:queued_count(store1, StoreStates1)).
+    ?assertEqual(8, ar_sync_store:claimed_chunks(store1, StoreStates1)),
+    ?assertEqual(8, ar_sync_store:queued_task_count(store1, StoreStates1)),
+    ?assertEqual(8, queue:len(maps:get(Peer,
+        Dispatch1#dispatch.peer_queues))).
 
 fragmented_partial_intervals_claim_each_request_test() ->
     Peer = {1, 1, 1, 1, 9},
@@ -1011,7 +1251,9 @@ fragmented_partial_intervals_claim_each_request_test() ->
     {_State, Dispatch1} = dispatch_work(Work, #state{}, DispatchA),
     StoreStates1 = ar_sync_store:finish_dispatch(Dispatch1#dispatch.stores),
     ?assertEqual(2, ar_sync_store:claimed_chunks(store1, StoreStates1)),
-    ?assertEqual(2, ar_sync_store:queued_count(store1, StoreStates1)).
+    ?assertEqual(2, ar_sync_store:queued_task_count(store1, StoreStates1)),
+    ?assertEqual(2, queue:len(maps:get(Peer,
+        Dispatch1#dispatch.peer_queues))).
 
 overlapping_partial_intervals_defer_duplicate_request_test() ->
     Peer = {1, 1, 1, 1, 9},
@@ -1038,8 +1280,9 @@ overlapping_partial_intervals_defer_duplicate_request_test() ->
     {_State, Dispatch1} = dispatch_work(Work, #state{}, DispatchA),
     StoreStates1 = ar_sync_store:finish_dispatch(Dispatch1#dispatch.stores),
     ?assertEqual(1, ar_sync_store:claimed_chunks(store1, StoreStates1)),
-    ?assertEqual(1, ar_sync_store:queued_count(store1, StoreStates1)),
-    [Child] = ar_sync_store:queued_tasks(store1, StoreStates1),
+    ?assertEqual(1, ar_sync_store:queued_task_count(store1, StoreStates1)),
+    [Child] = queue:to_list(maps:get(Peer,
+        Dispatch1#dispatch.peer_queues)),
     ?assertEqual(0, Child#task.offset).
 
 %% Dispatch selection is pure (dispatch_tasks/2 produces a start list with no
@@ -1054,8 +1297,8 @@ decision_test_() ->
         test_footprint_piggyback(),
         test_bound_footprint_refills_through_dispatch(),
         test_draining_footprint_tasks_finish_dispatching(),
-        test_peer_store_horizon_limits_footprint_bindings(),
-        test_peer_store_horizon_is_work_conserving(),
+        test_peer_store_queue_limit_bounds_footprint_bindings(),
+        test_peer_store_queue_limit_is_work_conserving(),
         test_byte_source_bypasses_full_footprint_pool(),
         test_bound_footprint_keeps_its_peer(),
         test_per_peer_concurrency_cap(),
@@ -1215,8 +1458,10 @@ test_task_lifecycle() ->
     },
     FootprintWriting = on_task_fetch_completed(
         FootprintRef, ?DATA_CHUNK_SIZE, FetchTiming, FootprintState),
-    ?assertEqual(1, ar_sync_footprint:bound_count(
+    ?assertEqual(0, ar_sync_footprint:bound_count(
         FootprintWriting#state.footprints)),
+    ?assertEqual(none,
+        (maps:get(FootprintRef, FootprintWriting#state.tasks))#task.footprint),
     FootprintDone = on_task_write_completed(FootprintRef, FootprintWriting),
     ?assertNot(maps:is_key(FootprintRef, FootprintDone#state.tasks)),
     ?assertEqual(0, ar_sync_footprint:bound_count(
@@ -1424,16 +1669,15 @@ test_footprint_piggyback() ->
     ?assertEqual(P, ar_sync_footprint:reservation_peer(Reservation)).
 
 %% A bound reservation with retained intervals remains normal store work. The
-%% store-first dispatch loop enqueues one horizon-sized batch and starts it even
+%% store-first dispatch loop enqueues one queue-sized batch and starts it even
 %% when the ordinary store queue was initially empty.
 test_bound_footprint_refills_through_dispatch() ->
     Peer = {1, 1, 1, 1, 9},
     StoreID = store1,
     Footprint = #footprint{ store_id = StoreID, partition = 1,
         footprint = 1 },
-    %% Three retained chunks exceed the unmeasured peer's rounded two-task
-    %% assignment limit. One starts fetching and one remains queued, leaving
-    %% one chunk on the reservation after this dispatch pass.
+    %% A one-task active cap plus a two-task queue limit lets one fetch start
+    %% while one waits, leaving one retained chunk for the next dispatch pass.
     Intervals = ar_intervals:from_list([{3 * ?DATA_CHUNK_SIZE, 0}]),
     Reservation = ar_sync_footprint:test_reservation(
         StoreID, Footprint,
@@ -1446,8 +1690,9 @@ test_bound_footprint_refills_through_dispatch() ->
     },
     Dispatch0 = start_dispatch(State),
     {_State, Dispatch} = dispatch_tasks(#state{},
-        Dispatch0#dispatch{ peers = peer_dispatches_for_stores(
-            #{Peer => 1}, #{Peer => [StoreID]}) }),
+        Dispatch0#dispatch{ peers = ar_sync_peer:set_store_task_targets(
+            Peer, [StoreID], ar_sync_peer:test_dispatch(
+                #{Peer => 1}, #{Peer => 2})) }),
     [Started] = Dispatch#dispatch.tasks_to_start,
     ?assertEqual(Peer, Started#task.peer),
     Reservation2 = ar_sync_footprint:test_get(Footprint, Dispatch#dispatch.footprints),
@@ -1489,8 +1734,8 @@ test_draining_footprint_tasks_finish_dispatching() ->
     ?assertEqual(Footprint, Started#task.footprint).
 
 %% A peer/store pair binds one partial footprint at a time. Enqueued tasks
-%% consume that pair's horizon before another footprint can bind.
-test_peer_store_horizon_limits_footprint_bindings() ->
+%% consume that pair's queue capacity before another footprint can bind.
+test_peer_store_queue_limit_bounds_footprint_bindings() ->
     Peer = {1, 1, 1, 1, 9},
     AlternatePeer = {2, 2, 2, 2, 9},
     FootprintA = #footprint{ store_id = store1, partition = 1, footprint = 1 },
@@ -1520,7 +1765,7 @@ test_peer_store_horizon_limits_footprint_bindings() ->
 
 %% Peer/store load is a selection bias rather than a second hard gate, so a
 %% store with remaining work uses capacity that another store cannot use.
-test_peer_store_horizon_is_work_conserving() ->
+test_peer_store_queue_limit_is_work_conserving() ->
     Peer = {1, 1, 1, 1, 9},
     TasksA = [#task{ store_id = store_a,
         sources = [#task_source{ peer = Peer }], offset = 0 }],
@@ -1533,7 +1778,7 @@ test_peer_store_horizon_is_work_conserving() ->
             #{Peer => 4}, #{Peer => [store_a, store_b]}) },
     {_State, Dispatch} = dispatch_tasks(#state{}, Dispatch1),
     Started = Dispatch#dispatch.tasks_to_start,
-    %% The four-task peer horizon starts the only store_a task and lets store_b
+    %% The four-task peer limit starts the only store_a task and lets store_b
     %% use the otherwise-unused second half of its nominal two-task share.
     ?assertEqual(4, length(Started)),
     ?assertEqual(1, count_tasks_by_store(store_a, Started)),
@@ -1619,7 +1864,11 @@ test_per_peer_concurrency_cap() ->
     GoodCap = 16,
     {_State, Dispatch} = dispatch_tasks(#state{},
         (seed(Tasks))#dispatch{
-            peers = ar_sync_peer:test_dispatch(#{Good => GoodCap, Bad => 8}) }),
+            %% Explicit queue limits keep enough runnable work behind each active
+            %% cap; the default eight-task bootstrap is for unmeasured peers.
+            peers = ar_sync_peer:test_dispatch(
+                #{Good => GoodCap, Bad => 8},
+                #{Good => GoodCap, Bad => 8}) }),
     TasksToStart = Dispatch#dispatch.tasks_to_start,
     GoodCount = count_tasks_by_peer(Good, TasksToStart),
     BadCount = count_tasks_by_peer(Bad, TasksToStart),
@@ -1638,7 +1887,9 @@ test_store_balance() ->
             offset = I * ?DATA_CHUNK_SIZE } || I <- lists:seq(1, 20)],
     {_State, Dispatch} = dispatch_tasks(#state{},
         (seed(TasksA ++ TasksB))#dispatch{
-            peers = ar_sync_peer:test_dispatch(#{P => 10}) }),
+            %% Ten runnable tasks make the queue deep enough to fill the
+            %% explicit ten-request active cap in this synthetic first pass.
+            peers = ar_sync_peer:test_dispatch(#{P => 10}, #{P => 10}) }),
     TasksToStart = Dispatch#dispatch.tasks_to_start,
     ACount = count_tasks_by_store(store_a, TasksToStart),
     BCount = count_tasks_by_store(store_b, TasksToStart),
@@ -1657,10 +1908,10 @@ test_disk_gate() ->
     {_State, Dispatch} = dispatch_tasks(#state{}, seed(Tasks)),
     ?assertEqual([], Dispatch#dispatch.tasks_to_start).
 
-%% Per-peer cap = derived control (ar_sync_peer); this test pins the
-%% scheduler wiring end to end: unmeasured peers hold the exploration cap,
-%% productive demand grows toward the delivery ceiling, and inactive peers
-%% drop from the cap map.
+%% Per-peer cap = derived control (ar_sync_peer); this test pins the scheduler
+%% wiring end to end: unmeasured peers hold the exploration cap, productive
+%% driven work applies the exploration-window probe, and inactive peers drop
+%% from the cap map.
 cap_test_() ->
     PeerA = {1, 1, 1, 1, 25},
     PeerB = {2, 2, 2, 2, 75},
@@ -1672,48 +1923,39 @@ cap_test_() ->
             ar_sync_peer:concurrency_cap(unknown, PeerDispatches)),
         ?assertEqual(1,
             ar_sync_peer:concurrency_cap(known, PeerDispatches)),
-        %% Queued sources provide peer demand directly; neither test peer needs
-        %% a currently fetching task to remain visible to the scheduler.
-        Queued = queued_state([
-            #task{ store_id = s,
-                sources = [#task_source{ peer = PeerA }],
-                offset = 0 },
-            #task{ store_id = s,
-                sources = [#task_source{ peer = PeerB }],
-                offset = ?DATA_CHUNK_SIZE }
-        ]),
-        %% First tick: no measured delivery yet, so the pipeline ceiling holds
-        %% both peers at the ?CAP_INITIAL exploration bound despite demand.
+        %% First tick has no productive request time, so both peers remain at
+        %% the eight-request exploration bound despite each having a queued
+        %% task behind eight active fetches.
         InitialPeerState = record_peer_results([PeerA, PeerB],
-            100_000_000, #fetch_timing{}, Queued#state.peer_state),
-        State1 = tick(Queued#state{
-            peer_state = InitialPeerState }, 1000),
+            100_000_000, #fetch_timing{}, ar_sync_peer:new()),
+        State0 = driven_peer_state(
+            #{PeerA => 8, PeerB => 8}, #state{
+                peer_state = InitialPeerState }),
+        State1 = tick(State0, 1000),
         PeerDispatches1 = ar_sync_peer:start_dispatch(
             #{}, [], State1#state.peer_state),
         ?assertEqual(8, ar_sync_peer:concurrency_cap(PeerA, PeerDispatches1)),
         ?assertEqual(8, ar_sync_peer:concurrency_cap(PeerB, PeerDispatches1)),
-        %% Second tick: delivery measured (100k B/ms) gives a pipeline ceiling
-        %% well above the current cap. At small caps the eight-request minimum
-        %% probe dominates quarter growth: max(8 + 8, round(8 * 1.25)) = 16.
+        %% The first productive driven observation establishes an eight-request
+        %% baseline and starts its sixteen-request probe.
         ProductiveTiming = #fetch_timing{ productive_ms = 1000 },
         PeerState2 = record_peer_results([PeerA, PeerB],
             100_000_000, ProductiveTiming, State1#state.peer_state),
-        State2 = tick(State1#state{ peer_state = PeerState2 }, 2000),
+        State2 = tick(driven_peer_state(
+            #{PeerA => 8, PeerB => 8}, State1#state{
+                peer_state = PeerState2 }), 2000),
         PeerDispatches2 = ar_sync_peer:start_dispatch(
             #{}, [], State2#state.peer_state),
         ?assertEqual(16, ar_sync_peer:concurrency_cap(PeerA, PeerDispatches2)),
         ?assertEqual(16, ar_sync_peer:concurrency_cap(PeerB, PeerDispatches2)),
         %% Third tick with PeerB's queue drained and nothing inflight:
         %% PeerB drops from the caps map (its budget memory is kept in the
-        %% scheduler state); PeerA takes another minimum probe toward the
-        %% pipeline ceiling: max(16 + 8, round(16 * 1.25)) = 24.
-        QueuedA = queued_state([#task{ store_id = s,
-            sources = [#task_source{ peer = PeerA }], offset = 0 }]),
+        %% scheduler state); PeerA records the first flat-goodput observation
+        %% and advances its additive probe while waiting for repeated evidence.
         PeerState3 = record_peer_results([PeerA, PeerB],
             100_000_000, ProductiveTiming, State2#state.peer_state),
-        State3 = tick(State2#state{
-            stores = QueuedA#state.stores,
-            peer_state = PeerState3 }, 3000),
+        State3 = tick(driven_peer_state(#{PeerA => 16}, State2#state{
+            peer_state = PeerState3 }), 3000),
         PeerDispatches3 = ar_sync_peer:start_dispatch(
             #{}, [], State3#state.peer_state),
         ?assertEqual(24, ar_sync_peer:concurrency_cap(PeerA, PeerDispatches3)),
@@ -1735,6 +1977,30 @@ record_peer_results(Peers, DeliveredBytes, FetchTiming, PeerState) ->
         end,
         PeerState,
         Peers).
+
+driven_peer_state(InflightByPeer, State) ->
+    Tasks = maps:fold(
+        fun(Peer, Count, Acc) ->
+            lists:foldl(
+                fun(Index, TasksAcc) ->
+                    Ref = {Peer, Index},
+                    maps:put(Ref, #task{ task_ref = Ref, state = fetching,
+                        peer = Peer, store_id = s }, TasksAcc)
+                end,
+                Acc,
+                lists:seq(1, Count))
+        end,
+        #{},
+        InflightByPeer),
+    PeerQueues = maps:map(
+        fun(Peer, _Count) ->
+            queue:from_list([#task{ state = queued, peer = Peer,
+                store_id = s }])
+        end,
+        InflightByPeer),
+    State#state{ tasks = Tasks, peer_queues = PeerQueues,
+        driven_peers = maps:map(fun(_Peer, _Count) -> true end,
+            InflightByPeer) }.
 
 %% End-to-end: enqueue a mix of byte + footprint tasks; immediate-exit workers
 %% drive the spawn -> 'DOWN' -> release -> refill cycle to completion. Asserts no
@@ -1847,19 +2113,6 @@ test_cache_full() ->
 
 ensure_table() ->
     ar_sync_peer:create_ets().
-
-%% Queue Tasks through the real admission path so every field in the store state
-%% is consistent with the queued tasks.
-queued_state(Tasks) ->
-    lists:foldl(
-        fun(Task, State) ->
-            StoreID = Task#task.store_id,
-            {ok, _ClaimedChunks, State2} = admit_candidate(
-                StoreID, Task, State),
-            State2
-        end,
-        #state{},
-        Tasks).
 
 count_tasks_by_peer(Peer, Tasks) ->
     lists:foldl(

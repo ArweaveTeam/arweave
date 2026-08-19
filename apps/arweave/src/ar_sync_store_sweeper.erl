@@ -84,6 +84,10 @@
 %% minimum age is reached, use whatever peer metadata is currently cached;
 %% slower responses can populate the cache for a later sweep.
 -define(SWEEP_RANGE_WARM_WAIT_MS, 10_000).
+%% Thirty-two footprint metadata requests may not all finish during the fixed
+%% warm gate when a peer serves them serially. Give a newly exposed missing
+%% footprint head one more second without delaying byte or cached work.
+-define(SWEEP_RANGE_CADENCE_MS, 1_000).
 -define(CHUNK_PATH, "/chunk2").
 %% Fixed delay between sweeps. The sweep loop does not issue HTTP; discovery's
 %% HTTP workers have their own pacing. This delay only prevents tight-loop log
@@ -147,7 +151,7 @@ init(StoreID) ->
 
 handle_call(ping, _From, State) ->
     %% A synchronous no-op: replying proves every earlier mailbox message was
-    %% processed, allowing simulator settling and teardown to drain this stage.
+    %% processed, allowing callers to observe when this stage has drained.
     {reply, pong, State};
 handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -278,7 +282,8 @@ sweep_ready(State) ->
     State2 = fill_sweep_queues(State),
     case process_sweep_queues(State2) of
         {ok, State3} ->
-            {noreply, schedule_sweep(0, State3)};
+            Delay = completed_range_delay(State2, State3),
+            {noreply, schedule_sweep(Delay, State3)};
         {blocked, Delay, State3} ->
             NextDelay = case can_extend_sweep_queue(State3) of
                 true -> 0;
@@ -289,6 +294,45 @@ sweep_ready(State) ->
             %% Both mode queues reached the end of their queued readahead.
             %% Completion is observed after the final queued range is processed.
             {noreply, schedule_sweep(0, State2)}
+    end.
+
+completed_range_delay(StateBefore, StateAfter) ->
+    CompletedFootprint = completed_nonempty_head(
+        footprint, StateBefore, StateAfter),
+    case CompletedFootprint
+            andalso next_head_metadata_missing(footprint, StateAfter) of
+        true -> ?SWEEP_RANGE_CADENCE_MS;
+        false -> 0
+    end.
+
+next_head_metadata_missing(Mode, State) ->
+    case queue:peek(sweep_queue(Mode, State)) of
+        {value, #sweep_range{
+                unsynced_range = #unsynced_range{
+                    query_offset = QueryOffset,
+                    range_start = RangeStart,
+                    range_end = RangeEnd
+                }
+            }} ->
+            Peers = candidate_peers(QueryOffset),
+            {_PeerRanges, CacheStatus} = ar_sync_discovery:cached_peer_ranges(
+                State#state.store_id, Peers, QueryOffset, RangeStart, RangeEnd),
+            CacheStatus =:= cache_miss;
+        _ ->
+            false
+    end.
+
+completed_nonempty_head(Mode, StateBefore, StateAfter) ->
+    case queue:peek(sweep_queue(Mode, StateBefore)) of
+        {value, #sweep_range{ unsynced_range = none }} ->
+            false;
+        {value, #sweep_range{ offset = Offset }} ->
+            case queue:peek(sweep_queue(Mode, StateAfter)) of
+                {value, #sweep_range{ offset = Offset }} -> false;
+                _ -> true
+            end;
+        empty ->
+            false
     end.
 
 %% @doc Start the next sweep once both cursors reached their live bounds.
@@ -783,6 +827,55 @@ empty_sweep_range_has_no_metadata_wait_test() ->
     State2 = do_enqueue_sweep_range(Empty, Cursor, State),
     {ok, State3} = process_next_sweep_range(byte, State2),
     ?assert(queue:is_empty(sweep_queue(byte, State3))).
+
+completed_nonempty_range_uses_cadence_test_() ->
+    ar_test_util:with_mocked([
+        {ar_sync_discovery, get_peers_for_offset,
+            fun(100) -> [test_peer] end},
+        {ar_sync_discovery, cached_peer_ranges,
+            fun(test_store, [test_peer], 100, 100, 200) ->
+                {[], cache_miss}
+            end},
+        {ar_sync_deps, is_throttled,
+            fun(test_peer, ?CHUNK_PATH) -> false end},
+        {ar_sync_deps, pick_peers,
+            fun([test_peer], _Limit) -> [test_peer] end}
+    ], fun() ->
+        CompletedRange = #sweep_range{
+            mode = footprint,
+            offset = 0,
+            unsynced_range = occupied
+        },
+        PendingUnsyncedRange = #unsynced_range{
+            query_offset = 100,
+            range_start = 100,
+            range_end = 200
+        },
+        PendingRange = #sweep_range{
+            mode = footprint,
+            offset = 100,
+            unsynced_range = PendingUnsyncedRange
+        },
+        Before = #state{ store_id = test_store, sweep_queues = #{
+            byte => queue:new(),
+            footprint => queue:from_list([CompletedRange, PendingRange])
+        }},
+        After = Before#state{ sweep_queues = #{
+            byte => queue:new(),
+            footprint => queue:from_list([PendingRange])
+        }},
+        %% One second lets the pending serial metadata request progress.
+        ?assertEqual(?SWEEP_RANGE_CADENCE_MS,
+            completed_range_delay(Before, After)),
+        EmptyBefore = Before#state{ sweep_queues = #{
+            byte => queue:new(),
+            footprint => queue:from_list([
+                CompletedRange#sweep_range{ unsynced_range = none },
+                PendingRange
+            ])
+        }},
+        ?assertEqual(0, completed_range_delay(EmptyBefore, After))
+    end, 30).
 
 waiting_metadata_allows_other_mode_progress_test_() ->
     ar_test_util:with_mocked([

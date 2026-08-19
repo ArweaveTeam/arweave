@@ -99,7 +99,7 @@ do_refill(Rate, NowMs, Limit) ->
             %% A newly configured limiter starts with one full second.
             Limit;
         {Limit, _} ->
-            %% Simulated time may replace a later real-clock timestamp.
+            %% Clamp elapsed time if the injected clock source moves backward.
             ElapsedMs = max(0, NowMs - RefillMs),
             min(Limit, Balance + ElapsedMs * Limit div 1000)
     end,
