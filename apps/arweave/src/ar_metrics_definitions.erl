@@ -574,6 +574,10 @@ all_metrics() ->
             {help, "Discovery job counts and concurrency limits. 'kind' is "
                     "'sync_bucket' or 'chunk_interval'; 'state' is 'pending', "
                     "'inflight', or 'max_inflight'."}]},
+        {prometheus_gauge, [{name, sync_chunk_interval_jobs_by_store},
+            {labels, [state, store_id]},
+            {help, "Detailed-metadata discovery jobs by destination store. "
+                    "'state' is 'pending' or 'inflight'."}]},
         {prometheus_counter, [{name, chunk_interval_cache_evictions},
             {labels, [reason]},
             {help, "Cumulative rows evicted from ar_sync_discovery's chunk "
@@ -595,8 +599,8 @@ all_metrics() ->
                     "budget."}]},
         {prometheus_gauge, [{name, sync_claimed_peers_by_store},
             {labels, [store_id]},
-            {help, "Distinct peers owning fetching or write-pending claimed "
-                    "chunks for the store."}]},
+            {help, "Distinct peers owning runnable, fetching, or write-pending "
+                    "claimed chunks for the store."}]},
         {prometheus_gauge, [{name, sync_claimed_chunks_by_peer_store},
             {labels, [peer, store_id]},
             {help, "Peer-bound claimed chunks grouped by peer and store."}]},
@@ -606,7 +610,7 @@ all_metrics() ->
         {prometheus_gauge, [{name, sync_tasks_by_peer},
             {labels, [stage, peer]},
             {help, "Current peer-bound sync tasks by lifecycle stage. Stage is "
-                    "'fetching' or 'writing'."}]},
+                    "'queued', 'fetching', or 'writing'."}]},
         {prometheus_gauge, [{name, sync_tasks_by_store},
             {labels, [stage, store_id]},
             {help, "Current sync tasks by store and lifecycle stage. Stage is "
@@ -617,20 +621,20 @@ all_metrics() ->
         {prometheus_gauge, [{name, sync_peer_goodput_bytes_per_second},
             {labels, [peer]},
             {help, "Delivered chunk bytes per second used to size the peer's "
-                    "sync concurrency cap."}]},
-        {prometheus_gauge, [{name, sync_peer_pipeline_ceiling},
+                    "maximum queue length."}]},
+        {prometheus_gauge, [{name, sync_peer_queue_max_length},
             {labels, [peer]},
-            {help, "Concurrency ceiling derived from the peer's measured "
-                    "goodput and the configured pipeline horizon."}]},
-        {prometheus_gauge, [{name, sync_peer_control_ceiling},
-            {labels, [peer]},
-            {help, "Concurrency ceiling produced by the peer controller's "
-                    "growth and failure-pressure step."}]},
+            {help, "Maximum peer-bound tasks allowed to wait behind active "
+                    "fetches, derived from measured goodput."}]},
         {prometheus_gauge, [{name, sync_peer_failure_pressure},
             {labels, [peer]},
             {help, "Share of the peer's completed fetch-worker time spent on "
                     "429s, timeouts, and client errors during the latest "
                     "control interval."}]},
+        {prometheus_gauge, [{name, sync_peer_driven},
+            {labels, [peer]},
+            {help, "1 when runnable work waits behind a full peer concurrency "
+                    "cap while shared scheduler gates are open; 0 otherwise."}]},
         {prometheus_gauge, [{name, sync_active_peers},
             {help, "Distinct peers with queued or nonterminal sync tasks."}]},
         {prometheus_gauge, [{name, sync_total_concurrency_cap},
@@ -656,10 +660,10 @@ all_metrics() ->
         {prometheus_gauge, [{name, sync_store_pipeline_limit_chunks},
             {labels, [store_id]},
             {help, "Fetched plus fetching chunk limit derived from the store's "
-                    "measured drain rate and the sync pipeline horizon."}]},
-        {prometheus_gauge, [{name, sync_controller_demand_peers},
-            {help, "Distinct peers in controller demand at the latest scheduler "
-                    "control tick."}]},
+                    "measured write rate and assignment target duration."}]},
+        {prometheus_gauge, [{name, sync_scheduler_driven_peers},
+            {help, "Distinct peers whose runnable queues were held behind full "
+                    "concurrency caps at the latest scheduler tick."}]},
         {prometheus_gauge, [{name, repack_chunk_states},
             {labels, [store_id, type, state]},
             {help, "The count of chunks in each state. 'type' can be 'cache' or 'queue'."}]},

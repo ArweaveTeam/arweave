@@ -15,7 +15,8 @@
         compete_for_entropy_capacity/4, bound_candidates/1,
         is_source_compatible/3,
         pending_reservations/1,
-        has_bound_work/1, is_empty/1, task_completed/2, bound_count/1,
+        has_bound_work/1, is_empty/1, task_completed/2,
+        bound_count/1, bound_count/2,
         peers/1, queued_claim_chunks/1]).
 -export_type([state/0, dispatch/0, reservation/0]).
 
@@ -26,7 +27,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -export([test_reservation/6, reservation_state/1,
         reservation_peer/1, active_tasks/1,
-        test_state/1, test_get/2, test_dispatch/2, set_max_active/2]).
+        test_state/1, test_get/2, test_dispatch/2,
+        set_max_active/2]).
 -endif.
 
 -opaque reservation() :: #footprint_reservation{}.
@@ -317,20 +319,14 @@ defer(Footprint, #dispatch{ deferred = Deferred } = Dispatch) ->
     {deferred, Dispatch#dispatch{ deferred =
         sets:add_element(Footprint, Deferred) }}.
 
-%% @doc Return bound reservations with intervals that can still form tasks.
-%% The scheduler combines these identifiers with live store and peer state.
+%% @doc Return every bound reservation occupying an entropy slot. A footprint
+%% remains eligible for displacement after all its work has entered peer queues;
+%% otherwise queued work can hide the slot from a newly available store.
 bound_candidates(Dispatch) ->
     maps:fold(
         fun(Footprint, #footprint_reservation{ state = bound,
-                peer = Peer, store_id = StoreID,
-                sources = [#task_source{ peer = Peer,
-                    footprint = #footprint{}, intervals = Intervals }] }, Acc) ->
-                case ar_intervals:is_empty(Intervals) of
-                    true ->
-                        Acc;
-                    false ->
-                        [{Footprint, Peer, StoreID} | Acc]
-                end;
+                peer = Peer, store_id = StoreID }, Acc) ->
+                [{Footprint, Peer, StoreID} | Acc];
             (_Footprint, _Reservation, Acc) ->
                 Acc
         end,
@@ -362,12 +358,28 @@ compete_with_weakest(CandidatePriority, BoundPriorities, Reservations) ->
             end
     end.
 
-candidate_wins({0, _CandidatePeerLoad, _CandidateCap},
-        {1, _IncumbentPeerLoad, _IncumbentCap}) ->
+candidate_wins({CandidateStoreCount, _CandidateAvailability,
+        _CandidatePeerLoad, _CandidateCap},
+        {IncumbentStoreCount, _IncumbentAvailability,
+            _IncumbentPeerLoad, _IncumbentCap})
+        when CandidateStoreCount < IncumbentStoreCount ->
     true;
-candidate_wins(
-        {0, CandidatePeerLoad, NegativeCandidateCap},
-        {0, IncumbentPeerLoad, NegativeIncumbentCap}) ->
+candidate_wins({CandidateStoreCount, _CandidateAvailability,
+        _CandidatePeerLoad, _CandidateCap},
+        {IncumbentStoreCount, _IncumbentAvailability,
+            _IncumbentPeerLoad, _IncumbentCap})
+        when CandidateStoreCount > IncumbentStoreCount ->
+    false;
+candidate_wins({StoreCount, 0, _CandidatePeerLoad, _CandidateCap},
+        {StoreCount, 1, _IncumbentPeerLoad, _IncumbentCap}) ->
+    true;
+candidate_wins({StoreCount, 1, _CandidatePeerLoad, _CandidateCap},
+        {StoreCount, 0, _IncumbentPeerLoad, _IncumbentCap}) ->
+    false;
+candidate_wins({StoreCount, Availability, CandidatePeerLoad,
+        NegativeCandidateCap},
+        {StoreCount, Availability, IncumbentPeerLoad,
+            NegativeIncumbentCap}) ->
     case compare_load_with_margin(CandidatePeerLoad, IncumbentPeerLoad) of
         better -> true;
         worse -> false;
@@ -405,9 +417,9 @@ release(Footprint, Reservations) ->
 is_source_compatible(#footprint_reservation{ state = bound, peer = Peer },
         #task_source{ peer = Peer }, _Dispatch) ->
     true;
-is_source_compatible(#footprint_reservation{ state = queued, store_id = StoreID },
-        #task_source{ peer = Peer }, Dispatch) ->
-    not has_partial_footprint(Peer, StoreID, reservations(Dispatch));
+is_source_compatible(#footprint_reservation{ state = queued },
+        #task_source{}, _Dispatch) ->
+    true;
 is_source_compatible(#footprint_reservation{ state = draining },
         _Source, _Dispatch) ->
     false;
@@ -487,6 +499,20 @@ bound_count(Footprints) ->
         0,
         reservations(Footprints)).
 
+%% @doc Count entropy slots currently owned by one destination store.
+bound_count(StoreID, Footprints) ->
+    maps:fold(
+        fun(_Footprint, #footprint_reservation{ store_id = OwnerStoreID,
+                state = State }, Count)
+                when OwnerStoreID =:= StoreID,
+                    (State =:= bound orelse State =:= draining) ->
+                Count + 1;
+            (_Footprint, _Reservation, Count) ->
+                Count
+        end,
+        0,
+        reservations(Footprints)).
+
 draining_count(Reservations) ->
     maps:fold(
         fun(_Footprint, Reservation, Count) ->
@@ -497,28 +523,6 @@ draining_count(Reservations) ->
         end,
         0,
         Reservations).
-
-%% @doc Return whether Peer already has a bound footprint with work remaining
-%% for StoreID.
-has_partial_footprint(Peer, StoreID, Reservations) ->
-    lists:any(
-        fun(Reservation) ->
-                State = Reservation#footprint_reservation.state,
-                case State =:= bound orelse State =:= draining of
-                    true ->
-                        #footprint_reservation{ peer = OwnerPeer,
-                            store_id = OwnerStoreID,
-                            sources = [#task_source{ peer = OwnerPeer,
-                                footprint = #footprint{},
-                                intervals = Intervals }] } = Reservation,
-                        OwnerPeer =:= Peer
-                            andalso OwnerStoreID =:= StoreID
-                            andalso not ar_intervals:is_empty(Intervals);
-                    false ->
-                        false
-                end
-        end,
-        maps:values(Reservations)).
 
 %% @doc Return peers owning bound or draining footprints.
 peers(Footprints) ->
@@ -606,16 +610,32 @@ admit_replaces_unbound_source_snapshot_test() ->
     ?assertEqual(sources(Updated),
         sources(maps:get(Footprint, Reservations2))).
 
-queued_reservation_avoids_peer_with_bound_store_footprint_test() ->
+queued_reservation_can_use_available_global_slot_test() ->
     StoreID = store,
     Peer = peer,
     BoundFootprint = footprint(StoreID, 1),
     QueuedFootprint = footprint(StoreID, 2),
     Bound = bound_reservation(Peer, BoundFootprint, 1),
     Queued = queued_reservation(Peer, QueuedFootprint),
+    %% One bound footprint leaves the second global entropy slot available.
     Dispatch = test_dispatch(test_state([Bound, Queued]), 2),
     [Source] = sources(Queued),
-    ?assertNot(is_source_compatible(Queued, Source, Dispatch)).
+    ?assert(is_source_compatible(Queued, Source, Dispatch)),
+    ?assert(has_entropy_capacity(QueuedFootprint, Source, Dispatch)).
+
+queued_reservation_reaches_full_cache_competition_test() ->
+    StoreID = store,
+    Peer = peer,
+    BoundFootprint = footprint(StoreID, 1),
+    QueuedFootprint = footprint(StoreID, 2),
+    Bound = bound_reservation(Peer, BoundFootprint, 1),
+    Queued = queued_reservation(Peer, QueuedFootprint),
+    %% The one-slot cache is full, but compatibility must let the queued
+    %% footprint reach the scheduler's bounded displacement decision.
+    Dispatch = test_dispatch(test_state([Bound, Queued]), 1),
+    [Source] = sources(Queued),
+    ?assert(is_source_compatible(Queued, Source, Dispatch)),
+    ?assertNot(has_entropy_capacity(QueuedFootprint, Source, Dispatch)).
 
 build_batches_test() ->
     Peer = peer,
@@ -700,6 +720,33 @@ task_completed_test() ->
     ?assertEqual(1, Reservation2#footprint_reservation.active_tasks),
     ?assertEqual(release, task_completed(Reservation2)).
 
+bound_candidates_include_fully_queued_footprint_test() ->
+    Peer = peer,
+    Footprint = footprint(store, 1),
+    %% One active child with no remaining source intervals represents a
+    %% footprint whose complete batch has already entered the peer queue.
+    Reservation = #footprint_reservation{ store_id = store,
+        footprint = Footprint, peer = Peer,
+        sources = [#task_source{ peer = Peer, footprint = Footprint,
+            intervals = ar_intervals:new() }],
+        active_tasks = 1, state = bound },
+    Dispatch = test_dispatch(#{Footprint => Reservation}, 1),
+    ?assertEqual([{Footprint, Peer, store}], bound_candidates(Dispatch)).
+
+bound_count_by_store_test() ->
+    StoreAFootprint = footprint(store_a, 1),
+    StoreBFootprint = footprint(store_b, 2),
+    %% One bound slot and one draining slot both consume entropy, while each
+    %% destination store owns only its corresponding slot.
+    StoreAReservation = bound_reservation(peer, StoreAFootprint, 1),
+    StoreBReservation = (bound_reservation(peer, StoreBFootprint, 1))
+        #footprint_reservation{ state = draining },
+    Dispatch = test_dispatch(test_state(
+        [StoreAReservation, StoreBReservation]), 2),
+    ?assertEqual(2, bound_count(Dispatch)),
+    ?assertEqual(1, bound_count(store_a, Dispatch)),
+    ?assertEqual(1, bound_count(store_b, Dispatch)).
+
 competition_releases_idle_incumbent_test() ->
     IdlePeer = idle,
     WaitingPeer = waiting,
@@ -711,8 +758,8 @@ competition_releases_idle_incumbent_test() ->
     },
     %% One entropy slot is occupied by an idle one-request peer while a
     %% 100-request peer waits, so the waiting footprint wins that slot.
-    CandidatePriority = {0, 0.0, -100},
-    BoundPriorities = [{{0, 0.0, -1}, IdleFootprint}],
+    CandidatePriority = {0, 0, 0.0, -100},
+    BoundPriorities = [{{0, 0, 0.0, -1}, IdleFootprint}],
     {released, Reservations2} = compete_with_weakest(
         CandidatePriority, BoundPriorities, Reservations),
     ?assertNot(maps:is_key(IdleFootprint, Reservations2)),
@@ -730,16 +777,16 @@ competition_renewal_margin_test() ->
     },
     %% Loads of 50% and 46% differ by less than the ten-percent renewal margin,
     %% so the incumbent retains entropy.
-    IncumbentPriority = {0, 0.50, -100},
+    IncumbentPriority = {0, 0, 0.50, -100},
     BoundPriorities = [{IncumbentPriority, IncumbentFootprint}],
     lost = compete_with_weakest(
-        {0, 0.46, -100}, BoundPriorities, Reservations),
+        {0, 0, 0.46, -100}, BoundPriorities, Reservations),
     ?assertMatch(#footprint_reservation{ state = bound },
         maps:get(IncumbentFootprint, Reservations)),
     %% A 44% waiting load is more than ten percent below the incumbent's 50%,
     %% so the waiting footprint wins the occupied slot.
     {draining, DrainingReservations} = compete_with_weakest(
-        {0, 0.44, -100}, BoundPriorities, Reservations),
+        {0, 0, 0.44, -100}, BoundPriorities, Reservations),
     ?assertMatch(#footprint_reservation{ state = draining },
         maps:get(IncumbentFootprint, DrainingReservations)),
     %% An active draining reservation remains until its child task completes.
@@ -748,6 +795,45 @@ competition_renewal_margin_test() ->
         #task{ footprint = IncumbentFootprint },
         DrainingReservations),
     ?assertNot(maps:is_key(IncumbentFootprint, CompletedReservations)).
+
+competition_prefers_store_with_fewer_footprints_test() ->
+    Peer = peer,
+    IncumbentFootprint = footprint(store_a, 1),
+    WaitingFootprint = footprint(store_b, 2),
+    Reservations = #{
+        IncumbentFootprint => bound_reservation(
+            Peer, IncumbentFootprint, 1),
+        WaitingFootprint => queued_reservation(Peer, WaitingFootprint)
+    },
+    %% Equal 50% peer loads leave destination-store entropy ownership as the
+    %% tie-breaker. A store with no slot beats an incumbent store with one.
+    CandidatePriority = {0, 0, 0.5, -100},
+    BoundPriorities = [{{1, 0, 0.5, -100}, IncumbentFootprint}],
+    {draining, DrainingReservations} = compete_with_weakest(
+        CandidatePriority, BoundPriorities, Reservations),
+    ?assertMatch(#footprint_reservation{ state = draining },
+        maps:get(IncumbentFootprint, DrainingReservations)).
+
+competition_releases_excess_slot_before_blocked_store_test() ->
+    BlockedFootprint = footprint(store_a, 1),
+    ExcessFootprint = footprint(store_b, 2),
+    Reservations = #{
+        BlockedFootprint => bound_reservation(
+            blocked_peer, BlockedFootprint, 0),
+        ExcessFootprint => bound_reservation(
+            ready_peer, ExcessFootprint, 0)
+    },
+    %% Store A owns one temporarily blocked slot while store B owns two slots.
+    %% A zero-slot candidate must reclaim store B's excess instead of starving
+    %% store A because its current work is momentarily unrunnable.
+    BoundPriorities = [
+        {{1, 1, 0.0, -100}, BlockedFootprint},
+        {{2, 0, 0.0, -100}, ExcessFootprint}
+    ],
+    {released, Reservations2} = compete_with_weakest(
+        {0, 0, 0.0, -100}, BoundPriorities, Reservations),
+    ?assert(maps:is_key(BlockedFootprint, Reservations2)),
+    ?assertNot(maps:is_key(ExcessFootprint, Reservations2)).
 
 competition_prefers_stronger_waiter_test() ->
     IncumbentPeer = incumbent,
@@ -760,8 +846,8 @@ competition_prefers_stronger_waiter_test() ->
         WaitingFootprint => queued_reservation(WaitingPeer, WaitingFootprint)
     },
     %% Equal zero load leaves the caps as the strength tie-breaker.
-    CandidatePriority = {0, 0.0, -100},
-    BoundPriorities = [{{0, 0.0, -1}, IncumbentFootprint}],
+    CandidatePriority = {0, 0, 0.0, -100},
+    BoundPriorities = [{{0, 0, 0.0, -1}, IncumbentFootprint}],
     {draining, DrainingReservations} = compete_with_weakest(
         CandidatePriority, BoundPriorities, Reservations),
     ?assertMatch(#footprint_reservation{ state = draining },
@@ -794,9 +880,10 @@ competition_drains_multiple_incumbents_test() ->
     %% Both slots contain one-request peers and both queued footprints have
     %% 100-request peers, so each queued footprint drains one incumbent.
     {draining, DrainingReservations1} = compete_with_weakest(
-        {0, 0.0, -100}, [{{0, 0.0, -1}, BoundFootprintA}], Reservations),
+        {0, 0, 0.0, -100},
+        [{{0, 0, 0.0, -1}, BoundFootprintA}], Reservations),
     {draining, DrainingReservations} = compete_with_weakest(
-        {0, 0.0, -100}, [{{0, 0.0, -1}, BoundFootprintB}],
+        {0, 0, 0.0, -100}, [{{0, 0, 0.0, -1}, BoundFootprintB}],
         DrainingReservations1),
     ?assertMatch(#footprint_reservation{ state = draining },
         maps:get(BoundFootprintA, DrainingReservations)),

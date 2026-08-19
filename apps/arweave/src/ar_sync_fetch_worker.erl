@@ -28,8 +28,8 @@
 
 %% @doc Fetch from the task's offset and rate the peer by the bytes it delivered.
 run(#task{ peer = Peer } = Task) ->
-    %% Fetch timing uses ar_timer so the same accounting follows simulated
-    %% and live time. timer:tc remains the wall-clock input to ar_peers.
+    %% Fetch timing uses the scheduler's clock. timer:tc remains
+    %% the wall-clock input to ar_peers.
     {ElapsedUs, {Result, BytesFetched, FetchTiming}} =
         timer:tc(fun() -> fetch_task(Task) end),
     ar_sync_scheduler:task_fetch_completed(Task#task.task_ref, BytesFetched,

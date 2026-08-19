@@ -15,11 +15,13 @@
         peers/1,
         record_write_completed/2, sample_drain_rates/2, drain_rate/2,
         cache_limit/2, pipeline_limit/2,
-        start_dispatch/3, finish_dispatch/1,
+        start_dispatch/4, refresh_work/2, finish_dispatch/1,
         best_store/1, pop_work/2,
-        add_reservations/2, start_task/2,
-        enqueue_tasks/2, bind_footprint/2,
-        unclaimed_intervals/3, has_capacity/2, stores_by_peer/1]).
+        add_reservations/2, bind_task/2, start_bound_task/2,
+        enqueue_bound_tasks/2, bind_footprint/2,
+        unclaimed_intervals/3, has_capacity/2, can_start_bound_task/2,
+        fetching_count/2,
+        stores_by_peer/1]).
 -export_type([state/0, dispatch/0]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -32,12 +34,12 @@
 
 %% Enough queued work to cover transient write variance without letting a slow
 %% store monopolize the chunk cache.
--define(PIPELINE_HORIZON_MS, 5000).
+-define(WRITE_QUEUE_TARGET_DURATION_MS, 5000).
 
 %% A delayed fetch can occupy five seconds before entering the five-second
-%% write horizon. One additional second covers strict admission boundaries and
+%% write queue. One additional second covers strict admission boundaries and
 %% scheduler/completion-wave quantization.
--define(ASSIGNMENT_PIPELINE_HORIZON_MS, 11_000).
+-define(ASSIGNMENT_TARGET_DURATION_MS, 11_000).
 
 %% Smooth write-completion bursts over roughly two drain-rate observations.
 %% The first continuously backlogged interval seeds the estimate directly.
@@ -74,6 +76,8 @@
 %% One store's mutable snapshot during a scheduler dispatch pass.
 -record(store_dispatch, {
     state,
+    %% Tasks already assigned to peer queues but not yet fetching.
+    bound_count = 0,
     fetching_count = 0,
     writing_count = 0,
     cached_chunk_count = 0,
@@ -112,7 +116,7 @@
 new() ->
     #{}.
 
-%% @doc Chunks the store may still claim before reaching its work horizon.
+%% @doc Chunks the store may still claim before reaching its queue target.
 admission_headroom(StoreID, States) ->
     admission_headroom(get_state(StoreID, States)).
 
@@ -126,7 +130,7 @@ claim_limit(#store_state{ drain_rate = undefined }) ->
     bootstrap_limit(ar_sync_deps:chunk_cache_size_limit());
 claim_limit(#store_state{ drain_rate = ChunksPerSecond }) ->
     max(?MIN_CLAIM_LIMIT,
-        round(ChunksPerSecond * ?PIPELINE_HORIZON_MS / 1000)).
+        round(ChunksPerSecond * ?WRITE_QUEUE_TARGET_DURATION_MS / 1000)).
 
 
 %% @doc Return the store capacity reserved by a task or reservation. A
@@ -266,7 +270,7 @@ record_write_completed(StoreID, States) ->
 
 %% @doc Sample completed writes at tick boundaries. If the fetched cache was
 %% empty during the sample, observed throughput is demand-limited and a fully
-%% consumed horizon may grow. A continuously backlogged sample is authoritative
+%% consumed queue may grow. A continuously backlogged sample is authoritative
 %% in both directions, including zero throughput.
 sample_drain_rates(NowMs, States) ->
     maps:map(
@@ -330,7 +334,8 @@ drain_rate(StoreID, States) ->
     (get_state(StoreID, States))#store_state.drain_rate.
 
 %% @doc Per-store share of the hard fetched-chunk cache. A measured store is
-%% bounded by its drain horizon; an unmeasured store starts with a small probe.
+%% bounded by its write-rate-derived target; an unmeasured store starts with a
+%% small probe.
 cache_limit(StoreID, States) ->
     State = get_state(StoreID, States),
     do_cache_limit(State, configured_store_count()).
@@ -362,7 +367,7 @@ assignment_pipeline_limit(#store_state{ drain_rate = undefined }) ->
     ?MIN_CLAIM_LIMIT;
 assignment_pipeline_limit(#store_state{ drain_rate = ChunksPerSecond }) ->
     max(?MIN_CLAIM_LIMIT, round(ChunksPerSecond
-        * ?ASSIGNMENT_PIPELINE_HORIZON_MS / 1000)).
+        * ?ASSIGNMENT_TARGET_DURATION_MS / 1000)).
 
 %%%===================================================================
 %%% Dispatch snapshot.
@@ -370,7 +375,7 @@ assignment_pipeline_limit(#store_state{ drain_rate = ChunksPerSecond }) ->
 
 %% @doc Snapshot every indexed store, existing task, and pending footprint
 %% footprint work for one scheduler dispatch pass.
-start_dispatch(Footprints, Tasks, States) ->
+start_dispatch(Footprints, Tasks, BoundTasks, States) ->
     StoreCount = configured_store_count(),
     Dispatches = maps:map(
         fun(StoreID, State) ->
@@ -379,6 +384,12 @@ start_dispatch(Footprints, Tasks, States) ->
         end,
         States),
     Dispatches2 = add_reservations(Footprints, Dispatches),
+    Dispatches3 = lists:foldl(
+        fun(#task{ store_id = StoreID }, Acc) ->
+            record_task(StoreID, bound, Acc)
+        end,
+        Dispatches2,
+        BoundTasks),
     maps:fold(
         fun(_TaskRef, #task{ state = TaskState, store_id = StoreID }, Acc)
                 when TaskState =:= fetching; TaskState =:= writing ->
@@ -386,13 +397,28 @@ start_dispatch(Footprints, Tasks, States) ->
             (_TaskRef, _Task, Acc) ->
                 Acc
         end,
-        Dispatches2,
+        Dispatches3,
         Tasks).
+
+%% @doc Rebuild dispatch-local work after activation frees peer-queue slots.
+%% Only successfully bound tasks were removed from persistent store state; work
+%% skipped earlier in the pass becomes selectable again for the refill.
+refresh_work(Footprints, Dispatches) ->
+    Dispatches2 = maps:map(
+        fun(_StoreID, #store_dispatch{ state = State } = Dispatch) ->
+            Dispatch#store_dispatch{
+                work_queue = State#store_state.work_queue,
+                peers = sets:from_list(
+                    maps:keys(State#store_state.queued_peer_counts))
+            }
+        end,
+        Dispatches),
+    add_reservations(Footprints, Dispatches2).
 
 -ifdef(AR_TEST).
 %% @doc Build a store dispatch without existing tasks or footprint work.
 test_dispatch(States) ->
-    start_dispatch(ar_sync_footprint:new(), #{}, States).
+    start_dispatch(ar_sync_footprint:new(), #{}, [], States).
 -endif.
 
 %% @doc Return the indexed persistent state after a dispatch pass.
@@ -408,27 +434,33 @@ record_task(StoreID, TaskState, Dispatches) ->
 
 do_record_task(fetching, #store_dispatch{ fetching_count = Count } = Dispatch) ->
     Dispatch#store_dispatch{ fetching_count = Count + 1 };
+do_record_task(bound, #store_dispatch{ bound_count = Count } = Dispatch) ->
+    Dispatch#store_dispatch{ bound_count = Count + 1 };
 do_record_task(writing, #store_dispatch{ writing_count = Count } = Dispatch) ->
     Dispatch#store_dispatch{ writing_count = Count + 1 }.
 
 %% @doc Return fetching load and total active load for store selection.
-load(#store_dispatch{ fetching_count = FetchingCount,
+load(#store_dispatch{ bound_count = BoundCount,
+        fetching_count = FetchingCount,
         writing_count = WritingCount }) ->
-    {FetchingCount, FetchingCount + WritingCount}.
+    NetworkCount = BoundCount + FetchingCount,
+    {NetworkCount, NetworkCount + WritingCount}.
 
 %% @doc Return whether the store can start another network fetch within its
-%% write-stage horizon.
+%% write-stage limits.
 has_capacity(#store_dispatch{
         state = State,
+        bound_count = BoundCount,
         fetching_count = FetchingCount,
         cached_chunk_count = CachedChunkCount,
         cache_limit = CacheLimit,
         pipeline_limit = PipelineLimit,
         disk_ready = DiskReady
     }) ->
+    NetworkCount = BoundCount + FetchingCount,
     DiskReady andalso CachedChunkCount < CacheLimit
-        andalso CachedChunkCount + FetchingCount < PipelineLimit
-        andalso initial_fetch_has_capacity(FetchingCount, State).
+        andalso CachedChunkCount + NetworkCount < PipelineLimit
+        andalso initial_fetch_has_capacity(NetworkCount, State).
 
 initial_fetch_has_capacity(FetchingCount,
         #store_state{ drain_rate = undefined }) ->
@@ -439,6 +471,20 @@ initial_fetch_has_capacity(_FetchingCount, #store_state{}) ->
 %% @doc Return whether one store can start another network fetch this pass.
 has_capacity(StoreID, Dispatches) ->
     has_capacity(get_dispatch(StoreID, Dispatches)).
+
+%% @doc Return whether an already-admitted peer-bound task may start. Moving a
+%% task from bound to fetching does not add store pipeline load.
+can_start_bound_task(StoreID, Dispatches) ->
+    #store_dispatch{
+        cached_chunk_count = CachedChunkCount,
+        cache_limit = CacheLimit,
+        disk_ready = DiskReady
+    } = get_dispatch(StoreID, Dispatches),
+    DiskReady andalso CachedChunkCount < CacheLimit.
+
+%% @doc Return one destination store's active network-fetch count.
+fetching_count(StoreID, Dispatches) ->
+    (get_dispatch(StoreID, Dispatches))#store_dispatch.fetching_count.
 
 %% @doc Select the least-loaded store with runnable work and capacity.
 best_store(Dispatches) ->
@@ -499,27 +545,46 @@ do_add_reservation(Reservation, Dispatches) ->
         peers = Peers
     }, Dispatches).
 
-%% @doc Remove a selected chunk from persistent work and count its fetch.
-start_task(Task, Dispatches) ->
+%% @doc Move one selected task from the unbound store queue into a peer queue.
+%% It remains queued for admission accounting until a fetch actually starts.
+bind_task(Task, Dispatches) ->
     StoreID = Task#task.store_id,
     Dispatch = get_dispatch(StoreID, Dispatches),
-    #store_dispatch{ state = State, fetching_count = FetchingCount } = Dispatch,
+    #store_dispatch{ state = State, bound_count = BoundCount } = Dispatch,
     put_dispatch(Dispatch#store_dispatch{
-        state = dequeue(Task, State),
-        fetching_count = FetchingCount + 1
+        state = bind_queued_task(Task, State),
+        bound_count = BoundCount + 1
     }, Dispatches).
 
-%% @doc Enqueue claimed tasks in persistent and dispatch-pass work.
-enqueue_tasks(Tasks, Dispatches) ->
-    lists:foldl(fun do_enqueue_task/2, Dispatches, Tasks).
+%% @doc Claim footprint children directly into their selected peer queue.
+enqueue_bound_tasks(Tasks, Dispatches) ->
+    lists:foldl(fun do_enqueue_bound_task/2, Dispatches, Tasks).
 
-do_enqueue_task(Task, Dispatches) ->
+do_enqueue_bound_task(Task, Dispatches) ->
     StoreID = Task#task.store_id,
     Dispatch = get_dispatch(StoreID, Dispatches),
-    #store_dispatch{ state = State, work_queue = WorkQueue } = Dispatch,
+    #store_dispatch{ state = State, bound_count = BoundCount } = Dispatch,
     put_dispatch(Dispatch#store_dispatch{
-        state = enqueue_state(Task, State),
-        work_queue = gb_sets:add_element(work_element(Task), WorkQueue)
+        state = enqueue_bound_task(Task, State),
+        bound_count = BoundCount + 1
+    }, Dispatches).
+
+%% @doc Move one peer-bound task into the active network-fetch stage.
+start_bound_task(Task, Dispatches) ->
+    StoreID = Task#task.store_id,
+    Dispatch = get_dispatch(StoreID, Dispatches),
+    #store_dispatch{
+        state = State,
+        bound_count = BoundCount,
+        fetching_count = FetchingCount
+    } = Dispatch,
+    State2 = State#store_state{
+        queued_task_count = max(0, State#store_state.queued_task_count - 1)
+    },
+    put_dispatch(Dispatch#store_dispatch{
+        state = State2,
+        bound_count = max(0, BoundCount - 1),
+        fetching_count = FetchingCount + 1
     }, Dispatches).
 
 %% @doc Bind a reservation and release its persistent whole-footprint claim.
@@ -619,13 +684,10 @@ enqueue_state(Reservation, State) ->
             + chunks_in_claim(Reservation)
     }).
 
-dequeue(#task{ sources = Sources } = Task, State) ->
-    State#store_state{
-        work_queue = gb_sets:delete(
-            work_element(Task), State#store_state.work_queue),
-        queued_peer_counts = adjust_peer_counts(
-            Sources, -1, State#store_state.queued_peer_counts),
-        queued_task_count = max(0, State#store_state.queued_task_count - 1)
+dequeue(#task{} = Task, State) ->
+    State2 = bind_queued_task(Task, State),
+    State2#store_state{
+        queued_task_count = max(0, State2#store_state.queued_task_count - 1)
     };
 dequeue(Reservation, State) ->
     State#store_state{
@@ -633,6 +695,22 @@ dequeue(Reservation, State) ->
             work_element(Reservation), State#store_state.work_queue),
         queued_peer_counts = adjust_peer_counts(
             sources(Reservation), -1, State#store_state.queued_peer_counts)
+    }.
+
+bind_queued_task(#task{ sources = Sources } = Task, State) ->
+    State#store_state{
+        work_queue = gb_sets:delete(
+            work_element(Task), State#store_state.work_queue),
+        queued_peer_counts = adjust_peer_counts(
+            Sources, -1, State#store_state.queued_peer_counts)
+    }.
+
+enqueue_bound_task(#task{ offset = Offset }, State) ->
+    State#store_state{
+        claimed = ar_intervals:add(
+            State#store_state.claimed, Offset + ?DATA_CHUNK_SIZE, Offset),
+        claimed_chunks = State#store_state.claimed_chunks + 1,
+        queued_task_count = State#store_state.queued_task_count + 1
     }.
 
 do_unclaimed_intervals(Intervals, #store_state{ claimed = Claimed }) ->
@@ -777,9 +855,9 @@ admission_headroom_counts_only_queued_tasks_test() ->
     },
     ?assertEqual(21, admission_headroom(State)).
 
-fetching_tasks_do_not_consume_store_write_horizon_test() ->
+fetching_tasks_do_not_consume_store_cache_limit_test() ->
     %% Once drain is measured, peer and global limits bound network requests;
-    %% the store horizon applies only after chunks enter its cache.
+    %% the store cache limit applies only after chunks enter its cache.
     Dispatch = #store_dispatch{
         state = #store_state{ drain_rate = 1 },
         cached_chunk_count = 3,
@@ -898,7 +976,7 @@ stores_by_peer_includes_task_and_footprint_demand_test() ->
     Reservation = ar_sync_footprint:test_reservation(
         StoreID, Footprint, [Source], FootprintPeer, 0, bound),
     Footprints = ar_sync_footprint:test_state([Reservation]),
-    Dispatches0 = start_dispatch(Footprints, #{}, States),
+    Dispatches0 = start_dispatch(Footprints, #{}, [], States),
     Dispatch = maps:get(StoreID, Dispatches0),
     Dispatches = #{StoreID => Dispatch#store_dispatch{ disk_ready = true }},
     ?assertEqual(#{

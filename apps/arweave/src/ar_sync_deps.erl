@@ -1,8 +1,6 @@
-%%% @doc The sync pipeline's injectable dependency boundary. Operations the
-%%% simulator replaces go through the module returned by m/0.
-%%% ar_sync_deps_mainnet is the production implementation; ar_sync_sim_tests
-%%% installs ar_sync_deps_sim to run the real pipeline against a controlled
-%%% world.
+%%% @doc The sync pipeline's injectable dependency boundary. Replaceable
+%%% operations go through the module returned by m/0; ar_sync_deps_mainnet is
+%%% the default implementation.
 %%%
 %%% Deliberately NOT in the boundary: time (ar_timer), configuration
 %%% (with_test_config/1), metrics, and internal discovery cache operations.
@@ -66,11 +64,8 @@
 -callback unsynced_footprint_intervals(Partition :: non_neg_integer(),
     Footprint :: non_neg_integer(), StoreID :: term()) -> term().
 
-%% ar_sync_discovery's own outward dependencies — the peer registry,
-%% node state, and peer metadata endpoints — so the REAL
-%% discovery gen_server can run against the simulated world (a sim-side
-%% model of discovery would only ever test a copy of its admission
-%% logic; regressions there stay invisible).
+%% ar_sync_discovery's outward dependencies: the peer registry, node state,
+%% and peer metadata endpoints.
 -callback get_peer_release(Peer :: term()) -> integer().
 -callback get_peers(Type :: current) -> [term()].
 -callback is_joined() -> boolean().

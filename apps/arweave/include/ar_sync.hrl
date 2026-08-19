@@ -27,7 +27,7 @@
 
 %% The chunks of one replica.2.9 footprint in one storage module. Entropy is
 %% peer-specific, so the scheduler binds each active footprint batch to one
-%% peer and holds that source's entropy until the batch's tasks finish.
+%% peer and holds that source's entropy until the batch's tasks finish fetching.
 %% A later sweep may bind still-unsynced chunks to another peer.
 %%
 %% The active batch's peer lives in ar_sync_scheduler's footprints map, not in
@@ -70,8 +70,8 @@
 %% Deferred work for one local footprint. A queued reservation retains every
 %% source known when it was created. A bound reservation retains the selected
 %% source and intervals not yet enqueued while finite task
-%% batches run. A draining reservation finishes its enqueued tasks but receives
-%% no new batch.
+%% batches remain queued or fetching. A draining reservation finishes those
+%% network tasks but receives no new batch.
 -record(footprint_reservation, {
     sources = [],
     peer = undefined,
@@ -95,18 +95,10 @@
 %%% Chunk fetch deadline.
 %%%===================================================================
 
-%% Deadline for a single chunk request. Ten times the four-second delivered-work
-%% horizon in ar_sync_peer: a chunk request younger than the queue it stands in
-%% is alive; one that has outlived it several times over is dead. The
-%% BitTorrent-style separation keeps the queue equilibrium far from the death
-%% sentence — at the previous flat 120 s a hung request held its worker slot for
-%% two minutes.
-%%
-%% This is also what bounds a fetch in ar_sync_sim_world, so a simulated peer
-%% that stops progressing releases its worker and claim on the same schedule a
-%% real one does. The two must not drift: the scheduler's claim lifetime is
-%% derived from it, and a simulation that released sooner or later than
-%% production would model a different pipeline.
+%% Deadline for a single active chunk request. Forty seconds leaves ample room
+%% for an unusually slow valid response while releasing a dead request much
+%% sooner than the previous 120-second timeout. This is independent of how much
+%% peer-bound work waits for an active fetch slot.
 -define(FETCH_TIMEOUT_MS, 40_000).
 
 %%%===================================================================
