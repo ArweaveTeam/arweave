@@ -168,6 +168,7 @@ get_chunk_binary(Name, Offset) ->
 %% scenarios that model a peer whose metadata endpoint overloads under fan-out.
 wait_for_chunk_interval_response(Peer) ->
     NumInflight = add_counter({chunk_interval_inflight, Peer}, 1),
+    _ = add_counter({chunk_interval_requests, Peer}, 1),
     try
         #sim_peer{ chunk_interval_latency_ms = Latency } = get({peer, Peer}),
         LatencyMS = case Latency of
@@ -525,6 +526,10 @@ snapshot() ->
         timed_out_by_peer = counter_map(timeouts, PeerIDs),
         client_errors_by_peer = counter_map(client_errors, PeerIDs),
         http_inflight_by_peer = counter_map(http_inflight, PeerIDs),
+        chunk_interval_requests_by_peer =
+            counter_map(chunk_interval_requests, PeerIDs),
+        chunk_interval_inflight_by_peer =
+            counter_map(chunk_interval_inflight, PeerIDs),
         chunks_stored_by_store = counter_map(chunks_stored_by_store, StoreIDs)
     }.
 
