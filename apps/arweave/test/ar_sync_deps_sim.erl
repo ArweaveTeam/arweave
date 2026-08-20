@@ -44,7 +44,7 @@ pick_peers(Peers, Count) ->
     Picked.
 
 is_throttled(Peer, _Path) ->
-    #sim_peer{ selection_throttled = IsThrottled } =
+    #sim_peer{ is_throttled = IsThrottled } =
         ar_sync_sim_world:get({peer, Peer}),
     IsThrottled.
 

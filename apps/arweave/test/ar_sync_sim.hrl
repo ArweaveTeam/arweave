@@ -37,7 +37,7 @@
     %% Whether requests above max_serve_cps receive HTTP 429 instead of waiting.
     limited = false :: boolean(),
     %% Whether peer selection sees this peer as near its outbound quota.
-    selection_throttled = false :: boolean(),
+    is_throttled = false :: boolean(),
     %% Per-peer maximum concurrent HTTP chunk requests. A fetch above this limit
     %% returns {error, client_error}; infinity disables the simulated constraint.
     http_inflight_limit = infinity :: non_neg_integer() | infinity,
@@ -91,6 +91,10 @@
     timed_out_by_peer = #{} :: map(),
     client_errors_by_peer = #{} :: map(),
     http_inflight_by_peer = #{} :: map(),
+    %% Detailed-metadata request observations distinguish a configured slow
+    %% endpoint from one the discovery pipeline never contacted.
+    chunk_interval_requests_by_peer = #{} :: map(),
+    chunk_interval_inflight_by_peer = #{} :: map(),
     %% Completed chunk writes provide the per-store progress signal used by
     %% store-distribution scenarios.
     chunks_stored_by_store = #{} :: map()

@@ -234,6 +234,9 @@ metric(timed_out_by_peer, Measurement) ->
     map_counter_difference(#sim_snapshot.timed_out_by_peer, Measurement);
 metric(client_errors_by_peer, Measurement) ->
     map_counter_difference(#sim_snapshot.client_errors_by_peer, Measurement);
+metric(chunk_interval_requests_by_peer, Measurement) ->
+    map_counter_difference(
+        #sim_snapshot.chunk_interval_requests_by_peer, Measurement);
 metric(chunks_stored_by_store, Measurement) ->
     map_counter_difference(#sim_snapshot.chunks_stored_by_store, Measurement);
 metric(chunks_stored_total, Measurement) ->
@@ -244,7 +247,19 @@ metric(stored_cps, Measurement) ->
 metric(final_http_inflight_by_peer, #sim_measurement{
         after_snapshot = #sim_snapshot{ http_inflight_by_peer = HTTPInflight }
     }) ->
-    HTTPInflight.
+    HTTPInflight;
+metric(final_chunk_interval_requests_by_peer, #sim_measurement{
+        after_snapshot = #sim_snapshot{
+            chunk_interval_requests_by_peer = ChunkIntervalRequests
+        }
+    }) ->
+    ChunkIntervalRequests;
+metric(final_chunk_interval_inflight_by_peer, #sim_measurement{
+        after_snapshot = #sim_snapshot{
+            chunk_interval_inflight_by_peer = ChunkIntervalInflight
+        }
+    }) ->
+    ChunkIntervalInflight.
 
 map_counter_difference(FieldIndex, #sim_measurement{
         before_snapshot = Before,
