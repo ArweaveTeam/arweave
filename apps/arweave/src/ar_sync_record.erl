@@ -695,7 +695,10 @@ store_state(State) ->
         ar_kv:put(
             StateDB,
             ?SYNC_RECORDS_KEY,
-            term_to_binary({SyncRecordByID, SyncRecordByIDType})
+            %% Fragmented records can serialize to hundreds of MB. Keep the
+            %% single RocksDB value small enough to avoid long write stalls.
+            term_to_binary(
+                {SyncRecordByID, SyncRecordByIDType}, [compressed])
         ),
     ResetWAL =
         case StoreSyncRecords of
@@ -826,12 +829,25 @@ test_persistence_roundtrip() ->
             _ -> false
         end
     end),
+    {ok, Snapshot} = ar_kv:get(StateDB, ?SYNC_RECORDS_KEY),
+    %% 131 is the external-term version and 80 is its compressed-term tag.
+    ?assertMatch(<<131, 80, _/binary>>, Snapshot),
     kill(Pid2),
     {ok, Pid3} = start_link(name(StoreID), StoreID),
     ?assertEqual([{6, 5}], ar_intervals:to_list(get(ID, StoreID))),
     ?assertEqual([{6, 5}], ar_intervals:to_list(get(ID, unpacked, StoreID))),
     ?assertEqual(false, is_recorded(2, ID, StoreID)),
-    kill(Pid3).
+    kill(Pid3),
+    %% Snapshots written before compression must remain readable on upgrade.
+    ok = ar_kv:put(
+        StateDB,
+        ?SYNC_RECORDS_KEY,
+        term_to_binary(binary_to_term(Snapshot, [safe]))
+    ),
+    {ok, Pid4} = start_link(name(StoreID), StoreID),
+    ?assertEqual([{6, 5}], ar_intervals:to_list(get(ID, StoreID))),
+    ?assertEqual([{6, 5}], ar_intervals:to_list(get(ID, unpacked, StoreID))),
+    kill(Pid4).
 
 kill(Pid) ->
     unlink(Pid),

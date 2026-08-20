@@ -605,8 +605,8 @@ all_metrics() ->
             {labels, [peer, store_id]},
             {help, "Peer-bound claimed chunks grouped by peer and store."}]},
         {prometheus_gauge, [{name, sync_sweep_offset},
-            {labels, [store_id, lane]},
-            {help, "Bytes the lane's sweep cursor has swept into the store's range."}]},
+            {labels, [store_id, mode]},
+            {help, "Bytes the mode's sweep cursor has swept into the store's range."}]},
         {prometheus_gauge, [{name, sync_tasks_by_peer},
             {labels, [stage, peer]},
             {help, "Current peer-bound sync tasks by lifecycle stage. Stage is "

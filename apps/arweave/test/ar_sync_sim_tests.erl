@@ -2372,7 +2372,7 @@ test_ready_footprint_peer_progresses_while_metadata_pending() ->
 %% Contract:
 %% - C1: Exhausted entropy capacity does not suppress independently fetchable
 %%   byte work.
-%% - C2: The footprint lane also remains active.
+%% - C2: Footprint-mode syncing also remains active.
 %%
 %% Verification:
 %% - V1: The byte peer reaches 95% of its serving capacity.
@@ -2540,7 +2540,7 @@ test_metadata_scarce_store_spread() ->
     %% requests overloading the peer's metadata endpoint.
     MetadataCPS = ?SIM_STORES * ChunksPerRange / MetadataLatencySeconds,
     %% The peer can serve 400 chunks/s while metadata exposes 384 chunks/s.
-    %% Ninety percent permits scheduler boundaries but rejects a starved lane.
+    %% Ninety percent permits scheduler boundaries but rejects a starved mode.
     assert_at_least(ar_sync_sim_runner:metric(stored_cps, Measurement),
         0.90 * MetadataCPS, #{ metric => stored_cps }),
     assert_chunks_spread_across_stores(Measurement, 0),
