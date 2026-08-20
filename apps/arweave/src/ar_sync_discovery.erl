@@ -39,9 +39,12 @@
 -define(QUERY_SYNC_INTERVALS_COUNT_LIMIT, 1000).
 -endif.
 
-%% Each peer, store, and mode has independent metadata, but querying multiple
-%% locations for the same combination concurrently only duplicates work.
--define(MAX_CHUNK_INTERVAL_JOBS_PER_PEER_STORE_MODE, 1).
+%% Byte metadata may paginate, so keep one request per peer and store. A
+%% footprint response covers one independent location and is small enough to
+%% search several locations concurrently. This matters when the peer and local
+%% holdings are both sparse: most successful responses may have no overlap.
+-define(MAX_BYTE_JOBS_PER_PEER_STORE, 1).
+-define(MAX_FOOTPRINT_JOBS_PER_PEER_STORE, 4).
 
 %% Bound each kind of metadata work so discovery cannot saturate the shared
 %% request path and starve chunk fetching.
@@ -770,14 +773,14 @@ compute_job_load(#discovery_jobs{ inflight = Inflight }) ->
 
 take_next_job(Jobs, PeerLoad, StoreLoad, PeerStoreModeCounts) ->
     #discovery_jobs{ pending = Pending } = Jobs,
-    RunnableByLane = maps:fold(
+    RunnableByPeerStoreMode = maps:fold(
         fun(PendingKey, Job, Acc) ->
-            Lane = peer_store_mode_key(PendingKey),
-            case maps:get(Lane, PeerStoreModeCounts, 0)
-                    < ?MAX_CHUNK_INTERVAL_JOBS_PER_PEER_STORE_MODE of
+            PeerStoreMode = peer_store_mode_key(PendingKey),
+            case maps:get(PeerStoreMode, PeerStoreModeCounts, 0)
+                    < max_jobs_per_peer_store_mode(PeerStoreMode) of
                 true ->
                     Candidate = {PendingKey, Job},
-                    maps:update_with(Lane,
+                    maps:update_with(PeerStoreMode,
                         fun(Existing) ->
                             preferred_pending_job(Candidate, Existing)
                         end,
@@ -789,7 +792,7 @@ take_next_job(Jobs, PeerLoad, StoreLoad, PeerStoreModeCounts) ->
         end,
         #{},
         Pending),
-    case maps:values(RunnableByLane) of
+    case maps:values(RunnableByPeerStoreMode) of
         [] ->
             none;
         PendingJobs ->
@@ -805,6 +808,11 @@ take_next_job(Jobs, PeerLoad, StoreLoad, PeerStoreModeCounts) ->
                 pending = maps:remove(SelectedKey, Pending)
             }}
     end.
+
+max_jobs_per_peer_store_mode({_Peer, _StoreID, footprint}) ->
+    ?MAX_FOOTPRINT_JOBS_PER_PEER_STORE;
+max_jobs_per_peer_store_mode(_PeerStoreMode) ->
+    ?MAX_BYTE_JOBS_PER_PEER_STORE.
 
 preferred_pending_job(
         {Key1, Job1} = Candidate1,
@@ -1448,13 +1456,19 @@ with_mocked_chunk_interval_pages(Peer, Release, PageFun, TestFun) ->
     ], TestFun, 30).
 
 chunk_interval_job_for_test(Peer, StoreID, Start) ->
-    AlignedStart = interval_location(byte, Start),
+    chunk_interval_job_for_test(Peer, StoreID, byte, Start).
+
+chunk_interval_job_for_test(Peer, StoreID, Mode, Start) ->
+    AlignedStart = case Mode of
+        byte -> interval_location(byte, Start);
+        footprint -> Start
+    end,
     #discovery_job{
-        key = {chunk_interval, Peer, StoreID, byte, AlignedStart},
+        key = {chunk_interval, Peer, StoreID, Mode, AlignedStart},
         kind = chunk_interval,
         peer = Peer,
         store_id = StoreID,
-        mode = byte,
+        mode = Mode,
         start = AlignedStart
     }.
 
@@ -1692,7 +1706,7 @@ removed_peer_job_results_are_ignored_test() ->
     TrackedState = add_peer(Peer, #state{}),
     _ = handle_cast(
         {job_result, Peer,
-            {chunk_intervals, test_store, Offset,
+            {chunk_intervals, ?DEFAULT_MODULE, Offset,
                 byte, {ok, Intervals}}},
         TrackedState),
     ?assertEqual({hit, Intervals}, chunk_interval_lookup(byte, Peer, Offset)),
@@ -1744,9 +1758,9 @@ take_next_job_prefers_less_loaded_peer_test() ->
         inflight_peer_store_mode_counts(Jobs)),
     ?assertEqual(p2, Selected#discovery_job.peer).
 
-%% @doc A newer frontier waits behind the active request for the same peer,
-%% store, and mode while unrelated stores continue using discovery capacity.
-take_next_job_limits_peer_store_mode_test() ->
+%% @doc Byte metadata stays serialized per peer and store while unrelated
+%% stores continue using discovery capacity.
+take_next_job_limits_byte_peer_store_mode_test() ->
     Step = ar_sync_cursor:query_range_step_size(),
     Inflight = chunk_interval_job_for_test(peer, store1, 0),
     SamePendingKey = chunk_interval_job_for_test(peer, store1, Step),
@@ -1776,6 +1790,37 @@ take_next_job_limits_peer_store_mode_test() ->
     ?assertEqual(
         #{SamePendingKey#discovery_job.key => SamePendingKey},
         Jobs2#discovery_jobs.pending).
+
+%% @doc Independent footprint locations use bounded concurrent searches.
+take_next_job_allows_bounded_footprint_concurrency_test() ->
+    Limit = ?MAX_FOOTPRINT_JOBS_PER_PEER_STORE,
+    InflightJobs = [
+        chunk_interval_job_for_test(peer, store, footprint, N)
+        || N <- lists:seq(0, Limit - 1)
+    ],
+    Pending = chunk_interval_job_for_test(
+        peer, store, footprint, Limit),
+    Inflight = maps:from_list([
+        {Job#discovery_job.key, Job#discovery_job{ pid = self() }}
+        || Job <- InflightJobs
+    ]),
+    FullJobs = #discovery_jobs{
+        pending = #{Pending#discovery_job.key => Pending},
+        inflight = Inflight
+    },
+    {PeerLoad, StoreLoad} = compute_job_load(FullJobs),
+    ?assertEqual(none, take_next_job(
+        FullJobs, PeerLoad, StoreLoad,
+        inflight_peer_store_mode_counts(FullJobs))),
+    [Released | _] = InflightJobs,
+    JobsWithCapacity = FullJobs#discovery_jobs{
+        inflight = maps:remove(Released#discovery_job.key, Inflight)
+    },
+    {PeerLoad2, StoreLoad2} = compute_job_load(JobsWithCapacity),
+    {ok, Selected, _Jobs2} = take_next_job(
+        JobsWithCapacity, PeerLoad2, StoreLoad2,
+        inflight_peer_store_mode_counts(JobsWithCapacity)),
+    ?assertEqual(Pending#discovery_job.key, Selected#discovery_job.key).
 
 take_next_job_prefers_recently_requested_location_test() ->
     Step = ar_sync_cursor:query_range_step_size(),
