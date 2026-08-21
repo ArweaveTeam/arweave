@@ -64,7 +64,8 @@ all() ->
      configured_local_ip_does_not_exempt_peer_shapes,
      exhausted_quota_refills_after_reset_seconds,
      update_quota_cancels_reset_timer,
-     update_quota_with_no_header_resets_peer
+     update_quota_with_no_header_resets_peer,
+     update_quota_with_too_long_header_resets_peer
     ].
 
 %%====================================================================
@@ -429,6 +430,63 @@ update_quota_with_no_header_resets_peer(_Config) ->
     %% Peer reset.
     {ok, S4} = arweave_throttling:status(?GROUPID_GENERAL, ?PEER1),
     ?assertMatch(#{total := infinity}, S4),
+    ok.
+
+update_quota_with_too_long_header_resets_peer(_Config) ->
+    LongName = "12345678901234567890123456789012345678901234567890"
+        "12345678901234567890123456789012345678901234567890123456789012345678901234567890", %% 130 long
+    ?assertEqual(130, length(LongName)),
+    ShortName = "1234567890", %% 10 long
+    Total = 10,
+    HeadersFun = fun(Name, Remaining) ->
+                     Policies =  #{id => Name,
+                                   concurrency => #{limit => 500},
+                                   sliding_window => #{limit => 0,
+                                                       window_seconds => 1},
+                                   leaky_bucket   => #{burst => Total,
+                                                       tick_ms => 30000,
+                                                       tick_reduction => Total}},
+                     arweave_limiter_http_headers:to_http_headers(
+                         {register, leaky,
+                          #{expiring_limit => Total,
+                            remaining => Remaining,
+                            reset_amount => Total - Remaining,
+                            reset_seconds => 0,
+                            policies => Policies}
+                         })
+                 end,
+    H1 = HeadersFun(ShortName, 9),
+
+    %% Before anything calling too long name does nothing. Won't start process
+    ?assertMatch({error, header_id_too_long},
+                 arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun(LongName, 9))),
+    %% 130 long + prefix should work because it's less than the max atom length(256)
+    AssumedName = "arweave_throttling_group_" ++ LongName,
+    ?assertNot(is_pid(whereis(list_to_atom(AssumedName)))),
+
+    %% Let's start with a normal name
+    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, H1),
+    ShortNameAtom = list_to_atom(ShortName),
+    ?assertMatch({ok, ShortNameAtom},
+                 arweave_throttling_path:path_to_group_id(?PEER1, ?PATH_GENERAL)),
+    ?assertMatch(ok, arweave_throttling:throttle(?PEER1, ?PATH_GENERAL)),
+
+    ?assertMatch({ok, #{total := 10, remaining := 8}}, arweave_throttling:status(ShortNameAtom, ?PEER1)),
+    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun(ShortName, 8)),
+    ?assertMatch({ok, #{total := 10, remaining := 8}}, arweave_throttling:status(ShortNameAtom, ?PEER1)),
+
+    ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
+    ?assertMatch({ok, #{total := 10, remaining := 7}},arweave_throttling:status(ShortNameAtom, ?PEER1)),
+
+    %% Another qualifying name, just gives group_mismatch
+    ?assertMatch({group_mismatch,'1234567890', <<"123">>},
+                 arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun("123", 9))),
+
+    %% Header too long error
+    ?assertMatch({error, header_id_too_long},
+                 arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun(LongName, 9))),
+    %% Peer reset.
+    ?assertMatch({ok, #{total := infinity}}, arweave_throttling:status(ShortNameAtom, ?PEER1)),
     ok.
 
 %%====================================================================

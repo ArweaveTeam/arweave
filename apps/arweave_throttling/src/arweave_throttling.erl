@@ -51,6 +51,11 @@
 %% user won't configure 1000 different limiter groups for their node.
 -define(DISTINCT_GROUP_ID_LIMIT, 1000).
 
+%% Maximum limiting group ID size. It's an arbitrary number we chose.
+%% However, it shouldn't be larger than 230 as that would be
+%% longer than the max system atom size, after applying the process name prefix.
+-define(MAX_GROUP_ID_SIZE, 128).
+
 %% @doc Start the `arweave_throttling' application together
 %% with its dependencies.
 -spec start() -> ok | {error, term()}.
@@ -134,17 +139,7 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
             %% Missing header should reset peer state across all
             %% groups. We don't know at this point what groups the peer was a part
             %% of.
-            case arweave_throttling_peer_compatibility:is_peer_marked_compatible(Peer) of
-                false ->
-                    %% When it's marked incompatibl already, we're good. we don't have to
-                    %% do anything.
-                    ok;
-                true ->
-                    %% Reset
-                    arweave_throttling_sup:reset_peer_in_all_groups(Peer),
-                    maybe_log_update_error(Peer, Path, 'unknown', Reason),
-                    arweave_throttling_peer_compatibility:mark_incompatible(Peer)
-            end,
+            try_mark_peer_incompatible(Peer, Path, Reason),
             E;
         {error, Reason} = E ->
             %% We can be more tolerant towards other errors, no reset.
@@ -153,6 +148,10 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
             %% as the peer runs an incompatible version.
             maybe_log_update_error(Peer, Path, 'unknown', Reason),
             E;
+        {ok, #{group_id := HeaderGroupID}} when byte_size(HeaderGroupID) > ?MAX_GROUP_ID_SIZE ->
+            Reason = 'header_id_too_long',
+            try_mark_peer_incompatible(Peer, Path, Reason),
+            {error, Reason};
         {ok, #{group_id := HeaderGroupID} = Quota} ->
             %% Try to look up group ID for the Peer and Path.
             arweave_throttling_peer_compatibility:mark_compatible(Peer),
@@ -187,6 +186,19 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
                             E
                     end
             end
+    end.
+
+try_mark_peer_incompatible(Peer, Path, Reason) ->
+    case arweave_throttling_peer_compatibility:is_peer_marked_compatible(Peer) of
+        false ->
+            %% When it's marked incompatibl already, we're good. we don't have to
+            %% do anything.
+            ok;
+        true ->
+            %% Reset
+            arweave_throttling_sup:reset_peer_in_all_groups(Peer),
+            maybe_log_update_error(Peer, Path, 'unknown', Reason),
+            arweave_throttling_peer_compatibility:mark_incompatible(Peer)
     end.
 
 %% @doc Return a snapshot of the throttler state for `Peer' in
