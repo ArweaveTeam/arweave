@@ -70,19 +70,22 @@ Prefix the title with `AI: `. Keep the body short — what happens, why it
 matters, then the fix — with no severity or area headings. Name the confirmed
 triggering condition, so whoever picks the issue up can reproduce it.
 
-Follow the summary with the model that produced the report and the date it was
-run, taken from the report itself, then the report's own text for this finding,
-copied verbatim as the last section:
+Follow the summary with the model that produced the report, the date it was run
+— both taken from the report itself — and a link back to the report, then the
+report's own text for this finding, copied verbatim as the last section:
 
 ```markdown
 <What happens, why it matters, then the fix.>
 
-Found by Claude Opus 5 security review, 2026-08-14.
+Found by Claude Opus 5 security review, 2026-08-14; full report in #1395.
 
 ## Original finding
 
 <The report's text for this finding, verbatim.>
 ```
+
+Link the report by issue number when it is a GitHub issue, and by path when it
+is a file in the tree.
 
 Copy only the part of the report covering this finding, not the whole report,
 and do not correct it — the drifted line numbers and any claims you disproved
@@ -94,7 +97,17 @@ If the report does not say which model was run, or when, ask before filing.
 
 If the fix is a large change better owned by the team, say so in the issue.
 
-## 5. Report back
+## 5. Record the disposition on the report
+
+When the report is a GitHub issue, comment on it with the disposition of every
+finding: a table of finding to filed issue, and a line for each finding you did
+not file with the reason. Add anything re-verification established that the
+report itself does not say — a precondition that turned out to hold on a path
+the report did not name, a mechanism it got right for the wrong reason, the
+near-duplicates you ruled out. Whoever opens the report next should be able to
+see what became of it without triaging it again.
+
+## 6. Report back
 
 Summarize every finding in the report with its disposition: filed, already
 fixed on master, duplicate of an existing issue, or rejected — with the reason
