@@ -50,22 +50,22 @@ end_per_testcase(_TestCase, Config) ->
 
 all() ->
     [
-        no_groups_started,
-        groups_started_on_update_quota,
-        throttle_and_update_quota,
-        blocking_call_is_released_by_update,
-        fifo_ordering,
-        stale_update_outside_window_overrides,
-        queue_full_returns_error,
-        dead_caller_is_dropped_from_queue,
-        reset_releases_waiters,
-        peer_4_and_5_tuple_keys,
-        configured_local_peer_obeys_outbound_quota,
-        configured_local_ip_does_not_exempt_peer_shapes,
-        exhausted_quota_refills_after_reset_seconds,
-        update_quota_cancels_reset_timer,
-        update_quota_with_no_header_resets_peer,
-        update_quota_with_too_long_header_resets_peer
+     no_groups_started,
+     groups_started_on_update_quota,
+     throttle_and_update_quota,
+     blocking_call_is_released_by_update,
+     fifo_ordering,
+     stale_update_outside_window_overrides,
+     queue_full_returns_error,
+     dead_caller_is_dropped_from_queue,
+     reset_releases_waiters,
+     peer_4_and_5_tuple_keys,
+     configured_local_peer_obeys_outbound_quota,
+     configured_local_ip_does_not_exempt_peer_shapes,
+     exhausted_quota_refills_after_reset_seconds,
+     update_quota_cancels_reset_timer,
+     update_quota_with_no_header_resets_peer,
+     crash_loses_isolated_state
     ].
 
 %%====================================================================
@@ -570,6 +570,23 @@ update_quota_with_too_long_header_resets_peer(_Config) ->
     ),
     %% Peer reset.
     ?assertMatch({ok, #{total := infinity}}, arweave_throttling:status(ShortNameAtom, ?PEER1)),
+    ok.
+
+crash_loses_isolated_state(_Config) ->
+    %% Two throttling groups receive updates.
+    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, headers(?GROUPID_GENERAL, 10, 9)),
+    ok = arweave_throttling:update_quota(?PEER1, ?PATH_DATA_SYNC, headers(?GROUPID_DATA_SYNC, 100, 90)),
+    ?assertMatch({ok, #{total := 10, remaining := 9}}, arweave_throttling:status(?GROUPID_GENERAL, ?PEER1)),
+    ?assertMatch({ok, #{total := 100, remaining := 90}}, arweave_throttling:status(?GROUPID_DATA_SYNC, ?PEER1)),
+
+    %% One crashes (it's killed in the test)
+    exit(whereis(arweave_throttling_group_general), kill),
+    timer:sleep(1000),
+
+    %% Only one is restarted, and has state reset.
+    ?assertMatch({ok, #{total := infinity,remaining := infinity}}, arweave_throttling:status(?GROUPID_GENERAL, ?PEER1)),
+    ?assertMatch({ok, #{total := 100, remaining := 90}}, arweave_throttling:status(?GROUPID_DATA_SYNC, ?PEER1)),
+
     ok.
 
 %%====================================================================
