@@ -13,6 +13,11 @@ from an external report or an internal review — see
   named role: peers used to join the network, configured trusted peers,
   coordinated-mining peers and exit nodes, VDF servers, and local peers. This
   assumption does not apply to pool mining, where the pool client is untrusted.
+- The node's pool interface intentionally performs no share validation. A pool
+  is expected to run its own logic on top of the interface, including
+  validating partial difficulty on submitted shares. The absence of share
+  verification in the reference client is a design decision, not a finding
+  ([#1409][issue-1409]).
 - A denial of service caused by a trusted actor is not critical. Receiving the
   wrong version of the chain from a peer used to join the network is also an
   accepted risk.
@@ -49,6 +54,7 @@ attacker can trigger them with practical reliability or their impact crosses a
 trust boundary described above.
 
 [issue-1310]: https://github.com/ArweaveTeam/arweave-dev/issues/1310
+[issue-1409]: https://github.com/ArweaveTeam/arweave-dev/issues/1409
 [pr-1316]: https://github.com/ArweaveTeam/arweave-dev/pull/1316
 [pr-1317]: https://github.com/ArweaveTeam/arweave-dev/pull/1317
 [pr-1319]: https://github.com/ArweaveTeam/arweave-dev/pull/1319
