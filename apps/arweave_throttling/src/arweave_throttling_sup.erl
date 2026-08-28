@@ -22,11 +22,11 @@ start_link() ->
 
 all_info() ->
     Children = supervisor:which_children(?MODULE),
-    [{worker_to_group(ID), arweave_throttling_group:info(worker_to_group(ID))}  || {ID, _Child, _Type, _Modules} <- Children].
+    [{ID, arweave_throttling_group:info(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
 
 reset_peer_in_all_groups(Peer) ->
     Children = supervisor:which_children(?MODULE),
-    Groups = [worker_to_group(ID)||{ID, _Child, _Type, _Modules} <- Children],
+    Groups = [ID||{ID, _Child, _Type, _Modules} <- Children],
     arweave_util:pmap(fun(GroupID) -> arweave_throttling_group:reset_peer(GroupID, Peer) end,
          Groups, ?PMAP_TIMEOUT).
 
@@ -43,20 +43,22 @@ start_throttling_group(GroupID) ->
     supervisor:start_child(?MODULE, child_spec_for_group(GroupID)).
 
 %% Child spec
-child_spec_for_group(GroupID) ->
+child_spec_for_group(GroupID) when is_binary(GroupID) ->
+    child_spec_for_group(binary_to_list(GroupID));
+child_spec_for_group(GroupID) when is_list(GroupID) ->
     Spec = #{id => GroupID},
     #{
-    id => arweave_throttling_group:registered_name(GroupID),
-    start => {arweave_throttling_group, start_link, [Spec]},
-    type => worker,
-    shutdown => ?SHUTDOWN_TIMEOUT
-    }.
+         id => GroupID,
+         start => {arweave_throttling_group, start_link, [Spec]},
+         type => worker,
+         shutdown => ?SHUTDOWN_TIMEOUT
+     }.
 
 %% Only used in tests
 -ifdef(AR_TEST).
 reset_all() ->
     Children = supervisor:which_children(?MODULE),
-    [{worker_to_group(ID), arweave_throttling_group:reset(worker_to_group(ID))}  || {ID, _Child, _Type, _Modules} <- Children].
+    [{ID, arweave_throttling_group:reset(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
 
 all_off() ->
     Children = supervisor:which_children(?MODULE),
@@ -67,6 +69,3 @@ all_on() ->
     [{ID, arweave_throttling_group:turn_on(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
 -endif.
 
-worker_to_group(WorkerRef) ->
-    Prefix = "arweave_throttling_group_",
-    list_to_atom(string:prefix(atom_to_list(WorkerRef), Prefix)).

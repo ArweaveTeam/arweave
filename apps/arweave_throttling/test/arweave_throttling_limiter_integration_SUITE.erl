@@ -107,8 +107,8 @@
                                        %% By doing all this, now we can use assert to validate the
                                        %% actual return value from the throttling call. It normally
                                        %% would be hidden by the functions handling this.
-                                       Name = arweave_throttling_group:registered_name(GroupID),
-                                       Value = arweave_throttling_group:try_throttle_call(Name, Peer),
+                                       {ok, Pid} = arweave_throttling_process:get(GroupID),
+                                       Value = arweave_throttling_group:try_throttle_call(Pid, Peer),
                                        ?assertMatch(ExpectedThrottlingOutput, Value),
                                        ok;
                                    _ ->

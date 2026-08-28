@@ -59,11 +59,10 @@
 -export(
    [
     start_link/1,
-    registered_name/1,
     throttle/2,
     is_throttled/2,
     info/1,
-    update_quota/3,
+    update_quota/4,
     status/2,
     reset/1,
     reset_peer/2,
@@ -126,12 +125,8 @@
 -define(CONCURRENCY_WINDOW_MS, 80).
 
 %% @doc Start a group process.
--spec start_link(map()) -> {ok, pid()} | {error, term()}.
-start_link(#{id := ID} = Spec) ->
-    gen_server:start_link({local, registered_name(ID)}, ?MODULE, Spec, []).
-
-registered_name(ID) when is_atom(ID) ->
-    list_to_atom("arweave_throttling_group_" ++ atom_to_list(ID)).
+start_link(#{id := _ID} = Spec) ->
+    gen_server:start_link(?MODULE, Spec, []).
 
 %% @doc Blocking throttle call.
 %%
@@ -148,45 +143,43 @@ registered_name(ID) when is_atom(ID) ->
 %% sent by the group when budget becomes available. The wait has a
 %% 60s ceiling; on expiry the caller sends a `cancel_request' cast
 %% to evict the entry from the queue and returns `{error, timeout}'.
--spec throttle(atom(), tuple()) -> ok | {error, term()}.
 throttle(GroupID, Peer) ->
 	{Time, Value} = timer:tc(fun do_throttle/2, [GroupID, Peer]),
 	arweave_metrics:histogram_observe(arweave_throttling_request_response_time_microseconds,
-					[atom_to_list(GroupID)], Time),
+					[GroupID], Time),
 	Value.
 
--spec do_throttle(atom(), tuple()) -> ok | {error, term()}.
 do_throttle(GroupID, Peer) ->
-    arweave_metrics:counter_inc(arweave_throttling_requests_total, [atom_to_list(GroupID)]),
-    Name = registered_name(GroupID),
-    {Time, WorkerReturn} = timer:tc(fun try_throttle_call/2, [Name, Peer]),
+    arweave_metrics:counter_inc(arweave_throttling_requests_total, [GroupID]),
+    {ok, Pid} = arweave_throttling_process:get(GroupID),
+    {Time, WorkerReturn} = timer:tc(fun try_throttle_call/2, [Pid, Peer]),
     arweave_metrics:histogram_observe(arweave_throttling_worker_response_time_microseconds,
-                                      [atom_to_list(GroupID)], Time),
+                                      [GroupID], Time),
     case WorkerReturn of
         accepted ->
             ok;
         {queued, Ref} ->
-            arweave_metrics:counter_inc(arweave_throttling_queued_total, [atom_to_list(GroupID)]),
+            arweave_metrics:counter_inc(arweave_throttling_queued_total, [GroupID]),
             receive
                 {request_ready, Ref} ->
                     ok
             after ?THROTTLE_RECEIVE_TIMEOUT_MS ->
-                    gen_server:cast(Name, {cancel_request, Peer, Ref}),
+                    gen_server:cast(Pid, {cancel_request, Peer, Ref}),
                     arweave_metrics:counter_inc(arweave_throttling_requests_error,
-                                                [atom_to_list(GroupID), "throttle_receive_timeout"]),
+                                                [GroupID, "throttle_receive_timeout"]),
                     {error, throttle_receive_timeout}
             end;
         {error, Reason} = Error ->
             %% TODO: extract error reason
             ?LOG_ERROR([{event, client_throttling_throttle_error}, {reason, Reason}]),
             arweave_metrics:counter_inc(arweave_throttling_requests_error,
-                                        [atom_to_list(GroupID), "unknown"]),
+                                        [GroupID, "unknown"]),
             Error
     end.
 
-try_throttle_call(Name, Peer) ->
+try_throttle_call(Pid, Peer) when is_pid(Pid) ->
     try
-        gen_server:call(Name, {throttle, Peer}, ?CALL_TIMEOUT)
+        gen_server:call(Pid, {throttle, Peer}, ?CALL_TIMEOUT)
     catch
         E:R:Stack ->
             {error, {E,R,Stack}}
@@ -204,8 +197,7 @@ try_throttle_call(Name, Peer) ->
 %%       when the quota is exhausted; pass `0' (or any non-negative
 %%       integer) when not exhausted.</li>
 %% </ul>
--spec update_quota(atom(), tuple(), map()) -> ok.
-update_quota(GroupID, Peer,
+update_quota(Pid, GroupID, Peer,
              #{total := Total,
                remaining := Remaining,
                reset_amount := ResetAmount,
@@ -215,25 +207,23 @@ update_quota(GroupID, Peer,
        is_integer(ResetAmount), Remaining >= 0,
        is_integer(ResetSeconds), ResetSeconds >= 0 ->
     arweave_metrics:counter_inc(arweave_throttling_quota_update_requests,
-                                [atom_to_list(GroupID)]),
+                                [GroupID]),
     ReceivedAt = monotonic_ms(),
-    gen_server:cast(registered_name(GroupID),
-                    {update_quota, Peer, Total, Remaining,
-                     ResetAmount, ResetSeconds, ReceivedAt}).
+    gen_server:cast(Pid, {update_quota, Peer, Total, Remaining,
+                          ResetAmount, ResetSeconds, ReceivedAt}).
 
 %% @doc Return true when this node should avoid selecting `Peer' in
 %% `GroupID' because its outbound quota is near exhaustion.
--spec is_throttled(atom(), tuple()) -> boolean().
-is_throttled(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
+is_throttled(GroupID, Peer) when is_tuple(Peer) ->
     {Time, Value} = timer:tc(fun do_is_throttled/2, [GroupID, Peer]),
     arweave_metrics:histogram_observe(arweave_throttling_is_throttled_response_time_microseconds,
-                                      [atom_to_list(GroupID)], Time),
+                                      [GroupID], Time),
     Value.
 
--spec do_is_throttled(atom(), tuple()) -> boolean().
-do_is_throttled(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
+do_is_throttled(GroupID, Peer) when is_tuple(Peer) ->
     try
-        {ok, IsThrottled} = gen_server:call(registered_name(GroupID), {is_throttled, Peer}, ?CALL_TIMEOUT),
+        {ok, Pid} = arweave_throttling_process:get(GroupID),
+        {ok, IsThrottled} = gen_server:call(Pid, {is_throttled, Peer}, ?CALL_TIMEOUT),
         IsThrottled
     catch
         {'EXIT', {noproc, {gen_server, call, _}}} -> false;
@@ -249,15 +239,19 @@ do_is_throttled(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
 
 %% @doc Get all info
 info(GroupID) ->
-    gen_server:call(registered_name(GroupID), get_info).
+    maybe
+        {ok, Pid} ?= arweave_throttling_process:get(GroupID),
+        gen_server:call(Pid, get_info)
+    end.
 
 %% @doc Return a snapshot of the per-peer state.
--spec status(atom(), tuple()) -> {ok, map()} | {error, term()}.
 status(GroupID, Peer) ->
-    gen_server:call(registered_name(GroupID), {status, Peer}).
+    maybe
+        {ok, Pid} ?= arweave_throttling_process:get(GroupID),
+        gen_server:call(Pid, {status, Peer})
+    end.
 
 %% @doc Number of waiting callers currently queued for `Peer'.
--spec pending(atom(), tuple()) -> non_neg_integer().
 pending(GroupID, Peer) ->
     case status(GroupID, Peer) of
         {ok, #{queue_length := N}} -> N;
@@ -267,29 +261,33 @@ pending(GroupID, Peer) ->
 %% @doc Drop all per-peer state. Pending waiters receive a
 %% `{request_ready, Ref}' notification so their `throttle/2' returns
 %% `ok' rather than staying blocked.
--spec reset(atom()) -> ok.
 reset(GroupID) ->
-    gen_server:call(registered_name(GroupID), reset).
+    maybe
+        {ok, Pid} ?= arweave_throttling_process:get(GroupID),
+        gen_server:call(Pid, reset)
+    end.
 
 %% @doc when we don't know the quota for a remote peer anymore, we remove
 %% it from all
--spec reset_peer(atom(), tuple()) -> ok.
 reset_peer(GroupID, Peer) ->
-    gen_server:call(registered_name(GroupID), {reset_peer, Peer}).
+    maybe
+        {ok, Pid} ?= arweave_throttling_process:get(GroupID),
+        gen_server:call(Pid, {reset_peer, Peer})
+    end.
 
--spec turn_off(atom()) -> ok.
 turn_off(WorkerRef) ->
     gen_server:call(WorkerRef, turn_off).
 
--spec turn_on(atom()) -> ok.
 turn_on(WorkerRef) ->
     gen_server:call(WorkerRef, turn_on).
 
 
 %% @doc Stop the group process.
--spec stop(atom()) -> ok.
 stop(GroupID) ->
-    gen_server:stop(registered_name(GroupID)).
+    maybe
+        {ok, Pid} ?= arweave_throttling_process:get(GroupID),
+        gen_server:stop(Pid)
+    end.
 
 %% gen_server callbacks
 init(#{id := GroupID}) ->
