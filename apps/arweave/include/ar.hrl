@@ -155,6 +155,15 @@
 %% The maximum byte size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).
 
+%% Serve format-1 transactions without a denomination only once they are
+%% this deep in the chain.
+-define(V1_DENOMINATION0_TX_MIN_CONFIRMATIONS, 12).
+
+%% The response body POST /tx replies with to a format-1 transaction without
+%% a denomination.
+-define(V1_DENOMINATION0_TX_REJECTED, <<"Format 1 transactions are deprecated "
+		"and not accepted. Sign a format 2 transaction.">>).
+
 %% The maximum allowed size in bytes for the data field of
 %% a format=1 transaction.
 -define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
@@ -711,7 +720,10 @@
 	poa2_cache,
 
 	%% Used internally, not gossiped.
-	receive_timestamp
+	receive_timestamp,
+	%% Used internally, not gossiped. The peer the block was
+	%% received from, if any.
+	source_peer
 }).
 
 %% @doc A transaction.

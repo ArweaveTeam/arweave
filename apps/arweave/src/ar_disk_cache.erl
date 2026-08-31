@@ -299,7 +299,8 @@ write_tx(TX) ->
 	Data = ar_serialize:jsonify(JSONStruct),
 	Size = byte_size(Data),
 	?LOG_DEBUG([{event, write_tx}, {txid, ar_util:encode(TX#tx.id)}, {size, Size}]),
-	gen_server:cast(?MODULE, {record_written_data, Size}),
+	%% Overwriting a cached copy only grows the cache by the difference.
+	gen_server:cast(?MODULE, {record_written_data, Size - filelib:file_size(File)}),
 	case ar_storage:write_file_atomic(File, Data) of
 		ok ->
 			ok;

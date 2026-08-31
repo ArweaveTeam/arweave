@@ -9,8 +9,11 @@
 -module(ar_ignore_registry).
 
 -export([add/1, add_ref/2, add_ref/3, remove/1, remove_ref/2,
-		add_temporary/2, remove_temporary/2, member/1,
+		add_temporary/2, remove_temporary/2, mark_tx_processed/2, member/1,
 		permanent_member/1]).
+
+%% How long a processed transaction identifier stays in the registry.
+-define(PROCESSED_TX_IGNORE_MS, 10 * 60 * 1000).
 
 %% @doc Put a permanent ID record into the registry.
 add(ID) ->
@@ -55,6 +58,13 @@ add_temporary(ID, Timeout) ->
 %% @doc Remove the temporary record from the registry.
 remove_temporary(ID, Ref) ->
 	catch ets:delete_object(ignored_ids, {ID, {temporary, Ref}}).
+
+%% @doc Mark the transaction as processed: drop the in-flight reference and
+%% ignore the identifier for a while so the pushes and polls of it are not
+%% handled again.
+mark_tx_processed(TXID, Ref) ->
+	remove_ref(TXID, Ref),
+	add_temporary(TXID, ?PROCESSED_TX_IGNORE_MS).
 
 %% @doc Check if there is a temporary or a permanent record in the registry.
 member(ID) ->

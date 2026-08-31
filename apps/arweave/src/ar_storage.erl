@@ -8,6 +8,7 @@
 		store_block_time_history_part/2, store_block_time_history_part2/1,
 		write_full_block/2, read_block/1, read_block/2, write_tx/1,
 		read_tx/1, read_tx_data/1, update_confirmation_index/1, get_tx_confirmation_data/1,
+		is_v1_denomination0_local_tx/1,
 		read_wallet_list/1, write_wallet_list/2,
 		delete_blacklisted_tx/1, lookup_tx_filename/1,
 		wallet_list_filepath/1, tx_filepath/1, tx_data_filepath/1, read_tx_file/1,
@@ -256,14 +257,10 @@ store_block_time_history_part2([{H, El} | History]) ->
 			{error, not_found}
 	end.
 
--if(?NETWORK_NAME == "arweave.N.1").
-write_full_block(#block{ height = 0 } = BShadow, TXs) ->
-	%% Genesis transactions are stored in data/genesis_txs; they are part of the repository.
-	write_full_block2(BShadow, TXs);
 write_full_block(BShadow, TXs) ->
 	case update_confirmation_index(BShadow#block{ txs = TXs }) of
 		ok ->
-			case write_tx([TX || TX <- TXs, not is_blacklisted(TX)]) of
+			case write_block_txs(BShadow, TXs) of
 				ok ->
 					write_full_block2(BShadow, TXs);
 				Error ->
@@ -271,20 +268,35 @@ write_full_block(BShadow, TXs) ->
 			end;
 		Error ->
 			Error
+	end.
+
+-if(?NETWORK_NAME == "arweave.N.1").
+%% The mainnet genesis transactions are part of the repository, copied to
+%% data_dir/txs on startup (ar_weave:add_mainnet_v1_genesis_txs/0), so they
+%% are not stored again.
+write_block_txs(#block{ height = 0 }, _TXs) ->
+	ok;
+write_block_txs(_BShadow, TXs) ->
+	write_tx([TX || TX <- TXs, not is_blacklisted(TX)]).
+
+%% @doc Record the genesis transactions, stored from the repository files
+%% without confirmation data, as confirmed by the genesis block. Nothing to
+%% do before the genesis block is stored: write_full_block/2 records them then.
+write_genesis_tx_confirmation_data(TXIDs) ->
+	case ar_kv:get(block_index_db, << 0:256 >>) of
+		{ok, Bin} ->
+			{GenesisH, _WeaveSize, _TXRoot, _PrevH} = binary_to_term(Bin, [safe]),
+			update_confirmation_index(#block{ height = 0, indep_hash = GenesisH,
+					txs = TXIDs });
+		_ ->
+			ok
 	end.
 -else.
-write_full_block(BShadow, TXs) ->
-	case update_confirmation_index(BShadow#block{ txs = TXs }) of
-		ok ->
-			case write_tx([TX || TX <- TXs, not is_blacklisted(TX)]) of
-				ok ->
-					write_full_block2(BShadow, TXs);
-				Error ->
-					Error
-			end;
-		Error ->
-			Error
-	end.
+write_block_txs(_BShadow, TXs) ->
+	write_tx([TX || TX <- TXs, not is_blacklisted(TX)]).
+
+write_genesis_tx_confirmation_data(_TXIDs) ->
+	ok.
 -endif.
 
 is_blacklisted(#tx{ format = 2 }) ->
@@ -299,13 +311,36 @@ put_tx_confirmation_data(B) ->
 	Data = term_to_binary({B#block.height, B#block.indep_hash}),
 	lists:foldl(
 		fun	(TX, ok) ->
-				ar_kv:put(tx_confirmation_db, TX#tx.id, Data);
+				ar_kv:put(tx_confirmation_db, tx_id(TX), Data);
 			(_TX, Acc) ->
 				Acc
 		end,
 		ok,
 		B#block.txs
 	).
+
+%% @doc Return true if the locally stored transaction is a deprecated format-1
+%% transaction without a denomination that no block in the current block index
+%% confirmed. The copy the peers' block carries is fetched instead. The block
+%% index is empty while joining, so a joining node fetches every such
+%% transaction from its peers.
+is_v1_denomination0_local_tx(TX) ->
+	case ar_tx:is_v1_denomination0_tx(TX) of
+		false ->
+			false;
+		true ->
+			case get_tx_confirmation_data(TX#tx.id) of
+				{ok, {Height, BH}} ->
+					case ar_block_index:get_element_by_height(Height) of
+						{BH, _WeaveSize, _TXRoot} ->
+							false;
+						_ ->
+							true
+					end;
+				_ ->
+					true
+			end
+	end.
 
 %% @doc Return {BlockHeight, BlockHash} belonging to the block where
 %% the given transaction was included.
@@ -314,7 +349,9 @@ get_tx_confirmation_data(TXID) ->
 		{ok, Binary} ->
 			{ok, binary_to_term(Binary, [safe])};
 		not_found ->
-			not_found
+			not_found;
+		{error, Reason} ->
+			{error, Reason}
 	end.
 
 %% @doc Read a block from disk, given a height
@@ -624,6 +661,14 @@ write_tx(TXs) when is_list(TXs) ->
 write_tx(#tx{ format = Format, id = TXID } = TX) ->
 	case write_tx_header(TX) of
 		ok ->
+			%% Keep the disk cache copy, if any, in sync: read_tx/1 prefers
+			%% the disk cache over the copy just stored.
+			case ar_disk_cache:lookup_tx_filename(TXID) of
+				{ok, _Filename} ->
+					_ = ar_disk_cache:write_tx(TX);
+				unavailable ->
+					ok
+			end,
 			DataSize = byte_size(TX#tx.data),
 			case DataSize > 0 of
 				true ->
@@ -1047,7 +1092,7 @@ init([]) ->
 	{ok, Config} = arweave_config:get_env(),
 	ensure_directories(Config#config.data_dir),
 	%% Copy genesis transactions (snapshotted in the repo) into data_dir/txs
-	ar_weave:add_mainnet_v1_genesis_txs(),
+	GenesisTXIDs = ar_weave:add_mainnet_v1_genesis_txs(),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_confirmation_db"),
 			tx_confirmation_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_db"), tx_db),
@@ -1056,6 +1101,7 @@ init([]) ->
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
 			block_time_history_db),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),
+	write_genesis_tx_confirmation_data(GenesisTXIDs),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "account_tree_db"), account_tree_db),
 	ets:insert(?MODULE, [{same_disk_storage_modules_total_size,
 			get_same_disk_storage_modules_total_size()}]),

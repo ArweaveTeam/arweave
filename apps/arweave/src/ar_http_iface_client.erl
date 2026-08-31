@@ -1117,13 +1117,26 @@ get_tx(Peers, TXID) ->
 get_tx_from_disk_or_peers(Peers, TXID) ->
 	case ar_storage:read_tx(TXID) of
 		unavailable ->
-			case get_tx_from_remote_peers(Peers, TXID) of
-				not_found ->
-					not_found;
-				{TX, _Peer, _Time, _Size} ->
-					TX
-			end;
+			get_tx_from_peers(Peers, TXID, not_found);
 		TX ->
+			case ar_storage:is_v1_denomination0_local_tx(TX) of
+				true ->
+					%% A deprecated format-1 transaction is only authoritative
+					%% as carried by its block, so do not fall back to the local
+					%% copy: report not_found and let the caller fetch it from a
+					%% peer or retry, as ar_join:read_local_tx/1 does for the
+					%% trail.
+					get_tx_from_peers(Peers, TXID, not_found);
+				false ->
+					TX
+			end
+	end.
+
+get_tx_from_peers(Peers, TXID, Default) ->
+	case get_tx_from_remote_peers(Peers, TXID) of
+		not_found ->
+			Default;
+		{TX, _Peer, _Time, _Size} ->
 			TX
 	end.
 
