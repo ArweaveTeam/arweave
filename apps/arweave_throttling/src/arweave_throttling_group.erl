@@ -275,12 +275,17 @@ reset_peer(GroupID, Peer) ->
         gen_server:call(Pid, {reset_peer, Peer})
     end.
 
-turn_off(WorkerRef) ->
-    gen_server:call(WorkerRef, turn_off).
+turn_off(GroupID) ->
+    maybe
+        {ok, Pid} ?= arweave_throttling_process:get(GroupID),
+        gen_server:call(Pid, turn_off)
+    end.
 
-turn_on(WorkerRef) ->
-    gen_server:call(WorkerRef, turn_on).
-
+turn_on(GroupID) ->
+    maybe
+        {ok, Pid} ?= arweave_throttling_process:get(GroupID),
+        gen_server:call(Pid, turn_on)
+    end.
 
 %% @doc Stop the group process.
 stop(GroupID) ->
