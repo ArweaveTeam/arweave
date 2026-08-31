@@ -93,6 +93,16 @@ register() ->
             {labels, [group_id, reason]}
         ]),
 
+    %% Practical use: We monitor how often throttling groups stop after being
+    %%                idle, to tune `[throttling, idle_timeout]': a high rate
+    %%                means groups are restarted (and lose quota state) often.
+    ok = prometheus_counter:new(
+        [{name, arweave_throttling_idle_shutdown_total},
+            {help, "The number of times a throttling group process was shut "
+                "down after being idle for longer than the idle timeout"} %,
+%            {labels, []}
+        ]),
+
     %% Practical use: To determine load profile: many peers, few request vs few peers
     %%                with high number of requests
     ok = prometheus_gauge:new(
@@ -120,6 +130,7 @@ cleanup() ->
     prometheus_counter:deregister(arweave_throttling_requests_error),
     prometheus_counter:deregister(arweave_throttling_quota_update_error),
     prometheus_counter:deregister(arweave_throttling_quota_update_requests),
+    prometheus_counter:deregister(arweave_throttling_idle_shutdown_total),
     prometheus_gauge:deregister(arweave_throttling_peers),
     prometheus_gauge:deregister(arweave_throttling_queued_requests),
     ok.

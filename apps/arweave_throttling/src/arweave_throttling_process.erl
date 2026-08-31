@@ -8,8 +8,9 @@
 -export([
          init/0,
          get/1,
-         start_and_store/1,
+         store/2,
          delete/1,
+         delete/2,
          cleanup/0
         ]).
 
@@ -31,20 +32,25 @@ get(GroupID) when is_binary(GroupID) ->
     end.
 
 %% @doc Start a new process and store it for the Group.
-start_and_store(GroupID) when is_list(GroupID) ->
-    start_and_store(list_to_binary(GroupID));
-start_and_store(GroupID) when is_binary(GroupID) ->
-    maybe 
-        {ok, Pid} ?= arweave_throttling_sup:start_throttling_group(GroupID),
-        true ?= ets:insert(?MODULE, {GroupID, Pid}),
-        {ok, Pid}
-    end.
+store(GroupID, Pid) when is_list(GroupID), is_pid(Pid) ->
+    store(list_to_binary(GroupID), Pid);
+store(GroupID, Pid) when is_binary(GroupID), is_pid(Pid) ->
+    true = ets:insert(?MODULE, {GroupID, Pid}),
+    ok.
 
 %% @doc Remove entry 
 delete(GroupID) when is_list(GroupID) ->
     delete(list_to_binary(GroupID));
 delete(GroupID) when is_binary(GroupID) ->
     ets:delete(?MODULE, GroupID).
+
+%% @doc Remove the entry only when it still maps `GroupID' to `Pid', so a
+%% newer process for the same group keeps its registration.
+delete(GroupID, Pid) when is_list(GroupID) ->
+    delete(list_to_binary(GroupID), Pid);
+delete(GroupID, Pid) when is_binary(GroupID), is_pid(Pid) ->
+    true = ets:delete_object(?MODULE, {GroupID, Pid}),
+    ok.
 
 %% @doc Delete ETS table, leaving no trace.
 cleanup() ->

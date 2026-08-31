@@ -296,6 +296,9 @@ vdf:
   pull: false
   max_validation_threads: 2
   max_last_step_validation_threads: 3
+throttling:
+  idle_timeout: 30000
+  max_processes: 50
 limiter:
   chunk: &limiter_full
     sliding_window_limit: 50

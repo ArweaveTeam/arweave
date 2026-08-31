@@ -68,7 +68,7 @@ init_per_testcase(_TestCase, Config) ->
               "recent_hash_list_diff",
               "wallet_list"],
 
-    ok = lists:foreach(fun arweave_throttling_process:start_and_store/1, Groups),
+    ok = lists:foreach(fun arweave_throttling_sup:start_throttling_group/1, Groups),
    
     timer:sleep(1000),
 

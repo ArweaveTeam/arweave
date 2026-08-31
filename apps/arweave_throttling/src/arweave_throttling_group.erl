@@ -50,6 +50,17 @@
 %%% the new value, which lets the budget grow back when the remote
 %%% rate window resets. `total' and `reset_seconds' are always
 %%% replaced with the value from the most recent update.
+%%%
+%%% == Idle shutdown ==
+%%%
+%%% A group stops itself (exit reason `normal') once it has received no
+%%% `throttle', `is_throttled' or `update_quota' request for
+%%% `idle_timeout' milliseconds, taken from
+%%% `[throttling, idle_timeout]' when the supervisor starts the group.
+%%% A group with queued callers or a pending quota refill is never
+%%% considered idle. Before stopping, the group removes itself from
+%%% `arweave_throttling_process', so `throttle/2' lets requests through
+%%% and the next quota update starts a fresh group.
 %%% @end
 %%%===================================================================
 -module(arweave_throttling_group).
@@ -125,7 +136,7 @@
 -define(CONCURRENCY_WINDOW_MS, 80).
 
 %% @doc Start a group process.
-start_link(#{id := _ID} = Spec) ->
+start_link(#{id := _ID, idle_timeout := _IdleTimeout} = Spec) ->
     gen_server:start_link(?MODULE, Spec, []).
 
 %% @doc Blocking throttle call.
@@ -151,7 +162,16 @@ throttle(GroupID, Peer) ->
 
 do_throttle(GroupID, Peer) ->
     arweave_metrics:counter_inc(arweave_throttling_requests_total, [GroupID]),
-    {ok, Pid} = arweave_throttling_process:get(GroupID),
+    case arweave_throttling_process:get(GroupID) of
+        {ok, Pid} ->
+            do_throttle(GroupID, Peer, Pid);
+        {error, group_not_found} ->
+            %% The group stopped after being idle, so it holds no quota
+            %% state for the peer; let the request through.
+            ok
+    end.
+
+do_throttle(GroupID, Peer, Pid) ->
     {Time, WorkerReturn} = timer:tc(fun try_throttle_call/2, [Pid, Peer]),
     arweave_metrics:histogram_observe(arweave_throttling_worker_response_time_microseconds,
                                       [GroupID], Time),
@@ -181,8 +201,8 @@ try_throttle_call(Pid, Peer) when is_pid(Pid) ->
     try
         gen_server:call(Pid, {throttle, Peer}, ?CALL_TIMEOUT)
     catch
-        E:R:Stack ->
-            {error, {E,R,Stack}}
+        E:R:_Stack ->
+            {error, {E,R}}
     end.
 
 %% @doc Non-blocking quota refresh.
@@ -222,18 +242,25 @@ is_throttled(GroupID, Peer) when is_tuple(Peer) ->
 
 do_is_throttled(GroupID, Peer) when is_tuple(Peer) ->
     try
-        {ok, Pid} = arweave_throttling_process:get(GroupID),
-        {ok, IsThrottled} = gen_server:call(Pid, {is_throttled, Peer}, ?CALL_TIMEOUT),
-        IsThrottled
+        case arweave_throttling_process:get(GroupID) of
+            {ok, Pid} ->
+                {ok, IsThrottled} =
+                    gen_server:call(Pid, {is_throttled, Peer}, ?CALL_TIMEOUT),
+                IsThrottled;
+            {error, group_not_found} ->
+                %% The group stopped after being idle.
+                false
+        end
     catch
-        {'EXIT', {noproc, {gen_server, call, _}}} -> false;
-        {'EXIT', Reason} -> exit(Reason);
+        exit:{noproc, _}:_St ->
+            %% Process not alive, it's not going to be throttled.
+            false;
         E:R:Stack ->
+            %% Some unexpected condition
             ?LOG_ERROR([{event, client_throttling_is_throttled_error},
                         {class, E},
                         {reason, R},
                         {stacktrace, Stack}]),
-            %% previous solution
             false
     end.
 
@@ -295,39 +322,25 @@ stop(GroupID) ->
     end.
 
 %% gen_server callbacks
-init(#{id := GroupID}) ->
+init(#{id := GroupID, idle_timeout := IdleTimeout}) ->
     process_flag(trap_exit, true),
+    arweave_throttling_process:store(GroupID, self()),
+    arm_idle_timer(IdleTimeout),
     {ok, #{
         id => GroupID,
         is_enabled => true,
         peers => #{},
-        monitors => #{}
+        monitors => #{},
+        idle_timeout => IdleTimeout,
+        last_activity_ts => monotonic_ms()
         }}.
 
-handle_call({throttle, _Peer}, _From, #{is_enabled := false} = State) ->
-    {reply, accepted, State};
-handle_call({throttle, Peer}, From, #{peers := Peers} = State) ->
-    PS0 = get_or_init_peer(Peer, Peers),
-    case PS0#peer_state.remaining of
-        infinity ->
-            {reply, accepted, State};
-        Remaining when is_integer(Remaining) andalso Remaining > 0 ->
-            PS1 = PS0#peer_state{
-                remaining = PS0#peer_state.remaining - 1
-            },
-            {reply, accepted, State#{peers := Peers#{Peer => PS1}}};
-        _ ->
-            case enqueue_caller(Peer, From, PS0, State) of
-                {error, _} = E ->
-                    {reply, E, State};
-                {Ref, NewState} ->
-                    {reply, {queued, Ref}, NewState}
-            end
-    end;
+handle_call({throttle, Peer}, From, State) ->
+    do_handle_throttle(Peer, From, touch(State));
 handle_call({is_throttled, Peer}, _From, #{peers := Peers} = State) ->
     PS0 = get_or_init_peer(Peer, Peers),
     IsThrottled = quota_is_throttled(PS0),
-    {reply, {ok, IsThrottled}, State};
+    {reply, {ok, IsThrottled}, touch(State)};
 handle_call(get_info, _From, #{peers := Peers} = State) ->
     NumOfRequestsQueued =
         maps:fold(fun(_Peer, #peer_state{waiters = Waiters}, Acc) ->
@@ -400,10 +413,10 @@ handle_cast({update_quota, Peer, Total, Remaining, ResetAmount, ResetSeconds, Re
            },
     {PS2, Monitors1} = drain_waiters(PS1, Monitors),
     PS3 = arm_or_clear_reset_timer(Peer, PS2, ResetSeconds),
-    {noreply, State#{
+    {noreply, touch(State#{
         peers := Peers#{Peer => PS3},
         monitors := Monitors1
-    }};
+    })};
 handle_cast({cancel_request, Peer, Ref}, #{peers := Peers, monitors := Monitors} = State) ->
     case maps:find(Peer, Peers) of
         {ok, PS0} ->
@@ -458,6 +471,20 @@ handle_info({'DOWN', MRef, process, _Pid, _Reason}, #{peers := Peers, monitors :
         error ->
             {noreply, State}
     end;
+handle_info(idle_check, #{idle_timeout := IdleTimeout,
+                          last_activity_ts := LastActivityTS} = State) ->
+    IdleMs = monotonic_ms() - LastActivityTS,
+    case {IdleMs >= IdleTimeout, has_pending_work(State)} of
+        {true, false} ->
+            ok = stop_idle(State),
+            {stop, normal, State};
+        {true, true} ->
+            arm_idle_timer(IdleTimeout),
+            {noreply, State};
+        {false, _} ->
+            arm_idle_timer(IdleTimeout - IdleMs),
+            {noreply, State}
+    end;
 handle_info(Info, State) ->
     ?LOG_DEBUG([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
     {noreply, State}.
@@ -469,6 +496,51 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% Internals
+do_handle_throttle(_Peer, _From, #{is_enabled := false} = State) ->
+    {reply, accepted, State};
+do_handle_throttle(Peer, From, #{peers := Peers} = State) ->
+    PS0 = get_or_init_peer(Peer, Peers),
+    case PS0#peer_state.remaining of
+        infinity ->
+            {reply, accepted, State};
+        Remaining when is_integer(Remaining) andalso Remaining > 0 ->
+            PS1 = PS0#peer_state{
+                remaining = PS0#peer_state.remaining - 1
+            },
+            {reply, accepted, State#{peers := Peers#{Peer => PS1}}};
+        _ ->
+            case enqueue_caller(Peer, From, PS0, State) of
+                {error, _} = E ->
+                    {reply, E, State};
+                {Ref, NewState} ->
+                    {reply, {queued, Ref}, NewState}
+            end
+    end.
+
+%% @doc Record a request that keeps the group from being idle.
+touch(State) ->
+    State#{last_activity_ts := monotonic_ms()}.
+
+arm_idle_timer(DelayMs) ->
+    _ = erlang:send_after(DelayMs, self(), idle_check),
+    ok.
+
+%% @doc True when stopping the group would drop queued callers or a
+%% pending quota refill.
+has_pending_work(#{peers := Peers}) ->
+    lists:any(fun(#peer_state{waiters = Waiters, reset_timer = ResetTimer}) ->
+                      ResetTimer =/= undefined
+                          orelse not queue:is_empty(Waiters)
+              end, maps:values(Peers)).
+
+stop_idle(#{id := GroupID, idle_timeout := IdleTimeout}) ->
+    ok = arweave_throttling_process:delete(GroupID, self()),
+    arweave_metrics:counter_inc(arweave_throttling_idle_shutdown_total),
+    ?LOG_DEBUG([{event, throttling_group_idle_shutdown},
+                {group_id, GroupID},
+                {idle_timeout, IdleTimeout}]),
+    ok.
+
 quota_is_throttled(#peer_state{remaining = 0}) ->
     true;
 quota_is_throttled(#peer_state{total = Total, remaining = Remaining})

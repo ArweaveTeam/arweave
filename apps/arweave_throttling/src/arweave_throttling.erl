@@ -159,28 +159,16 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
                         {error, Reason} = E ->
                             maybe_log_update_error(Peer, Path, 'unknown', Reason),
                             E;
-                        {ok, _HeaderGroupID} ->
+                        {ok, HeaderGroupID} ->
                             %% Then we can look for the throttling group process.
-                            case get_or_start_throttling_group_process(HeaderGroupID) of
-                                {ok, Pid} when is_pid(Pid) ->
-                                    handle_update_group_id(Peer, Path, Pid, HeaderGroupID, Quota);
-                                {error, Reason} = E ->
-                                    maybe_log_update_error(Peer, Path, HeaderGroupID, Reason),
-                                    E
-                            end
+                            assign_to_throttling_group(Peer, Path, HeaderGroupID, Quota)
                     end;
                 {ok, GroupID} ->
                     case HeaderGroupID =:= GroupID of
                         true ->
-                            {ok, Pid} = arweave_throttling_process:get(GroupID),
-                            %% One could contemplate whether the process could
-                            %% terminate for any reason here. Ideally, we don't
-                            %% kill processes before removing them from the process
-                            %% table. Execution is not always so straightforward,
-                            %% but we will survive if this crashes. It would 
-                            %% crash the handler process, that would return 500.
-                            %% Pretty reasonable status there.
-                            handle_update_group_id(Peer, Path, Pid, GroupID, Quota);
+                            %% The group may have stopped after being idle,
+                            %% in which case it is started again here.
+                            assign_to_throttling_group(Peer, Path, GroupID, Quota);
                         false ->
                             E = {group_mismatch, GroupID, HeaderGroupID},
                             maybe_log_update_error(Peer, Path, 'unknown', E),
@@ -200,6 +188,17 @@ try_mark_peer_incompatible(Peer, Path, Reason) ->
             arweave_throttling_sup:reset_peer_in_all_groups(Peer),
             maybe_log_update_error(Peer, Path, 'unknown', Reason),
             arweave_throttling_peer_compatibility:mark_incompatible(Peer)
+    end.
+
+assign_to_throttling_group(Peer, Path, GroupID, Quota) ->
+    case get_or_start_throttling_group_process(GroupID) of
+        {ok, Pid} when is_pid(Pid) ->
+            handle_update_group_id(Peer, Path, Pid,
+                                   GroupID, Quota);
+        {error, Reason} = E ->
+            maybe_log_update_error(Peer, Path, GroupID,
+                                   Reason),
+            E
     end.
 
 %% @doc Return a snapshot of the throttler state for `Peer' in
@@ -227,8 +226,6 @@ start(_StartType, _StartArgs) ->
 
 stop(_State) ->
     ok = arweave_throttling_metrics:cleanup(),
-    %ok = arweave_throttling_router:cleanup(),
-    %ok = arweave_throttling_process:cleanup(),
     ?LOG_INFO("arweave_throttling application stopped"),
     ok.
 
@@ -284,26 +281,38 @@ get_or_start_throttling_group_process(GroupID) ->
         {ok, Pid} when is_pid(Pid) ->
             {ok, Pid};
         {error, group_not_found} ->
-            case arweave_throttling_process:start_and_store(GroupID) of
-                {ok, Pid} ->
-                    {ok, Pid};
-                {error, _Reason} = E ->
-                    E
+            case is_process_limit_breached(GroupID) of
+                true ->
+                    {error, process_limit_breached};
+                false ->
+                    case arweave_throttling_sup:start_throttling_group(GroupID) of
+                        {ok, Pid} ->
+                            {ok, Pid};
+                        {error, _Reason} = E ->
+                            E
+                    end
             end
     end.
-    %% case whereis(arweave_throttling_group:registered_name(GroupID)) of
-    %%     Pid when is_pid(Pid) ->
-    %%         {ok, Pid};
-    %%     _ ->
-    %%         case arweave_throttling_sup:start_throttling_group(GroupID) of
-    %%             {ok, Pid} ->
-    %%                 {ok, Child};
-    %%             {ok, Pid, _Info} ->
-    %%                 {ok, Child};
-    %%             {error, _Reason} = E ->
-    %%                 E
-    %%         end
-    %% end.
+
+is_process_limit_breached(GroupID) ->
+    case is_exempt_from_process_limit(GroupID) of
+        true ->
+            false;
+        false ->
+            MaxProcesses = arweave_config:get([throttling, max_processes]),
+            arweave_throttling_sup:count_running() >= MaxProcesses
+    end.
+
+%% @doc Groups also defined for the local limiter are exempt from the
+%% `[throttling, max_processes]' limit: their number is bounded by our
+%% own configuration, not by what remote peers report.
+is_exempt_from_process_limit(GroupID) when is_binary(GroupID) ->
+    is_exempt_from_process_limit(binary_to_list(GroupID));
+is_exempt_from_process_limit(GroupID) when is_list(GroupID) ->
+    lists:member(GroupID, exempt_group_ids()).
+
+exempt_group_ids() ->
+    [atom_to_list(ID) || ID <- arweave_config:limiter_groups()].
 
 get_quota_error_reason(Reason) when is_atom(Reason) ->
     atom_to_list(Reason);

@@ -54,14 +54,14 @@ get_and_delete_unknown_group(_Config) ->
 store_get_delete(Config) ->
     Pid = proplists:get_value(group_pid, Config),
     ?assertEqual({error, group_not_found}, ?M:get(<<"general">>)),
-    ?assertEqual({ok, Pid}, ?M:start_and_store(<<"general">>)),
+    ?assertEqual(ok, ?M:store(<<"general">>, Pid)),
     ?assertEqual({ok, Pid}, ?M:get(<<"general">>)),
     ?assertEqual(true, ?M:delete(<<"general">>)),
     ?assertEqual({error, group_not_found}, ?M:get(<<"general">>)).
 
 list_and_binary_group_ids_are_equivalent(Config) ->
     Pid = proplists:get_value(group_pid, Config),
-    ?assertEqual({ok, Pid}, ?M:start_and_store("general")),
+    ?assertEqual(ok, ?M:store(<<"general">>, Pid)),
     ?assertEqual({ok, Pid}, ?M:get(<<"general">>)),
     ?assertEqual(true, ?M:delete("general")),
     ?assertEqual({error, group_not_found}, ?M:get("general")).

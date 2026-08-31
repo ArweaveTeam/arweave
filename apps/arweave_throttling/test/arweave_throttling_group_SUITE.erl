@@ -24,7 +24,7 @@ end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_TestCase, Config) ->
-    Spec = #{id => "general"},
+    Spec = #{id => "general", idle_timeout => 60000},
 
     ok = meck:new([prometheus_counter, prometheus_histogram], [passthrough]),
     ok = meck:expect(prometheus_counter, inc, 2, ok),

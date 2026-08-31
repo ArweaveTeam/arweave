@@ -18,6 +18,13 @@
 -define(GROUPID_GENERAL, "general").
 -define(GROUPID_DATA_SYNC, "data_sync_record").
 
+%% Groups not defined for the local limiter, so they count against
+%% `[throttling, max_processes]'.
+-define(PATH_REMOTE_A, "remote_a").
+-define(GROUPID_REMOTE_A, "remote_a").
+-define(PATH_REMOTE_B, "remote_b").
+-define(GROUPID_REMOTE_B, "remote_b").
+
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 30}}].
 
 description() ->
@@ -65,7 +72,9 @@ all() ->
         exhausted_quota_refills_after_reset_seconds,
         update_quota_cancels_reset_timer,
         update_quota_with_no_header_resets_peer,
-        crash_loses_isolated_state
+        crash_loses_isolated_state,
+        process_limit_breached,
+        local_limiter_groups_exempt_from_process_limit
     ].
 
 %%====================================================================
@@ -591,12 +600,13 @@ crash_loses_isolated_state(_Config) ->
     ),
 
     %% One crashes (it's killed in the test)
-    GroupPid = arweave_throttling_process:get(?GROUPID_GENERAL),
+    {ok, GroupPid} = arweave_throttling_process:get(?GROUPID_GENERAL),
     exit(GroupPid, kill),
     ok = ar_test_await:until(
         throttling_group_restarted,
         fun() ->
-            RestartedPid = whereis(arweave_throttling_group_general),
+            %% New Pid will be available through the throttling process table
+            {ok, RestartedPid} = arweave_throttling_process:get("general"),
             is_pid(RestartedPid) andalso RestartedPid =/= GroupPid
         end
     ),
@@ -611,6 +621,50 @@ crash_loses_isolated_state(_Config) ->
         arweave_throttling:status(?GROUPID_DATA_SYNC, ?PEER1)
     ),
 
+    ok.
+
+process_limit_breached(_Config) ->
+    ok = arweave_config:set([throttling, max_processes], 1),
+    ok = arweave_throttling:update_quota(?PEER1, ?PATH_REMOTE_A,
+                                         headers(?GROUPID_REMOTE_A, 5, 4)),
+    ?assertMatch({ok, _}, arweave_throttling_process:get(?GROUPID_REMOTE_A)),
+
+    ?assertEqual({error, process_limit_breached},
+                 arweave_throttling:update_quota(?PEER1, ?PATH_REMOTE_B,
+                     headers(?GROUPID_REMOTE_B, 5, 4))),
+    ?assertEqual({error, group_not_found},
+                 arweave_throttling_process:get(?GROUPID_REMOTE_B)),
+    ?assertEqual(1, arweave_throttling_sup:count_running()),
+
+    %% A group that is already running keeps receiving updates.
+    ?assertEqual(ok, arweave_throttling:update_quota(?PEER1, ?PATH_REMOTE_A,
+                     headers(?GROUPID_REMOTE_A, 5, 4))),
+
+    ok = arweave_config:set([throttling, max_processes], 2),
+    ?assertEqual(ok, arweave_throttling:update_quota(?PEER1, ?PATH_REMOTE_B,
+                     headers(?GROUPID_REMOTE_B, 5, 4))),
+    ?assertMatch({ok, _}, arweave_throttling_process:get(?GROUPID_REMOTE_B)),
+    ?assertEqual(2, arweave_throttling_sup:count_running()),
+    ok.
+
+local_limiter_groups_exempt_from_process_limit(_Config) ->
+    ok = arweave_config:set([throttling, max_processes], 1),
+    ok = arweave_throttling:update_quota(?PEER1, ?PATH_REMOTE_A,
+                                         headers(?GROUPID_REMOTE_A, 5, 4)),
+
+    %% Local limiter groups start although the limit is reached...
+    ?assertEqual(ok, arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
+                     headers(?GROUPID_GENERAL, 5, 4))),
+    ?assertEqual(ok, arweave_throttling:update_quota(?PEER1, ?PATH_DATA_SYNC,
+                     headers(?GROUPID_DATA_SYNC, 5, 4))),
+    ?assertMatch({ok, _}, arweave_throttling_process:get(?GROUPID_GENERAL)),
+    ?assertMatch({ok, _}, arweave_throttling_process:get(?GROUPID_DATA_SYNC)),
+
+    %% ...and are not counted against it.
+    ?assertEqual(3, arweave_throttling_sup:count_running()),
+    ?assertEqual({error, process_limit_breached},
+                 arweave_throttling:update_quota(?PEER1, ?PATH_REMOTE_B,
+                     headers(?GROUPID_REMOTE_B, 5, 4))),
     ok.
 
 %%====================================================================
