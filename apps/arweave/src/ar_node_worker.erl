@@ -1752,6 +1752,9 @@ ignore_rejected_block(B) ->
     BH = B#block.indep_hash,
     case carries_v1_denomination0_tx(B) of
         true ->
+            ?LOG_DEBUG([{event, rejected_block_with_deprecated_v1_tx},
+                        {block, arweave_util:encode(BH)},
+                        {peer, B#block.source_peer}]),
             ar_ignore_registry:remove(BH),
             ID =
                 case B#block.source_peer of

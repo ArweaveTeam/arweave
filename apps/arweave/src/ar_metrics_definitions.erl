@@ -92,6 +92,16 @@ all_metrics() ->
             {help, "The size of the transaction propagation queue"}
         ]},
         {prometheus_counter, [
+            {name, deprecated_v1_transactions_total},
+            {labels, [source]},
+            {
+                help,
+                "The total number of deprecated format-1 transactions without "
+                "a denomination the node received and dropped, by source "
+                "(post, poll). Tracks the decline of format-1 usage."
+            }
+        ]},
+        {prometheus_counter, [
             {name, propagated_transactions_total},
             {labels, [status_class]},
             {

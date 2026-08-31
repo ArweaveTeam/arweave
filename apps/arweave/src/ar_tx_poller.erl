@@ -161,6 +161,12 @@ download_and_verify_tx(TXID, TXIDPeer) ->
                 true ->
                     %% Format-1 transactions without a denomination are
                     %% only accepted inside blocks.
+                    ?LOG_DEBUG([{event, dropped_deprecated_v1_tx},
+                                {source, poll},
+                                {tx, arweave_util:encode(TXID)},
+                                {peer, arweave_util:format_peer(Peer)}]),
+                    arweave_metrics:counter_inc(deprecated_v1_transactions_total,
+                                                [poll], 1),
                     ar_ignore_registry:mark_tx_processed(TXID, Ref);
                 false ->
                     validate_tx(TX, Ref, Peer, TXIDPeer, Time, Size)
