@@ -466,7 +466,10 @@ tx(Format, Owner, Reward, Data, TXID, Anchor, Quantity, Target) ->
 		owner = Owner,
 		target = Target,
 		last_tx = Anchor,
-		quantity = Quantity
+		quantity = Quantity,
+		%% Format-1 transactions without a denomination are deprecated and
+		%% never enter the mempool.
+		denomination = 1
 	}.
 
 assertMempoolSize(ExpectedMempoolSize) ->

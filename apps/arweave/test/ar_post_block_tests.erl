@@ -56,6 +56,10 @@ cleanup_all_post_fork({Cleanup, Functions}) ->
 instantiator(TestFun) ->
 	fun (Fixture) -> {timeout, 120, {with, Fixture, [TestFun]}} end.
 
+missing_txids_reported_in_block_order_test_() ->
+	{timeout, ?TEST_NODE_TIMEOUT,
+	 fun test_missing_txids_reported_in_block_order/0}.
+
 post_2_7_test_() ->
 	{setup, fun setup_all_post_2_7/0, fun cleanup_all_post_fork/1,
 		{foreach, fun reset_node/0, [
@@ -191,6 +195,31 @@ assert_banned(Peer) ->
 assert_not_banned(Peer) ->
 	timer:sleep(2000),
 	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(Peer)).
+
+test_missing_txids_reported_in_block_order() ->
+	%% POST /block2 replies 418 with the identifiers of the transactions
+	%% the node does not have. The sender inlines them on retry assuming
+	%% they are listed in the order they appear in the block
+	%% (ar_bridge:determine_included_transactions/2).
+	{_, Pub} = Wallet = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(1000), <<>>}]),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:disconnect_from(peer1),
+	Anchor = ar_test_node:get_tx_anchor(peer1),
+	TXs = [ar_test_node:sign_tx(peer1, Wallet, #{ last_tx => Anchor })
+		   || _ <- lists:seq(1, 3)],
+	lists:foreach(fun(TX) ->
+		ar_test_node:assert_post_tx_to_peer(peer1, TX)
+	end, TXs),
+	ar_test_node:mine(peer1),
+	[{H, _, _} | _] = ar_test_node:wait_until_height(peer1, 1),
+	B = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, H]),
+	TXIDs = [TX#tx.id || TX <- B#block.txs],
+	?assertEqual(3, length(TXIDs)),
+	{ok, {{<<"418">>, _}, _, Body, _, _}} =
+		send_new_block(ar_test_node:peer_ip(main), B#block{ txs = TXIDs }),
+	?assertEqual(TXIDs, [TXID || <<TXID:32/binary>> <= Body]).
 
 %% ------------------------------------------------------------------------------------------
 %% post_2_6_test_
@@ -653,14 +682,14 @@ test_send_block2() ->
 	{ok, {{<<"418">>, _}, _, Body3, _, _}} = ar_http:req(#{ method => post,
 			peer => ar_test_node:peer_ip(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B) }),
-	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [TXID | Acc] end,
-			[], TXs2 -- EverySecondTX)), Body3),
+	?assertEqual(iolist_to_binary([TXID || #tx{ id = TXID } <- TXs2 -- EverySecondTX]),
+			Body3),
 	B2 = B#block{ txs = [lists:nth(1, TXs2) | tl(B#block.txs)] },
 	{ok, {{<<"418">>, _}, _, Body4, _, _}} = ar_http:req(#{ method => post,
 			peer => ar_test_node:peer_ip(peer1), path => "/block2",
 			body => ar_serialize:block_to_binary(B2) }),
-	?assertEqual(iolist_to_binary(lists:foldl(fun(#tx{ id = TXID }, Acc) -> [TXID | Acc] end,
-			[], (TXs2 -- EverySecondTX) -- [lists:nth(1, TXs2)])), Body4),
+	?assertEqual(iolist_to_binary([TXID
+			|| #tx{ id = TXID } <- (TXs2 -- EverySecondTX) -- [lists:nth(1, TXs2)]]), Body4),
 	TXs3 = [ar_test_node:sign_tx(main, Wallet, #{ last_tx => ar_test_node:get_tx_anchor(peer1),
 			data => crypto:strong_rand_bytes(10 * 1024) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs3),
