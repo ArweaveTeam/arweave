@@ -41,7 +41,7 @@
         post_tx_json/2,
         wait_until_syncs_genesis_data/0, wait_until_syncs_genesis_data/1,
 
-        mock_all_nodes/1,
+        mock_all_nodes/1, run_with_mocked/3,
         test_with_all_nodes_mocked/2,
         test_with_all_nodes_mocked/3]).
 
@@ -1330,56 +1330,43 @@ get_tx_confirmations(Node, TXID) ->
 %% requires the slow path — fast-tagged modules whose mocks don't need
 %% to be visible on peers should use `ar_test_util:with_mocked/2,3'
 %% instead.
-mock_all_nodes(Functions) ->
-    {
-        fun() ->
-            with_meck_lock(fun() ->
-                lists:foldl(
-                    fun({Module, Fun, Mock}, Mocked) ->
-                        NewMocked = case maps:get(Module, Mocked, false) of
-                            false ->
-                                ar_test_util:new_mock(Module, [passthrough]),
-                                lists:foreach(
-                                    fun({_TestType, Node}) ->
-                                        remote_call(Node, ar_test_util, new_mock,
-                                                [Module, [no_link, passthrough]])
-                                    end,
-                                    all_peers(test)),
-                                maps:put(Module, true, Mocked);
-                            true ->
-                                Mocked
-                            end,
-                            ar_test_util:mock_function(Module, Fun, Mock),
-                            lists:foreach(
-                                fun({_TestType, Node}) ->
-                                    remote_call(Node, ar_test_util, mock_function,
-                                            [Module, Fun, Mock])
-                                end,
-                                all_peers(test)),
-                            NewMocked
-                    end,
-                    maps:new(),
-                    Functions
-                )
-            end)
-        end,
-        fun(Mocked) ->
-            with_meck_lock(fun() ->
-                maps:fold(
-                    fun(Module, _, _) ->
-                        ar_test_util:unmock_module(Module),
-                        lists:foreach(
-                            fun({_TestType, Node}) ->
-                                remote_call(Node, ar_test_util, unmock_module, [Module])
-                            end,
-                            all_peers(test))
-                    end,
-                    noop,
-                    Mocked
-                )
-            end)
-        end
-    }.
+%% @doc Return the setup and cleanup functions mocking the functions on every
+%% node. See run_with_mocked/3 for a scoped variant.
+mock_all_nodes(Mocks) ->
+    Nodes = [main | [Node || {_TestType, Node} <- all_peers(test)]],
+    {fun() -> mock_nodes(Nodes, Mocks) end,
+     fun(Modules) -> unmock_nodes(Nodes, Modules) end}.
+
+%% @doc Run Fun with the functions mocked on the given nodes (main included
+%% when listed) and unmock them afterwards.
+run_with_mocked(Nodes, Mocks, Fun) ->
+    Modules = mock_nodes(Nodes, Mocks),
+    try
+        Fun()
+    after
+        unmock_nodes(Nodes, Modules)
+    end.
+
+%% @doc Mock the functions on the given nodes. Return the mocked modules, to
+%% pass to unmock_nodes/2.
+mock_nodes(Nodes, Mocks) ->
+    Modules = lists:usort([Module || {Module, _, _} <- Mocks]),
+    with_meck_lock(fun() ->
+        lists:foreach(fun(Node) ->
+            [remote_call(Node, ar_test_util, new_mock, [Module, [no_link, passthrough]])
+                || Module <- Modules],
+            [remote_call(Node, ar_test_util, mock_function, [Module, F, Mock])
+                || {Module, F, Mock} <- Mocks]
+        end, Nodes)
+    end),
+    Modules.
+
+unmock_nodes(Nodes, Modules) ->
+    with_meck_lock(fun() ->
+        [remote_call(Node, ar_test_util, unmock_module, [Module])
+            || Node <- Nodes, Module <- Modules]
+    end),
+    ok.
 
 %% @doc Execute Fun under a distributed lock to avoid concurrent meck operations.
 with_meck_lock(Fun) when is_function(Fun, 0) ->
