@@ -157,18 +157,26 @@ download_and_verify_tx(TXID, TXIDPeer) ->
                     {txid_peer, arweave_util:format_peer(TXIDPeer)}
             ]);
         {TX, Peer, Time, Size} ->
-            case ar_tx_validator:validate(TX) of
-                {invalid, Code} ->
-                    log_invalid_tx(Code, TXID, TX, Peer, TXIDPeer);
-                {valid, TX2} ->
-                    ar_peers:rate_fetched_data(Peer, tx, Time, Size),
-                    ar_disk_pool:add_data_root(TX2#tx.data_root,
-                            TX2#tx.data_size, TX#tx.id),
-                    ar_events:send(tx, {new, TX2, {pulled, Peer}}),
-                    TXID = TX2#tx.id,
-                    ar_ignore_registry:remove_ref(TXID, Ref),
-                    ar_ignore_registry:add_temporary(TXID, 10 * 60 * 1000)
+            case ar_tx:is_v1_denomination0_tx(TX) of
+                true ->
+                    %% Format-1 transactions without a denomination are
+                    %% only accepted inside blocks.
+                    ar_ignore_registry:mark_tx_processed(TXID, Ref);
+                false ->
+                    validate_tx(TX, Ref, Peer, TXIDPeer, Time, Size)
             end
+    end.
+
+validate_tx(#tx{ id = TXID } = TX, Ref, Peer, TXIDPeer, Time, Size) ->
+    case ar_tx_validator:validate(TX) of
+        {invalid, Code} ->
+            log_invalid_tx(Code, TXID, TX, Peer, TXIDPeer);
+        {valid, TX2} ->
+            ar_peers:rate_fetched_data(Peer, tx, Time, Size),
+            ar_disk_pool:add_data_root(TX2#tx.data_root,
+                    TX2#tx.data_size, TXID),
+            ar_events:send(tx, {new, TX2, {pulled, Peer}}),
+            ar_ignore_registry:mark_tx_processed(TXID, Ref)
     end.
 
 log_invalid_tx(tx_bad_anchor, TXID, TX, Peer, TXIDPeer) ->

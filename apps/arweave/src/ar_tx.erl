@@ -7,7 +7,8 @@
         tags_to_list/1, get_tx_fee/1, get_tx_fee2/1, check_last_tx/2,
         generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
         chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
-        get_addresses/1, get_weave_size_increase/2, utility/1, get_owner_address/1]).
+        get_addresses/1, get_weave_size_increase/2, utility/1, get_owner_address/1,
+        is_v1_denomination0_tx/1]).
 
 -include("ar.hrl").
 -include("ar_pricing.hrl").
@@ -257,6 +258,14 @@ get_owner_address(#tx{ owner = Owner, signature_type = KeyType, owner_address = 
     ar_wallet:to_address(Owner, KeyType);
 get_owner_address(#tx{ owner_address = OwnerAddress }) ->
     OwnerAddress.
+
+%% @doc Return true if the transaction is a deprecated format-1 transaction
+%% signed without a denomination. Such transactions are only accepted inside
+%% blocks.
+is_v1_denomination0_tx(#tx{ format = 1, denomination = 0 }) ->
+    true;
+is_v1_denomination0_tx(_TX) ->
+    false.
 
 %%%===================================================================
 %%% Private functions.

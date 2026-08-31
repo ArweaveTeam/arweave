@@ -22,7 +22,14 @@ reset() ->
 load_from_disk() ->
     case ar_storage:read_term(mempool) of
         {ok, {SerializedTXs, _MempoolSize}} ->
-            TXs = maps:map(fun(_, {TX, St}) -> {deserialize_tx(TX), St} end, SerializedTXs),
+            TXs = maps:filtermap(
+                    fun(_, {TX, St}) ->
+                            TX2 = deserialize_tx(TX),
+                            case ar_tx:is_v1_denomination0_tx(TX2) of
+                                true -> false;
+                                false -> {true, {TX2, St}}
+                            end
+                    end, SerializedTXs),
 
             MaxDenomination = maps:fold(
                                 fun(_TXID, {TX, _Status}, Acc) ->
@@ -82,11 +89,17 @@ load_from_disk() ->
             reset()
     end.
 
+%% @doc Add the transaction to the mempool. Format-1 transactions without a
+%% denomination are never added. They are only accepted inside blocks.
 add_tx(TX, Status) ->
-    prometheus_histogram:observe_duration(ar_mempool_add_tx_duration_milliseconds,
-                                          fun() ->
-                                                  add_tx2(TX, Status)
-                                          end).
+    case ar_tx:is_v1_denomination0_tx(TX) of
+        true ->
+            ok;
+        false ->
+            prometheus_histogram:observe_duration(
+              ar_mempool_add_tx_duration_milliseconds,
+              fun() -> add_tx2(TX, Status) end)
+    end.
 
 add_tx2(#tx{ id = TXID } = TX, Status) ->
     Denomination = max(get_current_denomination(), get_origin_spent_total_denomination()),

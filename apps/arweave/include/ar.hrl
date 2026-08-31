@@ -155,6 +155,15 @@
 %% The maximum byte size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * ?MiB).
 
+%% Serve format-1 transactions without a denomination only once they are
+%% this deep in the chain.
+-define(V1_DENOMINATION0_TX_MIN_CONFIRMATIONS, 12).
+
+%% The response body POST /tx replies with to a format-1 transaction without
+%% a denomination.
+-define(V1_DENOMINATION0_TX_REJECTED, <<"Format 1 transactions are deprecated "
+        "and not accepted. Sign a format 2 transaction.">>).
+
 %% The maximum nesting depth for JSON inputs accepted via
 %% ar_serialize:json_decode/2, passed to the jiffy NIF as {max_depth, _}.
 %% The guard lives in our jiffy fork: it bails out with
@@ -700,7 +709,10 @@
                 poa2_cache,
 
                 %% Used internally, not gossiped.
-                receive_timestamp
+                receive_timestamp,
+                %% Used internally, not gossiped. The peer the block was
+                %% received from, if any.
+                source_peer
                }).
 
 %% @doc A transaction.

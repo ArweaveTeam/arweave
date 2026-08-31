@@ -316,12 +316,12 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 %% Return a JSON-encoded transaction.
 %% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
-    handle_get_tx(Hash, Req, json);
+    handle_get_tx(Hash, Req, json, hide_v1_denomination0);
 
 %% Return a binary-encoded transaction.
 %% GET request to endpoint /tx2/{hash}.
 handle(<<"GET">>, [<<"tx2">>, Hash], Req, _Pid) ->
-    handle_get_tx(Hash, Req, binary);
+    handle_get_tx(Hash, Req, binary, hide_v1_denomination0);
 
 %% Return a possibly unconfirmed JSON-encoded transaction.
 %% GET request to endpoint /unconfirmed_tx/{hash}.
@@ -345,7 +345,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
                 {error, invalid} ->
                     {400, #{}, <<"Invalid hash.">>, Req};
                 {ok, ID} ->
-                    case ar_storage:read_tx(ID) of
+                    case read_public_tx(ID) of
                         unavailable ->
                             {404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("genesis_data/not_found.html"), Req};
                         #tx{} = TX ->
@@ -1268,7 +1268,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
             {error, invalid} ->
                 {reply, {400, #{}, <<"Invalid hash.">>, Req}};
             {ok, ID} ->
-                {ar_storage:read_tx(ID), ID}
+                {read_public_tx(ID), ID}
         end,
     case ReadTX of
         {unavailable, TXID} ->
@@ -1530,7 +1530,7 @@ handle_get_tx_status(EncodedTXID, Req) ->
                 true ->
                     {202, #{}, <<"Pending">>, Req};
                 false ->
-                    case ar_storage:get_tx_confirmation_data(TXID) of
+                    case get_tx_confirmation_data(TXID) of
                         {ok, {Height, BH}} ->
                             PseudoTags = [
                                 {<<"block_height">>, Height},
@@ -1554,12 +1554,77 @@ handle_get_tx_status(EncodedTXID, Req) ->
                         not_found ->
                             {404, #{}, <<"Not Found.">>, Req};
                         {error, timeout} ->
-                            {503, #{}, <<"ArQL unavailable.">>, Req}
+                            {503, #{}, <<"ArQL unavailable.">>, Req};
+                        {error, _} ->
+                            {500, #{}, <<>>, Req}
                     end
             end
     end.
 
+%% @doc Look up the confirmation data, reporting hidden format-1
+%% transactions as not found.
+get_tx_confirmation_data(TXID) ->
+    case ar_storage:get_tx_confirmation_data(TXID) of
+        {ok, _} = Reply ->
+            case read_public_tx(TXID) of
+                #tx{} ->
+                    Reply;
+                unavailable ->
+                    not_found
+            end;
+        Reply ->
+            Reply
+    end.
+
+%% @doc Read the transaction from the local storage unless the public
+%% transaction endpoints do not serve it yet.
+read_public_tx(TXID) ->
+    case ar_storage:read_tx(TXID) of
+        #tx{} = TX ->
+            case is_hidden_v1_denomination0_tx(TX) of
+                true -> unavailable;
+                false -> TX
+            end;
+        unavailable ->
+            unavailable
+    end.
+
+%% @doc Return true if the transaction is a format-1 transaction without a
+%% denomination that is not served by the public transaction endpoints yet.
+%% Such transactions are only accepted inside blocks, so we only serve them
+%% once a block in the current block index confirmed them and they have
+%% ?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS confirmations.
+is_hidden_v1_denomination0_tx(TX) ->
+    case ar_storage:is_v1_denomination0_local_tx(TX) of
+        true ->
+            true;
+        false ->
+            case ar_tx:is_v1_denomination0_tx(TX) of
+                false ->
+                    false;
+                true ->
+                    not has_min_v1_denomination0_confirmations(TX)
+            end
+    end.
+
+%% @doc Return true if the format-1 transaction, confirmed by a block in the
+%% block index, has ?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS confirmations.
+has_min_v1_denomination0_confirmations(TX) ->
+    case ar_storage:get_tx_confirmation_data(TX#tx.id) of
+        {ok, {Height, _BH}} ->
+            Confirmations = ar_node:get_height() - Height + 1,
+            Confirmations >= ?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS;
+        _ ->
+            false
+    end.
+
 handle_get_tx(Hash, Req, Encoding) ->
+    handle_get_tx(Hash, Req, Encoding, serve_all).
+
+%% @doc Serve the transaction. Peers fetch block transactions through
+%% GET /unconfirmed_tx, which serves everything. The public GET /tx hides
+%% recent format-1 transactions without a denomination.
+handle_get_tx(Hash, Req, Encoding, Visibility) ->
     case arweave_util:safe_decode(Hash) of
         {error, invalid} ->
             {400, #{}, <<"Invalid hash.">>, Req};
@@ -1569,21 +1634,31 @@ handle_get_tx(Hash, Req, Encoding) ->
                 case ar_storage:read_tx(ID) of
                     unavailable ->
                         maybe_tx_is_pending_response(ID, Req);
+                    #tx{} = TX when Visibility == hide_v1_denomination0 ->
+                        case is_hidden_v1_denomination0_tx(TX) of
+                            true ->
+                                {404, #{}, <<"Not Found.">>, Req};
+                            false ->
+                                serve_tx(TX, Encoding, Req)
+                        end;
                     #tx{} = TX ->
-                        Body =
-                            case Encoding of
-                                json ->
-                                    ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX));
-                                binary ->
-                                    ar_serialize:tx_to_binary(TX)
-                            end,
-                        {200, #{}, Body, Req}
+                        serve_tx(TX, Encoding, Req)
                 end
             else
                 {error, timeout} ->
                     timeout_response(Req)
             end
     end.
+
+serve_tx(TX, Encoding, Req) ->
+    Body =
+        case Encoding of
+            json ->
+                ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX));
+            binary ->
+                ar_serialize:tx_to_binary(TX)
+        end,
+    {200, #{}, Body, Req}.
 
 handle_get_unconfirmed_tx(Hash, Req, Encoding) ->
     case arweave_util:safe_decode(Hash) of
@@ -1916,20 +1991,33 @@ handle_post_tx({Req, Pid, Encoding}) ->
         {error, timeout} ->
             {503, #{}, <<>>, Req};
         {ok, TX, Req2} ->
-            PostTxTimeout = arweave_config:get([gossip, tx, post_timeout]),
-            case acquire_http_semaphore(post_tx, PostTxTimeout * 1000) of
-                {error, timeout} ->
-                    {503, #{}, <<>>, Req2};
+            case ar_tx:is_v1_denomination0_tx(TX) of
+                true ->
+                    %% Format-1 transactions without a denomination are only
+                    %% accepted inside blocks. Reject without recording the
+                    %% identifier anywhere.
+                    Ref = erlang:get(tx_id_ref),
+                    ar_ignore_registry:remove_ref(TX#tx.id, Ref),
+                    {400, #{}, ?V1_DENOMINATION0_TX_REJECTED, Req2};
+                false ->
+                    handle_post_tx2(TX, Req, Req2)
+            end
+    end.
+
+handle_post_tx2(TX, Req, Req2) ->
+    PostTxTimeout = arweave_config:get([gossip, tx, post_timeout]),
+    case acquire_http_semaphore(post_tx, PostTxTimeout * 1000) of
+        {error, timeout} ->
+            {503, #{}, <<>>, Req2};
+        ok ->
+            Peer = ar_http_util:arweave_peer(Req),
+            case handle_post_tx(Req2, Peer, TX) of
                 ok ->
-                    Peer = ar_http_util:arweave_peer(Req),
-                    case handle_post_tx(Req2, Peer, TX) of
-                        ok ->
-                            {200, #{}, <<"OK">>, Req2};
-                        {error_response, {Status, Headers, Body}} ->
-                            Ref = erlang:get(tx_id_ref),
-                            ar_ignore_registry:remove_ref(TX#tx.id, Ref),
-                            {Status, Headers, Body, Req2}
-                    end
+                    {200, #{}, <<"OK">>, Req2};
+                {error_response, {Status, Headers, Body}} ->
+                    Ref = erlang:get(tx_id_ref),
+                    ar_ignore_registry:remove_ref(TX#tx.id, Ref),
+                    {Status, Headers, Body, Req2}
             end
     end.
 
@@ -1968,8 +2056,7 @@ handle_post_tx_accepted(Req, TX, Peer) ->
     ar_events:send(tx, {new, TX, {pushed, Peer}}),
     TXID = TX#tx.id,
     Ref = erlang:get(tx_id_ref),
-    ar_ignore_registry:remove_ref(TXID, Ref),
-    ar_ignore_registry:add_temporary(TXID, 10 * 60 * 1000),
+    ar_ignore_registry:mark_tx_processed(TXID, Ref),
     ok.
 
 handle_post_tx_verification_response() ->
@@ -2464,7 +2551,8 @@ val_for_key(K, L) ->
 handle_block_announcement(
   #block_announcement{indep_hash = H, previous_block = PrevH,
                       tx_prefixes = Prefixes, recall_byte2 = RecallByte2 }, Req) ->
-    case ar_ignore_registry:member(H) of
+    Peer = ar_http_util:arweave_peer(Req),
+    case ar_ignore_registry:member(H) orelse ar_ignore_registry:member({H, Peer}) of
         true ->
             check_block_receive_timestamp(H),
             {208, #{}, <<>>, Req};
@@ -2534,7 +2622,8 @@ post_block(check_block_hash_header, Peer, {Req, Pid, Encoding}, ReceiveTimestamp
         EncodedBH ->
             case arweave_util:safe_decode(EncodedBH) of
                 {ok, BH} when byte_size(BH) =< 48 ->
-                    case ar_ignore_registry:member(BH) of
+                    case ar_ignore_registry:member(BH)
+                            orelse ar_ignore_registry:member({BH, Peer}) of
                         true ->
                             check_block_receive_timestamp(BH),
                             {208, #{}, <<"Block already processed.">>, Req};
@@ -2780,7 +2869,9 @@ get_missing_tx_identifiers(TXIDs) ->
     get_missing_tx_identifiers(TXIDs, [], 0).
 
 get_missing_tx_identifiers([], MissingTXIDs, _N) ->
-    MissingTXIDs;
+    %% In the order the transactions appear in the block, as
+    %% ar_bridge:determine_included_transactions/2 expects.
+    lists:reverse(MissingTXIDs);
 get_missing_tx_identifiers([_ | _], _, N) when N == ?BLOCK_TX_COUNT_LIMIT ->
     {error, tx_list_too_long};
 get_missing_tx_identifiers([#tx{} | TXIDs], MissingTXIDs, N) ->

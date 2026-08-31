@@ -52,6 +52,10 @@
 -endif.
 -endif.
 
+%% How long to refuse a rejected block carrying deprecated format-1
+%% transactions from the peer that supplied it.
+-define(REJECTED_V1_BLOCK_IGNORE_MS, 30000).
+
 -define(FILTER_MEMPOOL_CHUNK_SIZE, 100).
 
 -ifdef(AR_TEST).
@@ -1053,7 +1057,7 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
             ar_events:send(block, {rejected, Reason, B#block.indep_hash, no_peer}),
             BH = B#block.indep_hash,
             ar_block_cache:remove(block_cache, BH),
-            ar_ignore_registry:add(BH),
+            ignore_rejected_block(B),
             gen_server:cast(?MODULE, apply_block),
             {noreply, State};
         valid ->
@@ -1063,7 +1067,7 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
                     ?LOG_WARNING([{event, failed_to_validate_wallet_list},
                                   {h, arweave_util:encode(BH)}]),
                     ar_block_cache:remove(block_cache, BH),
-                    ar_ignore_registry:add(BH),
+                    ignore_rejected_block(B),
                     gen_server:cast(?MODULE, apply_block),
                     {noreply, State};
                 ok ->
@@ -1740,6 +1744,27 @@ record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
         false ->
             ok
     end.
+
+%% @doc Ignore the rejected block. A block carrying deprecated format-1
+%% transactions is only refused from the peer that supplied it, and only for a
+%% while, so the other peers can still deliver it.
+ignore_rejected_block(B) ->
+    BH = B#block.indep_hash,
+    case carries_v1_denomination0_tx(B) of
+        true ->
+            ar_ignore_registry:remove(BH),
+            ID =
+                case B#block.source_peer of
+                    undefined -> BH;
+                    Peer -> {BH, Peer}
+                end,
+            ar_ignore_registry:add_temporary(ID, ?REJECTED_V1_BLOCK_IGNORE_MS);
+        false ->
+            ar_ignore_registry:add(BH)
+    end.
+
+carries_v1_denomination0_tx(B) ->
+    lists:any(fun ar_tx:is_v1_denomination0_tx/1, B#block.txs).
 
 return_orphaned_txs_to_mempool(H, H) ->
     ok;
