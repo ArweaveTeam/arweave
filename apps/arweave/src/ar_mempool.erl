@@ -23,7 +23,11 @@ load_from_disk() ->
 					fun(_, {TX, St}) ->
 							TX2 = deserialize_tx(TX),
 							case ar_tx:is_v1_denomination0_tx(TX2) of
-								true -> false;
+								true ->
+									?LOG_DEBUG([{event, dropped_deprecated_v1_tx},
+											{source, mempool_load},
+											{tx, ar_util:encode(TX2#tx.id)}]),
+									false;
 								false -> {true, {TX2, St}}
 							end
 					end, SerializedTXs),
@@ -77,6 +81,9 @@ load_from_disk() ->
 add_tx(TX, Status) ->
 	case ar_tx:is_v1_denomination0_tx(TX) of
 		true ->
+			?LOG_DEBUG([{event, dropped_deprecated_v1_tx},
+					{source, mempool_add},
+					{tx, ar_util:encode(TX#tx.id)}]),
 			ok;
 		false ->
 			prometheus_histogram:observe_duration(

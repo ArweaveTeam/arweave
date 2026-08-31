@@ -151,6 +151,12 @@ download_and_verify_tx(TXID) ->
 				true ->
 					%% Format-1 transactions without a denomination are
 					%% only accepted inside blocks.
+					?LOG_DEBUG([{event, dropped_deprecated_v1_tx},
+							{source, poll},
+							{tx, ar_util:encode(TXID)},
+							{peer, ar_util:format_peer(Peer)}]),
+					prometheus_counter:inc(deprecated_v1_transactions_total,
+							[poll]),
 					ar_ignore_registry:mark_tx_processed(TXID, Ref);
 				false ->
 					validate_tx(TX, Ref, Peer, Time, Size)

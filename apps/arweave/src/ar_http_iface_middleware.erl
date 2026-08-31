@@ -1996,6 +1996,11 @@ handle_post_tx({Req, Pid, Encoding}) ->
 							%% Format-1 transactions without a denomination are only
 							%% accepted inside blocks. Reject without recording the
 							%% identifier anywhere.
+							?LOG_DEBUG([{event, dropped_deprecated_v1_tx},
+									{source, post},
+									{tx, ar_util:encode(TX#tx.id)}]),
+							prometheus_counter:inc(deprecated_v1_transactions_total,
+									[post]),
 							Ref = erlang:get(tx_id_ref),
 							ar_ignore_registry:remove_ref(TX#tx.id, Ref),
 							{400, #{}, ?V1_DENOMINATION0_TX_REJECTED, Req2};

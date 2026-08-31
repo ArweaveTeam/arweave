@@ -39,6 +39,16 @@ register() ->
 		{help, "The total amount of bytes posted via HTTP, per remote endpoint"},
 		{labels, [route]}
 	]),
+	prometheus_counter:new([
+		{name, deprecated_v1_transactions_total},
+		{labels, [source]},
+		{
+			help,
+			"The total number of deprecated format-1 transactions without "
+			"a denomination the node received and dropped, by source "
+			"(post, poll). Tracks the decline of format-1 usage."
+		}
+	]),
 	prometheus_gauge:new([
 		{name, arweave_peer_count},
 		{help, "peer count"}
