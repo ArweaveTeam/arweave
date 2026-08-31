@@ -10,6 +10,7 @@
 syncs_headers_test_() ->
 	ar_test_node:test_with_mocked_functions([
 			{ar_fork, height_2_8, fun() -> 10 end},
+			{ar_fork, height_2_9_6, fun() -> infinity end},
 			{ar_retarget, is_retarget_height, fun(_Height) -> false end},
 			{ar_retarget, is_retarget_block, fun(_Block) -> false end}],
 			fun test_syncs_headers/0).

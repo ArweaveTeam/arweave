@@ -1633,7 +1633,7 @@ record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
 %% while, so the other peers can still deliver it.
 ignore_rejected_block(B) ->
 	BH = B#block.indep_hash,
-	case carries_v1_denomination0_tx(B) of
+	case carries_v1_denomination0_tx(B) andalso B#block.height < ar_fork:height_2_9_6() of
 		true ->
 			?LOG_DEBUG([{event, rejected_block_with_deprecated_v1_tx},
 					{block, ar_util:encode(BH)},

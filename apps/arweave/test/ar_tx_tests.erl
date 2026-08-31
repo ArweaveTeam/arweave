@@ -125,18 +125,28 @@ mines_blocks_under_the_size_limit_test_() ->
 	[
 		{
 			"Five transactions with block anchors",
-			{timeout, ?TEST_NODE_TIMEOUT, PrepareTestFor(fun() -> grouped_txs() end)}
+			ar_test_node:test_with_mocked_functions(
+					[{ar_fork, height_2_9_6, fun() -> infinity end}],
+					PrepareTestFor(fun() -> grouped_txs() end),
+					?TEST_NODE_TIMEOUT)
 		}
 	].
 
 joins_network_successfully_test_() ->
-	{timeout, ?TEST_NODE_TIMEOUT, fun joins_network_successfully/0}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun joins_network_successfully/0, ?TEST_NODE_TIMEOUT).
 
 recovers_from_forks_test_() ->
-	{timeout, ?TEST_NODE_TIMEOUT, fun() -> recovers_from_forks(7) end}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun() -> recovers_from_forks(7) end, ?TEST_NODE_TIMEOUT).
 
 rejects_transactions_above_the_size_limit_test_() ->
-	{timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_transactions_above_the_size_limit/0}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun test_rejects_transactions_above_the_size_limit/0,
+			?TEST_NODE_TIMEOUT).
 
 accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun test_accepts_at_most_one_wallet_list_anchored_tx_per_block/0}.
@@ -159,13 +169,16 @@ rejects_txs_with_outdated_anchors_test_() ->
 		_ = ar_test_node:start_peer(peer1, B0),
 		mine_blocks(peer1, ?MAX_TX_ANCHOR_DEPTH),
 		assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH),
-		TX1 = ar_test_node:sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
+		TX1 = ar_test_node:sign_tx(Key, #{ last_tx => B0#block.indep_hash }),
 		{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 			ar_test_node:post_tx_to_peer(peer1, TX1)
 	end}.
 
 drops_v1_txs_exceeding_mempool_limit_test_() ->
-	{timeout, ?TEST_NODE_TIMEOUT, fun test_drops_v1_txs_exceeding_mempool_limit/0}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun test_drops_v1_txs_exceeding_mempool_limit/0,
+			?TEST_NODE_TIMEOUT).
 
 drops_v2_txs_exceeding_mempool_limit_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun drops_v2_txs_exceeding_mempool_limit/0}.
@@ -448,15 +461,15 @@ test_accepts_at_most_one_wallet_list_anchored_tx_per_block() ->
 	]),
 	_ = ar_test_node:start_peer(peer1, B0),
 	_ = ar_test_node:connect_to_peer(peer1),
-	TX1 = ar_test_node:sign_v1_tx(Key),
+	TX1 = ar_test_node:sign_tx(Key),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, 1),
-	TX2 = ar_test_node:sign_v1_tx(Key, #{ last_tx => TX1#tx.id }),
+	TX2 = ar_test_node:sign_tx(Key, #{ last_tx => TX1#tx.id }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
-	TX3 = ar_test_node:sign_v1_tx(Key, #{ last_tx => TX2#tx.id }),
+	TX3 = ar_test_node:sign_tx(Key, #{ last_tx => TX2#tx.id }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx from mempool).">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, TX3),
-	TX4 = ar_test_node:sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
+	TX4 = ar_test_node:sign_tx(Key, #{ last_tx => B0#block.indep_hash }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX4),
 	ar_test_node:mine(peer1),
 	PeerBI = assert_wait_until_height(peer1, 2),
@@ -481,10 +494,10 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 	]),
 	_ = ar_test_node:start_peer(peer1, B0),
 	_ = ar_test_node:connect_to_peer(peer1),
-	TX1 = ar_test_node:sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1),
+	TX1 = ar_test_node:sign_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1),
 			quantity => ?AR(2) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
-	TX2 = ar_test_node:sign_v1_tx(
+	TX2 = ar_test_node:sign_tx(
 		Key2,
 		#{
 			target => ar_wallet:to_address(Pub1),
@@ -500,7 +513,7 @@ test_does_not_allow_to_spend_mempool_tokens() ->
 	PeerBI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [hd(PeerBI)]),
 	?assertEqual([TX1#tx.id], B1#block.txs),
-	TX3 = ar_test_node:sign_v1_tx(
+	TX3 = ar_test_node:sign_tx(
 		Key2,
 		#{
 			target => ar_wallet:to_address(Pub1),
@@ -529,7 +542,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 		{ar_wallet:to_address(Pub1), ?AR(50), <<>>}
 	]),
 	_ = ar_test_node:start_peer(peer1, B0),
-	TX1 = ar_test_node:sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
+	TX1 = ar_test_node:sign_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
 			quantity => ?AR(2), last_tx => <<>> }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX1),
 	ar_test_node:mine(peer1),
@@ -542,7 +555,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	Balance = binary_to_integer(Body),
-	TX2 = ar_test_node:sign_v1_tx(Key2, #{ target => ar_wallet:to_address(Pub1), reward => Balance - ?AR(1),
+	TX2 = ar_test_node:sign_tx(Key2, #{ target => ar_wallet:to_address(Pub1), reward => Balance - ?AR(1),
 			quantity => ?AR(1), last_tx => <<>> }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX2),
 	ar_test_node:mine(peer1),
@@ -554,7 +567,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
 			path => "/wallet/" ++ GetBalancePath ++ "/balance"
 		}),
 	?assertEqual(0, binary_to_integer(Body2)),
-	TX3 = ar_test_node:sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
+	TX3 = ar_test_node:sign_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
 			quantity => ?AR(2), last_tx => TX1#tx.id }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
 	ar_test_node:mine(peer1),
@@ -976,14 +989,14 @@ one_wallet_list_one_block_anchored_txs(Key, B0) ->
 	TX1Fun = fun() ->
 		case KeyType of
 			?RSA_KEY_TYPE ->
-				ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1) });
+				ar_test_node:sign_tx(Key, #{ reward => ?AR(1) });
 			?ECDSA_KEY_TYPE ->
 				ar_test_node:sign_tx(Key, #{ reward => ?AR(1), last_tx => <<>> })
 		end end,
 	TX2Fun = fun() ->
 		case KeyType of
 			?RSA_KEY_TYPE ->
-				ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
+				ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
 						last_tx => B0#block.indep_hash });
 			?ECDSA_KEY_TYPE ->
 				ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
@@ -998,7 +1011,7 @@ two_block_anchored_txs(Key, B0) ->
 	TX1Fun = fun() ->
 		case KeyType of
 			?RSA_KEY_TYPE ->
-				ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
+				ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
 						last_tx => B0#block.indep_hash });
 			?ECDSA_KEY_TYPE ->
 				ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
@@ -1007,7 +1020,7 @@ two_block_anchored_txs(Key, B0) ->
 	TX2Fun = fun() ->
 		case KeyType of
 			?RSA_KEY_TYPE ->
-				ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
+				ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
 						last_tx => B0#block.indep_hash });
 			?ECDSA_KEY_TYPE ->
 				ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
@@ -1021,23 +1034,24 @@ empty_tx_set(_Key, _B0) ->
 	[].
 
 block_anchor_txs_spending_balance_plus_one_more(Key, B0) ->
-	TX1 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
+	TX1 = ar_test_node:sign_tx(Key, #{
 			reward => ?AR(10), last_tx => B0#block.indep_hash }),
-	TX2 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
-			reward => ?AR(10), last_tx => B0#block.indep_hash }),
-	TX3 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
+	TX2 = ar_test_node:sign_tx(Key, #{
+			reward => ?AR(10), last_tx => B0#block.indep_hash,
+			tags => [{<<"nonce">>, <<"1">>}] }),
+	TX3 = ar_test_node:sign_tx(Key, #{
 			reward => ?AR(1), last_tx => B0#block.indep_hash }),
 	[TX1, TX2, TX3].
 
 mixed_anchor_txs_spending_balance_plus_one_more(Key, B0) ->
-	TX1 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1, reward => ?AR(10), last_tx => <<>> }),
-	TX2 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1, reward => ?AR(5),
+	TX1 = ar_test_node:sign_tx(Key, #{ reward => ?AR(10), last_tx => <<>> }),
+	TX2 = ar_test_node:sign_tx(Key, #{ reward => ?AR(5),
 			last_tx => B0#block.indep_hash }),
-	TX3 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1, reward => ?AR(2),
+	TX3 = ar_test_node:sign_tx(Key, #{ reward => ?AR(2),
 			last_tx => B0#block.indep_hash }),
-	TX4 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
+	TX4 = ar_test_node:sign_tx(Key, #{
 			reward => ?AR(3), last_tx => B0#block.indep_hash }),
-	TX5 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
+	TX5 = ar_test_node:sign_tx(Key, #{
 			reward => ?AR(1), last_tx => B0#block.indep_hash }),
 	[TX1, TX2, TX3, TX4, TX5].
 

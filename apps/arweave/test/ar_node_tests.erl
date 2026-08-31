@@ -5,7 +5,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [sign_v1_tx/3, read_block_when_stored/1]).
+-import(ar_test_node, [sign_tx/3, read_block_when_stored/1]).
 
 ar_node_interface_test_() ->
 	{timeout, 300, fun test_ar_node_interface/0}.
@@ -90,7 +90,7 @@ replay_attack_test_() ->
 		ar_test_node:start(B0),
 		ar_test_node:start_peer(peer1, B0),
 		ar_test_node:connect_to_peer(peer1),
-		SignedTX = sign_v1_tx(main, Key1, #{ target => ar_wallet:to_address(Pub2),
+		SignedTX = sign_tx(main, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
 		ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 		ar_test_node:mine(),
@@ -145,9 +145,9 @@ tx_threading_test_() ->
 		ar_test_node:start(B0),
 		ar_test_node:start_peer(peer1, B0),
 		ar_test_node:connect_to_peer(peer1),
-		SignedTX = sign_v1_tx(main, Key1, #{ target => ar_wallet:to_address(Pub2),
+		SignedTX = sign_tx(main, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => <<>> }),
-		SignedTX2 = sign_v1_tx(main, Key1, #{ target => ar_wallet:to_address(Pub2),
+		SignedTX2 = sign_tx(main, Key1, #{ target => ar_wallet:to_address(Pub2),
 				quantity => ?AR(1000), reward => ?AR(1), last_tx => SignedTX#tx.id }),
 		ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 		ar_test_node:mine(),

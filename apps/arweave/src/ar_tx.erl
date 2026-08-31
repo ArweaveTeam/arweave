@@ -358,12 +358,21 @@ verify_signature_type(#tx{ format = 2 } = TX, Height) ->
 do_verify(#tx{ format = 1 } = TX, Args, VerifySignature) ->
 	{_Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination,
 			_RedenominationHeight, Height, _Accounts, _Timestamp} = Args,
-	case verify_signature_type(TX, Height) of
+	case Height + 1 >= ar_fork:height_2_9_6() of
 		true ->
-			do_verify_v1(TX, Args, VerifySignature);
-		false ->
+			%% The block at the fork 2.9.6 activation height is the first one
+			%% that may not carry format-1 transactions. Historical blocks are
+			%% validated with their own, lower heights and are unaffected.
 			collect_validation_results(TX#tx.id,
-					[{"tx_signature_type_not_supported", false}])
+					[{"tx_format_1_not_supported", false}]);
+		false ->
+			case verify_signature_type(TX, Height) of
+				true ->
+					do_verify_v1(TX, Args, VerifySignature);
+				false ->
+					collect_validation_results(TX#tx.id,
+							[{"tx_signature_type_not_supported", false}])
+			end
 	end;
 do_verify(#tx{ format = 2 } = TX, Args, VerifySignature) ->
 	{_Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination,
@@ -743,7 +752,9 @@ tags_to_binary(Tags) ->
 %%%===================================================================
 
 sign_tx_test_() ->
-	{timeout, 30, fun test_sign_tx/0}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun test_sign_tx/0, 30).
 test_sign_tx() ->
 	NewTX = new(<<"TEST DATA">>, ?AR(1)),
 	{Priv, Pub} = ar_wallet:new(),

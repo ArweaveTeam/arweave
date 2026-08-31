@@ -52,7 +52,8 @@ reset_node() ->
 
 setup_all_post_2_8() ->
 	{Setup, Cleanup} = ar_test_node:mock_functions([
-		{ar_fork, height_2_8, fun() -> 0 end}
+		{ar_fork, height_2_8, fun() -> 0 end},
+		{ar_fork, height_2_9_6, fun() -> infinity end}
 		]),
 	Functions = Setup(),
 	start_node(),
@@ -60,7 +61,8 @@ setup_all_post_2_8() ->
 
 setup_all_post_2_9_height() ->
         {Setup, Cleanup} = ar_test_node:mock_functions([
-		{ar_fork, height_2_9, fun() -> 0 end}
+		{ar_fork, height_2_9, fun() -> 0 end},
+		{ar_fork, height_2_9_6, fun() -> infinity end}
 		]),
 	Functions = Setup(),
 	start_node(),

@@ -61,7 +61,9 @@ assert_clear_error_codes(TXID) ->
 	ok.
 
 tx_db_test_() ->
-	{timeout, 30, fun test_tx_db/0}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun test_tx_db/0, 30).
 
 test_tx_db() ->
 	{_, Pub1 = {_, Owner1}} = ar_wallet:new(),

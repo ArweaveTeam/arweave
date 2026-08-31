@@ -46,7 +46,9 @@ handle([<<"solution">>], Req, State) ->
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}.
 
 webhooks_test_() ->
-	{timeout, 120, fun test_webhooks/0}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun test_webhooks/0, 120).
 
 test_webhooks() ->
 	{_, Pub} = Wallet = ar_wallet:new(),

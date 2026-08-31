@@ -199,6 +199,44 @@ test_verify_block_txs() ->
 		TestCases
 	).
 
+format_1_fork_2_9_6_test_() ->
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> 5 end}],
+			fun test_format_1_fork_2_9_6/0).
+
+%% verify_tx/2, verify_block_txs/1, and pick_txs_to_mine/1 receive the
+%% previous block's height, so with the activation height mocked to 5 the
+%% highest accepted height is 3: the block built on top of it, at height 4,
+%% is the last one that may carry format-1 transactions.
+test_format_1_fork_2_9_6() ->
+	Key = ar_wallet:new(),
+	PrevHeightBeforeFork = 3,
+	PrevHeightAtFork = 4,
+	Timestamp = os:system_time(second),
+	Reward = max(fee(PrevHeightBeforeFork), fee(PrevHeightAtFork)),
+	TX = v1_tx(Key, Reward, <<"hash">>),
+	Wallets = wallets([wallet(Key, Reward)]),
+	VerifyTX = fun(Height) ->
+		ar_tx_replay_pool:verify_tx({TX, {1, 4}, 2000, 1, 1, Height, 0,
+				[<<"hash">>], #{}, #{}, Wallets}, verify_signature)
+	end,
+	VerifyBlockTXs = fun(Height) ->
+		ar_tx_replay_pool:verify_block_txs({[TX], {1, 4}, 2000, 1, 1, Height,
+				0, Timestamp, Wallets, [<<"hash">>], #{}})
+	end,
+	PickTXs = fun(Height) ->
+		ar_tx_replay_pool:pick_txs_to_mine({[<<"hash">>], #{}, Height, 0,
+				{1, 4}, 2000, 1, 1, Timestamp, Wallets, [TX]})
+	end,
+	?assertEqual(valid, VerifyTX(PrevHeightBeforeFork)),
+	?assertEqual(valid, VerifyBlockTXs(PrevHeightBeforeFork)),
+	?assertEqual([TX], PickTXs(PrevHeightBeforeFork)),
+	?assertEqual({invalid, tx_verification_failed}, VerifyTX(PrevHeightAtFork)),
+	?assertEqual({ok, ["tx_format_1_not_supported"]},
+			ar_tx_db:get_error_codes(TX#tx.id)),
+	?assertEqual(invalid, VerifyBlockTXs(PrevHeightAtFork)),
+	?assertEqual([], PickTXs(PrevHeightAtFork)).
+
 make_tx_chain(Key, Height) ->
 	TX1 = tx(Key, fee(Height), <<>>),
 	TX2 = tx(Key, fee(Height), TX1#tx.id),
@@ -215,8 +253,26 @@ tx(Key = {_, {_, Owner}}, Reward, Anchor) ->
 		Key
 	).
 
+v1_tx(Key = {_, {_, Owner}}, Reward, Anchor) ->
+	ar_tx:sign_v1(
+		#tx{
+			format = 1,
+			owner = Owner,
+			reward = Reward,
+			last_tx = Anchor,
+			%% An explicit denomination keeps the transaction out of the
+			%% deprecated denomination-0 class and short-circuits the
+			%% malleability check, which would otherwise constrain the fee.
+			denomination = 1
+		},
+		Key
+	).
+
 wallet({_, Pub}, Balance) ->
 	{ar_wallet:to_address(Pub), Balance, <<>>}.
+
+wallets(WL) ->
+	maps:from_list([{Addr, {Balance, LastTX}} || {Addr, Balance, LastTX} <- WL]).
 
 fee(Height) ->
 	ar_tx:get_tx_fee({0, 2000, 1, <<>>, #{}, Height + 1}).

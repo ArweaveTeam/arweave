@@ -6,7 +6,7 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--import(ar_test_node, [sign_v1_tx/2, wait_until_height/2, assert_wait_until_height/2,
+-import(ar_test_node, [wait_until_height/2, assert_wait_until_height/2,
 		read_block_when_stored/1, test_with_mocked_functions/2]).
 
 rejects_invalid_chunks_test_() ->

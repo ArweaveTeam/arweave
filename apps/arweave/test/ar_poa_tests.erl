@@ -6,7 +6,9 @@
 -import(ar_test_node, [wait_until_height/2, assert_wait_until_height/2, read_block_when_stored/1]).
 
 v1_transactions_after_2_0_test_() ->
-	{timeout, 420, fun test_v1_transactions_after_2_0/0}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun test_v1_transactions_after_2_0/0, 420).
 
 test_v1_transactions_after_2_0() ->
 	Key = {_, Pub1} = ar_wallet:new(),

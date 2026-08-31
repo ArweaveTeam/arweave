@@ -9,7 +9,9 @@
 -import(ar_test_node, [assert_wait_until_height/2]).
 
 syncs_data_test_() ->
-	{timeout, 240, fun test_syncs_data/0}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun test_syncs_data/0, 240).
 
 test_syncs_data() ->
 	?LOG_DEBUG([{event, test_syncs_data_start}]),

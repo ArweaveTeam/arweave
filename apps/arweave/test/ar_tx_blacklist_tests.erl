@@ -33,7 +33,9 @@ handle([<<"bad">>, <<"and">>, <<"good">>], Req, State) ->
 	{ok, cowboy_req:reply(200, #{}, Reply, Req), State}.
 
 uses_blacklists_test_() ->
-	{timeout, 300, fun test_uses_blacklists/0}.
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_9_6, fun() -> infinity end}],
+			fun test_uses_blacklists/0, 300).
 
 test_uses_blacklists() ->
 	{
