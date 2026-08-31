@@ -38,7 +38,8 @@ handle([<<"bad">>, <<"and">>, <<"good">>], Req, State) ->
 %% must be live before any node's arweave app starts.
 uses_blacklists_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
+        [{ar_fork, height_2_9_6, fun() -> infinity end},
+         {ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
         fun test_uses_blacklists/0,
         ?TEST_NODE_TIMEOUT
     ).

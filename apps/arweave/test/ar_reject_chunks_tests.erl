@@ -16,7 +16,7 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--import(ar_test_node, [sign_v1_tx/2, test_with_all_nodes_mocked/2]).
+-import(ar_test_node, [test_with_all_nodes_mocked/2]).
 
 test_rejects_invalid_chunks() ->
     ar_test_data_sync:setup_nodes(),

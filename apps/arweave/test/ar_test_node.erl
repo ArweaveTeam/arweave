@@ -865,16 +865,16 @@ sign_tx(Node, Wallet, Args) ->
 
 %% @doc Like sign_tx/1 but return a format=1 transaction.
 sign_v1_tx(Wallet) ->
-    sign_tx(peer1, Wallet, #{}, fun ar_tx:sign_v1/2).
+    sign_tx(peer1, Wallet, #{ format => 1 }, fun ar_tx:sign_v1/2).
 
 %% @doc Like sign_tx/2 but return a format=1 transaction.
 %% Use sign_v1_tx/3 when TXParams includes a last_tx fetched from another node.
 sign_v1_tx(Wallet, TXParams) ->
-    sign_tx(peer1, Wallet, TXParams, fun ar_tx:sign_v1/2).
+    sign_tx(peer1, Wallet, TXParams#{ format => 1 }, fun ar_tx:sign_v1/2).
 
 %% @doc Like sign_tx/3 but return a format=1 transaction.
 sign_v1_tx(Node, Wallet, Args) ->
-    sign_tx(Node, Wallet, Args, fun ar_tx:sign_v1/2).
+    sign_tx(Node, Wallet, Args#{ format => 1 }, fun ar_tx:sign_v1/2).
 
 %%%===================================================================
 %%% Legacy private functions.
@@ -895,7 +895,7 @@ sign_tx(Node, Wallet, Args, SignFun) ->
     {_, {_, Pub}} = Wallet,
     Data = maps:get(data, Args, <<>>),
     DataSize = maps:get(data_size, Args, byte_size(Data)),
-    Format = maps:get(format, Args, 1),
+    Format = maps:get(format, Args, 2),
     Target = maps:get(target, Args, <<>>),
     {Fee, Denomination} = tx_fee_and_denomination(Node, DataSize, Target, Format, Args),
     SignFun(

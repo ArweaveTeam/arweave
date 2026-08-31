@@ -3,7 +3,7 @@
 ## Configuration
 
 Arweave node configuration has been completely rewritten. For details please
-see the update docs: https://docs.arweave.org/developers/mining/readme/configuration
+see the update docs: [https://docs.arweave.org/developers/mining/readme/configuration](https://docs.arweave.org/developers/mining/readme/configuration)
 
 ### New Option Names
 
@@ -18,9 +18,11 @@ New ways of supplying configuration to arweave have been implemented.
 
 - New, hierachic JSON and YAML config files
 - `--config_param` Command line flags with double-dash allow access to the renamed
-  configuration parameters.
+configuration parameters.
 - `AR_CONFIG_PARAM=VALUE` Every configuration option can be set through an environment variable.
 - Legacy command line flags and config.json format are still supported.
+
+
 
 ### Dynamic Set/Get
 
@@ -28,10 +30,12 @@ All options can now be queried directly from a running node, and many options ca
 without needing to restart the node.
 
 - `arweave config get [option]` — print the current value of an option (or the
-  whole config). Values are returned as flattened strings, and the output of
-  `config get` can be fed straight back into `config set`.
+whole config). Values are returned as flattened strings, and the output of
+`config get` can be fed straight back into `config set`.
 - `arweave config set <option> <value>` — set an option, including list options
-  such as `peers.local`. 
+such as `peers.local`.
+
+
 
 ### Configuration migration tool
 
@@ -45,7 +49,7 @@ or
 `./bin/arweave convert_config json config.json config-new.json`
 
 Please, see the following link for detailed information on migrating your configuration:
-https://docs.arweave.org/developers/mining/readme/configuration/migrating-config
+[https://docs.arweave.org/developers/mining/readme/configuration/migrating-config](https://docs.arweave.org/developers/mining/readme/configuration/migrating-config)
 
 ## Storage modules defined by byte range
 
@@ -56,7 +60,7 @@ storage modules. A module is defined by either a `partition` or an explicit
 `range_start` + `range_end` (mutually exclusive). The pre-2.9.6 bucket notation
 is still accepted through the legacy config parser for backward compatibility.
 
-https://docs.arweave.org/developers/mining/readme/configuration/migrating-config
+[https://docs.arweave.org/developers/mining/readme/configuration/migrating-config](https://docs.arweave.org/developers/mining/readme/configuration/migrating-config)
 
 ## Rate Limiter and Throttling
 
@@ -64,13 +68,13 @@ The rate limiter is still the sliding window limiter integrated with leaky bucke
 tokens limiter. However several improvements and fixes have been applied.
 
 Please, see the following link for detailed information on rate-limiting and configuring
-your node's rate-limiting: https://docs.arweave.org/developers/mining/operations/rate-limiting
+your node's rate-limiting: [https://docs.arweave.org/developers/mining/operations/rate-limiting](https://docs.arweave.org/developers/mining/operations/rate-limiting)
 
 ### Headers
 
 It is using new naming convention for the different limiting groups in the HTTP headers.
 There is an additional header that is not part of the Polli IETF draft.
-https://www.ietf.org/archive/id/draft-polli-ratelimit-headers-02.html
+[https://www.ietf.org/archive/id/draft-polli-ratelimit-headers-02.html](https://www.ietf.org/archive/id/draft-polli-ratelimit-headers-02.html)
 
 ### Throttling
 
@@ -110,11 +114,14 @@ repack-in-place performance.
 could occur with `take_one_timeout` warnings).
 - Performance improvements for `GET /sync_buckets`
 
+
+
 ## Community involvement
 
 A huge thank you to all the Mining community members who contributed to this release by identifying and investigating bugs, sharing debug logs and node metrics, and providing guidance on performance tuning!
 
 Discord users (alphabetical order):
+
 - Butcher_
 - Evalcast
 - JF
@@ -124,4 +131,5 @@ Discord users (alphabetical order):
 
 And a further huge thank you to the following researchers who identified and helped to patch issues addressed in this release!
 
-- bbl4de (https://github.com/bbl4de)
+- bbl4de ([https://github.com/bbl4de](https://github.com/bbl4de))
+

@@ -21,14 +21,14 @@ one_wallet_list_one_block_anchored_txs(Key, B0) ->
     TX1Fun = fun() ->
         case KeyType of
             ?RSA_KEY_TYPE ->
-                ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1) });
+                ar_test_node:sign_tx(Key, #{ reward => ?AR(1) });
             ?ECDSA_KEY_TYPE ->
                 ar_test_node:sign_tx(Key, #{ reward => ?AR(1), last_tx => <<>> })
         end end,
     TX2Fun = fun() ->
         case KeyType of
             ?RSA_KEY_TYPE ->
-                ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
+                ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
                         last_tx => B0#block.indep_hash });
             ?ECDSA_KEY_TYPE ->
                 ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
@@ -43,7 +43,7 @@ two_block_anchored_txs(Key, B0) ->
     TX1Fun = fun() ->
         case KeyType of
             ?RSA_KEY_TYPE ->
-                ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
+                ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
                         last_tx => B0#block.indep_hash });
             ?ECDSA_KEY_TYPE ->
                 ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
@@ -52,7 +52,7 @@ two_block_anchored_txs(Key, B0) ->
     TX2Fun = fun() ->
         case KeyType of
             ?RSA_KEY_TYPE ->
-                ar_test_node:sign_v1_tx(Key, #{ reward => ?AR(1),
+                ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
                         last_tx => B0#block.indep_hash });
             ?ECDSA_KEY_TYPE ->
                 ar_test_node:sign_tx(Key, #{ reward => ?AR(1),
@@ -66,23 +66,24 @@ empty_tx_set(_Key, _B0) ->
     [].
 
 block_anchor_txs_spending_balance_plus_one_more(Key, B0) ->
-    TX1 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
+    TX1 = ar_test_node:sign_tx(Key, #{
             reward => ?AR(10), last_tx => B0#block.indep_hash }),
-    TX2 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
-            reward => ?AR(10), last_tx => B0#block.indep_hash }),
-    TX3 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
+    TX2 = ar_test_node:sign_tx(Key, #{
+            reward => ?AR(10), last_tx => B0#block.indep_hash,
+            tags => [{<<"nonce">>, <<"1">>}] }),
+    TX3 = ar_test_node:sign_tx(Key, #{
             reward => ?AR(1), last_tx => B0#block.indep_hash }),
     [TX1, TX2, TX3].
 
 mixed_anchor_txs_spending_balance_plus_one_more(Key, B0) ->
-    TX1 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1, reward => ?AR(10), last_tx => <<>> }),
-    TX2 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1, reward => ?AR(5),
+    TX1 = ar_test_node:sign_tx(Key, #{ reward => ?AR(10), last_tx => <<>> }),
+    TX2 = ar_test_node:sign_tx(Key, #{ reward => ?AR(5),
             last_tx => B0#block.indep_hash }),
-    TX3 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1, reward => ?AR(2),
+    TX3 = ar_test_node:sign_tx(Key, #{ reward => ?AR(2),
             last_tx => B0#block.indep_hash }),
-    TX4 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
+    TX4 = ar_test_node:sign_tx(Key, #{
             reward => ?AR(3), last_tx => B0#block.indep_hash }),
-    TX5 = ar_test_node:sign_v1_tx(Key, #{ denomination => 1,
+    TX5 = ar_test_node:sign_tx(Key, #{
             reward => ?AR(1), last_tx => B0#block.indep_hash }),
     [TX1, TX2, TX3, TX4, TX5].
 

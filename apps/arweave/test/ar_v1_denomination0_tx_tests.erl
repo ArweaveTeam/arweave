@@ -6,26 +6,32 @@
 
 %%% Format-1 transactions signed without a denomination are deprecated. Nodes
 %%% drop them on arrival, only process them inside blocks, and serve them
-%%% publicly only once they are deep enough.
+%%% publicly only once they are deep enough. This behavior precedes the fork
+%%% 2.9.6 rejection of all format-1 transactions (height 0 under the test
+%%% profile's FORKS_RESET), so every test runs with fork 2.9.6 mocked away.
 
 standalone_v1_denomination0_tx_is_dropped_test_() ->
-    {timeout, ?TEST_NODE_TIMEOUT,
-     fun test_standalone_v1_denomination0_tx_is_dropped/0}.
+    with_fork_2_9_6_disabled(
+            fun test_standalone_v1_denomination0_tx_is_dropped/0).
 
 v1_denomination0_tx_in_block_test_() ->
-    {timeout, ?TEST_NODE_TIMEOUT, fun test_v1_denomination0_tx_in_block/0}.
+    with_fork_2_9_6_disabled(fun test_v1_denomination0_tx_in_block/0).
 
 load_from_disk_drops_v1_denomination0_txs_test_() ->
-    {timeout, ?TEST_NODE_TIMEOUT,
-     fun test_load_from_disk_drops_v1_denomination0_txs/0}.
+    with_fork_2_9_6_disabled(
+            fun test_load_from_disk_drops_v1_denomination0_txs/0).
 
 genesis_v1_denomination0_tx_is_served_test_() ->
-    {timeout, ?TEST_NODE_TIMEOUT,
-     fun test_genesis_v1_denomination0_tx_is_served/0}.
+    with_fork_2_9_6_disabled(fun test_genesis_v1_denomination0_tx_is_served/0).
 
 polled_v1_denomination0_tx_is_dropped_once_test_() ->
-    {timeout, ?TEST_NODE_TIMEOUT,
-     fun test_polled_v1_denomination0_tx_is_dropped_once/0}.
+    with_fork_2_9_6_disabled(
+            fun test_polled_v1_denomination0_tx_is_dropped_once/0).
+
+with_fork_2_9_6_disabled(TestFun) ->
+    ar_test_node:test_with_all_nodes_mocked(
+            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            TestFun, ?TEST_NODE_TIMEOUT).
 
 test_standalone_v1_denomination0_tx_is_dropped() ->
     {Key, B0} = new_funded_wallet(),

@@ -9,7 +9,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 joins_network_successfully_test_() ->
-    {timeout, ?TEST_NODE_TIMEOUT, fun joins_network_successfully/0}.
+    ar_test_node:test_with_all_nodes_mocked(
+            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            fun joins_network_successfully/0, ?TEST_NODE_TIMEOUT).
 
 joins_network_successfully() ->
     %% peer1 mines get_max_tx_anchor_depth() blocks, some with TXs, then main

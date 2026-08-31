@@ -294,6 +294,7 @@ recalculate_price_per_gib_minute_2_7_1_ema_test_() ->
 auto_redenomination_and_endowment_debt_test_() ->
     %% Set some weird mocks to preserve the existing behavior of this test
     ar_test_node:test_with_all_nodes_mocked([
+            {ar_fork, height_2_9_6, fun() -> infinity end},
             {ar_pricing_transition, transition_start_2_7_2, fun() -> 3 end},
             {ar_pricing_transition, transition_length_2_7_2, fun() -> 1 end}
         ],
