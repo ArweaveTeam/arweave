@@ -1,0 +1,7 @@
+# Arweave 2.9.6 Release Notes
+
+**This Arweave node implementation proposes a soft fork that activates at height 2,000,000, approximately 2026-09-13 12:00 UTC. This software was prepared by the Digital History Association, in cooperation with the wider Arweave ecosystem.**
+
+This release terminates the grace period for accepting `format: 1` transactions which were deprecated in April 2020. `format: 1` present issues for clients that use them and have long been deprioritized for distribution by nodes in the network. `format: 1` transactions now represent ~0.007% of all Arweave base layer interactions, and all known libraries have long-since upgraded. Continuing to preserve `format: 1` TX support presents complications in ensuring robustness and reliability of the many transaction management/caching subsystems of the node -- one such latent issue is also fixed in this release. Subsequently, as of height 2,000,000 the grace period for acceptance of `format: 1` transactions is scheduled to cease.
+
+While this release itself does not create an immediate forking incompatibility at the activation height, all operators are encouraged to upgrade ahead of time in case their node does attempt to place a `Format: 1` transaction after the activation height. Such blocks will not be accepted by other peers.
