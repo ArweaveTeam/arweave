@@ -1,5 +1,9 @@
 **This is an alpha update and may not be ready for production use. This software was prepared by the Digital History Association, in cooperation from the wider Arweave ecosystem.**
 
+**This Arweave node implementation proposes hard fork 2.9.6 that activates at height XXXXXX, approximately 2026-XX-XX 14:00 UTC. This software was prepared by the Digital History Association, in cooperation from the wider Arweave ecosystem.**
+
+Format 1 transactions have been deprecated since 2020 and now represent less than 0.7% of all Arweave L1 transactions. As of the hard fork activation height, Format 1 transactions will no longer be accepted by the Arweave network.
+
 ## Configuration
 
 Arweave node configuration has been completely rewritten. For details please

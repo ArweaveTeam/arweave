@@ -2,7 +2,7 @@
  [
   {id, "arweave_throttling"},
   {description, "Arweave client-side request throttling"},
-  {vsn, "2.9.6-alpha3"},
+  {vsn, "2.9.7-alpha1"},
   {mod, {arweave_throttling, []}},
   {env, []},
   {applications, [
