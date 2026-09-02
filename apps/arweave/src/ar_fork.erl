@@ -183,10 +183,7 @@ height_2_9_6() ->
 height_2_9_6() ->
     0.
 -else.
-%% Height at which format-1 transactions are no longer accepted. Left at
-%% infinity until the activation height is scheduled: integers compare below
-%% atoms, so `Height >= infinity' is always false and the fork stays dormant.
 height_2_9_6() ->
-	infinity.
+	2_000_000. % Targeting 2026-09-13 12:00 UTC
 -endif.
 -endif.
