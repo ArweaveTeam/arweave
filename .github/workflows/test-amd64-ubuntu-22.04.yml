@@ -9,6 +9,14 @@ on:
     branches: ["**"]
   workflow_dispatch:
 
+# One run per branch at a time: a new push supersedes the run it replaces
+# instead of competing with it for the builder pool. Overlapping runs churn
+# the runner fleet, and runners that never come online cost jobs a 10-minute
+# "lost communication" failure.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # bin/arweave is the committed pre-render of priv/templates/extended_bin
   # (the relx overlay template); a launcher change applied to only one of

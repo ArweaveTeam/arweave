@@ -23,6 +23,14 @@ on:
 
 env:
   cache_key: ${{ inputs.os_arch }}-${{ inputs.os_name }}-${{ inputs.os_release }}
+  # GitHub refuses anonymous git-upload-pack from the builder IPs (401 Basic
+  # realm="GitHub"), which rebar3 reports as "Failed to fetch and copy dep" on
+  # the first git dependency (b64fast). Authenticate every dependency clone in
+  # this workflow with the job token. The rewrite lives in the environment, so
+  # no token reaches a config file and cloned remotes keep the plain URL.
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: 'url.https://x-access-token:${{ github.token }}@github.com/.insteadOf'
+  GIT_CONFIG_VALUE_0: 'https://github.com/'
 
 jobs:
   build-template:

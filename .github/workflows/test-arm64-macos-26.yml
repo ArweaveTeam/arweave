@@ -9,6 +9,11 @@ on:
     branches: ["**"]
   workflow_dispatch:
 
+# One run per branch at a time; see test-amd64-ubuntu-22.04.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     uses: ./.github/workflows/x-build.yml
