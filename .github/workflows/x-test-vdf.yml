@@ -29,6 +29,10 @@ on:
 
 env:
   cache_key: ${{ inputs.os_arch }}-${{ inputs.os_name }}-${{ inputs.os_release }}
+  # Authenticate dependency clones; see x-build.yml.
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: 'url.https://x-access-token:${{ github.token }}@github.com/.insteadOf'
+  GIT_CONFIG_VALUE_0: 'https://github.com/'
 
 jobs:
   discover-tests:
