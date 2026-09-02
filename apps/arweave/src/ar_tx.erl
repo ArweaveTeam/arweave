@@ -7,7 +7,8 @@
         tags_to_list/1, get_tx_fee/1, get_tx_fee2/1, check_last_tx/2,
         generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
         chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
-        get_addresses/1, get_weave_size_increase/2, utility/1, get_owner_address/1]).
+        get_addresses/1, get_weave_size_increase/2, utility/1, get_owner_address/1,
+        is_v1_denomination0_tx/1]).
 
 -include("ar.hrl").
 -include("ar_pricing.hrl").
@@ -258,6 +259,14 @@ get_owner_address(#tx{ owner = Owner, signature_type = KeyType, owner_address = 
 get_owner_address(#tx{ owner_address = OwnerAddress }) ->
     OwnerAddress.
 
+%% @doc Return true if the transaction is a deprecated format-1 transaction
+%% signed without a denomination. Such transactions are only accepted inside
+%% blocks.
+is_v1_denomination0_tx(#tx{ format = 1, denomination = 0 }) ->
+    true;
+is_v1_denomination0_tx(_TX) ->
+    false.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -357,12 +366,21 @@ verify_signature_type(#tx{ format = 2 } = TX, Height) ->
 do_verify(#tx{ format = 1 } = TX, Args, VerifySignature) ->
     {_Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination,
             _RedenominationHeight, Height, _Accounts, _Timestamp} = Args,
-    case verify_signature_type(TX, Height) of
+    case Height + 1 >= ar_fork:height_2_9_6() of
         true ->
-            do_verify_v1(TX, Args, VerifySignature);
-        false ->
+            %% The block at the fork 2.9.6 activation height is the first one
+            %% that may not carry format-1 transactions. Historical blocks are
+            %% validated with their own, lower heights and are unaffected.
             collect_validation_results(TX#tx.id,
-                    [{"tx_signature_type_not_supported", false}])
+                    [{"tx_format_1_not_supported", false}]);
+        false ->
+            case verify_signature_type(TX, Height) of
+                true ->
+                    do_verify_v1(TX, Args, VerifySignature);
+                false ->
+                    collect_validation_results(TX#tx.id,
+                            [{"tx_signature_type_not_supported", false}])
+            end
     end;
 do_verify(#tx{ format = 2 } = TX, Args, VerifySignature) ->
     {_Rate, _PricePerGiBMinute, _KryderPlusRateMultiplier, _Denomination,
@@ -742,7 +760,9 @@ tags_to_binary(Tags) ->
 %%%===================================================================
 
 sign_tx_test_() ->
-    {timeout, 30, fun test_sign_tx/0}.
+    ar_test_util:with_mocked(
+        [{ar_fork, height_2_9_6, fun() -> infinity end}],
+        fun test_sign_tx/0).
 test_sign_tx() ->
     NewTX = new(<<"TEST DATA">>, ?AR(1)),
     {Priv, Pub} = ar_wallet:new(),

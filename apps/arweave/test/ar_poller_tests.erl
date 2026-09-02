@@ -4,11 +4,49 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+poller_skips_temporarily_ignored_block_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT,
+     fun test_poller_skips_temporarily_ignored_block/0}.
+
 polling_test_() ->
     ar_test_node:test_with_all_nodes_mocked([
         {ar_retarget, is_retarget_height, fun(_Height) -> false end},
         {ar_retarget, is_retarget_block, fun(_Block) -> false end}],
         fun test_polling/0).
+
+test_poller_skips_temporarily_ignored_block() ->
+    %% A block ignored for a while (as a rejected block carrying a deprecated
+    %% format-1 transaction is) must not be downloaded from the polled peer
+    %% only to be skipped, and must be fetched once the ignore expires.
+    {_, Pub} = ar_wallet:new(),
+    [B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(1000), <<>>}]),
+    ar_test_node:start(B0),
+    ar_test_node:start_peer(peer1, B0),
+    ar_test_node:disconnect_from(peer1),
+    ar_test_node:mine(peer1),
+    {ok, [{H, _, _} | _]} = ar_test_await:node_height(peer1, 1),
+    Self = self(),
+    Mocks = [{ar_http_iface_client, get_block,
+              fun(Peer, BH, Indices) ->
+                  Self ! {get_block, BH},
+                  meck:passthrough([Peer, BH, Indices])
+              end}],
+    Peer = ar_test_node:peer_ip(peer1),
+    ar_test_node:run_with_mocked([main], Mocks, fun() ->
+        %% Ignore the block from peer1 the way a rejected block carrying a
+        %% deprecated format-1 transaction is ignored (ar_node_worker:
+        %% ignore_rejected_block/1). Several poll intervals (2 s in tests)
+        %% fit in the window.
+        ar_ignore_registry:add_temporary({H, Peer}, 12_000),
+        ar_test_node:connect_to_peer(peer1),
+        receive
+            {get_block, H} ->
+                ?assert(false, "The ignored block was downloaded.")
+        after 6_000 ->
+            ok
+        end,
+        ?assertMatch({ok, [{H, _, _} | _]}, ar_test_await:node_height(main, 1))
+    end).
 
 test_polling() ->
     {_, Pub} = Wallet = ar_wallet:new(),

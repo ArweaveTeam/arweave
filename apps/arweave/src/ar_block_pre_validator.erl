@@ -41,14 +41,14 @@ start_link() ->
 pre_validate(B, Peer, ReceiveTimestamp) ->
     try
         #block{ indep_hash = H } = B,
-        case ar_ignore_registry:member(H) of
+        case ar_ignore_registry:member(H) orelse ar_ignore_registry:member({H, Peer}) of
             true ->
                 skipped;
             false ->
                 Ref = make_ref(),
                 ar_ignore_registry:add_ref(H, Ref),
                 erlang:put(ignore_registry_ref, Ref),
-                B2 = B#block{ receive_timestamp = ReceiveTimestamp },
+                B2 = B#block{ receive_timestamp = ReceiveTimestamp, source_peer = Peer },
                 case pre_validate_is_peer_banned(B2, Peer) of
                     enqueued ->
                         ?LOG_DEBUG([{event, enqueued_block},

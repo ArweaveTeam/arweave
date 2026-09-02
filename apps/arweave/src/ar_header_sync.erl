@@ -175,14 +175,22 @@ handle_cast({add_historical_block, _, _, _, _, _},
     gen_server:cast(self(), process_item),
     {noreply, State};
 handle_cast({add_historical_block, B, H, H2, TXRoot, Backoff}, State) ->
-    case add_block(B, State) of
-        {ok, State2} ->
+    case ar_intervals:is_inside(State#state.sync_record, B#block.height) of
+        true ->
+            %% The node worker stored its validated copy of the block while
+            %% the download was in flight; keep that copy.
             gen_server:cast(self(), process_item),
-            {noreply, State2};
-        {_Error, State2} ->
-            gen_server:cast(self(), {failed_to_get_block, H, H2, TXRoot, B#block.height,
-                                     Backoff}),
-            {noreply, State2}
+            {noreply, State};
+        false ->
+            case add_block(B, State) of
+                {ok, State2} ->
+                    gen_server:cast(self(), process_item),
+                    {noreply, State2};
+                {_Error, State2} ->
+                    gen_server:cast(self(), {failed_to_get_block, H, H2, TXRoot,
+                                             B#block.height, Backoff}),
+                    {noreply, State2}
+            end
     end;
 
 handle_cast({add_block, B}, State) ->

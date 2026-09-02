@@ -65,10 +65,8 @@ else ifeq ($(UNAME_SYS), Linux)
 	CXXFLAGS += -finline-functions -Wall
 endif
 
-ifneq (, $(shell which pkg-config))
-	CFLAGS   += -I../lib/openssl-sha-lite/include
-	CXXFLAGS += -I../lib/openssl-sha-lite/include
-endif
+CFLAGS   += -I../lib/openssl-sha-lite/include
+CXXFLAGS += -I../lib/openssl-sha-lite/include
 
 C_SRC_DIR = $(CURDIR)
 

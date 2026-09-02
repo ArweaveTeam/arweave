@@ -8,7 +8,9 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 syncs_data_test_() ->
-    {timeout, 480, fun test_syncs_data/0}.
+    ar_test_node:test_with_all_nodes_mocked(
+            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            fun test_syncs_data/0, 480).
 
 test_syncs_data() ->
     ?LOG_DEBUG([{event, test_syncs_data_start}]),

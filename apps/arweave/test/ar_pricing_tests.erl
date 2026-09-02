@@ -294,6 +294,7 @@ recalculate_price_per_gib_minute_2_7_1_ema_test_() ->
 auto_redenomination_and_endowment_debt_test_() ->
     %% Set some weird mocks to preserve the existing behavior of this test
     ar_test_node:test_with_all_nodes_mocked([
+            {ar_fork, height_2_9_6, fun() -> infinity end},
             {ar_pricing_transition, transition_start_2_7_2, fun() -> 3 end},
             {ar_pricing_transition, transition_length_2_7_2, fun() -> 1 end}
         ],
@@ -514,10 +515,16 @@ test_auto_redenomination_and_endowment_debt() ->
     ?assertEqual(3, get_balance(Pub4)),
     Balance11 = get_balance(Pub3),
     {_, Pub5} = ar_wallet:new(),
+    %% Format-1 transactions without a denomination are deprecated. The node
+    %% rejects them without validation or recording an error code.
     TX9 = ar_test_node:sign_v1_tx(main, Key3, #{ denomination => 0, target => ar_wallet:to_address(Pub5),
             quantity => 100 }),
-    ?assertMatch({ok, {{<<"400">>, _}, _, _, _, _}}, ar_test_node:post_tx_to_peer(main, TX9)),
-    ?assertEqual({ok, ["invalid_denomination"]}, ar_tx_db:get_error_codes(TX9#tx.id)),
+    ?assertMatch(
+            {ok, {{<<"400">>, _}, _, ?V1_DENOMINATION0_TX_REJECTED, _, _}},
+            ar_test_node:post_tx_to_peer(main, TX9, false)
+    ),
+    ?assertNot(ar_mempool:has_tx(TX9#tx.id)),
+    ?assertEqual(not_found, ar_tx_db:get_error_codes(TX9#tx.id)),
     %% The redenomination did not start just yet.
     TX10 = ar_test_node:sign_v1_tx(main, Key3, #{ denomination => 2 }),
     ?assertMatch({ok, {{<<"400">>, _}, _, _, _, _}}, ar_test_node:post_tx_to_peer(main, TX10)),
@@ -553,7 +560,7 @@ test_auto_redenomination_and_endowment_debt() ->
             target => ar_wallet:to_address(Pub5) }),
     {Reward12, 2} = ar_test_node:get_tx_price(main, 0),
     ar_test_node:assert_post_tx_to_peer(main, TX12),
-    TX13 = ar_test_node:sign_v1_tx(main, Key3, #{ denomination => 0,
+    TX13 = ar_test_node:sign_v1_tx(main, Key3, #{ denomination => 2,
             reward => ar_test_node:get_optimistic_tx_price(main, 0),
             target => ar_wallet:to_address(Pub4), quantity => 4 }),
     ar_test_node:assert_post_tx_to_peer(main, TX13),

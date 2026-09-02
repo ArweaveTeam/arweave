@@ -95,10 +95,10 @@ test_does_not_allow_to_spend_mempool_tokens() ->
     ]),
     _ = ar_test_node:start_peer(peer1, B0),
     _ = ar_test_node:connect_to_peer(peer1),
-    TX1 = ar_test_node:sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1),
+    TX1 = ar_test_node:sign_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(1),
             quantity => ?AR(2) }),
     ar_test_node:assert_post_tx_to_peer(peer1, TX1),
-    TX2 = ar_test_node:sign_v1_tx(
+    TX2 = ar_test_node:sign_tx(
         Key2,
         #{
             target => ar_wallet:to_address(Pub1),
@@ -114,7 +114,7 @@ test_does_not_allow_to_spend_mempool_tokens() ->
     {ok, PeerBI} = ar_test_await:node_height(peer1, 1),
     B1 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(PeerBI)]),
     ?assertEqual([TX1#tx.id], B1#block.txs),
-    TX3 = ar_test_node:sign_v1_tx(
+    TX3 = ar_test_node:sign_tx(
         Key2,
         #{
             target => ar_wallet:to_address(Pub1),
@@ -139,7 +139,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
         {ar_wallet:to_address(Pub1), ?AR(50), <<>>}
     ]),
     _ = ar_test_node:start_peer(peer1, B0),
-    TX1 = ar_test_node:sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
+    TX1 = ar_test_node:sign_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
             quantity => ?AR(2), last_tx => <<>> }),
     ar_test_node:assert_post_tx_to_peer(peer1, TX1),
     ar_test_node:mine(peer1),
@@ -152,7 +152,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
             path => "/wallet/" ++ GetBalancePath ++ "/balance"
         }),
     Balance = binary_to_integer(Body),
-    TX2 = ar_test_node:sign_v1_tx(Key2, #{ target => ar_wallet:to_address(Pub1), reward => Balance - ?AR(1),
+    TX2 = ar_test_node:sign_tx(Key2, #{ target => ar_wallet:to_address(Pub1), reward => Balance - ?AR(1),
             quantity => ?AR(1), last_tx => <<>> }),
     ar_test_node:assert_post_tx_to_peer(peer1, TX2),
     ar_test_node:mine(peer1),
@@ -164,7 +164,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
             path => "/wallet/" ++ GetBalancePath ++ "/balance"
         }),
     ?assertEqual(0, binary_to_integer(Body2)),
-    TX3 = ar_test_node:sign_v1_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
+    TX3 = ar_test_node:sign_tx(Key1, #{ target => ar_wallet:to_address(Pub2), reward => ?AR(6),
             quantity => ?AR(2), last_tx => TX1#tx.id }),
     ar_test_node:assert_post_tx_to_peer(peer1, TX3),
     ar_test_node:mine(peer1),

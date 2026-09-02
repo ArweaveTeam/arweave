@@ -49,7 +49,8 @@ handle([<<"solution">>], Req, State) ->
 %% the production interval is 10 minutes.
 webhooks_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
+        [{ar_fork, height_2_9_6, fun() -> infinity end},
+         {ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
         fun test_webhooks/0,
         ?TEST_NODE_TIMEOUT
     ).

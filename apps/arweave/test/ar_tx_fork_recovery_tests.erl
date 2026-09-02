@@ -10,7 +10,9 @@
 
 
 recovers_from_forks_test_() ->
-    {timeout, ?TEST_NODE_TIMEOUT, fun() -> recovers_from_forks(7) end}.
+    ar_test_node:test_with_all_nodes_mocked(
+            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            fun() -> recovers_from_forks(7) end, ?TEST_NODE_TIMEOUT).
 
 re_admits_orphaned_tx_after_fork_recovery_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun re_admits_orphaned_tx_after_fork_recovery/0}.

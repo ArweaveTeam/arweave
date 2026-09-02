@@ -319,7 +319,7 @@ test_get_info(_) ->
 %% @doc Ensure that transactions are only accepted once.
 test_single_regossip(_) ->
     ar_test_node:disconnect_from(peer1),
-    TX = ar_tx:new(),
+    TX = new_tx(),
     ?assertMatch(
         {ok, {{<<"200">>, _}, _, _, _, _}},
         ar_http_iface_client:send_tx_json(ar_test_node:peer_ip(main), TX#tx.id,
@@ -376,7 +376,7 @@ get_fun_msg_pair(get_info) ->
     , info_unavailable};
 get_fun_msg_pair(send_tx_binary) ->
     { fun(Index) ->
-            InvalidTX = (ar_tx:new())#tx{ owner = <<"key">>, signature = <<"invalid">> },
+            InvalidTX = (new_tx())#tx{ owner = <<"key">>, signature = <<"invalid">> },
             send_tx_binary(Index, InvalidTX)
         end
     , too_many_requests}.
@@ -604,11 +604,11 @@ test_get_non_existent_block(_) ->
 test_get_format_2_tx(_) ->
     LocalHeight = ar_node:get_height(),
     DataRoot = (ar_tx:generate_chunk_tree(#tx{ data = <<"DATA">> }))#tx.data_root,
-    ValidTX = #tx{ id = TXID } = (ar_tx:new(<<"DATA">>))#tx{
+    ValidTX = #tx{ id = TXID } = (new_tx(<<"DATA">>))#tx{
             format = 2,
             data_root = DataRoot },
-    InvalidDataRootTX = #tx{ id = InvalidTXID } = (ar_tx:new(<<"DATA">>))#tx{ format = 2 },
-    EmptyTX = #tx{ id = EmptyTXID } = (ar_tx:new())#tx{ format = 2 },
+    InvalidDataRootTX = #tx{ id = InvalidTXID } = (new_tx(<<"DATA">>))#tx{ format = 2 },
+    EmptyTX = #tx{ id = EmptyTXID } = (new_tx())#tx{ format = 2 },
     EncodedTXID = binary_to_list(arweave_util:encode(TXID)),
     EncodedInvalidTXID = binary_to_list(arweave_util:encode(InvalidTXID)),
     EncodedEmptyTXID = binary_to_list(arweave_util:encode(EmptyTXID)),
@@ -672,7 +672,7 @@ test_get_format_2_tx(_) ->
 
 test_get_format_1_tx(_) ->
     LocalHeight = ar_node:get_height(),
-    TX = #tx{ id = TXID } = ar_tx:new(<<"DATA">>),
+    TX = #tx{ id = TXID } = new_tx(<<"DATA">>),
     EncodedTXID = binary_to_list(arweave_util:encode(TXID)),
     ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), TX#tx.id,
             ar_serialize:tx_to_binary(TX)),
@@ -702,7 +702,7 @@ test_get_format_1_tx(_) ->
 %% @doc Test adding transactions to a block.
 test_add_external_tx_with_tags(_) ->
     LocalHeight = ar_node:get_height(),
-    TX = ar_tx:new(<<"DATA">>),
+    TX = new_tx(<<"DATA">>),
     TaggedTX =
         TX#tx {
             tags =
@@ -725,7 +725,7 @@ test_add_external_tx_with_tags(_) ->
 %% @doc Test getting transactions
 test_find_external_tx(_) ->
     LocalHeight = ar_node:get_height(),
-    TX = ar_tx:new(<<"DATA">>),
+    TX = new_tx(<<"DATA">>),
     ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), TX#tx.id,
             ar_serialize:tx_to_binary(TX)),
     ?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
@@ -772,7 +772,7 @@ test_add_tx_and_get_last({_B0, Wallet1, Wallet2, _StaticWallet}) ->
 %% @doc Post a tx to the network and ensure that its subfields can be gathered
 test_get_subfields_of_tx(_) ->
     LocalHeight = ar_node:get_height(),
-    TX = ar_tx:new(<<"DATA">>),
+    TX = new_tx(<<"DATA">>),
     ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), TX#tx.id,
             ar_serialize:tx_to_binary(TX)),
     ?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
@@ -784,7 +784,7 @@ test_get_subfields_of_tx(_) ->
 
 %% @doc Correctly check the status of pending is returned for a pending transaction
 test_get_pending_tx(_) ->
-    TX = ar_tx:new(<<"DATA1">>),
+    TX = new_tx(<<"DATA1">>),
     ar_http_iface_client:send_tx_json(ar_test_node:peer_ip(main), TX#tx.id,
             ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
     ?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
@@ -818,7 +818,7 @@ test_get_tx() ->
 test_get_tx_body(_) ->
     ar_test_node:disconnect_from(peer1),
     LocalHeight = ar_node:get_height(),
-    TX = ar_tx:new(<<"TEST DATA">>),
+    TX = new_tx(<<"TEST DATA">>),
     ar_test_node:assert_post_tx_to_peer(main, TX),
     ar_test_node:mine(),
     ?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
@@ -830,7 +830,7 @@ test_get_tx_status(_) ->
     Height = ar_node:get_height(),
     ?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height)),
     ar_test_node:disconnect_from(peer1),
-    TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
+    TX = (new_tx())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
     ar_test_node:assert_post_tx_to_peer(main, TX),
     FetchStatus = fun() ->
         ar_http:req(#{
@@ -935,7 +935,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
         ar_test_node:mine(),
         ?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
         %% Send an unsigned transaction to be signed with the generated key.
-        TX = (ar_tx:new())#tx{reward = ?AR(1), last_tx = TopUpTX#tx.id},
+        TX = (new_tx())#tx{reward = ?AR(1), last_tx = TopUpTX#tx.id},
         UnsignedTXProps = [
             {<<"last_tx">>, <<>>},
             {<<"target">>, TX#tx.target},
@@ -1009,7 +1009,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 test_get_error_of_data_limit(_) ->
     LocalHeight = ar_node:get_height(),
     Limit = 1460,
-    TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>),
+    TX = new_tx(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>),
     ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), TX#tx.id,
             ar_serialize:tx_to_binary(TX)),
     ?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
@@ -1119,3 +1119,11 @@ test_get_total_supply(_Args) ->
 
 height(Node) ->
     ar_test_node:remote_call(Node, ar_node, get_height, []).
+
+%% @doc Like ar_tx:new/0,1 but with a denomination. Format-1 transactions
+%% without a denomination are deprecated and dropped on arrival.
+new_tx() ->
+    (ar_tx:new())#tx{ denomination = 1 }.
+
+new_tx(Data) ->
+    (ar_tx:new(Data))#tx{ denomination = 1 }.

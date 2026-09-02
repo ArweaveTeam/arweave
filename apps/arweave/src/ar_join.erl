@@ -508,7 +508,7 @@ worker() ->
             end,
             worker();
         {get_tx, H, TXID, Peer, From} ->
-            case ar_storage:read_tx(TXID) of
+            case read_local_tx(TXID) of
                 #tx{} = TX ->
                     From ! {tx_response, H, TXID, Peer, TX, storage};
                 unavailable ->
@@ -520,6 +520,22 @@ worker() ->
                     end
             end,
             worker()
+    end.
+
+%% @doc Read the transaction from the local storage unless it is a deprecated
+%% format-1 transaction, whose authoritative body is the one carried by the
+%% block.
+read_local_tx(TXID) ->
+    case ar_storage:read_tx(TXID) of
+        #tx{} = TX ->
+            case ar_storage:is_v1_denomination0_local_tx(TX) of
+                true ->
+                    unavailable;
+                false ->
+                    TX
+            end;
+        unavailable ->
+            unavailable
     end.
 
 %%%===================================================================

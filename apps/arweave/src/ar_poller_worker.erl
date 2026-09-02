@@ -69,7 +69,8 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer } = State) ->
             {noreply, State};
         {ok, {H, TXIDs, BlocksOnTop}} ->
             case ar_ignore_registry:member({poller_worker, H})
-                orelse ar_ignore_registry:permanent_member(H) of
+                orelse ar_ignore_registry:permanent_member(H)
+                orelse ar_ignore_registry:member({H, Peer}) of
                 true ->
                     ok;
                 false ->

@@ -10,6 +10,12 @@ concurrency:
   group: e2e-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Authenticate dependency clones; see x-build.yml.
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: 'url.https://x-access-token:${{ github.token }}@github.com/.insteadOf'
+  GIT_CONFIG_VALUE_0: 'https://github.com/'
+
 jobs:
   build:
     runs-on: [self-hosted, ubuntu, amd64, build-runner]
