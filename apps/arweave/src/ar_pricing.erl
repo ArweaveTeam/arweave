@@ -1,7 +1,7 @@
 -module(ar_pricing).
 
 %% 2.6 exports.
--export([get_price_per_gib_minute/2, get_tx_fee/1,
+-export([get_price_per_gib_minute/2, get_tx_fee/1, get_total_supply/1,
          get_miner_reward_endowment_pool_debt_supply/1, recalculate_price_per_gib_minute/1,
          redenominate/3, may_be_redenominate/1,
          get_redenomination_threshold/0, get_redenomination_delay_blocks/0]).

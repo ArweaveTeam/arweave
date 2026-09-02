@@ -437,7 +437,8 @@ all_metrics() ->
         ]},
         {prometheus_gauge, [
             {name, available_supply},
-            {help, "The total supply minus the endowment, in Winston."}
+            {help, "The total supply plus the debt supply minus the endowment, "
+                   "in the base units of the current denomination."}
         ]},
         {prometheus_gauge, [
             {name, debt_supply},

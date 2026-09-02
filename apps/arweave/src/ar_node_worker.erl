@@ -1719,7 +1719,8 @@ record_economic_metrics2(B, PrevB) ->
                     os:system_time(second), PrevB#block.usd_to_ar_rate, B#block.height),
             arweave_metrics:gauge_set(legacy_price_per_gibibyte_minute, LegacyPricePerGibibyte),
             arweave_metrics:gauge_set(available_supply,
-                    ?TOTAL_SUPPLY - B#block.reward_pool + B#block.debt_supply),
+                    ar_pricing:get_total_supply(B#block.denomination)
+                    - B#block.reward_pool + B#block.debt_supply),
             arweave_metrics:gauge_set(debt_supply, B#block.debt_supply);
         false ->
             ok
