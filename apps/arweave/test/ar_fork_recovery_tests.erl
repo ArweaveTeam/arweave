@@ -114,6 +114,164 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
     ?debugFmt("Expecting ~s to be re-mined.~n", [arweave_util:encode(TXID)]),
     ?assertEqual([TXID], H4TXIDs).
 
+orphaned_high_value_tx_is_remined_after_fork_recovery_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT,
+     fun test_orphaned_high_value_tx_is_remined_after_fork_recovery/0}.
+
+test_orphaned_high_value_tx_is_remined_after_fork_recovery() ->
+    %% Like the test above, but the orphaned transaction spends more than half
+    %% of the sender's balance. The mempool overspend check must evaluate the
+    %% returned transaction against the balances at the new tip, not the
+    %% orphaned one, where the transaction is already applied.
+    Key = {_, Pub} = ar_wallet:new(),
+    {_, TargetPub} = ar_wallet:new(),
+    %% Fund the target so that the fee does not include the new account fee.
+    [B0] = ar_weave:init([
+        {ar_wallet:to_address(Pub), ?AR(20), <<>>},
+        {ar_wallet:to_address(TargetPub), ?AR(1), <<>>}
+    ]),
+    ar_test_node:start(B0),
+    ar_test_node:start_peer(peer1, B0),
+    ar_test_node:disconnect_from(peer1),
+    TX = #tx{ id = TXID } = ar_test_node:sign_tx(Key, #{
+        denomination => 1,
+        reward => ?AR(1),
+        target => ar_wallet:to_address(TargetPub),
+        quantity => ?AR(15)
+    }),
+    ar_test_node:assert_post_tx_to_peer(peer1, TX),
+    ar_test_node:mine(peer1),
+    {ok, [{H1, _, _} | _]} = ar_test_await:node_height(peer1, 1),
+    H1B = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H1]),
+    ?assertEqual([TXID], H1B#block.txs),
+    ar_test_node:mine(),
+    {ok, [{H2, _, _} | _]} = ar_test_await:node_height(main, 1),
+    ar_test_node:mine(),
+    {ok, [{H3, _, _}, {H2, _, _}, {_, _, _}]} =
+        ar_test_await:node_height(main, 2),
+    ar_test_node:connect_to_peer(peer1),
+    ?assertMatch({ok, [{H3, _, _}, {H2, _, _}, {_, _, _}]},
+        ar_test_await:node_height(peer1, 2)),
+    ?assertEqual([TXID],
+        ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, [])),
+    ar_test_node:mine(peer1),
+    {ok, [{H4, _, _} | _]} = ar_test_await:node_height(peer1, 3),
+    H4B = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H4]),
+    ?assertEqual([TXID], H4B#block.txs).
+
+orphaned_tx_survives_sibling_mined_in_both_forks_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT,
+     fun test_orphaned_tx_survives_sibling_mined_in_both_forks/0}.
+
+test_orphaned_tx_survives_sibling_mined_in_both_forks() ->
+    %% Mine TX1 and TX2 from the same wallet on peer1 and TX1 alone on main.
+    %% Make main's fork longer and let peer1 switch to it. TX1 is in the new
+    %% fork so it must not return to the mempool. Were it returned, it would
+    %% count towards the wallet's spent total on top of the new tip's balance,
+    %% which already reflects it, and TX2, the lower fee one, would be dropped
+    %% as overspending instead of being re-mined.
+    Key = {_, Pub} = ar_wallet:new(),
+    {_, TargetPub} = ar_wallet:new(),
+    Target = ar_wallet:to_address(TargetPub),
+    [B0] = ar_weave:init([
+        {ar_wallet:to_address(Pub), ?AR(20), <<>>},
+        {Target, ?AR(1), <<>>}
+    ]),
+    ar_test_node:start(B0),
+    ar_test_node:start_peer(peer1, B0),
+    ar_test_node:disconnect_from(peer1),
+    TX1 = #tx{ id = TXID1 } = ar_test_node:sign_tx(Key, #{
+        denomination => 1,
+        reward => ?AR(2),
+        target => Target,
+        quantity => ?AR(7)
+    }),
+    TX2 = #tx{ id = TXID2 } = ar_test_node:sign_tx(Key, #{
+        denomination => 1,
+        reward => ?AR(1),
+        target => Target,
+        quantity => ?AR(8)
+    }),
+    ar_test_node:assert_post_tx_to_peer(main, TX1),
+    ar_test_node:assert_post_tx_to_peer(peer1, TX1),
+    ar_test_node:assert_post_tx_to_peer(peer1, TX2),
+    ar_test_node:mine(peer1),
+    {ok, [{H1, _, _} | _]} = ar_test_await:node_height(peer1, 1),
+    H1B = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H1]),
+    ?assertEqual(lists:sort([TXID1, TXID2]), lists:sort(H1B#block.txs)),
+    ar_test_node:mine(),
+    {ok, [{H2, _, _} | _]} = ar_test_await:node_height(main, 1),
+    ?assertEqual([TXID1], (ar_test_await:block_stored(H2))#block.txs),
+    ar_test_node:mine(),
+    {ok, [{H3, _, _}, {H2, _, _}, {_, _, _}]} =
+        ar_test_await:node_height(main, 2),
+    ar_test_node:connect_to_peer(peer1),
+    ?assertMatch({ok, [{H3, _, _}, {H2, _, _}, {_, _, _}]},
+        ar_test_await:node_height(peer1, 2)),
+    ?assertEqual([TXID2],
+        ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, [])),
+    ar_test_node:mine(peer1),
+    {ok, [{H4, _, _} | _]} = ar_test_await:node_height(peer1, 3),
+    H4B = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H4]),
+    ?assertEqual([TXID2], H4B#block.txs).
+
+orphaned_tx_survives_pending_tx_mined_in_new_fork_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT,
+     fun test_orphaned_tx_survives_pending_tx_mined_in_new_fork/0}.
+
+test_orphaned_tx_survives_pending_tx_mined_in_new_fork() ->
+    %% Mine TX1 on peer1. Then post TX2, from the same wallet and with a higher
+    %% fee, to both nodes and mine it on main, below the block that makes
+    %% main's fork longer. At the switch TX2 is still pending on peer1, and
+    %% it must leave the mempool before TX1 returns. Otherwise it would count
+    %% towards the wallet's spent total on top of the new tip's balance, which
+    %% already reflects it, and TX1, the lower fee one, would be dropped as
+    %% overspending instead of being re-mined.
+    Key = {_, Pub} = ar_wallet:new(),
+    {_, TargetPub} = ar_wallet:new(),
+    Target = ar_wallet:to_address(TargetPub),
+    [B0] = ar_weave:init([
+        {ar_wallet:to_address(Pub), ?AR(20), <<>>},
+        {Target, ?AR(1), <<>>}
+    ]),
+    ar_test_node:start(B0),
+    ar_test_node:start_peer(peer1, B0),
+    ar_test_node:disconnect_from(peer1),
+    TX1 = #tx{ id = TXID1 } = ar_test_node:sign_tx(Key, #{
+        denomination => 1,
+        reward => ?AR(1),
+        target => Target,
+        quantity => ?AR(8)
+    }),
+    ar_test_node:assert_post_tx_to_peer(peer1, TX1),
+    ar_test_node:mine(peer1),
+    {ok, [{H1, _, _} | _]} = ar_test_await:node_height(peer1, 1),
+    H1B = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H1]),
+    ?assertEqual([TXID1], H1B#block.txs),
+    TX2 = #tx{ id = TXID2 } = ar_test_node:sign_tx(Key, #{
+        denomination => 1,
+        reward => ?AR(2),
+        target => Target,
+        quantity => ?AR(7)
+    }),
+    ar_test_node:assert_post_tx_to_peer(main, TX2),
+    ar_test_node:assert_post_tx_to_peer(peer1, TX2),
+    ar_test_node:mine(),
+    {ok, [{H2, _, _} | _]} = ar_test_await:node_height(main, 1),
+    ?assertEqual([TXID2], (ar_test_await:block_stored(H2))#block.txs),
+    ar_test_node:mine(),
+    {ok, [{H3, _, _}, {H2, _, _}, {_, _, _}]} =
+        ar_test_await:node_height(main, 2),
+    ar_test_node:connect_to_peer(peer1),
+    ?assertMatch({ok, [{H3, _, _}, {H2, _, _}, {_, _, _}]},
+        ar_test_await:node_height(peer1, 2)),
+    ?assertEqual([TXID1],
+        ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, [])),
+    ar_test_node:mine(peer1),
+    {ok, [{H4, _, _} | _]} = ar_test_await:node_height(peer1, 3),
+    H4B = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H4]),
+    ?assertEqual([TXID1], H4B#block.txs).
+
 invalid_block_with_high_cumulative_difficulty_test_() ->
     ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
         fun() -> test_invalid_block_with_high_cumulative_difficulty() end).

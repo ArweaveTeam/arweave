@@ -1549,7 +1549,6 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
             arweave_metrics:histogram_observe(fork_recovery_depth, [], length(PrevBlocks))
     end,
     record_vdf_metrics(B, PrevB),
-    return_orphaned_txs_to_mempool(CurrentH, ForkRootB#block.indep_hash),
     lists:foldl(
       fun (CurrentB, start) ->
               CurrentB;
@@ -1565,8 +1564,18 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
       lists:reverse([B | PrevBlocks])
      ),
     ar_disk_cache:write_block(B),
-    BlockTXs = B#block.txs,
-    ar_mempool:drop_txs(BlockTXs, false, false),
+    %% The account tree now sits at the new tip. Drop the transactions mined in
+    %% the new fork, then return the orphaned ones except those the new fork
+    %% mined too. ar_mempool:add_tx/2 checks the sender's pending total against
+    %% the balance at the tip, and the balance at the new tip already reflects
+    %% every transaction the new fork mined. A fork transaction left pending,
+    %% or returned as an orphan, would be counted a second time and could get
+    %% a lower fee transaction of the same sender dropped as overspending.
+    ForkTXIDs = [ar_block_cache:tx_id(TX)
+        || ForkB <- [B | lists:droplast(PrevBlocks)], TX <- ForkB#block.txs],
+    ar_mempool:drop_txs(get_mempool_txs(ForkTXIDs), false, false),
+    return_orphaned_txs_to_mempool(CurrentH, ForkRootB#block.indep_hash,
+        sets:from_list(ForkTXIDs)),
     gen_server:cast(self(), {filter_mempool, ar_mempool:get_all_txids()}),
     {BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
     Height = B#block.height,
@@ -1770,9 +1779,23 @@ ignore_rejected_block(B) ->
 carries_v1_denomination0_tx(B) ->
     lists:any(fun ar_tx:is_v1_denomination0_tx/1, B#block.txs).
 
-return_orphaned_txs_to_mempool(H, H) ->
+%% @doc Return the mempool transactions with the given identifiers, skipping
+%% the ones the mempool does not hold.
+get_mempool_txs(TXIDs) ->
+    lists:filtermap(
+        fun(TXID) ->
+            case ar_mempool:get_tx(TXID) of
+                not_found -> false;
+                TX -> {true, TX}
+            end
+        end,
+        TXIDs).
+
+%% @doc Return the transactions of the orphaned blocks between H (inclusive)
+%% and BaseH (exclusive) to the mempool, except the ones in SkipTXIDs.
+return_orphaned_txs_to_mempool(H, H, _SkipTXIDs) ->
     ok;
-return_orphaned_txs_to_mempool(H, BaseH) ->
+return_orphaned_txs_to_mempool(H, BaseH, SkipTXIDs) ->
     maybe
         #block{ txs = TXs, previous_block = PrevH } ?= ar_block_cache:get(block_cache, H),
         lists:foreach(fun(TX) ->
@@ -1781,8 +1804,10 @@ return_orphaned_txs_to_mempool(H, BaseH) ->
                               %% Add it to the mempool here even though have triggered an event - processes
                               %% do not handle their own events.
                               ar_mempool:add_tx(TX, ready_for_mining)
-                      end, TXs),
-        return_orphaned_txs_to_mempool(PrevH, BaseH)
+                      end,
+                      [TX || TX <- TXs,
+                          not sets:is_element(TX#tx.id, SkipTXIDs)]),
+        return_orphaned_txs_to_mempool(PrevH, BaseH, SkipTXIDs)
     else
         not_found ->
             ?LOG_WARNING([{event, orphaned_block_not_found_in_cache},
