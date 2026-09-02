@@ -1130,31 +1130,35 @@ handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
 %% Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
 %% the given root hash. The wallet addresses are picked in the ascending alphabetical order.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash], Req, _Pid) ->
-    process_get_wallet_list_chunk(EncodedRootHash, first, Req);
+    maybe
+        ok ?= acquire_http_semaphore(get_wallet_list),
+        process_get_wallet_list_chunk(EncodedRootHash, first, Req)
+    else
+        {error, timeout} ->
+            timeout_response(Req)
+    end;
 
 %% Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
 %% the given root hash, starting with the provided cursor, taken the wallet addresses
 %% are picked in the ascending alphabetical order.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid) ->
-    process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req);
+    maybe
+        ok ?= acquire_http_semaphore(get_wallet_list),
+        process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req)
+    else
+        {error, timeout} ->
+            timeout_response(Req)
+    end;
 
 %% Return the balance of the given address from the wallet tree with the given root hash.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">>], Req,
        _Pid) ->
-    case {arweave_util:safe_decode(EncodedRootHash), arweave_util:safe_decode(EncodedAddr)} of
-        {{error, invalid}, _} ->
-            {400, #{}, jiffy:encode(#{ error => invalid_root_hash_encoding }), Req};
-        {_, {error, invalid}} ->
-            {400, #{}, jiffy:encode(#{ error => invalid_address_encoding }), Req};
-        {{ok, RootHash}, {ok, Addr}} ->
-            case ar_account_tree:get_balance(RootHash, Addr) of
-                {error, not_found} ->
-                    {404, #{}, jiffy:encode(#{ error => root_hash_not_found }), Req};
-                Balance when is_integer(Balance) ->
-                    {200, #{}, integer_to_binary(Balance), Req};
-                _Error ->
-                    {500, #{}, <<>>, Req}
-            end
+    maybe
+        ok ?= acquire_http_semaphore(get_wallet_list),
+        process_get_wallet_list_balance(EncodedRootHash, EncodedAddr, Req)
+    else
+        {error, timeout} ->
+            timeout_response(Req)
     end;
 
 %% Share your IP with another peer.
@@ -3108,6 +3112,24 @@ handle_get_block_wallet_balance3(Addr, RootHash, Req) ->
             {200, #{}, integer_to_binary(Balance), Req};
         {Balance, _LastTX, _Denomination, _MiningPermission} ->
             {200, #{}, integer_to_binary(Balance), Req}
+    end.
+
+process_get_wallet_list_balance(EncodedRootHash, EncodedAddr, Req) ->
+    case {arweave_util:safe_decode(EncodedRootHash),
+            arweave_util:safe_decode(EncodedAddr)} of
+        {{error, invalid}, _} ->
+            {400, #{}, jiffy:encode(#{ error => invalid_root_hash_encoding }), Req};
+        {_, {error, invalid}} ->
+            {400, #{}, jiffy:encode(#{ error => invalid_address_encoding }), Req};
+        {{ok, RootHash}, {ok, Addr}} ->
+            case ar_account_tree:get_balance(RootHash, Addr) of
+                {error, not_found} ->
+                    {404, #{}, jiffy:encode(#{ error => root_hash_not_found }), Req};
+                Balance when is_integer(Balance) ->
+                    {200, #{}, integer_to_binary(Balance), Req};
+                _Error ->
+                    {500, #{}, <<>>, Req}
+            end
     end.
 
 process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
