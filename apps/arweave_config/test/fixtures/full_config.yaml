@@ -89,6 +89,14 @@ disk_pool:
 genesis:
   init: true
   difficulty: 42
+testnet:
+  fork_height: 1710010
+  target_block_time: 45
+  test_wallet_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+  test_wallet_top_up: 1000000
+  reward_history_blocks: 120
+  legacy_reward_history_blocks: 40
+  locked_rewards_blocks: 40
 mining:
   enabled: true
   address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
@@ -259,12 +267,14 @@ storage_modules:
   - partition: 3
     packing_format: unpacked
     defrag: false
+    footprint_limit: 720
 repack_modules:
   - partition: 4
     from_format: unpacked
     from_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
     to_format: replica_2_9
     to_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+    footprint_limit: 720
   - range_start: 1000
     range_end: 2000
     from_format: spora_2_6

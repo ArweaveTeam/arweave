@@ -69,7 +69,9 @@
                 queue = ar_sync_task_queue:new(),
                 %% In-progress sweep. `undefined' means the loop hasn't started its
                 %% first sweep yet.
-                sweep = undefined :: undefined | #sweep{}
+                sweep = undefined :: undefined | #sweep{},
+                %% Footprints of each partition the module keeps.
+                footprint_limit
                }).
 
 -define(GET_SYNC_RECORD_PATH, [<<"data_sync_record">>]).
@@ -147,7 +149,8 @@ init(StoreID) ->
             store_id = StoreID,
             range_start = RangeStart,
             range_end = RangeEnd,
-            sync_status = ar_data_sync:init_sync_status(StoreID)
+            sync_status = ar_data_sync:init_sync_status(StoreID),
+            footprint_limit = ar_footprint_limit:get(StoreID)
            }}.
 
 init_range(?DEFAULT_MODULE) ->
@@ -258,9 +261,12 @@ do_enqueue(#state{ sweep = #sweep{ mode = footprint } } = State) ->
 
 do_enqueue_normal(State) ->
     #state{ store_id = StoreID, weave_size = WeaveSize, queue = Q,
+            footprint_limit = FootprintLimit,
             sweep = #sweep{ offset = Offset, end_ = End } = Sweep } = State,
     End2 = min(min(Offset + ?QUERY_RANGE_STEP_SIZE, End), WeaveSize),
-    UnsyncedIntervals = get_unsynced_intervals(Offset, End2, StoreID),
+    UnsyncedIntervals = limit_unsynced_intervals(
+        get_unsynced_intervals(Offset, End2, StoreID),
+        Offset, End2, FootprintLimit),
     case ar_intervals:is_empty(UnsyncedIntervals) of
         true ->
             NewSweep = Sweep#sweep{ offset = End2 },
@@ -294,13 +300,20 @@ do_enqueue_normal(State) ->
     end.
 
 do_enqueue_footprint(State) ->
-    #state{ store_id = StoreID, queue = Q,
+    #state{ store_id = StoreID, queue = Q, footprint_limit = FootprintLimit,
             sweep = #sweep{ start = Start, end_ = End, offset = Offset }
             = Sweep } = State,
     Partition = ar_replica_2_9:get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
     Footprint = ar_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE),
     UnsyncedIntervals =
-        ar_footprint_record:get_unsynced_intervals(Partition, Footprint, StoreID),
+        case ar_footprint_limit:is_beyond(Offset + ?DATA_CHUNK_SIZE,
+                                          FootprintLimit) of
+            true ->
+                ar_intervals:new();
+            false ->
+                ar_footprint_record:get_unsynced_intervals(
+                    Partition, Footprint, StoreID)
+        end,
     case ar_intervals:is_empty(UnsyncedIntervals) of
         true ->
             Offset2 = ar_replica_2_9:get_next_fetch_offset(Offset, Start, End),
@@ -530,6 +543,12 @@ get_hot_peers_for_bucket(GetAllFun, Path) ->
 %%%===================================================================
 %%% Unsynced interval gathering.
 %%%===================================================================
+
+%% @doc Drop the parts of the unsynced intervals that lie past the footprints
+%% the module keeps.
+limit_unsynced_intervals(Intervals, Start, End, FootprintLimit) ->
+    Kept = ar_footprint_limit:kept_intervals(Start, End, FootprintLimit),
+    ar_intervals:intersection(Intervals, Kept).
 
 get_unsynced_intervals(Start, End, StoreID) ->
     UnsyncedIntervals = get_unsynced_intervals(Start, End, ar_intervals:new(), StoreID),

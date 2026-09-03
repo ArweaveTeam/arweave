@@ -26,12 +26,16 @@ main(Args) ->
                       ar_doctor_dump:main(tl(Args));
                   "inspect" ->
                       ar_doctor_inspect:main(tl(Args));
+                  "snapshot" ->
+                      ar_doctor_snapshot:main(tl(Args));
                   _ ->
                       false
               end,
     case Success of
         true ->
             init:stop(0);
+        error ->
+            init:stop(1);
         _ ->
             help(),
             init:stop(1)
@@ -69,4 +73,6 @@ help() ->
     ar_doctor_dump:help(),
     ar:console("~n"),
     ar_doctor_inspect:help(),
+    ar:console("~n"),
+    ar_doctor_snapshot:help(),
     ar:console("~n").

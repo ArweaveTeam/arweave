@@ -795,7 +795,7 @@ log_price_metrics(Event,
 
 network_data_size(Height,
                   AverageHashRate, IntervalTotal, VDFIntervalTotal, SolutionsPerPartitionPerVDFStep) ->
-    TargetTime = ar_testnet:target_block_time(Height),
+    TargetTime = ar_consensus:target_block_time(Height),
     SolutionsPerPartitionPerBlock =
         (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal * TargetTime) div IntervalTotal,
     ?LOG_DEBUG([{event, network_data_size},

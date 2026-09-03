@@ -18,7 +18,8 @@
     %% `chunk_recorded' reads the gen_server; the `http_*_recorded' pair
     %% reads the HTTP API. The two views of the same record can diverge
     %% during boot or while caches warm, so pick deliberately.
-    chunk_recorded/3,               %% (Node, Offset, Opts) — see docstring
+    chunk_recorded/3,                 %% (Node, Offset, Opts) — see docstring
+    chunk_not_recorded/3,             %% (Node, Offset, Opts) — negative form
     http_chunks_recorded/3,         %% (Node, Start, End)
     http_chunks_not_recorded/3,     %% (Node, Start, End)
     entropy_prepared/4,             %% (Node, StoreID, Start, End)
@@ -119,6 +120,16 @@
 chunk_recorded(Node, Offset, Opts) ->
     do_until_true(chunk_recorded,
         fun() -> is_chunk_recorded(Node, Offset, Opts) end).
+
+%% @doc Inverse of `chunk_recorded/3': after `?TIMEOUT_NEGATIVE_MS'
+%% returns `ok' if the chunk is still not recorded, else
+%% `{error, chunk_recorded}'.
+chunk_not_recorded(Node, Offset, Opts) ->
+    timer:sleep(?TIMEOUT_NEGATIVE_MS),
+    case is_chunk_recorded(Node, Offset, Opts) of
+        false -> ok;
+        true -> {error, chunk_recorded}
+    end.
 
 %% @doc Wait until `Node' reports the byte range `[Start, End)' as
 %% recorded via its sync-record HTTP endpoint (plus footprint
@@ -723,13 +734,13 @@ on(Node, M, F, A) ->
 %% or `/3' by whether `Opts' restricts the store, tags the lookup with
 %% the packing key when given, and treats any non-`false' reply as a hit.
 is_chunk_recorded(Node, Offset, Opts) ->
-    Tag = case maps:get(packing, Opts, any) of
-        any -> ar_data_sync;
-        Packing -> {ar_data_sync, Packing}
-    end,
-    Args = case maps:get(store_id, Opts, any) of
-        any -> [Offset, Tag];
-        StoreID -> [Offset, Tag, StoreID]
+    %% The packing-specific records are keyed by {ID, Packing, StoreID}, so a
+    %% packing plus a store id goes through is_recorded/4.
+    Args = case {maps:get(packing, Opts, any), maps:get(store_id, Opts, any)} of
+        {any, any} -> [Offset, ar_data_sync];
+        {Packing, any} -> [Offset, {ar_data_sync, Packing}];
+        {any, StoreID} -> [Offset, ar_data_sync, StoreID];
+        {Packing, StoreID} -> [Offset, Packing, ar_data_sync, StoreID]
     end,
     on(Node, ar_sync_record, is_recorded, Args) =/= false.
 

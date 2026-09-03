@@ -17,6 +17,7 @@
 %%%   [repack_modules, {list_item}, from_address] :: 32-byte binary
 %%%   [repack_modules, {list_item}, to_format] :: unpacked | spora_2_6 | replica_2_9
 %%%   [repack_modules, {list_item}, to_address] :: 32-byte binary
+%%%   [repack_modules, {list_item}, footprint_limit] :: pos_integer, footprints
 %%%
 %%% A module has either `partition` or an explicit `range.{start, end}`.
 %%% Both `from` and `to` packings are required.
@@ -28,6 +29,7 @@
     specs/0,
     group_description/0,
     repack_modules/1,
+    footprint_limit/1,
     normalize_entry/1,
     config_to_repack_module/1,
     runtime_to_config/1,
@@ -120,6 +122,21 @@ specs() ->
             short_description =>
                 <<"Target mining address. Required unless "
                   "`to_format = unpacked'.">>
+        },
+        #{
+            enabled => true,
+            option_key => [repack_modules, {list_item}, footprint_limit],
+            type => pos_integer,
+            short_description =>
+                <<"Advanced: repack only the first N replica.2.9 entropy "
+                  "footprints of each sector; only for a module declared "
+                  "with `partition`.">>,
+            long_description =>
+                <<"Same meaning as `footprint_limit` on storage modules, "
+                  "and as rarely needed: only the first N footprints of "
+                  "every sector are repacked and, for a replica_2_9 "
+                  "target, only they receive entropy. The semantics live "
+                  "in ar_footprint_limit.">>
         }
     ].
 
@@ -132,16 +149,29 @@ group_description() ->
 %% full repack spec pairs
 %% `{{RangeStart, RangeEnd, FromPacking}, ToPacking}`.
 repack_modules(Shape) ->
-    Pairs =
-        case arweave_config_store:get([repack_modules]) of
-            {ok, Modules} when is_list(Modules) ->
-                [config_to_repack_module(Module) || Module <- Modules];
-            _ ->
-                []
-        end,
+    Pairs = [config_to_repack_module(Module) || Module <- stored_maps()],
     case Shape of
         module_only -> [Module || {Module, _ToPacking} <- Pairs];
         full -> Pairs
+    end.
+
+%% @doc Return the `footprint_limit` configured for the repack entry
+%% whose source module is the given runtime module, or `not_set`.
+footprint_limit(Module) ->
+    footprint_limit(Module, stored_maps()).
+
+footprint_limit(_Module, []) ->
+    not_set;
+footprint_limit(Module, [Map | Maps]) ->
+    case config_to_repack_module(Map) of
+        {Module, _ToPacking} -> maps:get(footprint_limit, Map, not_set);
+        _ -> footprint_limit(Module, Maps)
+    end.
+
+stored_maps() ->
+    case arweave_config_store:get([repack_modules]) of
+        {ok, Modules} when is_list(Modules) -> Modules;
+        _ -> []
     end.
 
 %% @doc Normalize one `[repack_modules]` list entry at set time:
@@ -232,12 +262,7 @@ run_checks([Check | Rest]) ->
     end.
 
 validate_shape() ->
-    case arweave_config_store:get([repack_modules]) of
-        {ok, Modules} when is_list(Modules) ->
-            validate_modules(Modules);
-        _ ->
-            validate_modules([])
-    end.
+    validate_modules(stored_maps()).
 
 validate_modules([]) ->
     ok;
@@ -248,15 +273,13 @@ validate_modules([Module | Rest]) ->
     end.
 
 validate_module(Module) when is_map(Module) ->
-    case arweave_config_options_storage_modules:validate_range_fields(
-            <<"repack_modules">>, Module) of
-        ok ->
-            case validate_module_packing(from, Module) of
-                ok -> validate_module_packing(to, Module);
-                {error, _} = Err -> Err
-            end;
-        {error, _} = Err ->
-            Err
+    maybe
+        ok ?= arweave_config_options_storage_modules:validate_range_fields(
+            <<"repack_modules">>, Module),
+        ok ?= validate_module_packing(from, Module),
+        ok ?= validate_module_packing(to, Module),
+        arweave_config_options_storage_modules:validate_footprint_limit(
+            <<"repack_modules">>, Module)
     end;
 validate_module(_) ->
     {error, <<"repack_modules: invalid module shape">>}.

@@ -145,6 +145,8 @@
                           mining_address,
                           %% The identifier of the storage module the process is responsible for.
                           store_id,
+                          %% Footprints of each sector the module keeps (ar_footprint_limit).
+                          footprint_limit,
                           %% The start offset of the range the module is responsible for.
                           range_start = -1,
                           %% The end offset of the range the module is responsible for.

@@ -31,7 +31,10 @@ all() ->
         validator_storage_modules_rejects_empty_range,
         validator_storage_modules_rejects_partition_and_range,
         validator_repack_allows_differing_addresses,
-        validator_repack_rejects_mixed_archetypes
+        validator_repack_rejects_mixed_archetypes,
+        validator_storage_modules_footprint_limit,
+        validator_repack_modules_footprint_limit,
+        validator_testnet_options_need_testnet_build
     ].
 
 %%====================================================================
@@ -209,3 +212,85 @@ validator_repack_rejects_mixed_archetypes(_Config) ->
         end
     end),
     ok.
+
+validator_storage_modules_footprint_limit(_Config) ->
+    arweave_config:with_test_config(fun() ->
+        Addr = crypto:strong_rand_bytes(32),
+        P = ?PARTITION_SIZE,
+        Limited = #{
+            partition => 7,
+            packing_format => replica_2_9,
+            packing_address => Addr,
+            footprint_limit => 720
+        },
+        Unlimited = #{partition => 8, packing_format => unpacked},
+        ok = arweave_config:set([storage_modules], [Limited, Unlimited]),
+        ?assertEqual(ok, arweave_config_validate:run()),
+        ?assertEqual(720, arweave_config:storage_module_footprint_limit(
+            {7 * P, 8 * P, {replica_2_9, Addr}})),
+        ?assertEqual(not_set, arweave_config:storage_module_footprint_limit(
+            {8 * P, 9 * P, unpacked})),
+        %% A limit that is not a positive integer is rejected, either at
+        %% set time or by the validator.
+        case arweave_config:set([storage_modules],
+                [Limited#{footprint_limit => 0}]) of
+            ok ->
+                ?assertMatch({error, _}, arweave_config_validate:run());
+            {error, _} ->
+                ok
+        end,
+        %% A limit on a custom range is rejected.
+        Ranged = #{
+            range_start => 7 * P,
+            range_end => 9 * P,
+            packing_format => unpacked,
+            footprint_limit => 720
+        },
+        ok = arweave_config:set([storage_modules], [Ranged]),
+        ?assertMatch({error, _}, arweave_config_validate:run())
+    end),
+    ok.
+
+%% The test profile is not a testnet build, so any testnet setting is
+%% rejected; the retarget-height rule only applies to testnet builds.
+validator_testnet_options_need_testnet_build(_Config) ->
+    arweave_config:with_test_config(fun() ->
+        ?assertEqual(ok, arweave_config_validate:run()),
+        ok = arweave_config:set([testnet, fork_height], 1710010),
+        ?assertMatch({error, _}, arweave_config_validate:run()),
+        ok = arweave_config:set([testnet, fork_height], not_set),
+        ?assertEqual(ok, arweave_config_validate:run()),
+        ok = arweave_config:set([testnet, target_block_time], 45),
+        ?assertMatch({error, _}, arweave_config_validate:run())
+    end),
+    ok.
+
+validator_repack_modules_footprint_limit(_Config) ->
+    arweave_config:with_test_config(fun() ->
+        Addr = crypto:strong_rand_bytes(32),
+        P = ?PARTITION_SIZE,
+        Repack = #{
+            partition => 4,
+            from_format => unpacked,
+            to_format => replica_2_9,
+            to_address => Addr,
+            footprint_limit => 4
+        },
+        ok = arweave_config:set([repack_modules], [Repack]),
+        ?assertEqual(ok, arweave_config_validate:run()),
+        ?assertEqual(4, arweave_config:storage_module_footprint_limit(
+            {4 * P, 5 * P, unpacked})),
+        case arweave_config:set([repack_modules],
+                [Repack#{footprint_limit => -5}]) of
+            ok ->
+                ?assertMatch({error, _}, arweave_config_validate:run());
+            {error, _} ->
+                ok
+        end,
+        Ranged = maps:merge(maps:remove(partition, Repack),
+            #{range_start => 4 * P, range_end => 6 * P}),
+        ok = arweave_config:set([repack_modules], [Ranged]),
+        ?assertMatch({error, _}, arweave_config_validate:run())
+    end),
+    ok.
+

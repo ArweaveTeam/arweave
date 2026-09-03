@@ -36,6 +36,8 @@
                 %% 256 MiB batches.
                 entropy_end = 0,
                 next_cursor = 0,
+                %% Footprints of each partition the module keeps.
+                footprint_limit,
                 configured_packing = undefined,
                 target_packing = undefined,
                 repack_status = undefined,
@@ -137,7 +139,8 @@ init({StoreID, ToPacking}) ->
                num_entropy_offsets = NumEntropyOffsets,
                module_start = ModuleStart,
                module_end = PaddedModuleEnd,
-               next_cursor = Cursor
+               next_cursor = Cursor,
+               footprint_limit = ar_footprint_limit:get(StoreID)
               },
     log_info(starting_repack_in_place, State, [
                                                {name, name(StoreID)},
@@ -155,9 +158,16 @@ init({StoreID, ToPacking}) ->
 get_read_range(BucketEndOffset, #state{} = State) ->
     #state{
        module_end = ModuleEnd,
+       footprint_start = FootprintStart,
        footprint_end = FootprintEnd,
-       read_batch_size = BatchSize
+       read_batch_size = ReadBatchSize,
+       footprint_limit = FootprintLimit
       } = State,
+    %% The batch of the footprint in progress, clipped at the footprint limit
+    %% the way do_repack_footprint clipped it.
+    FootprintBucketEnd = FootprintStart - 1 + ?DATA_CHUNK_SIZE,
+    BatchSize = ar_footprint_limit:clip(
+        FootprintBucketEnd, ReadBatchSize, FootprintLimit),
     get_read_range(BucketEndOffset, min(ModuleEnd, FootprintEnd), BatchSize).
 
 -spec get_read_range(
@@ -551,16 +561,41 @@ repack(#state{} = State) ->
             repack_footprint(Cursor, State)
     end.
 
-repack_footprint(Cursor, #state{} = State) ->
+repack_footprint(Cursor, #state{ footprint_limit = FootprintLimit } = State) ->
+    BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
+    case ar_footprint_limit:is_beyond(BucketEndOffset, FootprintLimit) of
+        true ->
+            %% The rest of this sector is past the footprint limit: move to
+            %% the next sector rather than finish. The module's first bucket
+            %% straddles the partition boundary and counts as the previous
+            %% partition's last sector, so the first bucket past the limit
+            %% can come before any footprint of this partition is repacked.
+            %% After that the repacked sectors are skipped one lookup each
+            %% until the cursor passes the module end.
+            NextCursor =
+                ar_footprint_record:get_next_sector_start(BucketEndOffset),
+            gen_server:cast(self(), repack),
+            log_debug(skipping_beyond_footprint_limit, State,
+                [{cursor, Cursor}, {next_cursor, NextCursor}]),
+            State#state{ next_cursor = NextCursor };
+        false ->
+            do_repack_footprint(Cursor, State)
+    end.
+
+do_repack_footprint(Cursor, #state{} = State) ->
     #state{ module_end = ModuleEnd,
             num_entropy_offsets = NumEntropyOffsets,
             configured_packing = SourcePacking,
             target_packing = TargetPacking,
             store_id = StoreID,
-            read_batch_size = BatchSize } = State,
+            read_batch_size = ReadBatchSize,
+            footprint_limit = FootprintLimit } = State,
 
     BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
     BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
+    %% A batch spans consecutive footprints; do not let it cross the limit.
+    BatchSize = ar_footprint_limit:clip(BucketEndOffset, ReadBatchSize,
+                                        FootprintLimit),
     FootprintOffsets = footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd),
     FootprintStart = BucketStartOffset+1,
     FootprintEnd = footprint_end(FootprintOffsets, ModuleEnd, BatchSize),
@@ -2016,6 +2051,9 @@ test_init_repack_chunk_map_a() ->
                footprint_end = FootprintEnd,
                read_batch_size = BatchSize,
                repack_chunk_map = #{},
+               %% Mainnet-scale offsets under the test geometry: a limit above
+               %% any footprint number, so nothing is clipped.
+               footprint_limit = 1 bsl 40,
                target_packing = {replica_2_9, <<"addr">>}
               },
 
@@ -2046,6 +2084,9 @@ test_init_repack_chunk_map_b() ->
                footprint_end = FootprintEnd,
                read_batch_size = BatchSize,
                repack_chunk_map = #{},
+               %% Mainnet-scale offsets under the test geometry: a limit above
+               %% any footprint number, so nothing is clipped.
+               footprint_limit = 1 bsl 40,
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),
@@ -2079,6 +2120,9 @@ test_init_repack_chunk_map_sector_boundary() ->
                footprint_end = FootprintEnd,
                read_batch_size = BatchSize,
                repack_chunk_map = #{},
+               %% Mainnet-scale offsets under the test geometry: a limit above
+               %% any footprint number, so nothing is clipped.
+               footprint_limit = 1 bsl 40,
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),

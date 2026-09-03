@@ -81,6 +81,7 @@
     parse_storage_module_arg/1,
     storage_modules/0,
     defrag_storage_modules/0,
+    storage_module_footprint_limit/1,
     repack_modules/1,
     is_legacy_launch/0,
     convert_config/3
@@ -285,6 +286,18 @@ storage_modules() ->
 %% runtime tuples.
 defrag_storage_modules() ->
     arweave_config_options_storage_modules:defrag_storage_modules().
+
+%% @doc Return the `footprint_limit` of the given runtime storage module
+%% or repack-in-place source module, or `not_set`. A module is in one of
+%% the two lists at most, so the second lookup only runs when the first
+%% finds nothing.
+storage_module_footprint_limit(Module) ->
+    case arweave_config_options_storage_modules:footprint_limit(Module) of
+        not_set ->
+            arweave_config_options_repack_modules:footprint_limit(Module);
+        Limit ->
+            Limit
+    end.
 
 %% @doc Return the configured repack-in-place modules. With
 %% `module_only' only the source storage module of each entry is

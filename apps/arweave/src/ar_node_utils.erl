@@ -405,11 +405,20 @@ update_accounts5(B, Accounts, Args) ->
      KryderPlusRateMultiplier} = Args,
     case validate_account_anchors(Accounts, B#block.txs) of
         true ->
-            Accounts2 = ar_testnet:top_up_test_wallet(Accounts, B#block.height),
+            Accounts2 = top_up_test_wallet(Accounts, B#block.height),
             {ok, {EndowmentPool, MinerReward, DebtSupply, KryderPlusRateMultiplierLatch,
                   KryderPlusRateMultiplier, Accounts2}};
         false ->
             {error, invalid_account_anchors}
+    end.
+
+%% @doc Credit the test wallet when the height carries a configured top-up.
+top_up_test_wallet(Accounts, Height) ->
+    case ar_consensus:test_wallet_top_up(Height) of
+        not_set ->
+            Accounts;
+        {Addr, Winston} ->
+            maps:put(Addr, {Winston, <<>>, 1, true}, Accounts)
     end.
 
 do_validate(NewB, OldB, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->

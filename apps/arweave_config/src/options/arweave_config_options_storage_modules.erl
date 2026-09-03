@@ -14,6 +14,7 @@
 %%%   [storage_modules, {list_item}, packing_format] :: unpacked | spora_2_6 | replica_2_9
 %%%   [storage_modules, {list_item}, packing_address] :: 32-byte binary
 %%%   [storage_modules, {list_item}, defrag] :: boolean
+%%%   [storage_modules, {list_item}, footprint_limit] :: pos_integer, footprints
 %%%
 %%% A module has either `partition` or explicit `range_start` and
 %%% `range_end` (mutually exclusive). Ranges are arbitrary byte
@@ -38,6 +39,7 @@
 -export([
     storage_modules/0,
     defrag_storage_modules/0,
+    footprint_limit/1,
     normalize_entry/1,
     config_to_storage_module/1,
     runtime_to_config/1,
@@ -54,6 +56,7 @@
     packing_from_map/3,
     validate_range_fields/2,
     validate_module_packing/4,
+    validate_footprint_limit/2,
     write_module_maps/2
 ]).
 -include("arweave_config.hrl").
@@ -142,6 +145,30 @@ specs() ->
                   "true` as the master switch. After defragmentation "
                   "completes, the node continues normally with the "
                   "module declared as a regular storage module.">>
+        },
+        #{
+            enabled => true,
+            option_key => [storage_modules, {list_item}, footprint_limit],
+            type => pos_integer,
+            short_description =>
+                <<"Advanced: keep only the first N replica.2.9 entropy "
+                  "footprints of each sector; only for a module declared "
+                  "with `partition`.">>,
+            long_description =>
+                <<"An advanced setting most miners never need: it is for "
+                  "nodes that hold a slice of a partition on purpose, such "
+                  "as test networks and builders; a miner wanting a full "
+                  "replica leaves it unset. The module still covers its "
+                  "whole partition but only stores the first N entropy "
+                  "footprints of every sector (256 MiB each on mainnet), "
+                  "i.e. the chunks at positions below N in the sector, "
+                  "whatever the packing. A value at or above the number "
+                  "of footprints in a partition keeps everything. Bounds "
+                  "entropy preparation, repacking in place and syncing "
+                  "alike, so a partial partition costs entropy in "
+                  "proportion to the data kept. Rejected on "
+                  "`range_start`/`range_end` modules. The semantics live "
+                  "in ar_footprint_limit.">>
         }
     ].
 
@@ -159,6 +186,19 @@ storage_modules() ->
 defrag_storage_modules() ->
     [config_to_storage_module(Module) || Module <- stored_maps(),
         maps:get(defrag, Module, false) =:= true].
+
+%% @doc Return the `footprint_limit` configured for the given runtime
+%% module, or `not_set`.
+footprint_limit(Module) ->
+    footprint_limit(Module, stored_maps()).
+
+footprint_limit(_Module, []) ->
+    not_set;
+footprint_limit(Module, [Map | Maps]) ->
+    case config_to_storage_module(Map) of
+        Module -> maps:get(footprint_limit, Map, not_set);
+        _ -> footprint_limit(Module, Maps)
+    end.
 
 stored_maps() ->
     case arweave_config_store:get([storage_modules]) of
@@ -297,13 +337,12 @@ validate_modules([Module | Rest]) ->
     end.
 
 validate_module(Module) when is_map(Module) ->
-    case validate_range_fields(<<"storage_modules">>, Module) of
-        ok ->
-            validate_module_packing(
-                <<"storage_modules">>, packing_format, packing_address,
-                Module);
-        {error, _} = Err ->
-            Err
+    maybe
+        ok ?= validate_range_fields(<<"storage_modules">>, Module),
+        ok ?= validate_module_packing(
+            <<"storage_modules">>, packing_format, packing_address,
+            Module),
+        validate_footprint_limit(<<"storage_modules">>, Module)
     end;
 validate_module(_) ->
     {error, <<"storage_modules: invalid module shape">>}.
@@ -345,6 +384,25 @@ validate_module_packing(Group, FormatField, AddressField, Module) ->
         _:_ ->
             {error, <<Group/binary, ": invalid packing">>}
     end.
+
+%% @doc Validate the optional `footprint_limit` field of a canonical
+%% module map: a positive integer, only on a module declared with the
+%% `partition` shorthand. `Group' prefixes the error message.
+validate_footprint_limit(_Group, Module)
+        when not is_map_key(footprint_limit, Module) ->
+    ok;
+validate_footprint_limit(Group, #{footprint_limit := Limit} = Module)
+        when is_integer(Limit), Limit > 0 ->
+    case is_map_key(partition, Module) of
+        true ->
+            ok;
+        false ->
+            {error, <<Group/binary, ": footprint_limit requires a module "
+                      "that covers exactly one partition (partition: N)">>}
+    end;
+validate_footprint_limit(Group, _Module) ->
+    {error, <<Group/binary, ": footprint_limit must be a positive integer "
+              "(footprints)">>}.
 
 validate_no_duplicates() ->
     Modules = storage_modules(),
