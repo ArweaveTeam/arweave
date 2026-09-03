@@ -49,6 +49,9 @@ do_run({Start, End, _, TargetStoreID} = Args) ->
                 false ->
                     timer:sleep(30000),
                     do_run(Args);
+                not_initialized ->
+                    timer:sleep(200),
+                    do_run(Args);
                 true ->
                     ?LOG_DEBUG([{event, read_range}, {pid, self()},
                                 {size_mb, (End - Start) / ?MiB}, {args, Args}]),
@@ -197,6 +200,27 @@ post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
 
 %% Each test drives read_and_post_chunk/3 over the two-chunk range
 %% [0, 2 * ?DATA_CHUNK_SIZE) with `ar_data_sync' reads scripted per offset.
+
+disk_space_initialization_is_retried_test_() ->
+    ar_test_util:with_mocked(
+      [
+       {ar_data_sync, is_chunk_cache_full, fun() -> false end},
+       {ar_data_sync, is_disk_space_sufficient,
+        fun(_StoreID) ->
+                Checks = get(disk_space_checks),
+                put(disk_space_checks, Checks + 1),
+                case Checks of
+                    0 -> not_initialized;
+                    1 -> true
+                end
+        end}
+       | read_range_mocks(fun(_Offset, _StoreID) -> past_range_reply() end)
+      ],
+      fun() ->
+              put(disk_space_checks, 0),
+              ok = do_run(test_range()),
+              ?assertEqual(2, get(disk_space_checks))
+      end).
 
 data_read_failed_skips_chunk_test_() ->
     ar_test_util:with_mocked(

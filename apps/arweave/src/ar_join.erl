@@ -525,6 +525,8 @@ worker() ->
 %% @doc Read the transaction from the local storage unless it is a deprecated
 %% format-1 transaction, whose authoritative body is the one carried by the
 %% block.
+read_local_tx(#tx{} = TX) ->
+    TX;
 read_local_tx(TXID) ->
     case ar_storage:read_tx(TXID) of
         #tx{} = TX ->
@@ -541,6 +543,10 @@ read_local_tx(TXID) ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+embedded_v1_transaction_is_authoritative_test() ->
+    TX = #tx{ format = 1, denomination = 0 },
+    ?assertEqual(TX, read_local_tx(TX)).
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test_() ->
