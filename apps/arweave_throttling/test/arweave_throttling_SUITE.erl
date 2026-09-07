@@ -8,9 +8,9 @@
 
 -define(M, arweave_throttling).
 
--define(PEER1, {1,2,3,4,1984}).
--define(PEER2, {2,3,4,5,1984}).
--define(PEER3, {3,4,5,6,1984}).
+-define(PEER1, {1, 2, 3, 4, 1984}).
+-define(PEER2, {2, 3, 4, 5, 1984}).
+-define(PEER3, {3, 4, 5, 6, 1984}).
 
 -define(PATH_GENERAL, "some/path/that/lead/to/general").
 -define(PATH_DATA_SYNC, "data_sync_record").
@@ -50,22 +50,22 @@ end_per_testcase(_TestCase, Config) ->
 
 all() ->
     [
-     no_groups_started,
-     groups_started_on_update_quota,
-     throttle_and_update_quota,
-     blocking_call_is_released_by_update,
-     fifo_ordering,
-     stale_update_outside_window_overrides,
-     queue_full_returns_error,
-     dead_caller_is_dropped_from_queue,
-     reset_releases_waiters,
-     peer_4_and_5_tuple_keys,
-     configured_local_peer_obeys_outbound_quota,
-     configured_local_ip_does_not_exempt_peer_shapes,
-     exhausted_quota_refills_after_reset_seconds,
-     update_quota_cancels_reset_timer,
-     update_quota_with_no_header_resets_peer,
-     update_quota_with_too_long_header_resets_peer
+        no_groups_started,
+        groups_started_on_update_quota,
+        throttle_and_update_quota,
+        blocking_call_is_released_by_update,
+        fifo_ordering,
+        stale_update_outside_window_overrides,
+        queue_full_returns_error,
+        dead_caller_is_dropped_from_queue,
+        reset_releases_waiters,
+        peer_4_and_5_tuple_keys,
+        configured_local_peer_obeys_outbound_quota,
+        configured_local_ip_does_not_exempt_peer_shapes,
+        exhausted_quota_refills_after_reset_seconds,
+        update_quota_cancels_reset_timer,
+        update_quota_with_no_header_resets_peer,
+        update_quota_with_too_long_header_resets_peer
     ].
 
 %%====================================================================
@@ -78,7 +78,6 @@ no_groups_started(_Config) ->
     ?assertNot(is_pid(whereis(arweave_throttling_group_general))),
     ?assertNot(is_pid(whereis(arweave_throttling_group_data_sync_record))),
     ok.
-
 
 groups_started_on_update_quota(_Config) ->
     ?assert(is_pid(whereis(arweave_throttling_sup))),
@@ -103,25 +102,25 @@ throttle_and_update_quota(_Config) ->
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        maps:get(remaining, S) =:= 0
-                    end),
+        maps:get(remaining, S) =:= 0
+    end),
 
     Headers = headers(?GROUPID_GENERAL, 10, 3, 7, 0),
 
     ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, Headers),
 
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        (maps:get(remaining, S) =:= 3)
-                        andalso (maps:get(total, S) =:= 10)
-                        andalso (maps:get(reset_seconds, S) =:= 0)
-                    end),
+        (maps:get(remaining, S) =:= 3) andalso
+            (maps:get(total, S) =:= 10) andalso
+            (maps:get(reset_seconds, S) =:= 0)
+    end),
 
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        maps:get(remaining, S) =:= 0
-                    end),
+        maps:get(remaining, S) =:= 0
+    end),
     ok.
 
 blocking_call_is_released_by_update(_Config) ->
@@ -150,46 +149,61 @@ fifo_ordering(_Config) ->
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
 
-    _Pids = lists:map(fun(N) ->
-                Pid = spawn(fun() ->
-                        ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
-                        Parent ! {released, N, self()}
-                    end),
-                ok = wait_status(general, ?PEER1, fun(S) ->
-                                    maps:get(queue_length, S) =:= N
-                                end),
-                Pid
-            end, [1, 2, 3]),
+    _Pids = lists:map(
+        fun(N) ->
+            Pid = spawn(fun() ->
+                ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
+                Parent ! {released, N, self()}
+            end),
+            ok = wait_status(general, ?PEER1, fun(S) ->
+                maps:get(queue_length, S) =:= N
+            end),
+            Pid
+        end,
+        [1, 2, 3]
+    ),
 
     %% concurrency_window_ms is 50 in init_per_testcase, so 80ms ensures
     %% each update is treated as a fresh observation rather than merged
     %% with the previous one.
-    Order = lists:map(fun(_) ->
-                timer:sleep(80),
-                ok = arweave_throttling:update_quota(
-                    ?PEER1, ?PATH_GENERAL, headers(?GROUPID_GENERAL, 10, 1, 9, 0)),
-                receive {released, N, _} -> N after 1000 ->
-                    ct:fail("a waiter was never released")
-                end
-            end, [1, 2, 3]),
+    Order = lists:map(
+        fun(_) ->
+            timer:sleep(80),
+            ok = arweave_throttling:update_quota(
+                ?PEER1, ?PATH_GENERAL, headers(?GROUPID_GENERAL, 10, 1, 9, 0)
+            ),
+            receive
+                {released, N, _} -> N
+            after 1000 ->
+                ct:fail("a waiter was never released")
+            end
+        end,
+        [1, 2, 3]
+    ),
 
     [1, 2, 3] = Order,
     ok.
 
 stale_update_outside_window_overrides(_Config) ->
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
-                        headers(?GROUPID_GENERAL,10, 2, 8, 0)),
+    ok = arweave_throttling:update_quota(
+        ?PEER1,
+        ?PATH_GENERAL,
+        headers(?GROUPID_GENERAL, 10, 2, 8, 0)
+    ),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        maps:get(remaining, S) =:= 2
-                    end),
+        maps:get(remaining, S) =:= 2
+    end),
 
     timer:sleep(150),
 
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
-                        headers(?GROUPID_GENERAL, 10, 9, 1, 0)),
+    ok = arweave_throttling:update_quota(
+        ?PEER1,
+        ?PATH_GENERAL,
+        headers(?GROUPID_GENERAL, 10, 9, 1, 0)
+    ),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        maps:get(remaining, S) =:= 9
-                    end),
+        maps:get(remaining, S) =:= 9
+    end),
     ok.
 
 queue_full_returns_error(_Config) ->
@@ -197,33 +211,51 @@ queue_full_returns_error(_Config) ->
     ok = arweave_throttling:throttle(?PEER1, ?PATH_DATA_SYNC),
     ?assertNot(is_pid(whereis(arweave_throttling_group_data_sync_record))),
 
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_DATA_SYNC, headers(?GROUPID_DATA_SYNC, 2, 2)),
+    ok = arweave_throttling:update_quota(
+        ?PEER1, ?PATH_DATA_SYNC, headers(?GROUPID_DATA_SYNC, 2, 2)
+    ),
     ?assert(is_pid(whereis(arweave_throttling_group_data_sync_record))),
 
     Parent = self(),
 
     ok = arweave_throttling:throttle(?PEER1, ?PATH_DATA_SYNC),
 
-    lists:foreach(fun(N) ->
+    lists:foreach(
+        fun(N) ->
             spawn(fun() ->
                 Reply = arweave_throttling:throttle(?PEER1, ?PATH_DATA_SYNC),
                 Parent ! {n, N, Reply}
             end)
-        end, lists:seq(1, 5003)), %% remaining quota (2) + max_queue_length (5000) + 1
+        %% remaining quota (2) + max_queue_length (5000) + 1
+        end,
+        lists:seq(1, 5003)
+    ),
 
-    ok = wait_status(?GROUPID_DATA_SYNC, ?PEER1,
-                fun(S) ->
-                    maps:get(queue_length, S) =:= 5000
-                end),
+    ok = wait_status(
+        ?GROUPID_DATA_SYNC,
+        ?PEER1,
+        fun(S) ->
+            maps:get(queue_length, S) =:= 5000
+        end
+    ),
 
     {error, queue_full} =
         arweave_throttling:throttle(?PEER1, ?PATH_DATA_SYNC),
 
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_DATA_SYNC,
-                        headers(?GROUPID_DATA_SYNC, 10, 5, 5, 0)),
+    ok = arweave_throttling:update_quota(
+        ?PEER1,
+        ?PATH_DATA_SYNC,
+        headers(?GROUPID_DATA_SYNC, 10, 5, 5, 0)
+    ),
 
-    receive {n, _N1, ok} -> ok after 1000 -> ct:fail(timeout_1) end,
-    receive {n, _N2, ok} -> ok after 1000 -> ct:fail(timeout_2) end,
+    receive
+        {n, _N1, ok} -> ok
+    after 1000 -> ct:fail(timeout_1)
+    end,
+    receive
+        {n, _N2, ok} -> ok
+    after 1000 -> ct:fail(timeout_2)
+    end,
     ok.
 
 dead_caller_is_dropped_from_queue(_Config) ->
@@ -240,30 +272,35 @@ dead_caller_is_dropped_from_queue(_Config) ->
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
 
     Doomed = spawn(fun() ->
-            _ = (catch arweave_throttling:throttle(?PEER1, ?PATH_GENERAL)),
-            Parent ! {done, self()}
-        end),
+        _ = (catch arweave_throttling:throttle(?PEER1, ?PATH_GENERAL)),
+        Parent ! {done, self()}
+    end),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        maps:get(queue_length, S) =:= 1
-                    end),
+        maps:get(queue_length, S) =:= 1
+    end),
 
     exit(Doomed, kill),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        maps:get(queue_length, S) =:= 0
-                    end),
+        maps:get(queue_length, S) =:= 0
+    end),
 
     Live = spawn(fun() ->
-            ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
-            Parent ! {live_done, self()}
-        end),
+        ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
+        Parent ! {live_done, self()}
+    end),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        maps:get(queue_length, S) =:= 1
-                    end),
+        maps:get(queue_length, S) =:= 1
+    end),
 
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
-                        headers(?GROUPID_GENERAL, 10, 1, 9, 0)),
+    ok = arweave_throttling:update_quota(
+        ?PEER1,
+        ?PATH_GENERAL,
+        headers(?GROUPID_GENERAL, 10, 1, 9, 0)
+    ),
 
-    receive {live_done, Live} -> ok after 1000 ->
+    receive
+        {live_done, Live} -> ok
+    after 1000 ->
         ct:fail("live waiter was not released")
     end,
     ok.
@@ -281,19 +318,27 @@ reset_releases_waiters(_Config) ->
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
 
-    [spawn(fun() ->
-        Reply = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
-        Parent ! {released, self(), Reply}
-    end) || _ <- lists:seq(1, 2)],
+    [
+        spawn(fun() ->
+            Reply = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
+            Parent ! {released, self(), Reply}
+        end)
+     || _ <- lists:seq(1, 2)
+    ],
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        maps:get(queue_length, S) =:= 2
-                    end),
+        maps:get(queue_length, S) =:= 2
+    end),
 
     ok = arweave_throttling:reset(general),
 
-    [receive {released, _, ok} -> ok after 1000 ->
-        ct:fail("reset did not release a waiter")
-    end || _ <- lists:seq(1, 2)],
+    [
+        receive
+            {released, _, ok} -> ok
+        after 1000 ->
+            ct:fail("reset did not release a waiter")
+        end
+     || _ <- lists:seq(1, 2)
+    ],
 
     {ok, Status} = arweave_throttling:status(general, ?PEER1),
     %% Reset also clears the peers -> quota is infinity when peer is not present.
@@ -334,16 +379,19 @@ configured_local_peer_obeys_outbound_quota(_Config) ->
 
 configured_local_ip_does_not_exempt_peer_shapes(_Config) ->
     LocalPeerShapes = [
-        {1,2,3,4},
-        {1,2,3,4,9999},
-        {{1,2,3,4},9999}
+        {1, 2, 3, 4},
+        {1, 2, 3, 4, 9999},
+        {{1, 2, 3, 4}, 9999}
     ],
     ok = arweave_config:set([peers, local], [?PEER1]),
     lists:foreach(fun(Peer) -> ok = record_quota(Peer, 1, 0, 1, 600) end, LocalPeerShapes),
 
-    lists:foreach(fun(Peer) ->
-        ?assert(arweave_throttling:is_throttled(Peer, ?PATH_GENERAL))
-    end, LocalPeerShapes),
+    lists:foreach(
+        fun(Peer) ->
+            ?assert(arweave_throttling:is_throttled(Peer, ?PATH_GENERAL))
+        end,
+        LocalPeerShapes
+    ),
     ok.
 
 %% @doc When `update_quota' reports an exhausted quota together with
@@ -359,21 +407,24 @@ exhausted_quota_refills_after_reset_seconds(_Config) ->
 
     Parent = self(),
 
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
-                        headers(?GROUPID_GENERAL, 5, 0, 5, 1)),
+    ok = arweave_throttling:update_quota(
+        ?PEER1,
+        ?PATH_GENERAL,
+        headers(?GROUPID_GENERAL, 5, 0, 5, 1)
+    ),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        (maps:get(remaining, S) =:= 0)
-                        andalso (maps:get(total, S) =:= 5)
-                        andalso (maps:get(reset_seconds, S) =:= 1)
-                    end),
+        (maps:get(remaining, S) =:= 0) andalso
+            (maps:get(total, S) =:= 5) andalso
+            (maps:get(reset_seconds, S) =:= 1)
+    end),
 
     spawn(fun() ->
         ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
         Parent ! refilled
     end),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        maps:get(queue_length, S) =:= 1
-                    end),
+        maps:get(queue_length, S) =:= 1
+    end),
 
     receive
         refilled -> ok
@@ -397,20 +448,26 @@ update_quota_cancels_reset_timer(_Config) ->
     ?assert(is_pid(whereis(arweave_throttling_group_general))),
 
     %% This will update since the headers total is different from the previously set one.
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
-                            headers(?GROUPID_GENERAL, 5, 0, 5, 30)),
+    ok = arweave_throttling:update_quota(
+        ?PEER1,
+        ?PATH_GENERAL,
+        headers(?GROUPID_GENERAL, 5, 0, 5, 30)
+    ),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        (maps:get(reset_seconds, S) =:= 30)
-                        andalso (maps:get(remaining, S) =:= 0)
-                    end),
+        (maps:get(reset_seconds, S) =:= 30) andalso
+            (maps:get(remaining, S) =:= 0)
+    end),
 
     timer:sleep(80),
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
-                        headers(?GROUPID_GENERAL, 5, 4, 1, 0)),
+    ok = arweave_throttling:update_quota(
+        ?PEER1,
+        ?PATH_GENERAL,
+        headers(?GROUPID_GENERAL, 5, 4, 1, 0)
+    ),
     ok = wait_status(general, ?PEER1, fun(S) ->
-                        (maps:get(remaining, S) =:= 4)
-                        andalso (maps:get(reset_seconds, S) =:= 0)
-                    end),
+        (maps:get(remaining, S) =:= 4) andalso
+            (maps:get(reset_seconds, S) =:= 0)
+    end),
     ok.
 
 update_quota_with_no_header_resets_peer(_Config) ->
@@ -425,41 +482,55 @@ update_quota_with_no_header_resets_peer(_Config) ->
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
     {ok, S3} = arweave_throttling:status(?GROUPID_GENERAL, ?PEER1),
     ?assertMatch(#{total := 10, remaining := 7}, S3),
-    ?assertMatch({error, {missing_header, <<"ratelimit-limit">>}},
-                 arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, #{})),
+    ?assertMatch(
+        {error, {missing_header, <<"ratelimit-limit">>}},
+        arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, #{})
+    ),
     %% Peer reset.
     {ok, S4} = arweave_throttling:status(?GROUPID_GENERAL, ?PEER1),
     ?assertMatch(#{total := infinity}, S4),
     ok.
 
 update_quota_with_too_long_header_resets_peer(_Config) ->
-    LongName = "12345678901234567890123456789012345678901234567890"
-        "12345678901234567890123456789012345678901234567890123456789012345678901234567890", %% 130 long
+    LongName =
+        "12345678901234567890123456789012345678901234567890"
+        %% 130 long
+        "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
     ?assertEqual(130, length(LongName)),
-    ShortName = "1234567890", %% 10 long
+    %% 10 long
+    ShortName = "1234567890",
     Total = 10,
     HeadersFun = fun(Name, Remaining) ->
-                     Policies =  #{id => Name,
-                                   concurrency => #{limit => 500},
-                                   sliding_window => #{limit => 0,
-                                                       window_seconds => 1},
-                                   leaky_bucket   => #{burst => Total,
-                                                       tick_ms => 30000,
-                                                       tick_reduction => Total}},
-                     arweave_limiter_http_headers:to_http_headers(
-                         {register, leaky,
-                          #{expiring_limit => Total,
-                            remaining => Remaining,
-                            reset_amount => Total - Remaining,
-                            reset_seconds => 0,
-                            policies => Policies}
-                         })
-                 end,
+        Policies = #{
+            id => Name,
+            concurrency => #{limit => 500},
+            sliding_window => #{
+                limit => 0,
+                window_seconds => 1
+            },
+            leaky_bucket => #{
+                burst => Total,
+                tick_ms => 30000,
+                tick_reduction => Total
+            }
+        },
+        arweave_limiter_http_headers:to_http_headers(
+            {register, leaky, #{
+                expiring_limit => Total,
+                remaining => Remaining,
+                reset_amount => Total - Remaining,
+                reset_seconds => 0,
+                policies => Policies
+            }}
+        )
+    end,
     H1 = HeadersFun(ShortName, 9),
 
     %% Before anything calling too long name does nothing. Won't start process
-    ?assertMatch({error, header_id_too_long},
-                 arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun(LongName, 9))),
+    ?assertMatch(
+        {error, header_id_too_long},
+        arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun(LongName, 9))
+    ),
     %% 130 long + prefix should work because it's less than the max atom length(256)
     AssumedName = "arweave_throttling_group_" ++ LongName,
     ?assertNot(is_pid(whereis(list_to_atom(AssumedName)))),
@@ -467,24 +538,36 @@ update_quota_with_too_long_header_resets_peer(_Config) ->
     %% Let's start with a normal name
     ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, H1),
     ShortNameAtom = list_to_atom(ShortName),
-    ?assertMatch({ok, ShortNameAtom},
-                 arweave_throttling_path:path_to_group_id(?PEER1, ?PATH_GENERAL)),
+    ?assertMatch(
+        {ok, ShortNameAtom},
+        arweave_throttling_path:path_to_group_id(?PEER1, ?PATH_GENERAL)
+    ),
     ?assertMatch(ok, arweave_throttling:throttle(?PEER1, ?PATH_GENERAL)),
 
-    ?assertMatch({ok, #{total := 10, remaining := 8}}, arweave_throttling:status(ShortNameAtom, ?PEER1)),
+    ?assertMatch(
+        {ok, #{total := 10, remaining := 8}}, arweave_throttling:status(ShortNameAtom, ?PEER1)
+    ),
     ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun(ShortName, 8)),
-    ?assertMatch({ok, #{total := 10, remaining := 8}}, arweave_throttling:status(ShortNameAtom, ?PEER1)),
+    ?assertMatch(
+        {ok, #{total := 10, remaining := 8}}, arweave_throttling:status(ShortNameAtom, ?PEER1)
+    ),
 
     ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
-    ?assertMatch({ok, #{total := 10, remaining := 7}},arweave_throttling:status(ShortNameAtom, ?PEER1)),
+    ?assertMatch(
+        {ok, #{total := 10, remaining := 7}}, arweave_throttling:status(ShortNameAtom, ?PEER1)
+    ),
 
     %% Another qualifying name, just gives group_mismatch
-    ?assertMatch({group_mismatch,'1234567890', <<"123">>},
-                 arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun("123", 9))),
+    ?assertMatch(
+        {group_mismatch, '1234567890', <<"123">>},
+        arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun("123", 9))
+    ),
 
     %% Header too long error
-    ?assertMatch({error, header_id_too_long},
-                 arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun(LongName, 9))),
+    ?assertMatch(
+        {error, header_id_too_long},
+        arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, HeadersFun(LongName, 9))
+    ),
     %% Peer reset.
     ?assertMatch({ok, #{total := infinity}}, arweave_throttling:status(ShortNameAtom, ?PEER1)),
     ok.
@@ -502,13 +585,17 @@ assert_throttle_blocks_until_quota_update(Peer, Path, GroupID) ->
     ok = wait_status(GroupID, Peer, fun(Status) ->
         maps:get(queue_length, Status) =:= 1
     end),
-    false = receive
-        {throttle_result, Pid, _Result} -> true
-    after 100 ->
-        false
-    end,
-    ok = arweave_throttling:update_quota(Peer, Path,
-        headers(GroupID, 10, 1, 9, 0)),
+    false =
+        receive
+            {throttle_result, Pid, _Result} -> true
+        after 100 ->
+            false
+        end,
+    ok = arweave_throttling:update_quota(
+        Peer,
+        Path,
+        headers(GroupID, 10, 1, 9, 0)
+    ),
     receive
         {throttle_result, Pid, ok} -> ok
     after 1000 ->
@@ -516,8 +603,11 @@ assert_throttle_blocks_until_quota_update(Peer, Path, GroupID) ->
     end.
 
 record_quota(Peer, Total, Remaining, ResetAmount, ResetSeconds) ->
-    ok = arweave_throttling:update_quota(Peer, ?PATH_GENERAL,
-        headers(?GROUPID_GENERAL, Total, Remaining, ResetAmount, ResetSeconds)),
+    ok = arweave_throttling:update_quota(
+        Peer,
+        ?PATH_GENERAL,
+        headers(?GROUPID_GENERAL, Total, Remaining, ResetAmount, ResetSeconds)
+    ),
     wait_status(?GROUPID_GENERAL, Peer, fun(Status) ->
         maps:get(total, Status) =:= Total andalso
             maps:get(remaining, Status) =:= Remaining
@@ -528,28 +618,38 @@ headers(GroupID, Total, Remaining) ->
 
 headers(GroupID, Total, Remaining, ResetAmount, ResetSeconds) ->
     arweave_limiter_http_headers:to_http_headers(
-      {register, leaky,
-       #{expiring_limit => Total,
-         remaining => Remaining,
-         reset_amount => ResetAmount,
-         reset_seconds => ResetSeconds,
-         policies => policies(GroupID, Total)}
-      }).
-
+        {register, leaky, #{
+            expiring_limit => Total,
+            remaining => Remaining,
+            reset_amount => ResetAmount,
+            reset_seconds => ResetSeconds,
+            policies => policies(GroupID, Total)
+        }}
+    ).
 
 policies(Group, Total) ->
-    #{id => atom_to_list(Group),
-    concurrency => #{limit => 500},
-    sliding_window => #{limit => 0,
-                window_seconds => 1},
-    leaky_bucket   => #{burst => Total,
-                tick_ms => 30000,
-                tick_reduction => Total}}.
+    #{
+        id => atom_to_list(Group),
+        concurrency => #{limit => 500},
+        sliding_window => #{
+            limit => 0,
+            window_seconds => 1
+        },
+        leaky_bucket => #{
+            burst => Total,
+            tick_ms => 30000,
+            tick_reduction => Total
+        }
+    }.
 
 wait_status(Group, Peer, Pred) ->
-    ar_test_await:until(throttling_status_reached, fun() ->
+    ar_test_await:until(
+        throttling_status_reached,
+        fun() ->
             case arweave_throttling:status(Group, Peer) of
                 {ok, Status} -> Pred(Status);
                 _ -> false
             end
-        end, 1000).
+        end,
+        1000
+    ).
