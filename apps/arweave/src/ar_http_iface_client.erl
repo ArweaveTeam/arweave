@@ -39,6 +39,10 @@
 -include("ar_pool.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% The longest peer address we accept: "255.255.255.255:65535".
+-define(MAX_PEER_ADDRESS_LEN, 21).
+-define(MAX_PEER_LIST_LEN, 128).
+
 %%--------------------------------------------------------------------
 %% @doc Send a JSON-encoded transaction to the given Peer with default
 %% parameters.
@@ -1360,7 +1364,7 @@ get_peers(Peer) ->
                               timeout => 2 * 1000
                              }),
             PeerArray = ar_serialize:dejsonify(Body),
-            PeersList = lists:map(fun arweave_util:parse_peer/1, PeerArray),
+            PeersList = parse_peer_list(PeerArray),
             lists:flatten(PeersList)
         end
     catch _:_ -> unavailable
@@ -1550,3 +1554,37 @@ recent_hash_list_diff_parse_error_test() ->
     Response = {ok, {{<<"200">>, <<"OK">>}, [], Body, undefined, undefined}},
     ?assertMatch({error, _},
         handle_get_recent_hash_list_diff_response(Response, HL, undefined_peer)).
+
+%% @doc Parse external list of peer addresses
+parse_peer_list(PeerArray) ->
+    parse_peer_list(PeerArray, ?MAX_PEER_LIST_LEN, []).
+
+parse_peer_list(_PeerArray, 0, Acc) ->
+    lists:reverse(Acc);
+parse_peer_list([], _Left, Acc) ->
+    lists:reverse(Acc);
+parse_peer_list([RawPeer | PeerArray], Left, Acc) when is_binary(RawPeer) ->
+    case parse_peer_address(RawPeer) of
+        {ok, ParsedPeer} ->
+            parse_peer_list(PeerArray, Left - 1, [ParsedPeer | Acc]);
+        {error, _} ->
+            parse_peer_list(PeerArray, Left - 1, Acc)
+    end;
+parse_peer_list([_RawPeer | PeerArray], Left, Acc) ->
+    parse_peer_list(PeerArray, Left - 1, Acc).
+
+%% @doc Parse peer addresses from an external source.
+%% NOTE: It might be tempting to use parser function from arweave_util,
+%% but we need an additional validation in the API.
+parse_peer_address(Peer) when is_binary(Peer), byte_size(Peer) =< ?MAX_PEER_ADDRESS_LEN ->
+    parse_peer_address(binary_to_list(Peer));
+parse_peer_address(Peer)
+    when is_list(Peer), length(Peer) =< ?MAX_PEER_ADDRESS_LEN ->
+    try 
+        {ok, arweave_util:parse_peer(Peer)}
+    catch
+        _E:Reason ->
+            {error, Reason}
+    end;
+parse_peer_address(_Peer) ->
+    {error, invalid_peer_address}.
