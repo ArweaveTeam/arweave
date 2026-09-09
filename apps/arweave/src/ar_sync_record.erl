@@ -352,6 +352,9 @@ handle_call(Request, _From, State) ->
 
 handle_cast(store_state, State) ->
     {_, State2} = store_state(State),
+    %% Snapshot construction materializes every fragmented interval table.
+    %% Reclaim that temporary heap before this long-lived server goes idle.
+    erlang:garbage_collect(),
     {ok, _} = ar_timer:apply_after(
         ?STORE_SYNC_RECORD_FREQUENCY_MS,
         gen_server,
