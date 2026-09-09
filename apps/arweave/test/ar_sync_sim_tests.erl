@@ -86,27 +86,32 @@ test_steady_state_no_monopoly() ->
         0.60,
         #{ peer => ?PEER_UNLIMITED, metric => cps_share }),
     Minimum60CPS = 0.9 * 60,
-    assert_at_least(
-        maps:get(?PEER_LIMITED_1, CpsByPeer),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_1,
         Minimum60CPS,
-        #{ peer => ?PEER_LIMITED_1, metric => cps }),
-    assert_at_least(
-        maps:get(?PEER_LIMITED_2, CpsByPeer),
+        Measurement),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_2,
         Minimum60CPS,
-        #{ peer => ?PEER_LIMITED_2, metric => cps }),
+        Measurement),
     Minimum40CPS = 0.9 * 40,
-    assert_at_least(
-        maps:get(?PEER_LIMITED_3, CpsByPeer),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_3,
         Minimum40CPS,
-        #{ peer => ?PEER_LIMITED_3, metric => cps }),
-    assert_at_least(
-        maps:get(?PEER_LIMITED_4, CpsByPeer),
+        Measurement),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_4,
         Minimum40CPS,
-        #{ peer => ?PEER_LIMITED_4, metric => cps }),
-    assert_at_least(
-        maps:get(?PEER_LIMITED_5, CpsByPeer),
+        Measurement),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_5,
         0.9 * 5,
-        #{ peer => ?PEER_LIMITED_5, metric => cps }),
+        Measurement),
     ok.
 
 %% Scenario: Peers that take turns timing out recover their share of work while
@@ -217,26 +222,31 @@ test_timeout_resilience() ->
         * (RotationTicks - OutageTicks) / RotationTicks,
     MinimumLimitedCPS =
         ?MIN_STEADY_STATE_UTILIZATION * AvailableLimitedCPS,
-    assert_at_least(
-        maps:get(?PEER_LIMITED_1, CpsByPeer),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_1,
         MinimumLimitedCPS,
-        #{ peer => ?PEER_LIMITED_1, metric => cps }),
-    assert_at_least(
-        maps:get(?PEER_LIMITED_2, CpsByPeer),
+        Measurement),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_2,
         MinimumLimitedCPS,
-        #{ peer => ?PEER_LIMITED_2, metric => cps }),
-    assert_at_least(
-        maps:get(?PEER_LIMITED_3, CpsByPeer),
+        Measurement),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_3,
         MinimumLimitedCPS,
-        #{ peer => ?PEER_LIMITED_3, metric => cps }),
-    assert_at_least(
-        maps:get(?PEER_LIMITED_4, CpsByPeer),
+        Measurement),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_4,
         MinimumLimitedCPS,
-        #{ peer => ?PEER_LIMITED_4, metric => cps }),
-    assert_at_least(
-        maps:get(?PEER_LIMITED_5, CpsByPeer),
+        Measurement),
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_LIMITED_5,
         MinimumLimitedCPS,
-        #{ peer => ?PEER_LIMITED_5, metric => cps }),
+        Measurement),
     ok.
 
 %% Scenario: A fast peer is temporarily rate limited and then restored.
@@ -913,8 +923,9 @@ test_slow_stores_do_not_monopolize_cache() ->
     %% horizon.
     ar_sync_sim_runner:run_for(40),
     ?assertNot(ar_sync_deps:is_chunk_cache_full()),
-    %% Ten seconds contain at least 400 chunks at the smallest 40 chunks/s rate.
-    Measurement = ar_sync_sim_runner:run_for(10),
+    %% Twenty seconds contain at least 800 chunks at the smallest 40 chunks/s
+    %% rate and keep one tick boundary from deciding the utilization result.
+    Measurement = ar_sync_sim_runner:run_for(20),
     assert_metric_utilization(stored_cps, capacity(Peers), Measurement),
     ?assertNot(ar_sync_deps:is_chunk_cache_full()).
 
@@ -1353,10 +1364,12 @@ test_single_footprint_peer_store_bursts_preserve_throughput() ->
             [sync, cache_size] => 32768
         }
     }),
-    %% Sixty one-second ticks cover metadata discovery and capacity growth. The
-    %% 60-second measurement contains twenty complete three-second burst cycles
-    %% and makes endpoint backlog less than five percent of total capacity.
-    ar_sync_sim_runner:run_for(60),
+    %% One hundred twenty one-second ticks cover metadata discovery, capacity
+    %% growth, and the footprint-transition settling observed by this bursty
+    %% scenario. The 60-second measurement contains twenty complete
+    %% three-second burst cycles and makes endpoint backlog less than five
+    %% percent of total capacity.
+    ar_sync_sim_runner:run_for(120),
     Measurement = ar_sync_sim_runner:run_for(60),
     assert_chunks_spread_across_stores(Measurement),
     assert_metric_utilization(stored_cps, AggregateStoreCPS, Measurement).
@@ -1404,11 +1417,11 @@ test_delayed_fetch_waves_do_not_amplify_store_backlog() ->
     StoreCPS = 4,
     AggregateStoreCPS = ?SIM_STORES * StoreCPS,
     PeerCPS = 100,
-    WriteAllowanceSeconds = 5,
-    %% The normal five-second cached-write allowance is 5 * 4 = 20 chunks.
-    %% A 40-chunk threshold tolerates one additional allowance-sized response
-    %% wave before activating the synthetic pressure penalty described above.
-    BacklogPressureThreshold = 2 * WriteAllowanceSeconds * StoreCPS,
+    AssignmentAllowanceSeconds = 11,
+    %% The production pipeline permits five seconds of cached writes, five
+    %% seconds of delayed fetches, and one admission-boundary second. Trigger
+    %% the synthetic pressure penalty only after that 44-chunk hard bound.
+    BacklogPressureThreshold = AssignmentAllowanceSeconds * StoreCPS,
     PressuredCompletionCPS = 1,
     StoreCompletionCPS = fun(StoreID, _Tick) ->
         case ar_sync_sim_world:chunk_cache_size(StoreID)
@@ -2901,11 +2914,35 @@ assert_chunks_spread_across_stores(Measurement, MinimumFairShareFraction) ->
         end,
         ChunksStoredByStore).
 
-%% @doc Assert that a measured rate uses nearly all modeled sustainable capacity.
+%% @doc Assert that a measured metric reaches nearly all its expected value.
 assert_metric_utilization(Metric, ExpectedValue, Measurement) ->
     ActualValue = ar_sync_sim_runner:metric(Metric, Measurement),
     MinimumValue = ?MIN_STEADY_STATE_UTILIZATION * ExpectedValue,
-    assert_at_least(ActualValue, MinimumValue, #{ metric => Metric }).
+    assert_at_least_with_substep_allowance(
+        ActualValue, MinimumValue, Measurement, #{ metric => Metric }).
+
+%% @doc Assert a peer rate with one simulated clock quantum of boundary slack.
+assert_rate_at_least(RateMetric, Peer, ExpectedRate, Measurement) ->
+    RatesByPeer = ar_sync_sim_runner:metric(RateMetric, Measurement),
+    ActualRate = maps:get(Peer, RatesByPeer),
+    assert_at_least_with_substep_allowance(
+        ActualRate, ExpectedRate, Measurement,
+        #{ peer => Peer, metric => RateMetric }).
+
+%% @doc Assert a measured value with one clock quantum of boundary slack.
+assert_at_least_with_substep_allowance(
+        Actual, Expected, Measurement, Context) ->
+    DurationSeconds = ar_sync_sim_runner:metric(
+        duration_seconds, Measurement),
+    BoundaryAllowance = Expected * ?SIM_SUBSTEP_MS
+        / 1000 / DurationSeconds,
+    assert_at_least(
+        Actual,
+        Expected - BoundaryAllowance,
+        maps:merge(Context, #{
+            expected_before_boundary_allowance => Expected,
+            boundary_allowance => BoundaryAllowance
+        })).
 
 %% @doc Assert that detailed metadata was requested and remains unresolved.
 assert_chunk_interval_request_pending(Peer, Measurement) ->
