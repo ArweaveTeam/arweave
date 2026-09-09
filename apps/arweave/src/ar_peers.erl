@@ -747,7 +747,7 @@ probe_and_maybe_add_peer(Peer) ->
                                     case maps:get(atom_to_binary(release), Info, no_key) of
                                         Release when is_integer(Release) ->
                                             maybe_add_peer(Peer, Release);
-                                        no_key ->
+                                        _ ->
                                             maybe_add_peer(Peer, 0)
                                     end;
                                 _ ->

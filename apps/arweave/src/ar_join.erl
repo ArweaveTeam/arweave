@@ -34,7 +34,7 @@ filter_peers(Peers) ->
     filter_peers(Peers, []).
 
 filter_peers([Peer | Peers], Peers2) ->
-    case ar_http_iface_client:get_info(Peer, height) of
+    case get_peer_height(Peer) of
         info_unavailable ->
             ?LOG_WARNING([{event, trusted_peer_unavailable},
                           {peer, arweave_util:format_peer(Peer)}]),
@@ -47,6 +47,16 @@ filter_peers([], []) ->
 filter_peers([], Peers2) ->
     MaxHeight = lists:max([Height || {Height, _Peer} <- Peers2]),
     filter_peers2(Peers2, MaxHeight).
+
+%% @doc Return the peer's height, or info_unavailable unless it is a
+%% non-negative integer.
+get_peer_height(Peer) ->
+    case ar_http_iface_client:get_info(Peer, height) of
+        Height when is_integer(Height), Height >= 0 ->
+            Height;
+        _ ->
+            info_unavailable
+    end.
 
 filter_peers2([], _MaxHeight) ->
     [];
@@ -118,8 +128,12 @@ get_block_index([Peer | Peers]) ->
     end.
 
 get_block_index2(Peer) ->
-    Height = ar_http_iface_client:get_info(Peer, height),
-    get_block_index2(Peer, 0, Height, []).
+    case get_peer_height(Peer) of
+        info_unavailable ->
+            unavailable;
+        Height ->
+            get_block_index2(Peer, 0, Height, [])
+    end.
 
 get_block_index2(Peer, Start, Height, BI) ->
     N = ?REQUEST_BLOCK_INDEX_RANGE_SIZE,

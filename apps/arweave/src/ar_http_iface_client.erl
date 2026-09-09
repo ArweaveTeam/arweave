@@ -1341,13 +1341,18 @@ get_info(Peer) ->
                      })
     of
         {ok, {{<<"200">>, _}, _, JSON, _, _}} ->
-            case ar_serialize:json_decode(JSON, [return_maps]) of
-                {ok, JsonMap} ->
-                    JsonMap;
-                {error, _} ->
-                    info_unavailable
-            end;
+            decode_info(JSON);
         _ -> info_unavailable
+    end.
+
+%% @doc Decode a /info response body, returning info_unavailable unless it is
+%% a JSON object.
+decode_info(JSON) ->
+    case ar_serialize:json_decode(JSON, [return_maps]) of
+        {ok, Info} when is_map(Info) ->
+            Info;
+        _ ->
+            info_unavailable
     end.
 
 %% @doc Return a list of parsed peer IPs for a remote server.
@@ -1607,3 +1612,11 @@ recent_hash_list_diff_parse_error_test() ->
     Response = {ok, {{<<"200">>, <<"OK">>}, [], Body, undefined, undefined}},
     ?assertMatch({error, _},
         handle_get_recent_hash_list_diff_response(Response, HL, undefined_peer)).
+
+%% @doc Only a JSON object is accepted as a /info response body.
+decode_info_test() ->
+    ?assertEqual(#{ <<"height">> => 1 }, decode_info(<<"{\"height\":1}">>)),
+    ?assertEqual(info_unavailable, decode_info(<<"[]">>)),
+    ?assertEqual(info_unavailable, decode_info(<<"1">>)),
+    ?assertEqual(info_unavailable, decode_info(<<"\"x\"">>)),
+    ?assertEqual(info_unavailable, decode_info(<<"not json">>)).
