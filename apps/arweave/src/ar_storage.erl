@@ -94,16 +94,37 @@ read_reward_history([{H, _WeaveSize, _TXRoot} | BI], CustomDir) ->
         not_found ->
             not_found;
         History ->
-            case ar_kv:get(get_db_name(reward_history_db, CustomDir), H) of
+            case read_history_element(reward_history_db, CustomDir, H) of
                 not_found ->
-                    ?LOG_DEBUG([{event, read_reward_history_not_found},
-                            {reason, missing_block},
-                            {block, arweave_util:encode(H)}]),
                     not_found;
-                {ok, Bin} ->
-                    Element = binary_to_term(Bin, [safe]),
+                Element ->
                     [Element | History]
             end
+    end.
+
+%% @doc Read the history element stored for the block H in the given database.
+%% Return not_found when the element is missing, cannot be read, or cannot be
+%% decoded, so that the caller falls back to fetching the history from peers.
+read_history_element(DB, CustomDir, H) ->
+    case ar_kv:get(get_db_name(DB, CustomDir), H) of
+        not_found ->
+            ?LOG_DEBUG([{event, read_history_element_not_found}, {db, DB},
+                    {block, arweave_util:encode(H)}]),
+            not_found;
+        {ok, Bin} ->
+            try
+                binary_to_term(Bin, [safe])
+            catch Class:Reason ->
+                ?LOG_WARNING([{event, failed_to_decode_history_element},
+                        {db, DB}, {block, arweave_util:encode(H)},
+                        {class, Class}, {reason, io_lib:format("~p", [Reason])}]),
+                not_found
+            end;
+        {error, Reason} ->
+            ?LOG_WARNING([{event, failed_to_read_history_element}, {db, DB},
+                    {block, arweave_util:encode(H)},
+                    {reason, io_lib:format("~p", [Reason])}]),
+            not_found
     end.
 
 %% @doc Return the block time history for the given block index part or not_found.
@@ -121,11 +142,10 @@ read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI], CustomDir) ->
                 not_found ->
                     not_found;
                 History ->
-                    case ar_kv:get(get_db_name(block_time_history_db, CustomDir), H) of
+                    case read_history_element(block_time_history_db, CustomDir, H) of
                         not_found ->
                             not_found;
-                        {ok, Bin} ->
-                            Element = binary_to_term(Bin, [safe]),
+                        Element ->
                             [Element | History]
                     end
             end
