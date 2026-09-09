@@ -2201,7 +2201,10 @@ json_map_to_solution(JSON) ->
             false ->
                 NextVDFDifficulty
         end,
+    %% The nonce is a bare JSON number. Reject anything else, a float in
+    %% particular, before it reaches the hashing arithmetic.
     Nonce = maps:get(<<"nonce">>, JSON),
+    true = is_integer(Nonce),
     NonceLimiterOutput = arweave_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
     PartitionNumber = parse_integer(maps:get(<<"partition_number">>, JSON)),
     PartitionUpperBound = parse_integer(maps:get(<<"partition_upper_bound">>, JSON)),

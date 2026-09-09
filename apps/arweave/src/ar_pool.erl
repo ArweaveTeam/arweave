@@ -434,7 +434,8 @@ process_partial_solution_packing_difficulty(Solution, Ref) ->
 
 process_partial_solution_nonce(Solution, Ref) ->
     Max = ar_block:get_max_nonce(Solution#mining_solution.packing_difficulty),
-    case Solution#mining_solution.nonce > Max of
+    Nonce = Solution#mining_solution.nonce,
+    case Nonce < 0 orelse Nonce > Max of
         false ->
             process_partial_solution_quick_pow(Solution, Ref);
         true ->
