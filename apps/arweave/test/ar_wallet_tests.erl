@@ -42,6 +42,11 @@ test_invalid_signature() ->
     ].
 
 %% @doc Check generated keyfiles can be retrieved.
+oversized_rsa_modulus_rejected_test() ->
+    Pub = <<255:(4096 * 8)>>,
+    Sig = <<1:(4096 * 8)>>,
+    ?assertNot(ar_wallet:verify({{rsa, 65537}, Pub}, <<"data">>, Sig)).
+
 generate_keyfile_test_() ->
     {timeout, 30, fun test_generate_keyfile/0}.
 

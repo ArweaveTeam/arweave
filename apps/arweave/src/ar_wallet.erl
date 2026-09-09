@@ -225,6 +225,10 @@ sign({{KeyAlg, KeyCrv}, Priv, _}, Data)
     Data :: binary(),
     Return :: boolean().
 
+verify({{KeyAlg, PublicExpnt}, Pub}, _Data, _Sig)
+        when KeyAlg =:= ?RSA_SIGN_ALG andalso PublicExpnt =:= 65537
+            andalso byte_size(Pub) > ?RSA_BLOCK_SIG_SIZE ->
+    false;
 verify({{KeyAlg, PublicExpnt}, Pub}, Data, Sig)
         when KeyAlg =:= ?RSA_SIGN_ALG andalso PublicExpnt =:= 65537 ->
     try
