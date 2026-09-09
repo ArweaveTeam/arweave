@@ -453,30 +453,26 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedEnd, EncodedLimi
     end;
 
 %% Return the information about the presence of the data from the given footprint
-%% in the given partition. The returned intervals contain the numbers of the chunks
-%% starting from 0 belonging to the given footprint (and present on this node).
-%% The footprint is constructed like a replica 2.9 entropy footprint where chunks are
-%% spread out across the partition. Therefore, the interval [0, 2] does not denote
-%% two adjacent chunks but rather two chunks separated by
+%% in the given partition. The returned intervals contain global footprint record
+%% offsets, as computed by ar_footprint_record:get_offset/1, of the chunks belonging
+%% to the given footprint and present on this node. Each interval is a
+%% ["Start", "End"] pair where Start is excluded and End is included. Adjacent
+%% offsets in the record do not denote adjacent chunks in the weave: the footprint
+%% is constructed like a replica 2.9 entropy footprint where chunks are spread out
+%% across the partition, so consecutive record offsets are separated by
 %% ar_block:get_replica_2_9_entropy_count() chunks.
 %% Note that we do not only record footprints for replica_2_9 storage modules, but
 %% for any packing, because we want to make it convenient for any client to fetch
-%% the data from us.
+%% the data from us. The response does not identify the packing.
 %%
-%% Example response:
+%% Example response, for partition 104 and footprint 6426 on mainnet, where the
+%% footprint's record offsets are (1434904576, 1434905600]:
 %% {
-%%   "packing": "replica_2_9_A5KJQ7LjCyfGpNj-L-pasroRRVA7z_vWDNcK4aSgZs0",
 %%   "intervals": [
-%%     ["0", "1"],
-%%     ["2", "10"],
-%%     ["12", "1024"]
+%%     ["1434904576", "1434904577"],
+%%     ["1434904578", "1434904586"],
+%%     ["1434904588", "1434905600"]
 %%   ]
-%% }
-%%
-%% Example response:
-%% {
-%%   "packing": "unpacked",
-%%   "intervals": ["0", "1024"]
 %% }
 %%
 %% Return 404 when no storage module is configured for the given partition.
