@@ -404,7 +404,7 @@ handle_sync_record_add_range(Start, End, Module, State, N) when N < ?NUMBER_OF_T
                     {range_start, Start},
                     {range_end, End}]),
             timer:sleep(?WAIT_BETWEEN_TRIES),
-            handle_sync_record_add_range(Start, End, State, N + 1)
+            handle_sync_record_add_range(Start, End, Module, State, N + 1)
     end;
 handle_sync_record_add_range(Start, End, _Module, State, _N) ->
     ?LOG_WARNING([{event, gave_up_webhook_tx_offset_data_fetch},
