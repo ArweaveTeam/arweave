@@ -1,6 +1,6 @@
 {application, arweave_lib, [
     {description, "Arweave protocol constants and pure helpers"},
-    {vsn, "2.9.7-alpha1"},
+    {vsn, "2.9.7-alpha1-dev-sync-performance-20260909"},
     {applications, [kernel, stdlib, crypto, jiffy, b64fast]},
     {modules, []},
     {registered, []},
