@@ -36,7 +36,7 @@ test_wallet_top_up(Height) ->
             not_set
     end.
 
-locked_rewards_blocks(Height) ->
+get_locked_rewards_blocks(Height) ->
     case Height >= testnet_fork_height() of
         true -> arweave_config:get([testnet, locked_rewards_blocks]);
         false -> ?LOCKED_REWARDS_BLOCKS
@@ -72,7 +72,7 @@ testnet_fork_height() ->
 test_wallet_top_up(_Height) ->
     not_set.
 
-locked_rewards_blocks(_Height) ->
+get_locked_rewards_blocks(_Height) ->
     ?LOCKED_REWARDS_BLOCKS.
 
 reward_history_blocks(_Height) ->
@@ -84,4 +84,21 @@ legacy_reward_history_blocks(_Height) ->
 target_block_time(_Height) ->
     ?TARGET_BLOCK_TIME.
 
+-endif.
+
+%% @doc The number of blocks a mining reward stays locked. A localnet build
+%% lets the application environment override it, the way ar_pricing lets it
+%% override the redenomination parameters, so notebooks can shorten the
+%% lock. Every other build uses the build's value.
+-ifdef(LOCALNET).
+locked_rewards_blocks(Height) ->
+    case application:get_env(arweave, locked_rewards_blocks) of
+        {ok, Value} when is_integer(Value), Value > 0 ->
+            Value;
+        _ ->
+            get_locked_rewards_blocks(Height)
+    end.
+-else.
+locked_rewards_blocks(Height) ->
+    get_locked_rewards_blocks(Height).
 -endif.
