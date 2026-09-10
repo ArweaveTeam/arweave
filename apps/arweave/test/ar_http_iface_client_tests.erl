@@ -12,7 +12,11 @@ get_peers_test_() ->
     {timeout, 30,
      {foreach, fun setup/0, fun cleanup/1,
       [
-       fun(Config) -> fun() -> test_get_peers(Config) end end
+       fun(Config) -> fun() -> test_get_peers(Config) end end,
+       fun(Config) ->
+           fun() -> test_get_peers_rejects_non_ip_literals(Config) end
+       end,
+       fun(Config) -> fun() -> test_get_peers_rejects_bad_ports(Config) end end
       ]}}.
 
 setup() ->
@@ -90,6 +94,38 @@ test_get_peers(Config) ->
     ?assertEqual(Result128, ar_http_iface_client:get_peers(Peer)),
 
     ok.
+
+%% Remote peer lists only ever carry dotted-quad IPv4 literals. Names that
+%% need the resolver, and forms only the relaxed inet parser accepts, must
+%% be dropped without a DNS query.
+test_get_peers_rejects_non_ip_literals(Config) ->
+    Peer = proplists:get_value(peer, Config),
+    Table = proplists:get_value(table, Config),
+    lists:foreach(
+        fun(Bad) ->
+            ok = mock_get_peers_response(
+                     Table,
+                     ar_serialize:jsonify([<<"127.0.0.1:1984">>, Bad])),
+            ?assertEqual({Bad, [{127, 0, 0, 1, 1984}]},
+                         {Bad, ar_http_iface_client:get_peers(Peer)})
+        end,
+        [<<"localhost:1984">>, <<"127.1:1984">>, <<"0x7f.0.0.1:1984">>,
+         <<"0177.0.0.1:1984">>]).
+
+%% The port must be an integer in 1..65535 with nothing else in the field.
+test_get_peers_rejects_bad_ports(Config) ->
+    Peer = proplists:get_value(peer, Config),
+    Table = proplists:get_value(table, Config),
+    lists:foreach(
+        fun(Bad) ->
+            ok = mock_get_peers_response(
+                     Table,
+                     ar_serialize:jsonify([<<"127.0.0.1:1984">>, Bad])),
+            ?assertEqual({Bad, [{127, 0, 0, 1, 1984}]},
+                         {Bad, ar_http_iface_client:get_peers(Peer)})
+        end,
+        [<<"127.0.0.1:0">>, <<"127.0.0.1:65536">>, <<"127.0.0.1:-1">>,
+         <<"127.0.0.1:1984abc">>]).
 
 %% Private
 mock_get_peers_response(Table, Body) ->
