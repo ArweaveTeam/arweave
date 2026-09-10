@@ -20,8 +20,9 @@ specs() ->
                   "only).">>,
             long_description =>
                 <<"One above the tip of the state the testnet starts "
-                  "from, and a multiple of 10 so that it is a difficulty "
-                  "retarget height. At this height the difficulty drops "
+                  "from, and a multiple of the difficulty retarget "
+                  "interval so that the difficulty is recomputed there. "
+                  "At this height the difficulty drops "
                   "and the other testnet parameters apply. Required by "
                   "testnet builds.">>
         },
@@ -98,8 +99,9 @@ validate(true, _Configured) ->
         Height when is_integer(Height), Height rem ?RETARGET_BLOCKS =:= 0 ->
             ok;
         _ ->
-            {error, <<"testnet.fork_height must be a multiple of 10, a "
-                      "difficulty retarget height.">>}
+            {error, iolist_to_binary(io_lib:format(
+                "testnet.fork_height must be a multiple of ~B, the "
+                "difficulty retarget interval.", [?RETARGET_BLOCKS]))}
     end;
 validate(false, []) ->
     ok;
