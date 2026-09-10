@@ -39,10 +39,16 @@ is_beyond(BucketEndOffset, Limit) ->
     ar_footprint_record:get_footprint(BucketEndOffset) >= Limit.
 
 %% @doc The number of buckets from the given one to the end of the kept
-%% prefix of its sector, at most Count and at least one.
+%% prefix of its sector, at most Count and at least one. Without a limit
+%% Count is returned as is: the sector end is the caller's cap.
 clip(BucketEndOffset, Count, Limit) ->
-    Footprint = ar_footprint_record:get_footprint(BucketEndOffset),
-    max(1, min(Count, Limit - Footprint)).
+    case is_unlimited(Limit) of
+        true ->
+            Count;
+        false ->
+            Footprint = ar_footprint_record:get_footprint(BucketEndOffset),
+            max(1, min(Count, Limit - Footprint))
+    end.
 
 %% @doc The byte intervals of [Start, End) within the first Limit footprints
 %% of their sectors, as an ar_intervals set: what a module with the limit
@@ -115,12 +121,14 @@ is_beyond_test() ->
     ?assert(is_beyond(1048576, 1)).
 
 clip_test() ->
-    %% Two buckets from the first footprint with the limit at 2, one from
-    %% the second; never below one even past the limit.
-    ?assertEqual(2, clip(262144, 10, 2)),
-    ?assertEqual(1, clip(524288, 10, 2)),
+    %% One bucket from the first footprint with the limit at 1, never below
+    %% one past the limit, and the count as is without a limit (two
+    %% footprints per partition here).
+    ?assertEqual(1, clip(262144, 10, 1)),
     ?assertEqual(1, clip(524288, 10, 1)),
-    ?assertEqual(1, clip(262144, 1, 2)).
+    ?assertEqual(10, clip(262144, 10, 2)),
+    ?assertEqual(10, clip(524288, 10, 2)),
+    ?assertEqual(1, clip(262144, 1, 1)).
 
 kept_intervals_test() ->
     Whole = kept_intervals(0, 2097152, 5),

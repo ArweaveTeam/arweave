@@ -2051,9 +2051,9 @@ test_init_repack_chunk_map_a() ->
                footprint_end = FootprintEnd,
                read_batch_size = BatchSize,
                repack_chunk_map = #{},
-               %% Mainnet-scale offsets under the test geometry: a limit above
-               %% any footprint number, so nothing is clipped.
-               footprint_limit = 1 bsl 40,
+               %% No footprint limit, so nothing is clipped.
+               footprint_limit =
+                   ar_footprint_record:get_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
 
@@ -2084,9 +2084,9 @@ test_init_repack_chunk_map_b() ->
                footprint_end = FootprintEnd,
                read_batch_size = BatchSize,
                repack_chunk_map = #{},
-               %% Mainnet-scale offsets under the test geometry: a limit above
-               %% any footprint number, so nothing is clipped.
-               footprint_limit = 1 bsl 40,
+               %% No footprint limit, so nothing is clipped.
+               footprint_limit =
+                   ar_footprint_record:get_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),
@@ -2120,9 +2120,9 @@ test_init_repack_chunk_map_sector_boundary() ->
                footprint_end = FootprintEnd,
                read_batch_size = BatchSize,
                repack_chunk_map = #{},
-               %% Mainnet-scale offsets under the test geometry: a limit above
-               %% any footprint number, so nothing is clipped.
-               footprint_limit = 1 bsl 40,
+               %% No footprint limit, so nothing is clipped.
+               footprint_limit =
+                   ar_footprint_record:get_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),
