@@ -1564,19 +1564,6 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
       lists:reverse([B | PrevBlocks])
      ),
     ar_disk_cache:write_block(B),
-    %% The account tree now sits at the new tip. Drop the transactions mined in
-    %% the new fork, then return the orphaned ones except those the new fork
-    %% mined too. ar_mempool:add_tx/2 checks the sender's pending total against
-    %% the balance at the tip, and the balance at the new tip already reflects
-    %% every transaction the new fork mined. A fork transaction left pending,
-    %% or returned as an orphan, would be counted a second time and could get
-    %% a lower fee transaction of the same sender dropped as overspending.
-    ForkTXIDs = [ar_block_cache:tx_id(TX)
-        || ForkB <- [B | lists:droplast(PrevBlocks)], TX <- ForkB#block.txs],
-    ar_mempool:drop_txs(get_mempool_txs(ForkTXIDs), false, false),
-    return_orphaned_txs_to_mempool(CurrentH, ForkRootB#block.indep_hash,
-        sets:from_list(ForkTXIDs)),
-    gen_server:cast(self(), {filter_mempool, ar_mempool:get_all_txids()}),
     {BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
     Height = B#block.height,
     {Rate, ScheduledRate} =
@@ -1630,6 +1617,21 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
                             {scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute},
                             {merkle_rebase_support_threshold, get_merkle_rebase_threshold(B)}
                            ]),
+    %% The account tree and the node state both sit at the new tip now.
+    %% ar_mempool:add_tx/2 reads the sender's balance from the account tree
+    %% and the denomination from the current block, so neither may lag here.
+    %% Drop the transactions mined in the new fork, then return the orphaned
+    %% ones except those the new fork mined too: the balance at the new tip
+    %% already reflects every fork transaction, and one left pending or
+    %% returned as an orphan would be counted twice and could get a lower fee
+    %% transaction of the same sender dropped as overspending.
+    ForkBlocks = [B | lists:droplast(PrevBlocks)],
+    ForkTXs = lists:append([ForkB#block.txs || ForkB <- ForkBlocks]),
+    ForkTXIDs = [ar_block_cache:tx_id(TX) || TX <- ForkTXs],
+    ar_mempool:drop_txs(ar_mempool:get_txs(ForkTXIDs), false, false),
+    return_orphaned_txs_to_mempool(CurrentH, ForkRootB#block.indep_hash,
+        sets:from_list(ForkTXIDs)),
+    gen_server:cast(self(), {filter_mempool, ar_mempool:get_all_txids()}),
     SearchSpaceUpperBound = ar_node:get_partition_upper_bound(B#block.height, RecentBI),
     ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
     %% IMPORTANT! Always emit new_tip before checkpoint_block! For example,
@@ -1779,18 +1781,6 @@ ignore_rejected_block(B) ->
 
 carries_v1_denomination0_tx(B) ->
     lists:any(fun ar_tx:is_v1_denomination0_tx/1, B#block.txs).
-
-%% @doc Return the mempool transactions with the given identifiers, skipping
-%% the ones the mempool does not hold.
-get_mempool_txs(TXIDs) ->
-    lists:filtermap(
-        fun(TXID) ->
-            case ar_mempool:get_tx(TXID) of
-                not_found -> false;
-                TX -> {true, TX}
-            end
-        end,
-        TXIDs).
 
 %% @doc Return the transactions of the orphaned blocks between H (inclusive)
 %% and BaseH (exclusive) to the mempool, except the ones in SkipTXIDs.

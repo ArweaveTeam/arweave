@@ -3,7 +3,8 @@
 -include("ar.hrl").
 
 -export([reset/0, load_from_disk/0, add_tx/2, drop_txs/1, drop_txs/3,
-         get_map/0, get_all_txids/0, take_chunk/2, get_tx/1, is_known_tx/1, has_tx/1,
+         get_map/0, get_all_txids/0, take_chunk/2, get_tx/1, get_txs/1,
+         is_known_tx/1, has_tx/1,
          evict_tx_prefix/1,
          get_priority_set/0, get_last_tx_map/0, get_origin_tx_map/0,
          get_propagation_queue/0, del_from_propagation_queue/2]).
@@ -305,6 +306,17 @@ get_tx(TXID) ->
         {TX, _Status, _Timestamp} ->
             TX
     end.
+
+%% @doc Return the transactions in the mempool with the given identifiers.
+get_txs(TXIDs) ->
+    lists:filtermap(
+        fun(TXID) ->
+            case get_tx(TXID) of
+                not_found -> false;
+                TX -> {true, TX}
+            end
+        end,
+        TXIDs).
 
 is_known_tx(TXID) ->
     case ar_ignore_registry:member(TXID) of
