@@ -159,6 +159,96 @@ test_orphaned_high_value_tx_is_remined_after_fork_recovery() ->
     H4B = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H4]),
     ?assertEqual([TXID], H4B#block.txs).
 
+orphaned_tx_is_restored_across_redenomination_test_() ->
+    ar_test_node:test_with_all_nodes_mocked([
+        {ar_pricing, may_be_redenominate, fun forced_redenomination/1}
+    ], fun test_orphaned_tx_is_restored_across_redenomination/0).
+
+test_orphaned_tx_is_restored_across_redenomination() ->
+    %% Mine a transaction on peer1 and a second block on top, both at
+    %% denomination 1. Let main alone redenominate at height 2 and pay the
+    %% sender at height 3, so main's tip stores the sender's account at
+    %% denomination 2. Let peer1 switch to main's fork. Restoring the orphan
+    %% converts the sender's balance at the new tip to the node's current
+    %% denomination, which must already be the new tip's: converting down
+    %% has no clause and would kill the node worker.
+
+    %% Fund the sender and a second wallet that pays the sender later.
+    SenderKey = {_, SenderPub} = ar_wallet:new(),
+    FundingKey = {_, FundingPub} = ar_wallet:new(),
+    Sender = ar_wallet:to_address(SenderPub),
+    [B0] = ar_weave:init([
+        {Sender, ?AR(20), <<>>},
+        {ar_wallet:to_address(FundingPub), ?AR(20), <<>>}
+    ]),
+    ar_test_node:start(B0),
+    ar_test_node:start_peer(peer1, B0),
+    ar_test_node:disconnect_from(peer1),
+    %% peer1: mine the sender's transaction at height 1 and an empty block
+    %% at height 2, both at denomination 1.
+    OrphanedTX = #tx{ id = OrphanedTXID } = ar_test_node:sign_tx(peer1,
+        SenderKey, #{ denomination => 1, reward => ?AR(1) }),
+    ar_test_node:assert_post_tx_to_peer(peer1, OrphanedTX),
+    ar_test_node:mine(peer1),
+    {ok, [{PeerH1, _, _} | _]} = ar_test_await:node_height(peer1, 1),
+    PeerB1 = ar_test_node:remote_call(peer1, ar_test_await, block_stored,
+        [PeerH1]),
+    ?assertEqual(1, PeerB1#block.denomination),
+    ?assertEqual([OrphanedTXID], PeerB1#block.txs),
+    ar_test_node:mine(peer1),
+    {ok, [{PeerH2, _, _} | _]} = ar_test_await:node_height(peer1, 2),
+    PeerB2 = ar_test_node:remote_call(peer1, ar_test_await, block_stored,
+        [PeerH2]),
+    ?assertEqual(1, PeerB2#block.denomination),
+    %% main: mine an empty block at height 1, then the mock redenominates
+    %% and the empty block at height 2 is at denomination 2.
+    ar_test_node:mine(),
+    ?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
+    ar_test_node:mine(),
+    {ok, [{MainH2, _, _} | _]} = ar_test_await:node_height(main, 2),
+    ?assertEqual(2, (ar_test_await:block_stored(MainH2))#block.denomination),
+    %% main: pay the sender at height 3. Accounts are stored in the
+    %% denomination of the previous block, so the payment has to sit below
+    %% a denomination 2 block for the account to be stored at denomination 2.
+    FundingTX = #tx{ id = FundingTXID } = ar_test_node:sign_tx(main,
+        FundingKey, #{ denomination => 1, reward => ?AR(1), target => Sender,
+            quantity => ?AR(1) }),
+    ar_test_node:assert_post_tx_to_peer(main, FundingTX),
+    ar_test_node:mine(),
+    {ok, [{MainH3, _, _} | _]} = ar_test_await:node_height(main, 3),
+    ?assertEqual([FundingTXID],
+        (ar_test_await:block_stored(MainH3))#block.txs),
+    ?assertMatch(#{ Sender := {_, _, 2, _} }, ar_account_tree:get(Sender)),
+    %% Reconnect. peer1 switches to main's heavier fork, which orphans its
+    %% two blocks. The node worker must survive the switch, the tip must be
+    %% at denomination 2, and the orphaned transaction must be back in the
+    %% mempool.
+    Worker = ar_test_node:remote_call(peer1, erlang, whereis,
+        [ar_node_worker]),
+    ar_test_node:connect_to_peer(peer1),
+    ?assertMatch({ok, [{MainH3, _, _} | _]},
+        ar_test_await:node_height(peer1, 3)),
+    ?assertEqual(Worker,
+        ar_test_node:remote_call(peer1, erlang, whereis, [ar_node_worker])),
+    PeerB3 = ar_test_node:remote_call(peer1, ar_node, get_current_block, []),
+    ?assertEqual(2, PeerB3#block.denomination),
+    ?assertEqual([OrphanedTXID],
+        ar_test_node:remote_call(peer1, ar_mempool, get_all_txids, [])),
+    %% The restored transaction is mined on the new fork.
+    ar_test_node:mine(peer1),
+    {ok, [{PeerH4, _, _} | _]} = ar_test_await:node_height(peer1, 4),
+    PeerB4 = ar_test_node:remote_call(peer1, ar_test_await, block_stored,
+        [PeerH4]),
+    ?assertEqual([OrphanedTXID], PeerB4#block.txs).
+
+%% @doc Redenominate at height 2 on main's fork only: main's block 1 is
+%% empty, peer1's block 1 holds the orphaned transaction.
+forced_redenomination(#block{ height = 1, txs = [] }) ->
+    {2, 1};
+forced_redenomination(#block{ denomination = Denomination,
+        redenomination_height = RedenominationHeight }) ->
+    {Denomination, RedenominationHeight}.
+
 orphaned_tx_survives_sibling_mined_in_both_forks_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT,
      fun test_orphaned_tx_survives_sibling_mined_in_both_forks/0}.
