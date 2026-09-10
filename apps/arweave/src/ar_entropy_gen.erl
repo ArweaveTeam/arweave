@@ -23,7 +23,9 @@
                 module_start,
                 module_end,
                 cursor,
-                prepare_status = undefined
+                prepare_status = undefined,
+                %% Footprints of each partition the module keeps.
+                footprint_limit
                }).
 
 -ifdef(AR_TEST).
@@ -275,7 +277,8 @@ init({StoreID, Packing}) ->
                store_id = StoreID,
                packing = Packing,
                module_start = ModuleStart,
-               module_end = PaddedRangeEnd
+               module_end = PaddedRangeEnd,
+               footprint_limit = ar_footprint_limit:get(StoreID)
               },
 
     {ok, State2}.
@@ -349,55 +352,48 @@ do_prepare_entropy(State) ->
     %% Make sure all prior entropy writes are complete.
     ar_entropy_storage:is_ready(StoreID),
 
-    CheckRangeEnd =
-        case BucketEndOffset > ModuleEnd of
-            true ->
-                ar_device_lock:release_lock(prepare, StoreID),
-                ?LOG_INFO([{event, storage_module_entropy_preparation_complete},
-                           {store_id, StoreID}]),
-                ar:console("The storage module ~s is prepared for 2.9 replication.~n",
-                           [StoreID]),
-                ar_chunk_storage:set_entropy_complete(StoreID),
-                complete;
-            false ->
-                false
+    %% A bucket that is not to be prepared, or a failed entropy generation,
+    %% is the outcome itself.
+    Outcome =
+        maybe
+            prepare ?= classify_bucket(BucketEndOffset, State),
+            %% Every entropy needed to encipher the chunk at BucketEndOffset.
+            [_ | _] = Entropies ?=
+                generate_entropies(RewardAddr, BucketEndOffset, false),
+            EntropyKeys = generate_entropy_keys(RewardAddr, BucketEndOffset),
+            EntropyOffsets = entropy_offsets(BucketEndOffset, ModuleEnd),
+            ar_entropy_storage:store_entropy_footprint(
+              StoreID, Entropies, EntropyOffsets,
+              ModuleStart, EntropyKeys, RewardAddr)
         end,
-
-    CheckIsRecorded =
-        case CheckRangeEnd of
-            complete ->
-                complete;
-            false ->
-                ar_entropy_storage:is_entropy_recorded(BucketEndOffset, Packing, StoreID)
-        end,
-
-    StoreEntropy =
-        case CheckIsRecorded of
-            complete ->
-                complete;
-            true ->
-                is_recorded;
-            false ->
-                %% Get all the entropies needed to encipher the chunk at BucketEndOffset.
-                Entropies = generate_entropies(RewardAddr, BucketEndOffset, false),
-                case Entropies of
-                    {error, Reason} ->
-                        {error, Reason};
-                    _ ->
-                        EntropyKeys = generate_entropy_keys(RewardAddr, BucketEndOffset),
-                        EntropyOffsets = entropy_offsets(BucketEndOffset, ModuleEnd),
-                        ar_entropy_storage:store_entropy_footprint(
-                          StoreID, Entropies, EntropyOffsets,
-                          ModuleStart, EntropyKeys, RewardAddr)
-                end
-        end,
-    NextCursor = advance_entropy_offset(BucketEndOffset, Packing, StoreID),
-    case StoreEntropy of
+    case Outcome of
         complete ->
+            ar_device_lock:release_lock(prepare, StoreID),
+            ?LOG_INFO([{event, storage_module_entropy_preparation_complete},
+                       {store_id, StoreID}]),
+            ar:console("The storage module ~s is prepared for 2.9 "
+                       "replication.~n", [StoreID]),
+            ar_chunk_storage:set_entropy_complete(StoreID),
             ar_device_lock:set_device_lock_metric(StoreID, prepare, complete),
             State#state{ prepare_status = complete };
-        is_recorded ->
+        recorded ->
             gen_server:cast(self(), prepare_entropy),
+            NextCursor = advance_entropy_offset(BucketEndOffset, Packing,
+                                                StoreID),
+            State#state{ cursor = NextCursor };
+        beyond_limit ->
+            %% The rest of this sector is past the footprint limit: move to
+            %% the next sector rather than finish. The module's first bucket
+            %% straddles the partition boundary and counts as the previous
+            %% partition's last sector, so the first bucket past the limit
+            %% can come before any footprint of this partition is prepared.
+            %% Once they are, the following sectors are recorded and the
+            %% loop crosses them one lookup each until it passes the module
+            %% end.
+            NextCursor =
+                ar_footprint_record:get_next_sector_start(BucketEndOffset),
+            gen_server:cast(self(), prepare_entropy),
+            store_prepare_cursor(NextCursor, StoreID),
             State#state{ cursor = NextCursor };
         {error, Error} ->
             ?LOG_WARNING([{event, failed_to_store_entropy},
@@ -407,17 +403,42 @@ do_prepare_entropy(State) ->
             arweave_util:cast_after(500, self(), prepare_entropy),
             State;
         ok ->
+            NextCursor = advance_entropy_offset(BucketEndOffset, Packing,
+                                                StoreID),
             gen_server:cast(self(), prepare_entropy),
-            case store_cursor(NextCursor, StoreID) of
-                ok ->
-                    ok;
-                {error, Error} ->
-                    ?LOG_WARNING([{event, failed_to_store_prepare_entropy_cursor},
-                                  {chunk_cursor, NextCursor},
-                                  {store_id, StoreID},
-                                  {reason, io_lib:format("~p", [Error])}])
-            end,
+            store_prepare_cursor(NextCursor, StoreID),
             State#state{ cursor = NextCursor }
+    end.
+
+%% @doc What to do with the bucket: nothing more past the module end, move
+%% past the rest of a sector beyond the footprint limit, skip a footprint
+%% whose entropy is recorded, or prepare it.
+classify_bucket(BucketEndOffset, #state{ module_end = ModuleEnd })
+        when BucketEndOffset > ModuleEnd ->
+    complete;
+classify_bucket(BucketEndOffset, State) ->
+    #state{ footprint_limit = Limit, packing = Packing,
+            store_id = StoreID } = State,
+    case ar_footprint_limit:is_beyond(BucketEndOffset, Limit) of
+        true ->
+            beyond_limit;
+        false ->
+            case ar_entropy_storage:is_entropy_recorded(BucketEndOffset,
+                                                        Packing, StoreID) of
+                true -> recorded;
+                false -> prepare
+            end
+    end.
+
+store_prepare_cursor(Cursor, StoreID) ->
+    case store_cursor(Cursor, StoreID) of
+        ok ->
+            ok;
+        {error, Error} ->
+            ?LOG_WARNING([{event, failed_to_store_prepare_entropy_cursor},
+                          {chunk_cursor, Cursor},
+                          {store_id, StoreID},
+                          {reason, io_lib:format("~p", [Error])}])
     end.
 
 

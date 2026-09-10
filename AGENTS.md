@@ -47,8 +47,11 @@ see [doc/workspaces.md](doc/workspaces.md).
   everyone.
 - **`tmp/`** is for throwaway scratch — one-off diagnostic scripts, experiments,
   ad-hoc data dumps. Files under `tmp/` are gitignored.
-- Planning notes and investigation writeups also go under `tmp/` unless the user
-  explicitly asks to add them to the repo.
+- Plans, design proposals and investigation writeups are best delivered as a
+  published page the user can share, provided it is private by default (in
+  Claude Code: a claude.ai artifact). If the tool cannot publish a
+  private-by-default page, write them under `tmp/` instead. Add one to the
+  repo only when the user explicitly asks for a file.
 - When in doubt, start in `tmp/` and graduate to `scripts/` only once the
   script's role is permanent.
 

@@ -17,9 +17,9 @@ reward_history_length(Height) ->
         Height - ar_fork:height_2_6() + 1, %% included for compatibility with unit tests
         case Height >= ar_fork:height_2_8() of
             true ->
-                ar_testnet:reward_history_blocks(Height) + ar_block:get_consensus_window_size();
+                ar_consensus:reward_history_blocks(Height) + ar_block:get_consensus_window_size();
             false ->
-                ar_testnet:legacy_reward_history_blocks(Height) + ar_block:get_consensus_window_size()
+                ar_consensus:legacy_reward_history_blocks(Height) + ar_block:get_consensus_window_size()
         end
     ).
 
@@ -45,7 +45,7 @@ buffered_reward_history_length(Height) ->
             reward_history_length(Height - expected_hashes_length(Height)),
             reward_history_length(Height)
         ),
-        ar_testnet:locked_rewards_blocks(Height)
+        ar_consensus:locked_rewards_blocks(Height)
     ).
 
 %% @doc Add the corresponding reward history to every block record. We keep
@@ -68,7 +68,7 @@ get_locked_rewards(B) ->
 
 %% @doc Trim RewardHistory to just the locked rewards.
 trim_locked_rewards(Height, RewardHistory) ->
-    LockRewardsLength = ar_testnet:locked_rewards_blocks(Height),
+    LockRewardsLength = ar_consensus:locked_rewards_blocks(Height),
     lists:sublist(RewardHistory, LockRewardsLength).
 
 %% @doc Trim RewardHistory to the values that will be stored in the block. This is the
@@ -203,9 +203,9 @@ apply_rewards(PrevB, Accounts) ->
     %% happen on testnet.
     Height = PrevB#block.height,
     NumRewardsToApply = max(0,
-            ar_testnet:locked_rewards_blocks(Height) -
-            ar_testnet:locked_rewards_blocks(Height + 1) + 1),
-    true = NumRewardsToApply == 1 orelse ar_testnet:is_testnet(),
+            ar_consensus:locked_rewards_blocks(Height) -
+            ar_consensus:locked_rewards_blocks(Height + 1) + 1),
+    true = NumRewardsToApply == 1 orelse ar_consensus:is_testnet(),
 
     %% Get the last NumRewardsToApply elements of the LockedRewards list in reverse order.
     %% Normally this will be a list with a single element: the last element in the

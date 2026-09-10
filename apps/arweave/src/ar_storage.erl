@@ -13,6 +13,7 @@
         read_wallet_list/1, read_wallet_list/2, fold_wallet_list/4, write_wallet_list/2,
         delete_blacklisted_tx/1, lookup_tx_filename/1, lookup_tx_filename/2, open_databases/0,
         open_start_from_state_databases/1, close_start_from_state_databases/0,
+        get_db_name/2,
         wallet_list_filepath/1, wallet_list_filepath/2, tx_filepath/1, tx_filepath/2,
         tx_data_filepath/1, tx_data_filepath/2, read_tx_file/1,
         read_migrated_v1_tx_file/1, read_migrated_v1_tx_file/2, ensure_directories/1, write_file_atomic/2,
@@ -1377,6 +1378,8 @@ ensure_directories(DataDir) ->
     filelib:ensure_dir(filename:join(DataDir, ?HASH_LIST_DIR) ++ "/"),
     filelib:ensure_dir(filename:join([DataDir, ?TX_DIR, "migrated_v1"]) ++ "/").
 
+%% @doc Return the name the node database DBName is opened under when it is
+%% read from the node's own storage (not_set) or a start_from_state directory.
 get_db_name(DBName, not_set) ->
     DBName;
 get_db_name(DBName, _CustomDir) ->

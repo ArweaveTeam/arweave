@@ -160,8 +160,8 @@ then
 	fi
 
 	export REL_VSN
-	export REL_PATH="${BUILD_DIR}/default/rel/${REL_NAME}/${REL_VSN}"
-	export REL_PATH_ALT="${BUILD_DIR}/default/rel/${REL_NAME}/releases/${REL_VSN}"
+	export REL_PATH="${BUILD_DIR}/${ARWEAVE_BUILD_TARGET:-default}/rel/${REL_NAME}/${REL_VSN}"
+	export REL_PATH_ALT="${BUILD_DIR}/${ARWEAVE_BUILD_TARGET:-default}/rel/${REL_NAME}/releases/${REL_VSN}"
 	if ! test -e ${REL_PATH}
 	then
 		echo "error: ${REL_PATH} does not exist" 1>&2
@@ -184,7 +184,9 @@ fi
 if [ -d "${RELEASE_ROOT_DIR}/releases/${REL_VSN}" ] && [ ! -L "${RELEASE_ROOT_DIR}/releases" ]; then
     export ROOTDIR="$RELEASE_ROOT_DIR"
 else
-    export ROOTDIR="${BUILD_DIR}/default/rel/${REL_NAME}"
+    # The rebar3 profile the release was built with: default, prod or
+    # testnet (`bin/arweave build` reads the same variable).
+    export ROOTDIR="${BUILD_DIR}/${ARWEAVE_BUILD_TARGET:-default}/rel/${REL_NAME}"
 fi
 
 export REL_DIR="${ROOTDIR}/releases/${REL_VSN}"

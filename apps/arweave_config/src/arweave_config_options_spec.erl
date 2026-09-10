@@ -48,6 +48,7 @@ option_modules() ->
         arweave_config_options_verify,
         arweave_config_options_defragmentation,
         arweave_config_options_genesis,
+        arweave_config_options_testnet,
         arweave_config_options_config
     ].
 

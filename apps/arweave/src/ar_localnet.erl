@@ -179,10 +179,13 @@ store_snapshot_data3(BI, Height, SearchDepth, SnapshotDir) ->
             BI2 = lists:nthtail(Skipped, BI),
             Height2 = Height - Skipped,
             RewardHistoryBI = ar_rewards:interim_reward_history_bi(Height2, BI2),
-            BlockTimeHistoryBI = block_time_history_bi(BI2),
+            BlockTimeHistoryBI = ar_snapshot:block_time_history_bi(BI2),
             io:format("  Reward history: ~B entries~n", [length(RewardHistoryBI)]),
             io:format("  Block time history: ~B entries~n", [length(BlockTimeHistoryBI)]),
-            case store_snapshot_blocks_from_list(Blocks) of
+            case ar_snapshot:store_blocks(Blocks, not_set,
+                    #{ block => block_db,
+                       tx_confirmation => tx_confirmation_db },
+                    "Startup copy") of
                 {ok, TxIds} ->
                     io:format("  Tx headers to copy: ~B~n", [length(TxIds)]),
                     case store_snapshot_tx_headers(TxIds, SnapshotDir) of
@@ -466,7 +469,7 @@ open_snapshot_databases(SnapshotDir) ->
 
 %% @doc Create a new snapshot directory.
 create_snapshot(SnapshotDir, DataDir, NewSnapshotDir) ->
-    case ensure_snapshot_dir(NewSnapshotDir) of
+    case ar_snapshot:ensure_dir(NewSnapshotDir) of
         ok ->
             case maybe_backfill_snapshot_data(SnapshotDir) of
                 ok ->
@@ -503,462 +506,19 @@ maybe_backfill_snapshot_data(SnapshotDir) ->
             Error
     end.
 
-%% @doc Create the RocksDB databases for a new snapshot: open fresh databases,
-%% populate them with the block index, recent blocks, tx headers, block time history,
-%% and account tree, then verify the result.
+%% @doc Create the RocksDB databases of a new snapshot from the block index
+%% and storage of the running node.
 create_snapshot_rocksdb(NewSnapshotDir) ->
     case ar_node:get_block_index() of
         [] ->
             {error, empty_block_index};
         BI ->
-            Height = length(BI) - 1,
-            SearchDepth = min(Height, ?LOCALNET_START_FROM_STATE_SEARCH_DEPTH),
-            case open_snapshot_dbs(NewSnapshotDir) of
-                {ok, SnapshotDbs} ->
-                    Result =
-                        create_snapshot_rocksdb2(
-                          BI,
-                          Height,
-                          SearchDepth,
-                          SnapshotDbs
-                         ),
-                    close_snapshot_dbs(SnapshotDbs),
-                    Result;
+            case ar_snapshot:read_state(BI, not_set) of
+                {ok, State} ->
+                    ar_snapshot:write(NewSnapshotDir, State, not_set);
                 {error, _} = Error ->
                     Error
             end
-    end.
-
-create_snapshot_rocksdb2(BI, Height, SearchDepth, SnapshotDbs) ->
-    case write_block_index_snapshot(BI, maps:get(block_index, SnapshotDbs)) of
-        ok ->
-            create_snapshot_rocksdb3(
-              BI,
-              Height,
-              SearchDepth,
-              SnapshotDbs
-             );
-        {error, _} = Error ->
-            Error
-    end.
-
-create_snapshot_rocksdb3(BI, Height, SearchDepth, SnapshotDbs) ->
-    case read_recent_blocks_local(BI, SearchDepth) of
-        not_found ->
-            {error, block_headers_not_found};
-        {Skipped, Blocks} ->
-            io:format("Snapshot: recent blocks ~B (skipped: ~B)~n",
-                      [length(Blocks), Skipped]),
-            BI2 = lists:nthtail(Skipped, BI),
-            Height2 = Height - Skipped,
-            RewardHistoryBI = ar_rewards:interim_reward_history_bi(Height2, BI2),
-            BlockTimeHistoryBI = block_time_history_bi(BI2),
-            case store_snapshot_blocks_in_snapshot(Blocks, SnapshotDbs) of
-                {ok, TxIds} ->
-                    create_snapshot_rocksdb4(
-                      BI,
-                      Blocks,
-                      RewardHistoryBI,
-                      BlockTimeHistoryBI,
-                      SnapshotDbs,
-                      TxIds,
-                      SearchDepth
-                     );
-                {error, _} = Error ->
-                    Error
-            end
-    end.
-
-create_snapshot_rocksdb4(BI, Blocks, RewardHistoryBI, BlockTimeHistoryBI, SnapshotDbs, TxIds,
-                         SearchDepth) ->
-    case store_tx_headers(TxIds, maps:get(tx, SnapshotDbs)) of
-        ok ->
-            case copy_history_entries(
-                   RewardHistoryBI,
-                   reward_history_db,
-                   maps:get(reward_history, SnapshotDbs),
-                   reward_history
-                  ) of
-                ok ->
-                    case copy_history_entries(
-                           BlockTimeHistoryBI,
-                           block_time_history_db,
-                           maps:get(block_time_history, SnapshotDbs),
-                           block_time_history
-                          ) of
-                        ok ->
-                            case store_latest_wallet_list_from_blocks(Blocks,
-                                                                      maps:get(account_tree, SnapshotDbs), SearchDepth) of
-                                ok ->
-                                    verify_snapshot_rocksdb(BI, Blocks,
-                                                            maps:get(block_index, SnapshotDbs),
-                                                            maps:get(block, SnapshotDbs),
-                                                            maps:get(account_tree, SnapshotDbs));
-                                {error, _} = Error ->
-                                    io:format("Snapshot: error storing wallet list: ~p~n", [Error]),
-                                    Error
-                            end;
-                        {error, _} = Error ->
-                            io:format("Snapshot: error copying block time history: ~p~n", [Error]),
-                            Error
-                    end;
-                {error, _} = Error ->
-                    io:format("Snapshot: error copying reward history: ~p~n", [Error]),
-                    Error
-            end;
-        {error, _} = Error ->
-            io:format("Snapshot: error storing tx headers: ~p~n", [Error]),
-            Error
-    end.
-
-%% @doc Open a fresh set of RocksDB databases (tx_confirmation, tx, block,
-%% reward_history, block_time_history, block_index, account_tree) under
-%% NewSnapshotDir for writing. Return {ok, DbMap} where DbMap contains
-%% named handles keyed by atom. We cannot use ar_storage:open_databases/0
-%% since it always targets the data_dir and would collide with the
-%% running node's DB names.
-open_snapshot_dbs(NewSnapshotDir) ->
-    RocksDir = filename:join([NewSnapshotDir, ?ROCKS_DB_DIR]),
-    Dbs = [
-           {tx_confirmation, snapshot_tx_confirmation_db, "ar_storage_tx_confirmation_db"},
-           {tx, snapshot_tx_db, "ar_storage_tx_db"},
-           {block, snapshot_block_db, "ar_storage_block_db"},
-           {reward_history, snapshot_reward_history_db, "reward_history_db"},
-           {block_time_history, snapshot_block_time_history_db, "block_time_history_db"},
-           {block_index, snapshot_block_index_db, "block_index_db"},
-           {account_tree, snapshot_account_tree_db, "account_tree_db"}
-          ],
-    open_snapshot_write_dbs(Dbs, RocksDir, #{}, []).
-
-%% @doc Recursively open each RocksDB database in the list. On failure, close
-%% any already-opened databases before returning the error.
-open_snapshot_write_dbs([], _RocksDir, DbMap, Opened) ->
-    {ok, DbMap#{ opened => Opened }};
-open_snapshot_write_dbs([{Key, Name, DirName} | Rest], RocksDir, DbMap, Opened) ->
-    Path = filename:join([RocksDir, DirName]),
-    case ar_kv:open(#{ path => Path, name => Name }) of
-        ok ->
-            open_snapshot_write_dbs(Rest, RocksDir, DbMap#{ Key => Name }, [Name | Opened]);
-        {error, _} = Error ->
-            close_snapshot_dbs(DbMap#{ opened => Opened }),
-            Error
-    end.
-
-%% @doc Close all RocksDB databases that were opened for a snapshot.
-close_snapshot_dbs(SnapshotDbs) ->
-    Opened = maps:get(opened, SnapshotDbs, []),
-    lists:foreach(fun ar_kv:close/1, Opened).
-
-%% @doc Extract the portion of the block index needed for the block time history:
-%% history_length + consensus_window_size entries from the tip.
-block_time_history_bi(BI) ->
-    lists:sublist(BI,
-                  ar_block_time_history:history_length() + ar_block:get_consensus_window_size()).
-
-%% @doc Serialize the full block index into a snapshot RocksDB database, keyed
-%% by height. Each entry stores {H, WeaveSize, TXRoot, PrevH} so the chain
-%% linkage can be validated on load.
-write_block_index_snapshot(BI, SnapshotBlockIndexDb) ->
-    write_block_index_snapshot2(0, <<>>, lists:reverse(BI), SnapshotBlockIndexDb).
-
-write_block_index_snapshot2(_Height, _PrevH, [], _SnapshotBlockIndexDb) ->
-    ok;
-write_block_index_snapshot2(Height, PrevH, [{H, WeaveSize, TXRoot} | BI],
-                            SnapshotBlockIndexDb) ->
-    Bin = term_to_binary({H, WeaveSize, TXRoot, PrevH}),
-    case ar_kv:put(SnapshotBlockIndexDb, << Height:256 >>, Bin) of
-        ok ->
-            write_block_index_snapshot2(Height + 1, H, BI, SnapshotBlockIndexDb);
-        Error ->
-            Error
-    end.
-
-%% @doc Store blocks and their tx confirmation entries into the snapshot's
-%% RocksDB databases (block_db and tx_confirmation_db).
-store_snapshot_blocks_in_snapshot(Blocks, SnapshotDbs) ->
-    BlockDb = maps:get(block, SnapshotDbs),
-    TxConfirmationDb = maps:get(tx_confirmation, SnapshotDbs),
-    store_snapshot_blocks_with_dbs(Blocks, BlockDb, TxConfirmationDb, "Snapshot").
-
-%% @doc Serialize a single block (replacing full tx records with just their IDs)
-%% and write it to the given block database, keyed by indep_hash.
-store_block_snapshot(B, SnapshotBlockDb) ->
-    TxIds = lists:map(fun tx_id/1, B#block.txs),
-    BlockBin = ar_serialize:block_to_binary(B#block{ txs = TxIds }),
-    ar_kv:put(SnapshotBlockDb, B#block.indep_hash, BlockBin).
-
-%% @doc Extract the transaction ID from either a #tx{} record or a raw binary.
-tx_id(#tx{ id = TXID }) ->
-    TXID;
-tx_id(TXID) ->
-    TXID.
-
-%% @doc Copy transaction confirmation entries from the tx_confirmation_db
-%% to the snapshot database. If an entry is missing from the storage, build
-%% one from the given Height and BlockHash.
-copy_tx_confirmations([], _Height, _BlockHash, _SnapshotTxConfDb) ->
-    ok;
-copy_tx_confirmations([TXID | Rest], Height, BlockHash, SnapshotTxConfDb) ->
-    case tx_id(TXID) of
-        TXID2 when is_binary(TXID2) ->
-            case ar_kv:get(tx_confirmation_db, TXID2) of
-                {ok, Bin} ->
-                    case ar_kv:put(SnapshotTxConfDb, TXID2, Bin) of
-                        ok ->
-                            copy_tx_confirmations(Rest, Height, BlockHash, SnapshotTxConfDb);
-                        Error ->
-                            Error
-                    end;
-                not_found ->
-                    case ar_kv:put(SnapshotTxConfDb, TXID2, term_to_binary({Height, BlockHash})) of
-                        ok ->
-                            copy_tx_confirmations(Rest, Height, BlockHash, SnapshotTxConfDb);
-                        Error ->
-                            Error
-                    end;
-                {error, _} = Error ->
-                    Error
-            end;
-        _ ->
-            copy_tx_confirmations(Rest, Height, BlockHash, SnapshotTxConfDb)
-    end.
-
-%% @doc Read transactions from the node and write their headers (stripping
-%% data from v2 format) to the given snapshot tx database.
-store_tx_headers(TxIds, SnapshotTxDb) ->
-    lists:foldl(
-      fun(TXID, Acc) ->
-              case Acc of
-                  ok ->
-                      case read_tx_local(TXID) of
-                          #tx{} = TX ->
-                              store_tx_header_snapshot(TX, SnapshotTxDb);
-                          unavailable ->
-                              {error, {tx_unavailable, tx_id(TXID)}};
-                          Error ->
-                              {error, {tx_unavailable, tx_id(TXID), Error}}
-                      end;
-                  {error, _} = Error ->
-                      Error
-              end
-      end,
-      ok,
-      TxIds
-     ).
-
-%% @doc Write a single tx header to a database. For v2 transactions, strip the
-%% data field (it's stored separately as chunks); v1 transactions keep their data
-%% inline.
-store_tx_header_snapshot(TX, SnapshotTxDb) ->
-    TX2 =
-        case TX#tx.format of
-            1 ->
-                TX;
-            _ ->
-                TX#tx{ data = <<>> }
-        end,
-    ar_kv:put(SnapshotTxDb, TX2#tx.id, ar_serialize:tx_to_binary(TX2)).
-
-%% @doc Copy history entries (reward_history or block_time_history) from SourceDb
-%% to DestDb for each block hash in HistoryBI. Stops on the first error.
-copy_history_entries(HistoryBI, SourceDb, DestDb, Label) ->
-    lists:foldl(
-      fun({BH, _, _}, Acc) ->
-              case Acc of
-                  ok ->
-                      case ar_kv:get(SourceDb, BH) of
-                          {ok, Bin} ->
-                              ar_kv:put(DestDb, BH, Bin);
-                          not_found ->
-                              {error, {Label, not_found, BH}};
-                          {error, Reason} ->
-                              {error, {Label, Reason, BH}}
-                      end;
-                  {error, _} = Error ->
-                      Error
-              end
-      end,
-      ok,
-      HistoryBI
-     ).
-
-%% @doc Find the most recent readable wallet tree from the block list, verify
-%% its root hash matches the block's wallet_list field, then write the account
-%% tree nodes to the snapshot account_tree database.
-store_latest_wallet_list_from_blocks(Blocks, SnapshotAccountTreeDb, SearchDepth) ->
-    case find_wallet_tree_with_search(Blocks, SearchDepth, fun ar_storage:read_wallet_list/1) of
-        {ok, {B, Tree}} ->
-            {RootHash, _UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
-            case RootHash == B#block.wallet_list of
-                true ->
-                    store_account_tree_update_snapshot(
-                      B#block.height,
-                      RootHash,
-                      UpdateMap,
-                      SnapshotAccountTreeDb
-                     );
-                false ->
-                    {error, {wallet_list_root_mismatch, RootHash, B#block.wallet_list}}
-            end;
-        not_found ->
-            {error, wallet_list_not_found}
-    end.
-
-%% @doc Search through the block list to find one whose account tree can be
-%% successfully read. Start at the consensus-window-offset block and walks
-%% backward, skipping up to SearchDepth blocks. Return {ok, {Block, Tree}}
-%% or not_found.
-find_wallet_tree_with_search([], _SearchDepth, _ReadWalletFun) ->
-    not_found;
-find_wallet_tree_with_search(Blocks, SearchDepth, ReadWalletFun) ->
-    find_wallet_tree_with_search(Blocks, SearchDepth, 0, ReadWalletFun).
-
-find_wallet_tree_with_search(_Blocks, Skipped, Skipped, _ReadWalletFun) ->
-    not_found;
-find_wallet_tree_with_search(Blocks, SearchDepth, Skipped, ReadWalletFun) ->
-    {IsLast, B} =
-        case length(Blocks) >= ar_block:get_consensus_window_size() of
-            true ->
-                {false, lists:nth(ar_block:get_consensus_window_size(), Blocks)};
-            false ->
-                {true, lists:last(Blocks)}
-        end,
-    case ReadWalletFun(B#block.wallet_list) of
-        {ok, Tree} ->
-            {ok, {B, Tree}};
-        _ ->
-            case IsLast of
-                true ->
-                    not_found;
-                false ->
-                    find_wallet_tree_with_search(tl(Blocks), SearchDepth, Skipped + 1, ReadWalletFun)
-            end
-    end.
-
-%% @doc Write account tree nodes from the update map to the snapshot database.
-%% Each key is {Hash, Prefix} and the value is the tree node data. Existing
-%% entries are not overwritten.
-store_account_tree_update_snapshot(_Height, _RootHash, Map, SnapshotAccountTreeDb) ->
-    maps:fold(
-      fun({H, Prefix}, Value, Acc) ->
-              case Acc of
-                  ok ->
-                      Prefix2 =
-                          case Prefix of
-                              root ->
-                                  <<>>;
-                              _ ->
-                                  Prefix
-                          end,
-                      DBKey = << H/binary, Prefix2/binary >>,
-                      case ar_kv:get(SnapshotAccountTreeDb, DBKey) of
-                          not_found ->
-                              ar_kv:put(SnapshotAccountTreeDb, DBKey, term_to_binary(Value));
-                          {ok, _} ->
-                              ok;
-                          {error, Reason} ->
-                              {error, {account_tree_read_failed, Reason}}
-                      end;
-                  {error, _} = Error ->
-                      Error
-              end
-      end,
-      ok,
-      Map
-     ).
-
-%% @doc Validate a completed snapshot by checking: (1) the block index length
-%% matches, (2) all recent blocks exist in the snapshot block db, and (3) at
-%% least one account tree root is present in the account tree db.
-verify_snapshot_rocksdb(BI, Blocks, SnapshotBlockIndexDb, SnapshotBlockDb,
-                        SnapshotAccountTreeDb) ->
-    Height = length(BI) - 1,
-    case read_block_index_from_db(SnapshotBlockIndexDb) of
-        not_found ->
-            {error, snapshot_block_index_not_found};
-        SnapshotBI ->
-            case length(SnapshotBI) == length(BI) of
-                true ->
-                    case verify_recent_blocks_from_blocks(Blocks, SnapshotBlockDb) of
-                        ok ->
-                            case validate_wallet_root_from_blocks(Blocks, SnapshotAccountTreeDb) of
-                                ok ->
-                                    ok;
-                                {error, _} = Error ->
-                                    Error
-                            end;
-                        {error, _} = Error ->
-                            Error
-                    end;
-                false ->
-                    {error, {snapshot_block_index_length_mismatch, Height}}
-            end
-    end.
-
-%% @doc Read the complete block index from a RocksDB database and return it as
-%% a list of {H, WeaveSize, TXRoot} tuples (newest-first). Validates the PrevH
-%% chain linkage during reconstruction.
-read_block_index_from_db(DbName) ->
-    case ar_kv:get_prev(DbName, <<"a">>) of
-        none ->
-            not_found;
-        {ok, << Height:256 >>, _V} ->
-            {ok, Map} = ar_kv:get_range(DbName, << 0:256 >>, << Height:256 >>),
-            read_block_index_from_map(Map, 0, Height, <<>>, [])
-    end.
-
-read_block_index_from_map(_Map, Height, End, _PrevH, BI) when Height > End ->
-    BI;
-read_block_index_from_map(Map, Height, End, PrevH, BI) ->
-    V = maps:get(<< Height:256 >>, Map, not_found),
-    case V of
-        not_found ->
-            not_found;
-        _ ->
-            case binary_to_term(V, [safe]) of
-                {H, WeaveSize, TXRoot, PrevH} ->
-                    read_block_index_from_map(Map, Height + 1, End, H,
-                                              [{H, WeaveSize, TXRoot} | BI]);
-                {_, _, _, _} ->
-                    not_found
-            end
-    end.
-
-%% @doc Verify that every block in the list exists in the snapshot block database.
-verify_recent_blocks_from_blocks([], _SnapshotBlockDb) ->
-    ok;
-verify_recent_blocks_from_blocks([B | Rest], SnapshotBlockDb) ->
-    BH = B#block.indep_hash,
-    case ar_kv:get(SnapshotBlockDb, BH) of
-        {ok, _} ->
-            verify_recent_blocks_from_blocks(Rest, SnapshotBlockDb);
-        not_found ->
-            {error, {snapshot_block_missing, BH}};
-        {error, _} = Error ->
-            Error
-    end.
-
-%% @doc Check that at least one block's wallet_list root hash is present in the
-%% snapshot account tree database.
-validate_wallet_root_from_blocks([], _SnapshotAccountTreeDb) ->
-    {error, wallet_list_not_found};
-validate_wallet_root_from_blocks([B | Rest], SnapshotAccountTreeDb) ->
-    WalletList = B#block.wallet_list,
-    case ar_kv:get_prev(SnapshotAccountTreeDb, << WalletList/binary >>) of
-        none ->
-            validate_wallet_root_from_blocks(Rest, SnapshotAccountTreeDb);
-        {ok, _, _} ->
-            ok
-    end.
-
-%% @doc If TXID is already a #tx{} record, return it directly; otherwise read
-%% the transaction from local storage.
-read_tx_local(TXID) ->
-    case TXID of
-        #tx{} = TX ->
-            TX;
-        _ ->
-            ar_storage:read_tx(TXID)
     end.
 
 %% @doc Read recent blocks from the node's local storage.
@@ -970,51 +530,6 @@ read_recent_blocks_from_snapshot(BI, SearchDepth, SnapshotDir) ->
     ar_node:read_recent_blocks(BI, SearchDepth, SnapshotDir).
 
 
-%% @doc Store blocks into the node's block_db and tx_confirmation_db.
-store_snapshot_blocks_from_list(Blocks) ->
-    store_snapshot_blocks_with_dbs(Blocks, block_db, tx_confirmation_db, "Startup copy").
-
-%% @doc Serialize and store a list of blocks and their tx
-%% confirmation entries into the given databases. Return {ok, TXIDList} with
-%% the deduplicated set of all tx IDs across the stored blocks.
-store_snapshot_blocks_with_dbs(Blocks, BlockDb, TxConfirmationDb, LogPrefix) ->
-    case lists:foldl(
-           fun(B, Acc) ->
-                   case Acc of
-                       {ok, TxIdSet} ->
-                           io:format("~s: block ~s height ~B~n",
-                                     [LogPrefix, arweave_util:encode(B#block.indep_hash), B#block.height]),
-                           case store_block_snapshot(B, BlockDb) of
-                               ok ->
-                                   TxIds = lists:map(fun tx_id/1, B#block.txs),
-                                   case copy_tx_confirmations(TxIds, B#block.height,
-                                                              B#block.indep_hash, TxConfirmationDb) of
-                                       ok ->
-                                           {ok, sets:union(TxIdSet, sets:from_list(TxIds))};
-                                       {error, _} = Error ->
-                                           io:format("~s: error confirmations for block ~s: ~p~n",
-                                                     [LogPrefix, arweave_util:encode(B#block.indep_hash), Error]),
-                                           Error
-                                   end;
-                               {error, _} = Error ->
-                                   io:format("~s: error storing block ~s: ~p~n",
-                                             [LogPrefix, arweave_util:encode(B#block.indep_hash), Error]),
-                                   Error
-                           end;
-                       {error, _} = Error ->
-                           Error
-                   end
-           end,
-           {ok, sets:new()},
-           Blocks
-          ) of
-        {ok, TxIdSet} ->
-            {ok, sets:to_list(TxIdSet)};
-        {error, _} = Error ->
-            Error
-    end.
-
-
 %% @doc Copy tx headers into tx_db during startup. First check if
 %% the entry already exists; if not, read the tx from the snapshot directory
 %% as a fallback.
@@ -1024,14 +539,14 @@ store_snapshot_tx_headers(TxIds, SnapshotDir) ->
       fun(TXID, Acc) ->
               case Acc of
                   ok ->
-                      TXID2 = tx_id(TXID),
+                      TXID2 = ar_snapshot:tx_id(TXID),
                       case ar_kv:get(tx_db, TXID2) of
                           {ok, _} ->
                               ok;
                           not_found ->
                               case ar_storage:read_tx(TXID2, SnapshotDir) of
                                   #tx{} = TX ->
-                                      store_tx_header_snapshot(TX, tx_db);
+                                      ar_snapshot:store_tx_header(TX, tx_db);
                                   unavailable ->
                                       io:format("Startup copy: missing tx header ~s~n",
                                                 [arweave_util:encode(TXID2)]),
@@ -1055,8 +570,7 @@ store_snapshot_tx_headers(TxIds, SnapshotDir) ->
      ).
 
 %% @doc Copy block time history and reward history entries from SourceDB to DestDB
-%% during startup. Unlike copy_history_entries/4, this skips entries that
-%% already exist in the destination.
+%% during startup, skipping entries that already exist in the destination.
 store_snapshot_history_entries(HistoryBI, SourceDb, DestDb, Label) ->
     lists:foldl(
       fun({BH, _, _}, Acc) ->
@@ -1091,31 +605,15 @@ store_snapshot_history_entries(HistoryBI, SourceDb, DestDb, Label) ->
       HistoryBI
      ).
 
-%% @doc Read an account tree from the snapshot directory,
-%% verify the root hash, and store the account tree nodes in the local
-%% account_tree_db.
+%% @doc Read an account tree from the local storage or the snapshot
+%% directory, verify the root hash, and store the account tree nodes in the
+%% local account_tree_db.
 store_snapshot_wallet_list(Blocks, SnapshotDir, SearchDepth) ->
-    case find_wallet_tree_with_search(Blocks, SearchDepth,
-                                      fun(WalletList) -> read_wallet_list_from_snapshot(WalletList, SnapshotDir) end) of
-        {ok, {B, Tree}} ->
-            {RootHash, _UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
-            io:format("Startup copy: wallet list root ~s height ~B~n",
-                      [arweave_util:encode(RootHash), B#block.height]),
-            case RootHash == B#block.wallet_list of
-                true ->
-                    store_account_tree_update_snapshot(
-                      B#block.height,
-                      RootHash,
-                      UpdateMap,
-                      account_tree_db
-                     );
-                false ->
-                    {error, {wallet_list_root_mismatch, RootHash, B#block.wallet_list}}
-            end;
-        not_found ->
-            {error, wallet_list_not_found}
-    end.
-
+    ReadWalletList = fun(WalletList) ->
+        read_wallet_list_from_snapshot(WalletList, SnapshotDir)
+    end,
+    ar_snapshot:store_wallet_list(Blocks, SearchDepth, ReadWalletList,
+            account_tree_db).
 
 %% @doc Try to read a wallet list from local storage first; fall back to the
 %% snapshot directory if not available locally.
@@ -1125,18 +623,6 @@ read_wallet_list_from_snapshot(WalletList, SnapshotDir) ->
             {ok, Tree};
         _ ->
             ar_storage:read_wallet_list(WalletList, SnapshotDir)
-    end.
-
-%% @doc Create the snapshot output directory. Fail if the directory already
-%% exists (to avoid accidentally overwriting a previous snapshot).
-ensure_snapshot_dir(NewSnapshotDir) ->
-    case file:read_file_info(NewSnapshotDir) of
-        {ok, _} ->
-            {error, {snapshot_dir_exists, NewSnapshotDir}};
-        {error, enoent} ->
-            filelib:ensure_dir(filename:join(NewSnapshotDir, "placeholder") ++ "/");
-        {error, Reason} ->
-            {error, {snapshot_dir_unavailable, Reason}}
     end.
 
 %% @doc Copy a named subdirectory or file into TargetDir. Tries PrimaryDir

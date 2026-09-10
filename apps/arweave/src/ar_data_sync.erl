@@ -714,6 +714,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
                block_index = CurrentBI,
                weave_size = WeaveSize,
                store_id = StoreID,
+               footprint_limit = ar_footprint_limit:get(StoreID),
                sync_status = init_sync_status(StoreID)
               },
     ?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID},
@@ -742,6 +743,7 @@ init({StoreID, RepackInPlacePacking}) ->
     RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
     State0 = #data_sync_state{
                 store_id = StoreID,
+                footprint_limit = ar_footprint_limit:get(StoreID),
                 range_start = RangeStart2,
                 range_end = RangeEnd2,
                 %% weave_size will be set on join (and forwarded to ar_peer_sync
@@ -2187,11 +2189,10 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
     end.
 
 pack_and_store_chunk(Args = {_, AbsoluteEndOffset, _, _, _, _, _, _, _, _, _, _},
-                     #data_sync_state{ store_id = StoreID } = State) ->
-    case AbsoluteEndOffset > ar_disk_pool:get_threshold() of
-        true ->
-            %% We do not put data into storage modules unless it is well confirmed.
-            Reason = chunk_is_above_disk_pool_threshold,
+                     #data_sync_state{ store_id = StoreID,
+                                       footprint_limit = Limit } = State) ->
+    case should_skip_chunk(AbsoluteEndOffset, Limit) of
+        {true, Reason} ->
             arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
             ?LOG_DEBUG([{event, skipping_synced_chunk},
                         {reason, Reason},
@@ -2201,6 +2202,17 @@ pack_and_store_chunk(Args = {_, AbsoluteEndOffset, _, _, _, _, _, _, _, _, _, _}
             {noreply, State};
         false ->
             pack_and_store_chunk2(Args, State)
+    end.
+
+%% @doc Whether the module must not store the chunk: it is not yet well
+%% confirmed, or it lies past the footprints the module keeps.
+should_skip_chunk(AbsoluteEndOffset, FootprintLimit) ->
+    PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
+    IsBeyondLimit = ar_footprint_limit:is_beyond(PaddedOffset, FootprintLimit),
+    case {AbsoluteEndOffset > ar_disk_pool:get_threshold(), IsBeyondLimit} of
+        {true, _} -> {true, chunk_is_above_disk_pool_threshold};
+        {false, true} -> {true, chunk_is_beyond_footprint_limit};
+        {false, false} -> false
     end.
 
 pack_and_store_chunk2(Args, State) ->

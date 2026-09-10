@@ -39,7 +39,7 @@ calculate2(Height) ->
 %% Note: I've confirmed that when TARGET_BLOCK_TIME = 120 the following equation is
 %% exactly equal to `30 * 24 * 365` when executed within an Erlang shell (i.e. 262800).
 blocks_per_year(Height) ->
-    ((60 * 60 * 24 * 365) div ar_testnet:target_block_time(Height)).
+    ((60 * 60 * 24 * 365) div ar_consensus:target_block_time(Height)).
 
 %%%===================================================================
 %%% Private functions.

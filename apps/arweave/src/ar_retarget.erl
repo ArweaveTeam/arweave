@@ -84,7 +84,7 @@ calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
     Fork_2_5 = ar_fork:height_2_5(),
     Fork_2_6 = ar_fork:height_2_6(),
     Fork_2_7_2 = ar_fork:height_2_7_2(),
-    Fork_Testnet = ar_testnet:height_testnet_fork(),
+    Fork_Testnet = ar_consensus:testnet_fork_height(),
     case Height of
         _ when Height == Fork_Testnet ->
             calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, 100, 2);
@@ -153,9 +153,9 @@ calculate_difficulty(OldDiff, TS, Last, Height) ->
     %% We only do retarget if the time it took to mine ?RETARGET_BLOCKS is bigger than
     %% or equal to RetargetToleranceUpperBound or smaller than or equal to
     %% RetargetToleranceLowerBound.
-    TargetTime = ?RETARGET_BLOCKS * ar_testnet:target_block_time(Height),
-    TargetTimeUpperBound = TargetTime + ar_testnet:target_block_time(Height),
-    TargetTimeLowerBound = TargetTime - ar_testnet:target_block_time(Height),
+    TargetTime = ?RETARGET_BLOCKS * ar_consensus:target_block_time(Height),
+    TargetTimeUpperBound = TargetTime + ar_consensus:target_block_time(Height),
+    TargetTimeLowerBound = TargetTime - ar_consensus:target_block_time(Height),
     ActualTime = max(TS - Last, ar_block:get_max_timestamp_deviation()),
 
     case ActualTime < TargetTimeUpperBound andalso ActualTime > TargetTimeLowerBound of
@@ -173,7 +173,7 @@ calculate_difficulty_at_2_5(OldDiff, TS, Last, Height, PrevTS) ->
             ?DIFF_DROP_2_5).
 
 calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, InitialCoeff, Coeff) ->
-    TargetTime = ?RETARGET_BLOCKS * ar_testnet:target_block_time(Height),
+    TargetTime = ?RETARGET_BLOCKS * ar_consensus:target_block_time(Height),
     ActualTime = max(TS - Last, ar_block:get_max_timestamp_deviation()),
     Step = 10 * 60,
     %% Drop the difficulty InitialCoeff times right away, then drop extra Coeff times
@@ -186,7 +186,7 @@ calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, InitialCoeff, 
     ar_difficulty:scale_diff(OldDiff, {TargetTime, ActualTime2}, Height).
 
 calculate_difficulty_after_2_4_before_2_5(OldDiff, TS, Last, Height) ->
-    TargetTime = ?RETARGET_BLOCKS * ar_testnet:target_block_time(Height),
+    TargetTime = ?RETARGET_BLOCKS * ar_consensus:target_block_time(Height),
     ActualTime = TS - Last,
     TimeDelta = ActualTime / TargetTime,
     case abs(1 - TimeDelta) < ?RETARGET_TOLERANCE of
@@ -204,7 +204,7 @@ calculate_difficulty_after_2_4_before_2_5(OldDiff, TS, Last, Height) ->
     end.
 
 calculate_difficulty_at_2_4(OldDiff, TS, Last, Height) ->
-    TargetTime = ?RETARGET_BLOCKS * ar_testnet:target_block_time(Height),
+    TargetTime = ?RETARGET_BLOCKS * ar_consensus:target_block_time(Height),
     ActualTime = TS - Last,
     %% Make the difficulty drop 10 times faster than usual. The difficulty
     %% after SPoRA is estimated to be around 10-100 times lower. In the worst
@@ -222,7 +222,7 @@ calculate_difficulty_at_2_4(OldDiff, TS, Last, Height) ->
     ).
 
 calculate_difficulty_at_and_after_1_9_before_2_4(OldDiff, TS, Last, Height) ->
-    TargetTime = ?RETARGET_BLOCKS * ar_testnet:target_block_time(Height),
+    TargetTime = ?RETARGET_BLOCKS * ar_consensus:target_block_time(Height),
     ActualTime = TS - Last,
     TimeDelta = ActualTime / TargetTime,
     case abs(1 - TimeDelta) < ?RETARGET_TOLERANCE of
@@ -245,7 +245,7 @@ calculate_difficulty_at_and_after_1_9_before_2_4(OldDiff, TS, Last, Height) ->
     end.
 
 calculate_difficulty_after_1_8_before_1_9(OldDiff, TS, Last, Height) ->
-    TargetTime = ?RETARGET_BLOCKS * ar_testnet:target_block_time(Height),
+    TargetTime = ?RETARGET_BLOCKS * ar_consensus:target_block_time(Height),
     ActualTime = TS - Last,
     TimeDelta = ActualTime / TargetTime,
     case abs(1 - TimeDelta) < ?RETARGET_TOLERANCE of
@@ -262,7 +262,7 @@ calculate_difficulty_after_1_8_before_1_9(OldDiff, TS, Last, Height) ->
     end.
 
 calculate_difficulty_before_1_8(OldDiff, TS, Last, Height) ->
-    TargetTime = ?RETARGET_BLOCKS * ar_testnet:target_block_time(Height),
+    TargetTime = ?RETARGET_BLOCKS * ar_consensus:target_block_time(Height),
     ActualTime = TS - Last,
     TimeError = abs(ActualTime - TargetTime),
     Diff = erlang:max(

@@ -347,6 +347,8 @@ wildcard_option_concrete_keys() ->
             [[storage_modules]],
         [storage_modules, {list_item}, defrag] =>
             [[storage_modules]],
+        [storage_modules, {list_item}, footprint_limit] =>
+            [[storage_modules]],
         [repack_modules, {list_item}, partition] =>
             [[repack_modules]],
         [repack_modules, {list_item}, range_start] =>
@@ -360,6 +362,8 @@ wildcard_option_concrete_keys() ->
         [repack_modules, {list_item}, to_format] =>
             [[repack_modules]],
         [repack_modules, {list_item}, to_address] =>
+            [[repack_modules]],
+        [repack_modules, {list_item}, footprint_limit] =>
             [[repack_modules]]
     }.
 

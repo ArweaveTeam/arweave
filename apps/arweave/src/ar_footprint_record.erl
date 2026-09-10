@@ -6,7 +6,8 @@
          get_intervals/4, get_unsynced_intervals/3,
          get_intervals_from_footprint_intervals/1,
          get_footprint_size/0, get_footprints_per_partition/0,
-         max_offset/1, is_recorded/2]).
+         max_offset/1, is_recorded/2, get_next_sector_start/1,
+         get_sector_bucket_start/2]).
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
@@ -83,6 +84,11 @@ get_padded_offset_from_footprint_offset(FootprintOffset) ->
 get_footprint(Offset) ->
     EntropyIndex = ar_replica_2_9:get_entropy_index(Offset, 0),
     EntropyIndex div ?SUB_CHUNK_COUNT.
+
+%% @doc Return the bucket end offset of the first chunk of the sector after
+%% the one holding the given chunk.
+get_next_sector_start(AbsoluteChunkEndOffset) ->
+    get_sector_bucket_start(AbsoluteChunkEndOffset, 1) + ?DATA_CHUNK_SIZE.
 
 %% @doc Get the footprint bucket number of a chunk.
 -spec get_footprint_bucket(Offset :: non_neg_integer()) -> non_neg_integer().
@@ -225,6 +231,22 @@ get_intervals_from_footprint_intervals(Start, End, Intervals) ->
     Offset = get_padded_offset_from_footprint_offset(Start + 1),
     Intervals2 = ar_intervals:add(Intervals, Offset, Offset - ?DATA_CHUNK_SIZE),
     get_intervals_from_footprint_intervals(Start + 1, End, Intervals2).
+
+%% @doc Return the start offset of the first bucket of the sector that is
+%% SectorShift sectors after the one holding the given chunk. The last
+%% sector of a partition overhangs the next one, so a shift past it lands
+%% on the next partition's first bucket.
+get_sector_bucket_start(AbsoluteChunkEndOffset, SectorShift) ->
+    SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
+    PartitionSize = ar_block:partition_size(),
+    PartitionRelativeOffset =
+        ar_replica_2_9:get_partition_offset(AbsoluteChunkEndOffset),
+    Partition = ar_replica_2_9:get_entropy_partition(AbsoluteChunkEndOffset),
+    Sector = PartitionRelativeOffset div SectorSize + SectorShift,
+    SectorStart = min(Partition * PartitionSize + Sector * SectorSize,
+        (Partition + 1) * PartitionSize),
+    arweave_util:floor_int(
+        SectorStart + ?DATA_CHUNK_SIZE - 1, ?DATA_CHUNK_SIZE).
 
 %%%===================================================================
 %%% Tests.
@@ -496,3 +518,37 @@ test_get_intervals_from_footprint_intervals([{Input, Expected, Title} | Rest]) -
     test_get_intervals_from_footprint_intervals(Rest).
 
 -endif.
+
+footprint_geometry_test() ->
+    %% Test geometry: 512 KiB sectors, 2 chunks per sector, 4 sectors per
+    %% partition, partitions of 2,000,000 bytes.
+    ?assertEqual(0, get_footprint(262144)),
+    ?assertEqual(1, get_footprint(524288)),
+    ?assertEqual(0, get_footprint(786432)),
+    ?assertEqual(0, get_footprint(1835008)),
+    ?assertEqual(1, get_footprint(2097152)),
+    %% Partition 1 starts at 2,000,000, so its buckets sit 97,152 bytes
+    %% into each sector.
+    ?assertEqual(0, get_footprint(2359296)),
+    ?assertEqual(1, get_footprint(2621440)),
+    ?assertEqual(786432, get_next_sector_start(262144)),
+    ?assertEqual(786432, get_next_sector_start(524288)),
+    ?assertEqual(1310720, get_next_sector_start(786432)),
+    %% Sector 3 of partition 0 is followed by the first bucket of
+    %% partition 1.
+    ?assertEqual(2359296, get_next_sector_start(1835008)),
+    ?assertEqual(2883584, get_next_sector_start(2359296)).
+
+%% With 1,200,000-byte partitions the four 512 KiB sectors overhang the
+%% next partition by more than a bucket, as on mainnet; the sector after
+%% the last one must start at the next partition's first bucket.
+next_sector_start_clamps_to_partition_test_() ->
+    ar_test_util:with_mocked(
+        [{ar_block, partition_size, fun() -> 1200000 end}],
+        fun() ->
+            %% Bucket [1048576, 1310720) is sector 2 of partition 0; sector
+            %% 3 would start at 1572864, past the partition end 1200000.
+            ?assertEqual(1572864, get_next_sector_start(1310720)),
+            ?assertEqual(0, get_footprint(1572864))
+        end, 30).
+
