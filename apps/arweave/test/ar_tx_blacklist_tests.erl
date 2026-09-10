@@ -1,8 +1,6 @@
 -module(ar_tx_blacklist_tests).
 -test_peers([peer1]).
 
--export([init/2]).
-
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -11,26 +9,6 @@
 
 -import(ar_test_node, [
         sign_v1_tx/2, random_v1_data/1]).
-
-init(Req, State) ->
-    SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-    handle(SplitPath, Req, State).
-
-handle([<<"empty">>], Req, State) ->
-    {ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
-
-handle([<<"good">>], Req, State) ->
-    {ok, cowboy_req:reply(200, #{}, arweave_util:encode(hd(State)), Req), State};
-
-handle([<<"bad">>, <<"and">>, <<"good">>], Req, State) ->
-    Reply =
-        list_to_binary(
-            io_lib:format(
-                "~s\nbad base64url \n~s\n",
-                lists:map(fun arweave_util:encode/1, State)
-            )
-        ),
-    {ok, cowboy_req:reply(200, #{}, Reply, Req), State}.
 
 %% Mock the refresh interval on every peer and the local node via
 %% `test_with_all_nodes_mocked/3': the blacklist gen_server reads
@@ -55,7 +33,8 @@ test_uses_blacklists() ->
         V1TX,
         GoodOffsets,
         BadOffsets,
-        DataTrees
+        DataTrees,
+        {BlocklistPort, BlocklistReservation, BlocklistRoutes}
     } = setup(),
     WhitelistFile = random_filename(),
     ok = file:write_file(WhitelistFile, <<>>),
@@ -69,19 +48,16 @@ test_uses_blacklists() ->
                     [list_to_binary(File) || File <- BlacklistFiles],
                 [transactions, allowlist, files] => [list_to_binary(WhitelistFile)],
                 [sync, jobs] => 10,
-                [transactions, blocklist, urls] => [
-                    %% Serves empty body.
-                    <<"http://localhost:1985/empty">>,
-                    %% Serves a valid TX ID (one from the BadTXIDs list).
-                    <<"http://localhost:1985/good">>,
-                    %% Serves some valid TX IDs (from the BadTXIDs list) and a line
-                    %% with invalid Base64URL.
-                    <<"http://localhost:1985/bad/and/good">>
-                ],
+                [transactions, blocklist, urls] =>
+                    blocklist_urls(BlocklistPort),
                 [features, pack_served_chunks] => true
             },
             [storage_modules] => ar_test_node:storage_module_configs(StorageModules)
         }),
+        %% The node boot restarts ranch, so the stub serving the blocklist
+        %% URLs goes up only now, on the port reserved in setup/0.
+        {ok, _, BlocklistRef, BlocklistTable} = ar_test_http_server:start(
+            BlocklistRoutes, #{ reservation => BlocklistReservation }),
         ar_test_node:connect_to_peer(peer1),
         BadV1TXIDs = [V1TX#tx.id],
         lists:foreach(
@@ -150,7 +126,8 @@ test_uses_blacklists() ->
         ar_test_node:connect_to_peer(peer1),
         {ok, [{_, WeaveSize2, _} | _]} = ar_test_await:node_height(main, length(TXs) + 2),
         assert_removed_offsets([[WeaveSize2]]),
-        assert_present_offsets([[WeaveSize]])
+        assert_present_offsets([[WeaveSize]]),
+        ok = ar_test_http_server:stop(BlocklistRef, BlocklistTable)
     after
         teardown(Config)
     end.
@@ -177,13 +154,8 @@ setup() ->
             ]),
     BadTXIDs2 = [lists:nth(5, TXIDs), lists:nth(7, TXIDs)], % The endpoint.
     BadTXIDs3 = [lists:nth(4, TXIDs), lists:nth(6, TXIDs)], % Ranges.
-    Routes = [{"/[...]", ar_tx_blacklist_tests, BadTXIDs2}],
-    {ok, _PID} =
-        ar_test_node:remote_call(peer1, cowboy, start_clear, [
-            ar_tx_blacklist_test_listener,
-            [{port, 1985}],
-            #{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
-        ]),
+    {BlocklistPort, BlocklistReservation} =
+        ar_test_http_server:reserve_port(),
     GoodTXIDs = TXIDs -- (BadTXIDs ++ BadTXIDs2 ++ BadTXIDs3),
     BadOffsets2 =
         lists:map(
@@ -221,8 +193,31 @@ setup() ->
         V1TX,
         GoodOffsets2,
         BadOffsets3,
-        DataTrees
+        DataTrees,
+        {BlocklistPort, BlocklistReservation, blocklist_routes(BadTXIDs2)}
     }.
+
+%% @doc Routes for the stub serving the blocklist URLs main polls.
+blocklist_routes(BadTXIDs) ->
+    Encoded = lists:map(fun arweave_util:encode/1, BadTXIDs),
+    #{
+        %% Serves empty body.
+        {<<"GET">>, <<"/empty">>} => {200, #{}, <<>>},
+        %% Serves a valid TX ID (one from the BadTXIDs list).
+        {<<"GET">>, <<"/good">>} => {200, #{}, hd(Encoded)},
+        %% Serves some valid TX IDs (from the BadTXIDs list) and a line
+        %% with invalid Base64URL.
+        {<<"GET">>, <<"/bad/and/good">>} =>
+            {200, #{}, list_to_binary(
+                io_lib:format("~s\nbad base64url \n~s\n", Encoded))}
+    }.
+
+%% @doc The blocklist URLs served by the stub on Port; see blocklist_routes/1.
+blocklist_urls(Port) ->
+    Base = <<"http://localhost:", (integer_to_binary(Port))/binary>>,
+    [<<Base/binary, "/empty">>,
+     <<Base/binary, "/good">>,
+     <<Base/binary, "/bad/and/good">>].
 
 setup(Node) ->
     Wallet = {_, Pub} = ar_test_node:remote_call(Node, ar_wallet, new_keyfile, []),
@@ -509,5 +504,4 @@ decode_chunk(EncodedProof) ->
     ).
 
 teardown(Config) ->
-    ok = ar_test_node:remote_call(peer1, cowboy, stop_listener, [ar_tx_blacklist_test_listener]),
     arweave_config:restore(Config).

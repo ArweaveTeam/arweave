@@ -5,11 +5,17 @@
 %%% modules tagged `-test_category([fast])'. Every server gets its own
 %%% listener reference, route table, and port, so several may run at once.
 %%%
+%%% Booting a node with ar_test_node:start/1 restarts ranch, which kills
+%%% every listener in the BEAM. When the port has to be in the node's
+%%% configuration, reserve it with reserve_port/0 before the boot and
+%%% start the server with start/2 after it.
+%%%
 %%% Mocks responses using an ETS table.
 -module(ar_test_http_server).
 -test_category([fast]).
 
--export([start/1, set_routes/2, set_route/3, stop/2]).
+-export([reserve_port/0, start/1, start/2, set_routes/2, set_route/3,
+         stop/2]).
 
 %% cowboy handler callback.
 -export([init/2]).
@@ -18,20 +24,42 @@
 
 %%% Public
 
+%% @doc Reserve a free port for a server started later with start/2 and
+%% return {Port, Reservation}; the port stays bound until start/2 takes it.
+reserve_port() ->
+    {ok, Socket} = gen_tcp:listen(0, []),
+    {ok, Port} = inet:port(Socket),
+    {Port, Socket}.
+
 %% @doc Start a server answering Routes, a map of {Method, Path} to a
 %% {Status, Headers, Body} response or a fun(Req) returning one.
 %% Returns the peer to pass to ar_http, and the listener reference and
 %% route table to pass to stop/2. Unmapped requests are answered with a
 %% 404. The route table belongs to the calling process.
 start(Routes) ->
+    start(Routes, #{}).
+
+%% @doc start/1 with options: reservation, from reserve_port/0, makes the
+%% server take over the reserved port.
+start(Routes, Opts) ->
     Table = ets:new(?MODULE, [set, public]),
     ok = set_routes(Table, Routes),
     Ref = {?MODULE, erlang:unique_integer([positive])},
     Dispatch = cowboy_router:compile([{'_', [{"/[...]", ?MODULE, Table}]}]),
-    %% Port 0 makes the kernel pick and bind a free port in one step.
-    {ok, _} = cowboy:start_clear(Ref, [{port, 0}],
+    %% Port 0 makes the kernel pick and bind a free port in one step. A
+    %% reserved port is released right before the bind, so the window in
+    %% which something else could grab it is a few microseconds.
+    Port = release_reservation(maps:get(reservation, Opts, none)),
+    {ok, _} = cowboy:start_clear(Ref, [{port, Port}],
         #{ env => #{ dispatch => Dispatch } }),
     {ok, {127, 0, 0, 1, ranch:get_port(Ref)}, Ref, Table}.
+
+release_reservation(none) ->
+    0;
+release_reservation(Socket) ->
+    {ok, Port} = inet:port(Socket),
+    ok = gen_tcp:close(Socket),
+    Port.
 
 %% @doc Replace the whole route map on a running server. The next
 %% request served - including one on an already-open connection - uses
@@ -78,6 +106,17 @@ response({_Status, _Headers, _Body} = Response, _Req) ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+%% @doc A server started on a reserved port listens on that port.
+reserved_port_test() ->
+    {Port, Reservation} = reserve_port(),
+    {ok, Peer, Ref, Table} = start(
+        #{ {<<"GET">>, <<"/r">>} => {200, #{}, <<"reserved">>} },
+        #{ reservation => Reservation }),
+    ?assertEqual({127, 0, 0, 1, Port}, Peer),
+    ?assertMatch({ok, {{<<"200">>, _}, _, <<"reserved">>, _, _}},
+                 get(Peer, "/r")),
+    ok = stop(Ref, Table).
 
 %% @doc Two servers in one BEAM keep separate route tables and ports.
 two_servers_test() ->

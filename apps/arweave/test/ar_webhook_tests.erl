@@ -1,47 +1,48 @@
 -module(ar_webhook_tests).
 
-
--export([init/2]).
-
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
-init(Req, State) ->
-    SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-    handle(SplitPath, Req, State).
+%% @doc Routes for the stub server that records every webhook call it
+%% receives in the ?MODULE ETS table.
+webhook_routes() ->
+    #{
+        {<<"POST">>, <<"/tx">>} => fun(Req) ->
+            JSON = read_json(Req),
+            TX = maps:get(<<"transaction">>, JSON),
+            ets:insert(?MODULE, {{tx, maps:get(<<"id">>, TX)}, TX}),
+            {200, #{}, <<>>}
+        end,
+        {<<"POST">>, <<"/block">>} => fun(Req) ->
+            JSON = read_json(Req),
+            B = maps:get(<<"block">>, JSON),
+            ets:insert(?MODULE, {{block, maps:get(<<"height">>, B)}, B}),
+            {200, #{}, <<>>}
+        end,
+        {<<"POST">>, <<"/txdata">>} => fun(Req) ->
+            JSON = read_json(Req),
+            ets:insert(?MODULE,
+                {{tx_data_payload, maps:get(<<"txid">>, JSON)}, JSON}),
+            {200, #{}, <<>>}
+        end,
+        {<<"POST">>, <<"/solution">>} => fun(Req) ->
+            JSON = read_json(Req),
+            case maps:get(<<"event">>, JSON, not_found) of
+                <<"solution_accepted">> ->
+                    ets:update_counter(?MODULE, accepted_solutions, {2, 1},
+                        {accepted_solutions, 0});
+                _ ->
+                    ok
+            end,
+            {200, #{}, <<>>}
+        end
+    }.
 
-handle([<<"tx">>], Req, State) ->
-    {ok, Reply, _} = cowboy_req:read_body(Req),
-    JSON = jiffy:decode(Reply, [return_maps]),
-    TX = maps:get(<<"transaction">>, JSON),
-    ets:insert(?MODULE, {{tx, maps:get(<<"id">>, TX)}, TX}),
-    {ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
-
-handle([<<"block">>], Req, State) ->
-    {ok, Reply, _} = cowboy_req:read_body(Req),
-    JSON = jiffy:decode(Reply, [return_maps]),
-    B = maps:get(<<"block">>, JSON),
-    ets:insert(?MODULE, {{block, maps:get(<<"height">>, B)}, B}),
-    {ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
-
-handle([<<"txdata">>], Req, State) ->
-    {ok, Reply, _} = cowboy_req:read_body(Req),
-    JSON = jiffy:decode(Reply, [return_maps]),
-    ets:insert(?MODULE, {{tx_data_payload, maps:get(<<"txid">>, JSON)}, JSON}),
-    {ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
-
-handle([<<"solution">>], Req, State) ->
-    {ok, Reply, _} = cowboy_req:read_body(Req),
-    JSON = jiffy:decode(Reply, [return_maps]),
-    case maps:get(<<"event">>, JSON, not_found) of
-        <<"solution_accepted">> ->
-            ets:update_counter(?MODULE, accepted_solutions, {2, 1}, {accepted_solutions, 0});
-        _ ->
-            ok
-    end,
-    {ok, cowboy_req:reply(200, #{}, <<>>, Req), State}.
+read_json(Req) ->
+    {ok, Body, _} = cowboy_req:read_body(Req),
+    jiffy:decode(Body, [return_maps]).
 
 %% Mock `ar_tx_blacklist:refresh_interval_ms/0' so blacklist refreshes
 %% on a test-friendly cadence — the second-chunk blacklisting step
@@ -63,7 +64,11 @@ test_webhooks() ->
     end).
 
 test_webhooks_body(Wallet, B0) ->
-    Port = ar_test_node:get_unused_port(),
+    %% Reserve the port of the server that records the webhooks in the
+    %% ETS table, so it can go into the config; the node boot restarts
+    %% ranch, so the server itself goes up after the node.
+    ets:new(?MODULE, [named_table, set, public]),
+    {Port, Reservation} = ar_test_http_server:reserve_port(),
         PortBinary = integer_to_binary(Port),
         TXBlacklistFilename = random_tx_blacklist_filename(),
         Addr = ar_test_node:generate_address(main),
@@ -95,15 +100,8 @@ test_webhooks_body(Wallet, B0) ->
                     [storage_modules] => [
                         {0, 10 * ?MiB, {spora_2_6, Addr}}
                     ] }),
-        %% Setup a server that would be listening for the webhooks and registering
-        %% them in the ETS table.
-        ets:new(?MODULE, [named_table, set, public]),
-        Routes = [{"/[...]", ar_webhook_tests, []}],
-        cowboy:start_clear(
-            ar_webhook_test_listener,
-            [{port, Port}],
-            #{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
-        ),
+        {ok, _, Ref, Table} = ar_test_http_server:start(webhook_routes(),
+            #{ reservation => Reservation }),
         {V2TX, Proofs} = create_v2_tx(Wallet),
         TXs =
             lists:map(
@@ -204,7 +202,7 @@ test_webhooks_body(Wallet, B0) ->
         timer:sleep(3000),
         upload_chunks(Proofs),
         assert_transaction_data_synced(V2TXID),
-        cowboy:stop_listener(ar_webhook_test_listener).
+        ok = ar_test_http_server:stop(Ref, Table).
 
 %% @doc Poll the test's ETS receiver table until the entry at Key is present
 %% and its stored JSON satisfies MatchFun.
