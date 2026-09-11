@@ -229,15 +229,19 @@ collect_sync_bucket_peers(Mode, EndSyncBucket, Peers, Cursor) ->
 %% and stale rows enqueue exact chunk interval jobs; fresh rows and peers that
 %% do not advertise the relevant coarse bucket require no work.
 warm_peer_ranges(StoreID, Peers, Offset) ->
-    lists:foreach(
-        fun(Peer) ->
-            warm_peer_range(byte, StoreID, Peer, Offset),
-            warm_peer_range(footprint, StoreID, Peer, Offset)
-        end,
-        Peers),
-    ok.
+    gen_server:call(
+        ?MODULE, {warm_peer_ranges, StoreID, Peers, Offset}, infinity).
 
-warm_peer_range(Mode, StoreID, Peer, Offset) ->
+warm_peer_ranges(StoreID, Peers, Offset, State) ->
+    lists:foldl(
+        fun(Peer, Acc) ->
+            Acc2 = warm_peer_range(byte, StoreID, Peer, Offset, Acc),
+            warm_peer_range(footprint, StoreID, Peer, Offset, Acc2)
+        end,
+        State,
+        Peers).
+
+warm_peer_range(Mode, StoreID, Peer, Offset, State) ->
     maybe
         true ?= peer_supports(Mode, Peer),
         true ?= peer_has_sync_bucket(Mode, Peer, Offset),
@@ -247,12 +251,10 @@ warm_peer_range(Mode, StoreID, Peer, Offset) ->
             offset = Offset,
             peer = Peer
         },
-        gen_server:cast(?MODULE,
-            {refresh_chunk_intervals,
-                chunk_interval_job(Mode, PeerRange)})
+        enqueue_job(chunk_interval_job(Mode, PeerRange), State)
     else
         false ->
-            ok
+            State
     end.
 
 chunk_interval_refresh_needed(Mode, Peer, Offset) ->
@@ -383,6 +385,9 @@ handle_call(inflight_count, _From, State) ->
         0,
         JobsByKind),
     {reply, NumInflight, State};
+handle_call({warm_peer_ranges, StoreID, Peers, Offset}, _From, State) ->
+    State2 = warm_peer_ranges(StoreID, Peers, Offset, State),
+    {reply, ok, start_jobs(chunk_interval, State2)};
 handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
     {reply, ok, State}.
@@ -390,10 +395,6 @@ handle_call(Request, _From, State) ->
 handle_cast({add_peers, Peers}, State) ->
     State2 = lists:foldl(fun add_peer/2, State, Peers),
     {noreply, start_jobs(sync_bucket, State2)};
-
-handle_cast({refresh_chunk_intervals, ChunkIntervalJob}, State) ->
-    State2 = enqueue_job(ChunkIntervalJob, State),
-    {noreply, start_jobs(chunk_interval, State2)};
 
 handle_cast({job_result, Peer, Result}, State) ->
     State2 = case is_peer_tracked(Peer, State) of
@@ -557,27 +558,34 @@ peer_store_mode_key(Key) ->
 %% minimum may exceed it, so a late store can make progress without moving or
 %% evicting work that was already queued.
 enqueue_job(Job, State) ->
-    #discovery_job{ key = Key, kind = Kind, peer = Peer } = Job,
+    #discovery_job{ peer = Peer } = Job,
+    case is_peer_tracked(Peer, State) of
+        true -> enqueue_tracked_job(Job, State);
+        false -> State
+    end.
+
+enqueue_tracked_job(#discovery_job{ key = Key, kind = Kind } = Job, State) ->
     #state{ jobs = JobsByKind } = State,
     Jobs = maps:get(Kind, JobsByKind),
-    #discovery_jobs{ pending = Pending } = Jobs,
-    Jobs2 = case {
-        is_peer_tracked(Peer, State),
-        job_exists(Key, State),
-        has_pending_capacity(Job, Jobs)
-    } of
-        {false, _, _} -> %% Untracked peer.
-            Jobs;
-        {true, true, _} -> %% Refresh pending demand without duplicating it.
+    Jobs2 = case job_exists(Key, State) of
+        true ->
             refresh_pending_job(Job, Jobs);
-        {true, false, false} -> %% Global and per-store allowances are full.
-            Jobs;
-        {true, false, true} -> %% Enqueue new job.
-            Jobs#discovery_jobs{
-                pending = maps:put(Key, Job, Pending)
-            }
+        false ->
+            enqueue_new_job(Job, Jobs)
     end,
     State#state{ jobs = JobsByKind#{Kind := Jobs2} }.
+
+enqueue_new_job(Job, Jobs) ->
+    #discovery_job{ key = Key } = Job,
+    #discovery_jobs{ pending = Pending } = Jobs,
+    case has_pending_capacity(Job, Jobs) of
+        true ->
+            Jobs#discovery_jobs{
+                pending = maps:put(Key, Job, Pending)
+            };
+        false ->
+            Jobs
+    end.
 
 refresh_pending_job(#discovery_job{ key = Key } = Job,
         #discovery_jobs{ pending = Pending } = Jobs) ->
@@ -1971,29 +1979,71 @@ warming_schedules_miss_but_cached_read_has_no_side_effect_test() ->
         _ = sys:get_state(DiscoveryPid),
         receive
             {trace, DiscoveryPid, 'receive',
-                    {'$gen_cast', {refresh_chunk_intervals, _Job}}} ->
+                    {'$gen_call', _,
+                        {warm_peer_ranges, _, _, _}}} ->
                 ?assert(false)
         after 0 ->
             ok
         end,
         ?assertEqual(ok,
             warm_peer_ranges(?DEFAULT_MODULE, [Peer], 0)),
-        %% Reading the state is a mailbox barrier for the preceding cast.
-        _ = sys:get_state(DiscoveryPid),
         RefreshRequest = receive
             {trace, DiscoveryPid, 'receive',
-                    {'$gen_cast', {refresh_chunk_intervals, Job}}} ->
-                Job
-        %% The server mailbox barrier does not order delivery of trace messages.
+                    {'$gen_call', _,
+                        {warm_peer_ranges, StoreID, Peers, Offset}}} ->
+                {StoreID, Peers, Offset}
         after 1000 ->
             none
         end,
-        ?assertMatch(
-            #discovery_job{ kind = chunk_interval, mode = byte },
-            RefreshRequest)
+        ?assertEqual({?DEFAULT_MODULE, [Peer], 0}, RefreshRequest)
     after
         1 = erlang:trace(DiscoveryPid, false, ['receive'])
     end.
+
+warming_calls_are_backpressured_test() ->
+    DiscoveryPid = whereis(?MODULE),
+    %% Twenty callers making fifty requests model one thousand repeated store
+    %% requests. A synchronous batch permits only one queued call per caller.
+    CallerCount = 20,
+    RequestsPerCaller = 50,
+    ok = sys:suspend(DiscoveryPid),
+    Callers = [
+        spawn_monitor(fun() ->
+            lists:foreach(
+                fun(_) ->
+                    ok = warm_peer_ranges(test_store, [], 0)
+                end,
+                lists:seq(1, RequestsPerCaller))
+        end)
+        || _ <- lists:seq(1, CallerCount)
+    ],
+    try
+        ok = ar_test_await:until(discovery_warm_calls_blocked, fun() ->
+            warm_call_count(DiscoveryPid) =:= CallerCount
+        end),
+        ?assertEqual(CallerCount, warm_call_count(DiscoveryPid))
+    after
+        ok = sys:resume(DiscoveryPid)
+    end,
+    %% Empty peer batches complete well within the normal thirty-second test
+    %% timeout; matching monitor references also verifies no caller crashed.
+    Reasons = [
+        receive
+            {'DOWN', Ref, process, Pid, Reason} -> Reason
+        after 30_000 ->
+            timeout
+        end
+        || {Pid, Ref} <- Callers
+    ],
+    ?assertEqual(lists:duplicate(CallerCount, normal), Reasons).
+
+warm_call_count(DiscoveryPid) ->
+    {messages, Messages} = process_info(DiscoveryPid, messages),
+    length([
+        Message
+        || Message = {'$gen_call', _,
+            {warm_peer_ranges, _, _, _}} <- Messages
+    ]).
 
 %% An aged row is served as {stale, Intervals}: the data is still used while the
 %% demand path requests a chunk interval job. A fresh row stays a plain hit.
@@ -2052,13 +2102,11 @@ warming_stale_metadata_requests_refresh_test() ->
     1 = erlang:trace(DiscoveryPid, true, ['receive']),
     try
         ?assertEqual(ok, warm_peer_ranges(?DEFAULT_MODULE, [Peer], 0)),
-        _ = sys:get_state(DiscoveryPid),
         receive
             {trace, DiscoveryPid, 'receive',
-                    {'$gen_cast', {refresh_chunk_intervals,
-                        #discovery_job{ mode = byte }}}} ->
+                    {'$gen_call', _,
+                        {warm_peer_ranges, ?DEFAULT_MODULE, [Peer], 0}}} ->
                 ok
-        %% The server mailbox barrier does not order delivery of trace messages.
         after 1000 ->
             ?assert(false)
         end

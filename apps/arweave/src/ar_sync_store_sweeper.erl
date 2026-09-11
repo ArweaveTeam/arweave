@@ -608,8 +608,9 @@ do_process_sweep_range(SweepRange, State) ->
         range_end = RangeEnd
     } = UnsyncedRange,
     Peers = candidate_peers(QueryOffset),
-    %% Start warming candidates discovered since enqueue, but do not extend this
-    %% range's fixed wait; the claim below uses only metadata already cached.
+    %% Start warming candidates discovered since enqueue and retry demand that
+    %% discovery could not previously queue, but do not extend this range's
+    %% fixed wait; the claim below uses only metadata already cached.
     ok = ar_sync_discovery:warm_peer_ranges(
         State#state.store_id, Peers, QueryOffset),
     {PeerRanges, _CacheStatus} = ar_sync_discovery:cached_peer_ranges(
