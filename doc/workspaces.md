@@ -1,79 +1,177 @@
-# Development workspaces (`bin/dev/ws`)
+# Development workspaces (`bin/ws`)
 
-`bin/dev/ws` lets several engineers — or several Claude/agent sessions — work
-on this repo **concurrently on one machine** without stepping on each other.
+A workspace groups **one or more Git worktrees**, independent `screen` sessions,
+and an Erlang test namespace with a private EPMD port. Each checkout has its own
+build artifacts. Workspaces can contain different combinations of repositories.
 
-A **workspace** bundles three things under a single name:
-
-- a **git worktree** — an isolated checkout on its own branch, with its own
-  `_build/`, `.tmp/`, and compiled artifacts;
-- one or more **named `screen` sessions** — each survives ssh disconnects and
-  drives exactly one terminal: `ws-<name>` plus a `ws-<name>#2`, `#3`, … for
-  every extra shell you open with `ws shell`;
-- a **unique Erlang test namespace + private EPMD** — so concurrent test runs
-  never collide.
-
-One name (e.g. `fix-poller-race`) becomes the branch, the directory, the
-screen session, and the test namespace.
+The manager requires Python 3.9+, Git, GNU screen, `infocmp`, and Erlang's `epmd`.
+`bin/ws` and `bin/dev/ws` both invoke the implementation in `bin/dev/ws.py`.
 
 ## Commands
 
-The manager lives at `bin/dev/ws`, with a thin shim at `bin/ws`. Invoke it as
-`./bin/ws` from the repo. To use the bare `ws` shown below, put `bin/` on your
-`PATH` or symlink the shim somewhere on it (e.g.
-`ln -s "$PWD/bin/ws" ~/.local/bin/ws`).
-
+```bash
+ws new feature                         # clones/reuses ArweaveTeam/arweave-dev
+ws new feature --repo arweave-dev --repo infra --no-attach
+ws new release --repo arweave --ref release/N.2.9.6
+ws add feature docs.arweave.org-info
+ws add feature tools --ref main
+ws attach feature                      # attach the primary screen
+ws attach feature 2                    # attach screen #2
+ws shell feature --repo infra          # new independent shell in infra
+ws shell feature --no-attach            # start a shell without attaching
+ws current                             # show all repos in this workspace
+ws ls                                  # list workspaces and their repos
+ws rm feature                          # remove all its worktrees and sessions
+ws rm feature --force --delete-branch
 ```
-ws new <name> [--no-attach]   create a workspace and attach to it
-ws attach <name> [N]          attach to its primary (or #N) screen session
-ws shell <name>               start a new independent shell session in it
-ws current                    show details of the workspace you're in
-ws ls                         list all workspaces
-ws rm <name> [--force]        destroy a workspace
-          [--delete-branch]
-ws help                       full help
+
+`--repo NAME` selects **`github.com/ArweaveTeam/NAME`**. If its source clone is
+missing, the manager clones `git@github.com:ArweaveTeam/NAME.git` automatically,
+using your GitHub SSH credentials. This also applies to the default
+`arweave-dev` repository and to `ws add`. Directory paths and other organizations
+are not accepted as repository names.
+
+Source clones live under `WS_REPO_ROOT`, normally `/opt` on this machine. For
+example, `--repo infra` clones or reuses `/opt/infra`, then creates a worktree at
+`/opt/workspaces/<workspace>/infra`. There is no name registry or alias mapping.
+An existing clone is reused only if its configured `origin` matches the selected
+ArweaveTeam repository (SSH and HTTPS origins are recognized). A conflicting
+local directory is left untouched; select another `WS_REPO_ROOT` to clone the
+repository separately. Reused clones use their existing refs without fetching.
+
+Source clones are shared by workspaces and retained when a workspace is removed.
+A failed clone cleans up its temporary checkout; successful source clones remain
+available even if subsequent workspace creation fails. Clone operations use
+per-repository locks under `<WS_REPO_ROOT>/.ws-locks/` so concurrent requests do
+not race to create the same source clone.
+
+`ws new` accepts repeated `--repo` options; without them it uses `arweave-dev`.
+Each worktree starts detached, and submodules are initialized recursively.
+The default starting revision is the local branch corresponding to
+`origin/HEAD`, then that remote ref if the local branch is absent. Without a
+usable remote default, it tries local `main`, local `master`, then `HEAD`.
+`--ref` overrides this choice; for `new` it applies to every selected repository.
+Use `ws add --ref` to choose a different revision for an additional repository.
+Create or check out your working branch inside each checkout yourself.
+
+`ws new` starts a plain shell in the **first selected repository** and attaches
+unless `--no-attach` is given or you are already inside screen. It does not
+launch agents or tests. `ws add` creates another worktree without restarting,
+reattaching, or changing any existing shell. You can immediately `cd` into it.
+
+The primary screen is `ws-<name>`. Each `ws shell` creates a separate
+`ws-<name>#2`, `#3`, etc. These sessions do not share displays or detach one
+another. `Ctrl-A d` detaches. `ws attach` restarts a missing session, retaining a
+previously selected repository for extra shells. Nested screen attachment is
+refused; `ws shell` can still create the new session and print an attach command.
+
+`ws current` works from the workspace parent or any of its repositories. It also
+recognizes the workspace variables exported by screen and legacy shells. It
+shows each repository's branch, revision, path, and whether it has local edits.
+
+`ws rm` checks **every repository, including submodules**, before stopping any
+sessions. Local edits or untracked files prevent removal unless `--force` is
+given. Generated `.envrc` files do not count as edits, but modifications to them
+do. Git-ignored build output is disposable. All workspace screen sessions are
+stopped; worktrees are removed through their respective source repositories.
+Branches are retained unless `--delete-branch` explicitly requests deletion.
+Other files placed in the workspace parent are retained.
+
+## Directory layout and configuration
+
+With repositories under `/opt`, new workspaces look like this:
+
+```text
+/opt/workspaces/
+  .meta/
+    feature.json
+    feature.rc
+    feature#2.rc
+  feature/
+    arweave-dev/
+    infra/
+    docs.arweave.org-info/
 ```
 
-- **`ws new`** creates the worktree, initialises submodules, starts the screen
-  session, and attaches you to it. The session has a single plain shell window
-  in the worktree — run `claude`, the test suite, or whatever you like there;
-  `ws` does not launch anything for you. Pass `--no-attach` to just create the
-  workspace without attaching (handy when spinning up several at once).
+Each versioned `.json` record stores the repository sources and paths, default
+repository, namespace, and EPMD port. Screen configs are generated separately.
+Creation and addition clean up their new worktrees on failure. If cleanup itself
+fails, the remaining worktree is recorded so removal can be retried. Mutating
+commands serialize through a lock; port allocation includes legacy workspaces
+and checks whether another process already binds the candidate port.
 
-  The worktree starts on a **detached HEAD at `master`** — `ws` creates no
-  branch. Check out an existing branch (`git checkout <branch>`) or start a new
-  one (`git checkout -b <branch>`) yourself once inside. This is deliberate:
-  a git worktree cannot share a branch with any other worktree (including the
-  main checkout), so `ws` can't simply put you "on `master`"; and a detached
-  start means a stray commit can't accidentally advance a shared branch before
-  you've made your own.
-- **`ws attach`** attaches to the workspace's **primary** screen session
-  `ws-<name>` (starting it if it died); `Ctrl-A d` detaches. `ws attach <name>
-  N` attaches the extra shell session `ws-<name>#N` instead — handy for
-  reattaching one you opened earlier with `ws shell` and then detached.
-- **`ws shell`** starts a **new, independent** screen session — `ws-<name>#2`,
-  `#3`, … — in the worktree and attaches to it. This is the way to get a
-  second shell in a workspace: run `ws shell` from each terminal (or each
-  agent) and every one gets its own private, disconnect-proof session. The
-  sessions never share a display, resize each other, or detach one another —
-  unlike attaching the *same* session from two terminals, which `screen` would
-  turn into a shared, mirrored, smallest-common-size display.
-- **`ws current`** prints details of the workspace you're currently in (path,
-  branch, EPMD port, live screen sessions, uncommitted-change count). Run it
-  from inside a workspace shell.
-- **`ws rm`** kills **all** the workspace's screen sessions and its EPMD, then
-  removes the worktree. It **keeps the branch** (that's your work) unless you
-  pass `--delete-branch`. A worktree with uncommitted changes is not removed
-  unless you pass `--force`.
+| Variable | Default | Purpose |
+|---|---|---|
+| `WS_REPO_ROOT` | Parent of the main checkout containing the manager | Where GitHub source repositories are cloned and reused |
+| `WS_ROOT` | `<WS_REPO_ROOT>/workspaces` | New workspace directories and metadata |
+| `ARWEAVE_WS_ROOT` | Unset | Accepted as an older spelling of `WS_ROOT`; `WS_ROOT` takes precedence |
+| `WS_LEGACY_ROOT` | `<WS_REPO_ROOT>/arweave-workspaces` | Existing single-worktree workspaces |
 
-Each `ws shell` session, like the primary, exports `ARWEAVE_NAMESPACE` and
-`ERL_EPMD_PORT` for the workspace and starts in the worktree. They share that
-one namespace, so don't run the test suite in two of them at once — the
-namespace isolates *workspaces* from each other, not shells within one.
+Keep the workspace root outside your source repositories so build tools and
+language servers do not recurse into sibling workspaces. Use one canonical
+manager and root configuration for commands on this machine.
 
-Worktrees live in `../arweave-workspaces/` next to the repo (override with
-`ARWEAVE_WS_ROOT`). They are deliberately *outside* the repo so rebar3 and
-erlang_ls don't recurse into them.
+Every new workspace shell exports `WS_NAME`, `WS_ROOT`, `ARWEAVE_NAMESPACE`, and
+`ERL_EPMD_PORT`. The same exports are written to each new checkout's `.envrc`
+unless the repository already supplies one. Existing `.envrc` files are preserved;
+if you use one, add the namespace and port exports yourself for non-screen shells.
+Otherwise, `source .envrc` or use direnv in a plain SSH shell.
+
+Shells and repositories in the same workspace share the Erlang namespace and
+EPMD port. Run only one Erlang test invocation per workspace at a time, including
+when both `arweave` and `arweave-dev` are present. Separate workspaces isolate
+concurrent test runs.
+
+## Using the new manager with existing workspaces
+
+Existing `<legacy-root>/.meta/<name>.rc` records are recognized in place. Listing
+them does not rewrite metadata. Their checkout paths, session names, namespaces,
+and EPMD ports remain unchanged. Updating the manager requires no running shell
+restart, checkout move, or rebuild.
+
+Adding a repository to an existing workspace records both paths, for example:
+
+```text
+arweave-dev  /opt/arweave-workspaces/testnet
+infra        /opt/workspaces/testnet/infra
+```
+
+A new-format record is written when that workspace gains a repository or starts
+a new session; its original screen config remains untouched. The old checkout
+continues to work at its original path. `ws rm` subsequently handles both paths.
+Unmanaged Git worktrees without workspace metadata are not adopted automatically.
+
+If `ARWEAVE_WS_ROOT` currently selects the legacy root, choose a separate
+`WS_ROOT` before adding repositories to legacy workspaces. The manager refuses
+to nest another repository inside an existing checkout.
+
+Run the updated manager through one stable entry point on your PATH, or an alias
+pointing directly at its `bin/ws`. It can be invoked from any directory. Replace
+aliases that first change directory, such as
+`alias ws='cd /opt/arweave-dev; ./bin/ws'`, with a direct invocation:
+
+```bash
+alias ws='/path/to/updated/checkout/bin/ws'
+```
+
+Existing interactive shells need to redefine their alias, or source the updated
+shell configuration, to use it. Old checked-out copies of the manager only
+understand the old layout; use the updated entry point for workspace management.
+
+## Testing the manager
+
+```bash
+python3 scripts/test_ws.py
+```
+
+These integration tests use disposable local Git repositories, including
+submodules, and simulated screen/EPMD commands. GitHub clone URLs are redirected
+to local test repositories, so tests require neither GitHub access nor SSH keys.
+They exercise automatic cloning and reuse (including the default repository),
+multiple repositories, additions to running and legacy workspaces, port allocation,
+failed creation and addition, shell restarts, and protection of local edits.
+They do not operate on existing workspaces or sessions. Local socket creation
+must be permitted for the port-allocation checks.
 
 ## Why this is needed: Erlang test isolation
 
@@ -97,9 +195,8 @@ A workspace fixes both:
   Independent EPMD instances are separate registries, so node names cannot
   collide across workspaces even if something bypasses `ARWEAVE_NAMESPACE`.
 
-Both variables are exported automatically inside the workspace's screen
-session, and written to a `.envrc` in the worktree for plain ssh shells
-(`source .envrc`, or use `direnv`).
+Both variables are exported inside workspace screen sessions and written to
+manager-generated `.envrc` files for plain SSH shells.
 
 ### `ARWEAVE_NAMESPACE` outside the `ws` workflow
 
@@ -138,11 +235,11 @@ from inside the workspace directory:
 
 ```bash
 git add -A && git commit -m "..."
-git push -u origin <branch>          # branch == workspace name by default
+git push -u origin <branch>
 gh pr create --base master           # PRs go to the 'origin' (arweave-dev) remote
 ```
 
-Then keep working, or tear down: `ws rm <name>` removes the worktree but
+Then keep working, or tear down: `ws rm <name>` removes all its worktrees but
 **keeps the branch**, so the PR is unaffected. Delete the branch after the PR
 merges with `git branch -d <branch>` (or `ws rm <name> --delete-branch` if you
 remove the workspace at the same time).
