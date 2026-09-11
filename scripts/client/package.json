@@ -1,0 +1,9 @@
+{
+  "name": "arweave-client-scripts",
+  "private": true,
+  "description": "Command-line scripts that talk to an Arweave node with arweave-js.",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "arweave": "^2.0.1"
+  }
+}
