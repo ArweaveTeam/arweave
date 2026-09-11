@@ -766,17 +766,16 @@ test_starved_peer_recovers() ->
     %% dispatch/refill boundaries for the lower-rate recovered peer.
     ar_sync_sim_runner:run_for(40),
     Measurement = ar_sync_sim_runner:run_for(20),
-    CpsByPeer = ar_sync_sim_runner:metric(cps_by_peer, Measurement),
     %% The always-healthy and recovered peers provide their combined capacity.
     assert_metric_utilization(
         stored_cps, HealthyCPS + RecoveredCps, Measurement),
-    RecoveredPeerCps = maps:get(?PEER_TIMEOUT, CpsByPeer),
     %% A 90% peer floor distinguishes useful recovery from residual starvation;
     %% the aggregate 95% assertion above catches broader throughput loss.
-    assert_at_least(
-        RecoveredPeerCps,
+    assert_rate_at_least(
+        cps_by_peer,
+        ?PEER_TIMEOUT,
         0.9 * RecoveredCps,
-        #{ peer => ?PEER_TIMEOUT, metric => cps }).
+        Measurement).
 
 %% Scenario: All local completion paths stall and later recover while a mixed
 %% peer population remains available.
@@ -1528,8 +1527,8 @@ test_delayed_fetch_waves_do_not_amplify_store_backlog() ->
 %% Verification:
 %% - V1: The initial observation reaches its configured low rate and remains
 %%   materially below the recovered rate.
-%% - V2: Total recovered writes reach the 95% aggregate floor, minus one allowed
-%%   measurement-boundary completion.
+%% - V2: Total recovered writes reach the 95% aggregate floor across ten
+%%   complete batch periods.
 %% - V3: Every store remains within the default 90% equal-share floor.
 %%
 %% Modeling note:
@@ -1593,18 +1592,11 @@ test_low_local_completion_observation_does_not_limit_recovery() ->
     %% increases from the initial cap to the concurrency required by four-second
     %% request latency.
     ar_sync_sim_runner:run_for(40),
-    %% Twenty seconds average five complete batches from every store.
-    Measurement = ar_sync_sim_runner:run_for(20),
+    %% Forty seconds average ten complete batches from every store so one
+    %% partially populated completion wave cannot decide the utilization result.
+    Measurement = ar_sync_sim_runner:run_for(40),
     assert_chunks_spread_across_stores(Measurement),
-    DurationSeconds = ar_sync_sim_runner:metric(duration_seconds, Measurement),
-    %% Permit one completion to cross the measurement boundary while retaining
-    %% the 95% aggregate-throughput floor for every other chunk.
-    MinimumStoredChunks = ?MIN_STEADY_STATE_UTILIZATION
-        * AggregateStoreCPS * DurationSeconds - 1,
-    assert_at_least(
-        ar_sync_sim_runner:metric(chunks_stored_total, Measurement),
-        MinimumStoredChunks,
-        #{ metric => chunks_stored_total }).
+    assert_metric_utilization(stored_cps, AggregateStoreCPS, Measurement).
 
 %% Scenario: Four fast peers share an unadvertised downlink bottleneck.
 %%
