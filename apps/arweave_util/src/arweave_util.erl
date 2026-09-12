@@ -32,6 +32,7 @@
     parse_peer/1,
     parse_peer/2,
     parse_port/1,
+    parse_port_split/1,
     peer_to_ip/1,
     peer_to_str/1,
     pfilter/2,

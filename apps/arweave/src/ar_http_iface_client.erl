@@ -1396,14 +1396,33 @@ parse_peer_address(Peer) when is_binary(Peer), byte_size(Peer) =< ?MAX_PEER_ADDR
     parse_peer_address(binary_to_list(Peer));
 parse_peer_address(Peer)
     when is_list(Peer), length(Peer) =< ?MAX_PEER_ADDRESS_LEN ->
-    try
-        {ok, arweave_util:parse_peer(Peer)}
-    catch
-        _E:Reason ->
-            {error, Reason}
+    case arweave_util:parse_port_split(Peer) of
+        [Host, PortStr] ->
+            case inet:parse_ipv4strict_address(Host) of
+                {ok, {A, B, C, D}} ->
+                    maybe
+                        {ok, Port} ?= parse_port(PortStr),
+                        {ok, {A, B, C, D, Port}}
+                    end;
+                {error, _} ->
+                    {error, not_an_ip_literal}
+            end;
+        _ ->
+            {error, invalid_peer_address}
     end;
 parse_peer_address(_Peer) ->
     {error, invalid_peer_address}.
+
+parse_port(Port) when is_list(Port) ->
+    try list_to_integer(Port) of
+        Int when Int > 0,
+                 Int =< 65535 ->
+            {ok, Int};
+        _Int ->
+            {error, port_out_of_range}
+    catch _E:_R ->
+            {error, invalid_port}
+    end.
 
 %% @doc Process the response of an /block call.
 handle_block_response(_Peer, _Encoding, {ok, {{<<"400">>, _}, _, _, _, _}}) ->
