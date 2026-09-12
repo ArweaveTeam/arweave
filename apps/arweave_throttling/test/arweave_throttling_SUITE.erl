@@ -580,8 +580,14 @@ crash_loses_isolated_state(_Config) ->
     ?assertMatch({ok, #{total := 100, remaining := 90}}, arweave_throttling:status(?GROUPID_DATA_SYNC, ?PEER1)),
 
     %% One crashes (it's killed in the test)
-    exit(whereis(arweave_throttling_group_general), kill),
-    timer:sleep(1000),
+    GroupPid = whereis(arweave_throttling_group_general),
+    exit(GroupPid, kill),
+    ok = ar_test_await:until(
+             throttling_group_restarted,
+             fun() ->
+                 RestartedPid = whereis(arweave_throttling_group_general),
+                 is_pid(RestartedPid) andalso RestartedPid =/= GroupPid
+             end),
 
     %% Only one is restarted, and has state reset.
     ?assertMatch({ok, #{total := infinity,remaining := infinity}}, arweave_throttling:status(?GROUPID_GENERAL, ?PEER1)),
