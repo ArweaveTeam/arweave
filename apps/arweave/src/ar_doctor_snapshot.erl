@@ -20,7 +20,7 @@ main(_) ->
 help() ->
     ar:console("data-doctor snapshot <data_dir> <output_dir> [height <N>]~n"),
     ar:console("  Export a snapshot a node can start from via "
-            "join.start_from_state.~n"),
+            "join.start_from_state, with a manifest.json naming its tip.~n"),
     ar:console("  data_dir: Full path to the data_dir of a node that is not "
             "running.~n"),
     ar:console("  output_dir: Full path to the snapshot directory to create "
@@ -76,5 +76,7 @@ format_error({account_tree_not_found, Height, RootHash}) ->
             [RootHash, Height]);
 format_error({snapshot_dir_exists, Dir}) ->
     io_lib:format("the output directory ~s already exists", [Dir]);
+format_error({manifest_not_written, Reason}) ->
+    io_lib:format("manifest.json could not be written: ~p", [Reason]);
 format_error(Reason) ->
     io_lib:format("~p", [Reason]).

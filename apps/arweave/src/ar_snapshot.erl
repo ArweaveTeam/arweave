@@ -8,7 +8,8 @@
 
 %%% Build start_from_state snapshot directories: the block index, the recent
 %%% block and transaction headers, the reward and block time history entries
-%%% and the account tree a node needs to join from a local state.
+%%% and the account tree a node needs to join from a local state, plus a
+%%% manifest.json naming the tip.
 
 %% Mirrors ar_node_worker: how many missing recent block headers a node
 %% tolerates when it starts from a state.
@@ -75,7 +76,22 @@ do_export(DataDir, OutputDir, Height) ->
         %% The tree of the tip's window must be present; do not fall back to
         %% an older tree and let the node join below the requested height.
         ok ?= write_new(OutputDir, State#{ search_depth => 1 }, DataDir),
+        ok ?= write_manifest(OutputDir, tip_info(State)),
         {ok, tip_info(State)}
+    end.
+
+%% @doc Write manifest.json, the tip height, hash and weave size, next to
+%% the databases, so the directory describes itself without a node.
+write_manifest(Dir, Info) ->
+    #{ height := Height, hash := H, weave_size := WeaveSize } = Info,
+    JSON = ar_serialize:jsonify(#{ height => Height,
+            indep_hash => arweave_util:encode(H), weave_size => WeaveSize }),
+    case file:write_file(filename:join(Dir, "manifest.json"), JSON) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            _ = file:del_dir_r(Dir),
+            {error, {manifest_not_written, Reason}}
     end.
 
 read_block_index(DataDir) ->
