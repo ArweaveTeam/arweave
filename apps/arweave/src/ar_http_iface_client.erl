@@ -41,7 +41,7 @@
 
 %% The longest peer address we accept: "255.255.255.255:65535".
 -define(MAX_PEER_ADDRESS_LEN, 21).
--define(MAX_PEER_LIST_LEN, 128).
+-define(MAX_PEER_LIST_LEN, 1000).
 
 %%--------------------------------------------------------------------
 %% @doc Send a JSON-encoded transaction to the given Peer with default

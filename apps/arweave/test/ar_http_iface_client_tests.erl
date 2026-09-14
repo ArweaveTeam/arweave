@@ -1,8 +1,8 @@
 %%% @doc Tests for the HTTP client interface against a stub HTTP
 %%% server (`ar_test_http_server') rather than a full node.
-%%% 
+%%%
 %%% Since we aren't querying a node running our own code, we
-%%% can mock any 
+%%% can mock any
 -module(ar_http_iface_client_tests).
 -test_category([fast]).
 
@@ -52,20 +52,20 @@ test_get_peers(Config) ->
     %% 128 items accepted
     IPList = lists:map(fun(_) ->
                            <<"127.0.0.1:1984">>
-                       end, lists:seq(1,128)),
-    Body128 = ar_serialize:jsonify(IPList),
-    ok = mock_get_peers_response(Table, Body128),
-    Result128 = lists:map(fun(_) ->
+                       end, lists:seq(1,1000)),
+    Body1000 = ar_serialize:jsonify(IPList),
+    ok = mock_get_peers_response(Table, Body1000),
+    Result1000 = lists:map(fun(_) ->
                            {127,0,0,1,1984}
-                       end, lists:seq(1,128)),
-    ?assertEqual(Result128, ar_http_iface_client:get_peers(Peer)),
+                       end, lists:seq(1,1000)),
+    ?assertEqual(Result1000, ar_http_iface_client:get_peers(Peer)),
 
     %% One is too long
     ok = mock_get_peers_response(
              Table,
              ar_serialize:jsonify([<<"127.0.0.1:1984">>, <<"12312312310.1231230.1231230.1231231:11231231985">>])),
     ?assertEqual([{127,0,0,1,1984}], ar_http_iface_client:get_peers(Peer)),
-    
+
     %% One can't be parsed into IP+Port tuple
     ok = mock_get_peers_response(
              Table,
@@ -85,13 +85,20 @@ test_get_peers(Config) ->
     ?assertEqual([{127,0,0,1,1984}], ar_http_iface_client:get_peers(Peer)),
 
     %% List too long
-    IPListTooLong = lists:map(fun(_) ->
+    IPListTooLong1 = lists:map(fun(_) ->
                            <<"127.0.0.1:1984">>
-                       end, lists:seq(1,129)),
-    BodyTooLong = ar_serialize:jsonify(IPListTooLong),
-    ok = mock_get_peers_response(Table, BodyTooLong),
-    %% It will cut the list to 128. - the same as the valid one.
-    ?assertEqual(Result128, ar_http_iface_client:get_peers(Peer)),
+                       end, lists:seq(1,1001)),
+    BodyTooLong1 = ar_serialize:jsonify(IPListTooLong1),
+    ok = mock_get_peers_response(Table, BodyTooLong1),
+    %% It will cut the list to 1000. - the same as the valid one.
+    ?assertEqual(1000, length(ar_http_iface_client:get_peers(Peer))),
+
+    IPListTooLong2 = lists:map(fun(_) ->
+                           <<"127.0.0.1:1984">>
+                       end, lists:seq(1,2000)),
+    BodyTooLong2 = ar_serialize:jsonify(IPListTooLong2),
+    ok = mock_get_peers_response(Table, BodyTooLong2),
+    %% It will cut the list to 1000. - the same as the valid one.
 
     ok.
 

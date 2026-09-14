@@ -55,6 +55,9 @@
 -define(GET_MORE_PEERS_FREQUENCY_MS, 240 * 1000).
 -endif.
 
+%% The amount of time probing of discovered peers needs to return.
+-define(PEER_PROBE_TIMEOUT, 5000).
+
 %% Peers to never add to the peer list.
 -define(PEER_PERMANENT_BLACKLIST, []).
 
@@ -716,9 +719,22 @@ get_peer_rating(Rating, Performance) ->
             Performance#performance.current_rating
     end.
 
-discover_peers([]) ->
-    ok;
-discover_peers([Peer | Peers]) ->
+discover_peers(Peers) ->
+    %% We are trying to make discovery more efficient to avoid potential
+    %% blocking behaviour that could be used to DOS the system.
+    %% We can perform the probing (calling the `/info` endpoint) of remote nodes
+    %% in parallel.
+    %% An adversary might submit a half open IP and port 1000 times, in this case
+    %% pmap would be "demultiplexed" since the http client will use the same
+    %% connection process for the same peer.
+    %% Overall, we don't have to wait the sum of all response times, we will wait
+    %% for only the longest response time.
+    UniquePeers = lists:usort(Peers),
+    arweave_util:pmap(
+        fun probe_and_maybe_add_peer/1, UniquePeers, ?PEER_PROBE_TIMEOUT),
+    ok.
+
+probe_and_maybe_add_peer(Peer) ->
     case is_registered(Peer) of
         true ->
             ok;
@@ -744,8 +760,7 @@ discover_peers([Peer | Peers]) ->
                 _ ->
                     ok
             end
-    end,
-    discover_peers(Peers).
+    end.
 
 format_stats(lifetime, Peer, Perf) ->
     KB = Perf#performance.total_bytes / 1024,
