@@ -60,7 +60,7 @@ arweave_peer(Req) ->
 
 arweave_peer2(Binary, {A, B, C, D}) when is_binary(Binary) ->
     try
-        binary_to_integer(Binary)
+        ar_serialize:parse_integer(Binary)
     of
         P when P >= 1 andalso P =< 65535 ->
             {A, B, C, D, P};

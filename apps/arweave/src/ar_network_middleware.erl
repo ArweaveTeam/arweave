@@ -42,7 +42,7 @@ get_release(Req) ->
         -1 ->
             -1;
         ReleaseBin ->
-            case catch binary_to_integer(ReleaseBin) of
+            case catch ar_serialize:parse_integer(ReleaseBin) of
                 {'EXIT', _} ->
                     -1;
                 Release ->

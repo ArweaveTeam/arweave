@@ -4,7 +4,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("eunit/include/eunit.hrl").
 -export([
          add_peer/2,
          connected_peer/1,
@@ -12,6 +11,8 @@
          discover_peers/0,
          filter_peers/2,
          get_connection_timestamp_peer/1,
+         get_inbound_peer_counts/0,
+         get_inbound_peers/0,
          get_peer_performances/1,
          get_peer_release/1,
          get_peers/1,
@@ -30,6 +31,12 @@
          stats/1
         ]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+
+-ifdef(AR_TEST).
+-export([expire_inbound_peers/0, get_or_init_performance/1, get_total_rating/1,
+    maybe_rotate_peer_ports/1, observe_inbound_peer/3, remove_peer/2,
+    set_ranked_peers/2, update_rating/2, update_rating/5]).
+-endif.
 
 %% The frequency in seconds of re-resolving DNS of peers configured by domain names.
 -define(STORE_RESOLVED_DOMAIN_S, 60).
@@ -53,6 +60,10 @@
 
 %% The maximum number of peers to return from get_peers/0.
 -define(MAX_PEERS, 1000).
+
+-define(INBOUND_PEER_WINDOW_S, 3600).
+-define(MAX_INBOUND_PEERS, 10000).
+-define(MAX_INBOUND_RELEASE_LABELS, 32).
 
 %% Minimum average_success we'll tolerate before dropping a peer.
 -define(MINIMUM_SUCCESS, 0.8).
@@ -322,8 +333,36 @@ rate_gossiped_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
 issue_warning(Peer, _Type, _Reason) ->
     gen_server:cast(?MODULE, {warning, Peer}).
 
+%% @doc Register a peer observed in an inbound P2P request.
 add_peer(Peer, Release) ->
-    gen_server:cast(?MODULE, {add_peer, Peer, Release}).
+    At = erlang:monotonic_time(second),
+    gen_server:cast(?MODULE, {add_peer, Peer, Release, At}).
+
+%% @doc Return the last hour of inbound endpoints for local census queries.
+get_inbound_peers() ->
+    Now = erlang:monotonic_time(second),
+    #{observed_at => erlang:system_time(second),
+      window_seconds => ?INBOUND_PEER_WINDOW_S,
+      peers => [#{peer => Peer, release => Release,
+                  seconds_since_last_inbound => Now - At}
+          || {Peer, Release, At} <- recent_inbound_peers(Now)]}.
+
+%% @doc Count inbound endpoints by release within the last hour.
+get_inbound_peer_counts() ->
+    Rows = recent_inbound_peers(erlang:monotonic_time(second)),
+    Counts = lists:foldl(fun({_Peer, Release, _At}, Acc) ->
+        maps:update_with(Release, fun(N) -> N + 1 end, 1, Acc)
+    end, #{}, Rows),
+    UnknownCount = maps:get(unknown, Counts, 0),
+    ReleaseCounts = maps:to_list(maps:remove(unknown, Counts)),
+    SortKeys = [{-Count, Release} || {Release, Count} <- ReleaseCounts],
+    Sorted = lists:sort(SortKeys),
+    {Named, Rest} = lists:split(
+        min(?MAX_INBOUND_RELEASE_LABELS, length(Sorted)), Sorted),
+    NamedCounts = [{Release, -NegativeCount}
+        || {NegativeCount, Release} <- Named],
+    OtherCount = lists:sum([-NegativeCount || {NegativeCount, _} <- Rest]),
+    NamedCounts ++ [{unknown, UnknownCount}, {other, OtherCount}].
 
 %% @doc Print statistics about the current peers.
 stats(Ranking) ->
@@ -540,17 +579,19 @@ handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
     {reply, ok, State}.
 
-handle_cast({add_peer, Peer, Release}, State) ->
+handle_cast({add_peer, Peer, Release, At}, State) ->
+    observe_inbound_peer(Peer, Release, At),
     maybe_add_peer(Peer, Release),
     {noreply, State};
 
 handle_cast(rank_peers, State) ->
+    expire_inbound_peers(),
     LifetimePeers = score_peers(lifetime),
     CurrentPeers = score_peers(current),
     arweave_metrics:gauge_set(arweave_peer_count, length(LifetimePeers)),
     set_ranked_peers(lifetime, rank_peers(LifetimePeers)),
     set_ranked_peers(current, rank_peers(CurrentPeers)),
-    arweave_util:cast_after(?RANK_PEERS_FREQUENCY_MS, ?MODULE, rank_peers),
+    arweave_util:cast_after(?RANK_PEERS_FREQUENCY_MS, self(), rank_peers),
     {noreply, State};
 
 handle_cast(ping_peers, State) ->
@@ -1022,6 +1063,46 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
     set_total_rating(current, TotalCurrentRating2),
     Performance2.
 
+observe_inbound_peer(Peer, Release, At) ->
+    case ets:lookup(ar_inbound_peers, Peer) of
+        [{Peer, _, StoredAt}] when StoredAt > At ->
+            ok;
+        Existing ->
+            do_observe_inbound_peer(Peer, Release, At, Existing)
+    end.
+
+do_observe_inbound_peer(Peer, Release, At, Existing) ->
+    case Existing == [] andalso
+            ets:info(ar_inbound_peers, size) >= ?MAX_INBOUND_PEERS of
+        true ->
+            ok;
+        false ->
+            ets:insert(ar_inbound_peers,
+                {Peer, normalize_inbound_release(Release), At}),
+            ok
+    end.
+
+expire_inbound_peers() ->
+    Cutoff = erlang:monotonic_time(second) - ?INBOUND_PEER_WINDOW_S,
+    ets:select_delete(ar_inbound_peers, [{{'_', '_', '$1'},
+        [{'=<', '$1', Cutoff}], [true]}]).
+
+recent_inbound_peers(Now) ->
+    Rows = try ets:tab2list(ar_inbound_peers)
+    catch error:badarg ->
+        []
+    end,
+    Cutoff = Now - ?INBOUND_PEER_WINDOW_S,
+    lists:filter(fun({_Peer, _Release, At}) ->
+        At > Cutoff andalso At =< Now
+    end, Rows).
+
+normalize_inbound_release(Release) when is_integer(Release), Release >= 0,
+        Release =< 65535 ->
+    Release;
+normalize_inbound_release(_) ->
+    unknown.
+
 maybe_add_peer(Peer, Release) ->
     maybe_rotate_peer_ports(Peer),
     %% If we've just added his peer, flag it as active and connected.
@@ -1179,321 +1260,3 @@ is_connected_peer(Peer) ->
         {ok, V} -> V;
         {error, _} -> false
     end.
-
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
-connected_peer_test() ->
-    Peer = {100, 117, 109, 98, 1234},
-
-                                                % drop all objects from the table to start with a clean state
-    ets:delete_all_objects(?MODULE),
-
-                                                % get all peers connected, it should returns nothing by
-                                                % default because the table is empty.
-    ?assertEqual(undefined, get_connection_timestamp_peer(Peer)),
-
-                                                % manually add a new peer using set_ranked_peers function.
-                                                % the node is not connected because gun did not manage the
-                                                % connection in this test.
-    set_ranked_peers(lifetime, [Peer]),
-    set_ranked_peers(current, [Peer]),
-    ?assertEqual(false, is_connected_peer(Peer)),
-    ?assertEqual(undefined, get_connection_timestamp_peer(Peer)),
-
-                                                % force this peer to be connected using connected_peer
-                                                % function. A timestamp is created.
-    connected_peer(Peer),
-    Timestamp = get_connection_timestamp_peer(Peer),
-    ?assertEqual(true, is_connected_peer(Peer)),
-    ?assertEqual(Timestamp, get_connection_timestamp_peer(Peer)),
-    ?assertNotEqual(undefined, get_connection_timestamp_peer(Peer)),
-    ?assertEqual([Peer], get_peers(lifetime)),
-    ?assertEqual([Peer], get_peers(current)),
-
-                                                % Now remove the connection to the peer. A timestamp must
-                                                % still be there.
-    disconnected_peer(Peer),
-    ?assertEqual(false, is_connected_peer(Peer)),
-    ?assertNotEqual(undefined, get_connection_timestamp_peer(Peer)),
-    ?assertEqual([Peer], get_peers(lifetime)),
-    ?assertEqual([Peer], get_peers(current)),
-
-                                                % let modify manually the timestamp to check get_peers/1
-                                                % function, and overwrite Peer timestamp with some defined
-                                                % values.
-    Time = erlang:system_time(second),
-                                                % Go above the limit
-    Limit = Time-((?CURRENT_PEERS_LIST_FILTER+10)*60*60*24),
-    set_tag(Peer, {connection, last}, Limit),
-    ?assertEqual([], get_peers(current)),
-    ?assertEqual([Peer], get_peers(lifetime)).
-
-rotate_peer_ports_test() ->
-    Peer = {2, 2, 2, 2, 1},
-    maybe_rotate_peer_ports(Peer),
-    [{_, {PortMap, 1}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-    ?assertEqual(1, element(1, PortMap)),
-    remove_peer(test, Peer),
-    ?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})),
-    maybe_rotate_peer_ports(Peer),
-    Peer2 = {2, 2, 2, 2, 2},
-    maybe_rotate_peer_ports(Peer2),
-    [{_, {PortMap2, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-    ?assertEqual(1, element(1, PortMap2)),
-    ?assertEqual(2, element(2, PortMap2)),
-    remove_peer(test, Peer),
-    [{_, {PortMap3, 2}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-    ?assertEqual(empty_slot, element(1, PortMap3)),
-    ?assertEqual(2, element(2, PortMap3)),
-    Peer3 = {2, 2, 2, 2, 3},
-    Peer4 = {2, 2, 2, 2, 4},
-    Peer5 = {2, 2, 2, 2, 5},
-    Peer6 = {2, 2, 2, 2, 6},
-    Peer7 = {2, 2, 2, 2, 7},
-    Peer8 = {2, 2, 2, 2, 8},
-    Peer9 = {2, 2, 2, 2, 9},
-    Peer10 = {2, 2, 2, 2, 10},
-    Peer11 = {2, 2, 2, 2, 11},
-    maybe_rotate_peer_ports(Peer3),
-    maybe_rotate_peer_ports(Peer4),
-    maybe_rotate_peer_ports(Peer5),
-    maybe_rotate_peer_ports(Peer6),
-    maybe_rotate_peer_ports(Peer7),
-    maybe_rotate_peer_ports(Peer8),
-    maybe_rotate_peer_ports(Peer9),
-    maybe_rotate_peer_ports(Peer10),
-    [{_, {PortMap4, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-    ?assertEqual(empty_slot, element(1, PortMap4)),
-    ?assertEqual(2, element(2, PortMap4)),
-    ?assertEqual(10, element(10, PortMap4)),
-    maybe_rotate_peer_ports(Peer8),
-    maybe_rotate_peer_ports(Peer9),
-    maybe_rotate_peer_ports(Peer10),
-    [{_, {PortMap5, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-    ?assertEqual(empty_slot, element(1, PortMap5)),
-    ?assertEqual(2, element(2, PortMap5)),
-    ?assertEqual(3, element(3, PortMap5)),
-    ?assertEqual(9, element(9, PortMap5)),
-    ?assertEqual(10, element(10, PortMap5)),
-    maybe_rotate_peer_ports(Peer11),
-    [{_, {PortMap6, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-    ?assertEqual(element(2, PortMap5), element(1, PortMap6)),
-    ?assertEqual(3, element(2, PortMap6)),
-    ?assertEqual(4, element(3, PortMap6)),
-    ?assertEqual(5, element(4, PortMap6)),
-    ?assertEqual(11, element(10, PortMap6)),
-    maybe_rotate_peer_ports(Peer11),
-    [{_, {PortMap7, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-    ?assertEqual(element(2, PortMap5), element(1, PortMap7)),
-    ?assertEqual(3, element(2, PortMap7)),
-    ?assertEqual(4, element(3, PortMap7)),
-    ?assertEqual(5, element(4, PortMap7)),
-    ?assertEqual(11, element(10, PortMap7)),
-    remove_peer(test, Peer4),
-    [{_, {PortMap8, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-    ?assertEqual(empty_slot, element(3, PortMap8)),
-    ?assertEqual(3, element(2, PortMap8)),
-    ?assertEqual(5, element(4, PortMap8)),
-    remove_peer(test, Peer2),
-    remove_peer(test, Peer3),
-    remove_peer(test, Peer5),
-    remove_peer(test, Peer6),
-    remove_peer(test, Peer7),
-    remove_peer(test, Peer8),
-    remove_peer(test, Peer9),
-    remove_peer(test, Peer10),
-    [{_, {PortMap9, 10}}] = ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}}),
-    ?assertEqual(11, element(10, PortMap9)),
-    remove_peer(test, Peer11),
-    ?assertEqual([], ets:lookup(?MODULE, {peer_ip, {2, 2, 2, 2}})).
-
-update_rating_test() ->
-    ets:delete_all_objects(?MODULE),
-    Peer1 = {1, 2, 3, 4, 1984},
-    Peer2 = {5, 6, 7, 8, 1984},
-
-    ?assertEqual(#performance{}, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
-
-    update_rating(Peer1, true),
-    ?assertEqual(#performance{}, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
-
-
-    update_rating(Peer1, false),
-    assert_performance(#performance{ average_success = 0.965 }, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
-
-
-    %% Failed transfer should impact bytes or latency
-    update_rating(Peer1, 1000, 100, 1, false),
-    assert_performance(#performance{
-                          average_success = 0.9312 },
-                       get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
-
-
-    %% Test successful transfer
-    update_rating(Peer1, 1000, 100, 1, true),
-    assert_performance(#performance{
-                          total_bytes = 100,
-                          total_throughput = 0.1,
-                          total_transfers = 1,
-                          average_latency = 50,
-                          average_throughput = 0.005,
-                          average_success = 0.9336,
-                          lifetime_rating = 0.0934,
-                          current_rating = 0.0047 },
-                       get_or_init_performance(Peer1)),
-    ?assertEqual(0.0934, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0047, round(get_total_rating(current), 4)),
-
-    %% Test concurrency
-    update_rating(Peer1, 1000, 50, 10, true),
-    assert_performance(#performance{
-                          total_bytes = 150,
-                          total_throughput = 0.15,
-                          total_transfers = 2,
-                          average_latency = 97.5,
-                          average_throughput = 0.0298,
-                          average_success = 0.936,
-                          lifetime_rating = 0.0702,
-                          current_rating = 0.0278 },
-                       get_or_init_performance(Peer1)),
-    ?assertEqual(0.0702, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0278, round(get_total_rating(current), 4)),
-
-    %% With 2 peers total rating should be the sum of both
-    update_rating(Peer2, 1000, 100, 1, true),
-    assert_performance(#performance{
-                          total_bytes = 100,
-                          total_throughput = 0.1,
-                          total_transfers = 1,
-                          average_latency = 50,
-                          average_throughput = 0.005,
-                          average_success = 1,
-                          lifetime_rating = 0.1,
-                          current_rating = 0.005 },
-                       get_or_init_performance(Peer2)),
-    ?assertEqual(0.1702, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0328, round(get_total_rating(current), 4)).
-
-block_rejected_test_() ->
-    [
-     {timeout, 30, fun test_block_rejected/0}
-    ].
-
-test_block_rejected() ->
-    ar_blacklist_middleware:cleanup_ban(whereis(ar_blacklist_middleware)),
-    Peer = {127, 0, 0, 1, ar_test_node:get_unused_port()},
-    ar_peers:add_peer(Peer, -1),
-
-    ar_events:send(block, {rejected, invalid_signature, <<>>, Peer}),
-    timer:sleep(5000),
-
-    ?assertEqual(#{Peer => #performance{}}, ar_peers:get_peer_performances([Peer])),
-    ?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(Peer)),
-
-    ar_events:send(block, {rejected, failed_to_fetch_first_chunk, <<>>, Peer}),
-    timer:sleep(5000),
-
-    ?assertEqual(
-       #{Peer => #performance{ average_success = 0.965 }},
-       ar_peers:get_peer_performances([Peer])),
-    ?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(Peer)),
-
-    ar_events:send(block, {rejected, invalid_previous_solution_hash, <<>>, Peer}),
-    timer:sleep(5000),
-
-    ?assertEqual(#{Peer => #performance{}}, ar_peers:get_peer_performances([Peer])),
-    ?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)).
-
-rate_data_test() ->
-    ets:delete_all_objects(?MODULE),
-    Peer1 = {1, 2, 3, 4, 1984},
-
-    ?assertEqual(#performance{}, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
-
-    ar_peers:rate_fetched_data(Peer1, chunk, {error, timeout}, 1000000, 100, 10),
-    timer:sleep(500),
-    assert_performance(#performance{ average_success = 0.965 }, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
-
-    ar_peers:rate_fetched_data(Peer1, block, 1000000, 100),
-    timer:sleep(500),
-    assert_performance(#performance{
-                          total_bytes = 100,
-                          total_throughput = 0.1,
-                          total_transfers = 1,
-                          average_latency = 50,
-                          average_throughput = 0.005,
-                          average_success = 0.9662,
-                          lifetime_rating = 0.0966,
-                          current_rating = 0.0048 },
-                       get_or_init_performance(Peer1)),
-    ?assertEqual(0.0966, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0048, round(get_total_rating(current), 4)),
-
-    ar_peers:rate_fetched_data(Peer1, tx, ok, 1000000, 100, 2),
-    timer:sleep(500),
-    assert_performance(#performance{
-                          total_bytes = 200,
-                          total_throughput = 0.2,
-                          total_transfers = 2,
-                          average_latency = 97.5,
-                          average_throughput = 0.0148,
-                          average_success = 0.9674,
-                          lifetime_rating = 0.0967,
-                          current_rating = 0.0143 },
-                       get_or_init_performance(Peer1)),
-    ?assertEqual(0.0967, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0143, round(get_total_rating(current), 4)),
-
-    ar_peers:rate_gossiped_data(Peer1, block, 1000000, 100),
-    timer:sleep(500),
-    assert_performance(#performance{
-                          total_bytes = 300,
-                          total_throughput = 0.3,
-                          total_transfers = 3,
-                          average_latency = 142.625,
-                          average_throughput = 0.019,
-                          average_success = 0.9685,
-                          lifetime_rating = 0.0969,
-                          current_rating = 0.0184 },
-                       get_or_init_performance(Peer1)),
-    ?assertEqual(0.0969, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0184, round(get_total_rating(current), 4)).
-
-assert_performance(Expected, Actual) ->
-    ?assertEqual(Expected#performance.total_bytes, Actual#performance.total_bytes),
-    ?assertEqual(
-       round(Expected#performance.total_throughput, 4),
-       round(Actual#performance.total_throughput, 4)),
-    ?assertEqual(Expected#performance.total_transfers, Actual#performance.total_transfers),
-    ?assertEqual(
-       round(Expected#performance.average_latency, 4),
-       round(Actual#performance.average_latency, 4)),
-    ?assertEqual(
-       round(Expected#performance.average_throughput, 4),
-       round(Actual#performance.average_throughput, 4)),
-    ?assertEqual(
-       round(Expected#performance.average_success, 4),
-       round(Actual#performance.average_success, 4)),
-    ?assertEqual(
-       round(Expected#performance.lifetime_rating, 4),
-       round(Actual#performance.lifetime_rating, 4)),
-    ?assertEqual(
-       round(Expected#performance.current_rating, 4),
-       round(Actual#performance.current_rating, 4)).
-
-round(Float, N) ->
-    Multiplier = math:pow(10, N),
-    round(Float * Multiplier) / Multiplier.

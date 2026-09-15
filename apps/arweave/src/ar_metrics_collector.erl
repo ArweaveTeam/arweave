@@ -50,6 +50,11 @@ synced_blocks() ->
 metrics() ->
     RanchInfo = ranch:info(),
     [
+     {inbound_peer_count, gauge,
+      "Distinct inbound P2P endpoints seen in the last hour, by self-reported "
+      "release; unknown is missing/invalid and other groups excess releases",
+      [{[{release, Release}], Count}
+          || {Release, Count} <- ar_peers:get_inbound_peer_counts()]},
      {storage_blocks_stored, gauge,
       "Blocks stored",
       synced_blocks()},
