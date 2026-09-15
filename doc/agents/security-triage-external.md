@@ -1,10 +1,10 @@
 # Evaluating an externally reported security issue
 
 Follow this procedure only when the user explicitly invokes the skill with a
-security-tracker issue URL or with the text of a report:
+security-tracker issue URL, or with the text of one or more reports:
 
-- Codex: `$ar-security-triage-external <issue-url | report>`
-- Claude Code: `/ar-security-triage-external <issue-url | report>`
+- Codex: `$ar-security-triage-external <issue-url | reports>`
+- Claude Code: `/ar-security-triage-external <issue-url | reports>`
 
 The report is written by someone outside the team. It is either an existing
 issue on the security tracker, or a report the user pastes into the
@@ -17,6 +17,24 @@ evaluating it, and posting the assessment; it does not authorize code changes.
 
 Keep every write-up brief. Once the report is an issue, operate on it by its
 URL (`gh issue edit <url>` / `gh issue comment <url>`).
+
+## Several reports in one invocation
+
+The user may paste several reports at once, separated by a line whose only
+content is `NEXT REPORT` fenced by runs of `=`, as in `=== NEXT REPORT ===`.
+Match it loosely: the number of `=` on each side varies in practice, and a
+line that reads as that separator is one. Split on it and treat each part as
+its own report, with its own tracker issue, assessment and reply draft.
+
+Carry all the steps through for one report before starting the next, so the
+result reads as several complete triages rather than one merged one. The only
+work shared across a batch is the comparison refs and the tracker listing,
+which are the same for every report in it. Number the issues in the order the
+reports were pasted.
+
+A report that turns out to be invalid, duplicate or blocked does not stop the
+others. Finish the rest, then close with one summary naming each report and
+its disposition.
 
 ## Guardrails
 
@@ -39,6 +57,18 @@ URL (`gh issue edit <url>` / `gh issue comment <url>`).
 Rate the finding against
 [security-threat-model.md](security-threat-model.md) — the trust assumptions
 and the bar a finding has to clear.
+
+**A valid finding must be both exploitable and reachable.** A real defect that
+no attacker can trigger is not a valid finding, however sound the analysis
+behind it. Answer "Valid finding?" on that bar alone. Say no whenever the
+report establishes no reachable trigger, including when the reporter says so
+themselves, and say it plainly rather than softening it to a partial yes or a
+"valid as a code defect".
+
+Confirmed defects that miss the bar still matter — say so in the assessment so
+the team can queue them, and name them as bugs rather than findings. The two
+are tracked differently and only a valid finding earns a bounty, so blurring
+them sets a false expectation with the reporter.
 
 ## Repository and comparison refs
 
@@ -79,7 +109,8 @@ link in the new issue's body is enough, since GitHub records the reference on
 the older issue by itself.
 
 Record every related issue you find, duplicate or not, to cite in the
-assessment.
+assessment. When the invocation carries several reports, check them against
+each other too — two reports in one batch can describe the same problem.
 
 ## 2. File a pasted report
 
@@ -91,9 +122,11 @@ preserved original. File it on the security tracker, the private
 
 - Title: `AVDE-<year>-<N>: <title>`, where `N` is one more than the highest
   number already on the tracker (`gh issue list --repo ArweaveTeam/avde
-  --state all --limit 1 --json title`). Use the report's own title when it
-  has one; otherwise a one-line summary naming the class of problem and the
-  component.
+  --state all --limit 1 --json title`). When the report opens with a
+  `Subject:` or `Title:` line, that line is the title — copy it verbatim,
+  without rewording it or appending to it. Otherwise use a one-line summary
+  naming the class of problem and the component. A duplicate is recorded in
+  the body, never in the title.
 - Body: `Reported by _<reporter>_` on the first line, then — when step 1
   found one — a `Duplicate of <link>` line, then the report unchanged. Ask
   who the reporter is if the user did not say.
@@ -189,11 +222,42 @@ it duplicates an issue already tracked. Post a second comment on the new
 issue, separate from the assessment, holding a short reply the team can send
 to the reporter.
 
-Write it for someone outside the team: no private commit links, no internal
-issue numbers, no unreleased implementation details. Keep it to a few
-sentences — thank them, say what the report got right, give the one decisive
-fact that settles it, and say whether a change is planned. Plain prose, no
-severity table.
+The reporter sits outside the trust boundary and may use anything in the reply
+to cause harm, so share what settles this report and no more. Give the
+verdict, the one decisive fact behind it, and whether a change is planned,
+without handing over a wider map of the system. Plain prose, no severity
+table.
+
+Be courteous and warm. Open by thanking them for investigating and for the
+report, and close by inviting further findings or questions. Praise the effort
+and the clarity of the write-up, never the near miss — "a clear report" is
+right, "a great find" is not. Sign off as the Arweave team, not as an
+individual.
+
+Where one technical fact closes the matter, give it, even where it corrects
+the report — this is the most useful thing in the reply and the reason the
+reporter can accept the verdict. Where explaining would take a tour of the
+code, give the conclusion instead. Hedging it as "if we have understood
+correctly" invites a correction if we read the report wrong.
+
+Say plainly why no bounty follows, in the report's own terms:
+
+- Valid but not eligible — already reported by someone else, or already found
+  and fixed. Confirm the finding and name the reason.
+- Not exploitable or reachable. Say that it does not meet that bar, and keep
+  any intention to fix it separate from the verdict. A reachability trace
+  that starts somewhere not externally addressable is not end to end.
+
+Leave out:
+
+- Private commit links, internal issue numbers, unreleased implementation
+  details, and code or call paths the report did not already name itself.
+- Everything the report overlooked beyond the one fact that settles it. A
+  list of near misses maps how the system really works and points at the next
+  place to look.
+- What a defect could lead to, and how it might combine with anything else.
+- Fix detail beyond whether a change is planned and, where it helps, that it
+  will ship in a future release.
 
 Label it as a draft for a person to send, and do not contact the reporter
 yourself.

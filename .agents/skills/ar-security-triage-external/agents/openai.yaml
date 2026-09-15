@@ -1,7 +1,7 @@
 interface:
   display_name: "Arweave External Security Triage"
   short_description: "Evaluate an externally reported Arweave security issue or report"
-  default_prompt: "Use $ar-security-triage-external to file this security report as a tracker issue if it is not one already, then reformat, evaluate, and post an assessment on it."
+  default_prompt: "Use $ar-security-triage-external to file each pasted security report as a tracker issue if it is not one already, then reformat, evaluate, and post an assessment on it."
 
 policy:
   allow_implicit_invocation: false
