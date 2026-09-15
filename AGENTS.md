@@ -21,7 +21,7 @@ their tools to the shared documents.
 | [doc/agents/protocol.md](doc/agents/protocol.md) | Working on mining, packing, or recall-range code |
 | [doc/agents/code-review.md](doc/agents/code-review.md) | Reviewing a pull request, branch, or diff |
 | [doc/agents/security-threat-model.md](doc/agents/security-threat-model.md) | Rating the severity or exploitability of any security finding |
-| [doc/agents/security-triage-external.md](doc/agents/security-triage-external.md) | Explicitly invoking the `ar-security-triage-external` skill for a security-tracker issue |
+| [doc/agents/security-triage-external.md](doc/agents/security-triage-external.md) | Explicitly invoking the `ar-security-triage-external` skill for a security-tracker issue or a pasted external report |
 | [doc/agents/security-triage-internal.md](doc/agents/security-triage-internal.md) | Explicitly invoking the `ar-security-triage-internal` skill for an internal review report |
 | [doc/agents/issue-fixing.md](doc/agents/issue-fixing.md) | Fixing or resolving any tracker issue |
 

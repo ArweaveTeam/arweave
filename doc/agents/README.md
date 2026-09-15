@@ -38,10 +38,10 @@ resolve identically whichever way an agent reaches the file. Skills are named
 Invoke a skill explicitly with the tool's native prefix:
 
 - Codex: `$ar-code-review`, `$ar-fix-issue <issue-url>`,
-  `$ar-security-triage-external <issue-url>`, or
+  `$ar-security-triage-external <issue-url | report>`, or
   `$ar-security-triage-internal <report>`.
 - Claude Code: `/ar-code-review`, `/ar-fix-issue <issue-url>`,
-  `/ar-security-triage-external <issue-url>`, or
+  `/ar-security-triage-external <issue-url | report>`, or
   `/ar-security-triage-internal <report>`.
 
 Codex may also invoke a skill implicitly when its policy allows it, and Claude
