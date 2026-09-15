@@ -37,11 +37,11 @@
 -include("ar_mining.hrl").
 -include("ar_wallets.hrl").
 -include("ar_pool.hrl").
+-include("ar_peers.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% The longest peer address we accept: "255.255.255.255:65535".
 -define(MAX_PEER_ADDRESS_LEN, 21).
--define(MAX_PEER_LIST_LEN, 1000).
 
 %%--------------------------------------------------------------------
 %% @doc Send a JSON-encoded transaction to the given Peer with default
@@ -1373,7 +1373,7 @@ get_peers(Peer) ->
 
 %% @doc Parse external list of peer addresses
 parse_peer_list(PeerArray) ->
-    parse_peer_list(PeerArray, ?MAX_PEER_LIST_LEN, []).
+    parse_peer_list(PeerArray, ?MAX_PEER_DISCOVERY_LIST_LEN, []).
 
 parse_peer_list(_PeerArray, 0, Acc) ->
     lists:reverse(Acc);

@@ -3,6 +3,9 @@
 
 -include_lib("ar.hrl").
 
+%% The maximum number of peers to return from get_peers/0.
+-define(MAX_PEER_DISCOVERY_LIST_LEN, 1000).
+
 -record(performance, {
                       version = 3,
                       release = -1,

@@ -61,9 +61,6 @@
 %% Peers to never add to the peer list.
 -define(PEER_PERMANENT_BLACKLIST, []).
 
-%% The maximum number of peers to return from get_peers/0.
--define(MAX_PEERS, 1000).
-
 -define(INBOUND_PEER_WINDOW_S, 3600).
 -define(MAX_INBOUND_PEERS, 10000).
 -define(MAX_INBOUND_RELEASE_LABELS, 32).
@@ -984,7 +981,7 @@ rank_peers(ScoredPeers) ->
                            )].
 
 set_ranked_peers(Rating, Peers) ->
-    ets:insert(?MODULE, {{peers, Rating}, lists:sublist(Peers, ?MAX_PEERS)}).
+    ets:insert(?MODULE, {{peers, Rating}, lists:sublist(Peers, ?MAX_PEER_DISCOVERY_LIST_LEN)}).
 
 check_peer(Peer) ->
     check_peer(Peer, not is_loopback_ip(Peer)).
