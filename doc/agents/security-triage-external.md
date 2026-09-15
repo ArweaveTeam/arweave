@@ -178,4 +178,19 @@ exists, say so.
 
 Refer to the branch as `arweave-dev/master`, not merely `master`.
 
+## 8. Draft a reply to the reporter
+
+Only when the assessment concludes the report is not a valid finding. Post a
+second comment, separate from the assessment, holding a short reply the team
+can send to the reporter.
+
+Write it for someone outside the team: no private commit links, no internal
+issue numbers, no unreleased implementation details. Keep it to a few
+sentences — thank them, say what the report got right, give the one decisive
+fact that settles it, and say whether a change is planned. Plain prose, no
+severity table.
+
+Label it as a draft for a person to send, and do not contact the reporter
+yourself.
+
 [assessment-example]: https://github.com/ArweaveTeam/avde/issues/29#issuecomment-5268223438
