@@ -69,16 +69,19 @@ among several — read the linked report, not just the title. `gh search` does
 not index these private repositories reliably; scan the full issue list and
 read the candidates.
 
-If the same finding is already tracked, do not open a duplicate. Add the
-assessment to the existing issue instead, or report the duplicate and stop —
-say which. When a pasted report duplicates an open issue, comment there rather
-than filing a new one.
+File the report even when it duplicates an existing issue — the new issue is
+what the team uses to answer the reporter. Flag the duplicate at the top of
+the issue body and link the issue it duplicates, and put the assessment and
+the reply draft on the new issue. Do not close it or change its labels.
+
+Leave the issue it duplicates untouched: no comment, no edit, no reopen. The
+link in the new issue's body is enough, since GitHub records the reference on
+the older issue by itself.
 
 Record every related issue you find, duplicate or not, to cite in the
 assessment.
 
 ## 2. File a pasted report
-
 
 Skip this step when the invocation names an issue URL.
 
@@ -91,8 +94,9 @@ preserved original. File it on the security tracker, the private
   --state all --limit 1 --json title`). Use the report's own title when it
   has one; otherwise a one-line summary naming the class of problem and the
   component.
-- Body: `Reported by _<reporter>_` on the first line, then the report
-  unchanged. Ask who the reporter is if the user did not say.
+- Body: `Reported by _<reporter>_` on the first line, then — when step 1
+  found one — a `Duplicate of <link>` line, then the report unchanged. Ask
+  who the reporter is if the user did not say.
 
 ```bash
 gh issue create --repo ArweaveTeam/avde --title "<title>" --body-file <file>
@@ -180,9 +184,10 @@ Refer to the branch as `arweave-dev/master`, not merely `master`.
 
 ## 8. Draft a reply to the reporter
 
-Only when the assessment concludes the report is not a valid finding. Post a
-second comment, separate from the assessment, holding a short reply the team
-can send to the reporter.
+Only when the assessment concludes the report is not a valid finding, or that
+it duplicates an issue already tracked. Post a second comment on the new
+issue, separate from the assessment, holding a short reply the team can send
+to the reporter.
 
 Write it for someone outside the team: no private commit links, no internal
 issue numbers, no unreleased implementation details. Keep it to a few
