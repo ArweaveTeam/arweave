@@ -1,21 +1,22 @@
 # Evaluating an externally reported security issue
 
 Follow this procedure only when the user explicitly invokes the skill with a
-security-tracker issue URL:
+security-tracker issue URL or with the text of a report:
 
-- Codex: `$ar-security-triage-external <issue-url>`
-- Claude Code: `/ar-security-triage-external <issue-url>`
+- Codex: `$ar-security-triage-external <issue-url | report>`
+- Claude Code: `/ar-security-triage-external <issue-url | report>`
 
-The report is the issue itself, written by someone outside the team. For
+The report is written by someone outside the team. It is either an existing
+issue on the security tracker, or a report the user pastes into the
+invocation, which is filed as a new tracker issue before anything else. For
 findings from an internal review, use
 [security-triage-internal.md](security-triage-internal.md) instead.
 
-The invocation authorizes reformatting that issue, evaluating it, and posting
-the assessment; it does not authorize code changes.
+The invocation authorizes filing a pasted report, reformatting the issue,
+evaluating it, and posting the assessment; it does not authorize code changes.
 
-Keep every write-up brief. Operate on the issue by its URL
-(`gh issue edit <url>` / `gh issue comment <url>`) so the commands target the
-right repository without one being named here.
+Keep every write-up brief. Once the report is an issue, operate on it by its
+URL (`gh issue edit <url>` / `gh issue comment <url>`).
 
 ## Guardrails
 
@@ -58,14 +59,59 @@ Do not select `-test`, `-early-adopter`, or other suffixed tags. Record the
 exact ref, full commit SHA, and commit date for all three comparison points. If
 `arweave-dev` is unavailable, state that limitation and stop the assessment.
 
-## 1. Reformat the issue
+## 1. Check for existing and related reports
+
+Do this first, before filing or assessing anything. Search both the
+security tracker (`ArweaveTeam/avde`) and `ArweaveTeam/arweave-dev`, open and
+closed, for the same problem and for related ones. Check two shapes: a
+standalone issue, and a multi-finding report issue that carries this problem
+among several — read the linked report, not just the title. `gh search` does
+not index these private repositories reliably; scan the full issue list and
+read the candidates.
+
+If the same finding is already tracked, do not open a duplicate. Add the
+assessment to the existing issue instead, or report the duplicate and stop —
+say which. When a pasted report duplicates an open issue, comment there rather
+than filing a new one.
+
+Record every related issue you find, duplicate or not, to cite in the
+assessment.
+
+## 2. File a pasted report
+
+
+Skip this step when the invocation names an issue URL.
+
+Save the pasted text verbatim to a scratch file under `tmp/`; it is the
+preserved original. File it on the security tracker, the private
+`ArweaveTeam/avde` repository, following the tracker's conventions:
+
+- Title: `AVDE-<year>-<N>: <title>`, where `N` is one more than the highest
+  number already on the tracker (`gh issue list --repo ArweaveTeam/avde
+  --state all --limit 1 --json title`). Use the report's own title when it
+  has one; otherwise a one-line summary naming the class of problem and the
+  component.
+- Body: `Reported by _<reporter>_` on the first line, then the report
+  unchanged. Ask who the reporter is if the user did not say.
+
+```bash
+gh issue create --repo ArweaveTeam/avde --title "<title>" --body-file <file>
+```
+
+Set no label, assignee, milestone, or project. Check the tracker's visibility
+first, as the guardrails require before every write.
+
+Continue with the URL `gh issue create` prints; from here on the procedure is
+the same as for an existing issue.
+
+## 3. Reformat the issue
 
 Rewrite the body as clean Markdown: `##` headings per section, and fenced code
 blocks with language hints (` ```erlang ` / ` ```python ` / ` ```bash `).
 Preserve the content verbatim; only fix formatting. Push it back with
 `gh issue edit <url>`.
 
-## 2. Validate against the code
+## 4. Validate against the code
 
 Read the actual code at all three `arweave-dev` comparison refs for every file,
 function, and line the report names. Verify the vulnerable code, the full
@@ -73,13 +119,13 @@ reachability chain, and any ordering claims yourself — e.g. "runs before the
 semaphore / signature / size check", whether an exception is caught or
 crashes, header and dedup bypasses. Do not trust the report's claims unread.
 
-## 3. Find sibling instances
+## 5. Find sibling instances
 
 Search for sibling instances of the same bug class at all three comparison
 refs. Identify every instance that a complete fix must cover and include the
 results in the assessment.
 
-## 4. Compare across releases
+## 6. Compare across releases
 
 State vulnerable / not-vulnerable for `arweave-dev/master`, the latest full
 release, and the latest alpha release, with the exact tags and dates.
@@ -100,7 +146,7 @@ Use the short SHA as the link text in prose, and the full SHA as the link text
 where the assessment records a comparison ref. Hashes inside fenced code blocks
 stay bare, since links do not render there.
 
-## 5. Post the assessment
+## 7. Post the assessment
 
 Post as an issue comment (`gh issue comment <url>`). Start with this summary
 template, based on this [accepted assessment][assessment-example], and replace
@@ -125,6 +171,10 @@ or severity ratings into one answer.
 
 Follow with a short detailed write-up only if warranted — confirmed code and
 reachability, per-version breakdown, fix-commit links.
+
+Identify and link any other issue that reports the same or a similar
+problem, open or closed, rendering each as a Markdown link. If none
+exists, say so.
 
 Refer to the branch as `arweave-dev/master`, not merely `master`.
 
