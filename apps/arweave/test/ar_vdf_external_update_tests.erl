@@ -1,8 +1,6 @@
 -module(ar_vdf_external_update_tests).
 -test_category([vdf]).
 
--export([init/2]).
-
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
@@ -409,60 +407,6 @@ test_mining_session() ->
 %% -------------------------------------------------------------------------------------------------
 %% Helper Functions
 %% -------------------------------------------------------------------------------------------------
-
-init(Req, State) ->
-    SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-    handle(SplitPath, Req, State).
-
-handle([<<"vdf">>], Req, State) ->
-    {ok, Body, _} = ar_http_req:body(Req, ?MAX_BODY_SIZE),
-    case ar_serialize:binary_to_nonce_limiter_update(2, Body) of
-        {ok, Update} ->
-            handle_update(Update, Req, State);
-        {error, _} ->
-            Response = #nonce_limiter_update_response{ format = 2 },
-            Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
-            {ok, cowboy_req:reply(202, #{}, Bin, Req), State}
-    end.
-
-handle_update(Update, Req, State) ->
-    {Seed, _, _} = Update#nonce_limiter_update.session_key,
-    IsPartial  = Update#nonce_limiter_update.is_partial,
-    Session = Update#nonce_limiter_update.session,
-    StepNumber = Session#vdf_session.step_number,
-    NSteps = length(Session#vdf_session.steps),
-    Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map),
-
-    UpdateOutput = hd(Checkpoints),
-
-    SessionOutput = hd(Session#vdf_session.steps),
-
-    ?assertNotEqual(Checkpoints, Session#vdf_session.steps),
-    %% #nonce_limiter_update.checkpoints should be the checkpoints of the last step so
-    %% the head of checkpoints should match the head of the session's steps
-    ?assertEqual(UpdateOutput, SessionOutput),
-
-    case ets:lookup(computed_output, Seed) of
-        [{Seed, FirstStepNumber, LatestStepNumber}] ->
-            ?assert(not IsPartial orelse StepNumber == LatestStepNumber + 1,
-                lists:flatten(io_lib:format(
-                    "Partial VDF update did not increase by 1, "
-                    "StepNumber: ~p, LatestStepNumber: ~p",
-                    [StepNumber, LatestStepNumber]))),
-
-            ets:insert(computed_output, {Seed, FirstStepNumber, StepNumber}),
-            {ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
-        _ ->
-            case IsPartial of
-                true ->
-                    Response = #nonce_limiter_update_response{ session_found = false },
-                    Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
-                    {ok, cowboy_req:reply(202, #{}, Bin, Req), State};
-                false ->
-                    ets:insert(computed_output, {Seed, StepNumber - NSteps + 1, StepNumber}),
-                    {ok, cowboy_req:reply(200, #{}, <<>>, Req), State}
-            end
-    end.
 
 vdf_server_1() ->
     {127,0,0,1,2001}.

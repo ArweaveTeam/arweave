@@ -37,7 +37,11 @@
 -include("ar_mining.hrl").
 -include("ar_wallets.hrl").
 -include("ar_pool.hrl").
+-include("ar_peers.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+%% The longest peer address we accept: "255.255.255.255:65535".
+-define(MAX_PEER_ADDRESS_LEN, 21).
 
 %%--------------------------------------------------------------------
 %% @doc Send a JSON-encoded transaction to the given Peer with default
@@ -1360,12 +1364,65 @@ get_peers(Peer) ->
                               timeout => 2 * 1000
                              }),
             PeerArray = ar_serialize:dejsonify(Body),
-            PeersList = lists:map(fun arweave_util:parse_peer/1, PeerArray),
+            PeersList = parse_peer_list(PeerArray),
             lists:flatten(PeersList)
         end
     catch _:_ -> unavailable
     end.
 
+
+%% @doc Parse external list of peer addresses
+parse_peer_list(PeerArray) ->
+    parse_peer_list(PeerArray, ?MAX_PEER_DISCOVERY_LIST_LEN, []).
+
+parse_peer_list(_PeerArray, 0, Acc) ->
+    lists:reverse(Acc);
+parse_peer_list([], _Left, Acc) ->
+    lists:reverse(Acc);
+parse_peer_list([RawPeer | PeerArray], Left, Acc) when is_binary(RawPeer) ->
+    case parse_peer_address(RawPeer) of
+        {ok, ParsedPeer} ->
+            parse_peer_list(PeerArray, Left - 1, [ParsedPeer | Acc]);
+        {error, _} ->
+            parse_peer_list(PeerArray, Left - 1, Acc)
+    end;
+parse_peer_list([_RawPeer | PeerArray], Left, Acc) ->
+    parse_peer_list(PeerArray, Left - 1, Acc).
+
+%% @doc Parse peer addresses from an external source.
+%% NOTE: It might be tempting to use parser function from arweave_util,
+%% but we need an additional validation in the API.
+parse_peer_address(Peer) when is_binary(Peer), byte_size(Peer) =< ?MAX_PEER_ADDRESS_LEN ->
+    parse_peer_address(binary_to_list(Peer));
+parse_peer_address(Peer)
+    when is_list(Peer), length(Peer) =< ?MAX_PEER_ADDRESS_LEN ->
+    case arweave_util:parse_port_split(Peer) of
+        [Host, PortStr] ->
+            case inet:parse_ipv4strict_address(Host) of
+                {ok, {A, B, C, D}} ->
+                    maybe
+                        {ok, Port} ?= parse_port(PortStr),
+                        {ok, {A, B, C, D, Port}}
+                    end;
+                {error, _} ->
+                    {error, not_an_ip_literal}
+            end;
+        _ ->
+            {error, invalid_peer_address}
+    end;
+parse_peer_address(_Peer) ->
+    {error, invalid_peer_address}.
+
+parse_port(Port) when is_list(Port) ->
+    try list_to_integer(Port) of
+        Int when Int > 0,
+                 Int =< 65535 ->
+            {ok, Int};
+        _Int ->
+            {error, port_out_of_range}
+    catch _E:_R ->
+            {error, invalid_port}
+    end.
 
 %% @doc Process the response of an /block call.
 handle_block_response(_Peer, _Encoding, {ok, {{<<"400">>, _}, _, _, _, _}}) ->

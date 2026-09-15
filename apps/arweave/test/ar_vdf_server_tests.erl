@@ -1,7 +1,6 @@
 -module(ar_vdf_server_tests).
 -test_peers([peer1]).
 
--export([init/2]).
 -export([
     setup/0,
     cleanup/1,
@@ -49,7 +48,6 @@ cleanup({Config, PeerConfig}) ->
 %% vdf_server_push_test_
 %%
 test_vdf_server_push_fast_block() ->
-    VDFPort = ar_test_node:get_unused_port(),
     {_, Pub} = ar_wallet:new(),
     [B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -58,6 +56,10 @@ test_vdf_server_push_fast_block() ->
     ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
     timer:sleep(3000),
 
+    %% Reserve the port of the server listening for VDF pushes; the node
+    %% boot restarts ranch, so the server itself goes up after the node.
+    Updates = ets:new(vdf_updates, [bag, public]),
+    {VDFPort, Reservation} = ar_test_http_server:reserve_port(),
     _ = ar_test_node:start(
         B0, ar_test_node:generate_address(main),
         #{
@@ -65,13 +67,9 @@ test_vdf_server_push_fast_block() ->
                 list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort))]
         }
     ),
-    %% Setup a server to listen for VDF pushes
-    Routes = [{"/[...]", ar_vdf_server_tests, []}],
-    {ok, _} = cowboy:start_clear(
-        ar_vdf_server_test_listener,
-        [{port, VDFPort}],
-        #{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
-    ),
+    {ok, _, Ref, Table} = ar_test_http_server:start(
+        #{ {<<"POST">>, <<"/vdf">>} => vdf_push_route(Updates) },
+        #{ reservation => Reservation }),
     %% Mine a block that will be ahead of main in the VDF chain
     ar_test_node:mine(peer1),
     {ok, BI} = ar_test_await:node_height(peer1, 1),
@@ -91,14 +89,19 @@ test_vdf_server_push_fast_block() ->
     ?assertEqual(2, ets:info(computed_output, size), "VDF server did not post 2 sessions"),
     ?assert(LatestStepNumber0 >= StepNumber1,
         "VDF server did not post the full Session0 when starting Session1"),
+    ?assertEqual([], updates_with_checkpoints_equal_to_steps(Updates)),
+    ?assertEqual([], updates_with_mismatched_output(Updates)),
 
-    cowboy:stop_listener(ar_vdf_server_test_listener).
+    ar_test_http_server:stop(Ref, Table).
 
 test_vdf_server_push_slow_block() ->
-    VDFPort = ar_test_node:get_unused_port(),
     {_, Pub} = ar_wallet:new(),
     [B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
+    %% Reserve the port of the server listening for VDF pushes; the node
+    %% boot restarts ranch, so the server itself goes up after the node.
+    Updates = ets:new(vdf_updates, [bag, public]),
+    {VDFPort, Reservation} = ar_test_http_server:reserve_port(),
     _ = ar_test_node:start(
         B0, ar_test_node:generate_address(main),
         #{
@@ -106,13 +109,9 @@ test_vdf_server_push_slow_block() ->
                 list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort))]
         }
     ),
-    %% Setup a server to listen for VDF pushes
-    Routes = [{"/[...]", ar_vdf_server_tests, []}],
-    {ok, _} = cowboy:start_clear(
-        ar_vdf_server_test_listener,
-        [{port, VDFPort}],
-        #{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
-    ),
+    {ok, _, Ref, Table} = ar_test_http_server:start(
+        #{ {<<"POST">>, <<"/vdf">>} => vdf_push_route(Updates) },
+        #{ reservation => Reservation }),
     %% Let main get ahead of peer1 in the VDF chain.
     timer:sleep(3000),
 
@@ -143,8 +142,10 @@ test_vdf_server_push_slow_block() ->
     ?assertEqual(LatestStepNumber0, NewLatestStepNumber0,
         "Session0 should not have progressed"),
     ?assert(NewLatestStepNumber1 > LatestStepNumber1, "Session1 should have progressed"),
+    ?assertEqual([], updates_with_checkpoints_equal_to_steps(Updates)),
+    ?assertEqual([], updates_with_mismatched_output(Updates)),
 
-    cowboy:stop_listener(ar_vdf_server_test_listener).
+    ar_test_http_server:stop(Ref, Table).
 
 %%
 %% vdf_client_test_
@@ -446,56 +447,72 @@ test_serialize_response_compatibility() ->
 %% Helper Functions
 %% -------------------------------------------------------------------------------------------------
 
-init(Req, State) ->
-    SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-    handle(SplitPath, Req, State).
-
-handle([<<"vdf">>], Req, State) ->
-    {ok, Body, _} = ar_http_req:body(Req, ?MAX_BODY_SIZE),
-    case ar_serialize:binary_to_nonce_limiter_update(2, Body) of
-        {ok, Update} ->
-            handle_update(Update, Req, State);
-        {error, _} ->
-            Response = #nonce_limiter_update_response{ format = 2 },
-            Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
-            {ok, cowboy_req:reply(202, #{}, Bin, Req), State}
+%% @doc Return the /vdf route: track the pushed sessions in computed_output,
+%% record every update's checkpoints and steps in Updates for the test to
+%% check, and answer the way a VDF client would.
+vdf_push_route(Updates) ->
+    fun(Req) ->
+        {ok, Body, _} = ar_http_req:body(Req, ?MAX_BODY_SIZE),
+        case ar_serialize:binary_to_nonce_limiter_update(2, Body) of
+            {ok, Update} ->
+                handle_update(Update, Updates);
+            {error, _} ->
+                Response = #nonce_limiter_update_response{ format = 2 },
+                Bin = ar_serialize:nonce_limiter_update_response_to_binary(
+                    Response),
+                {202, #{}, Bin}
+        end
     end.
 
-handle_update(Update, Req, State) ->
+handle_update(Update, Updates) ->
     {Seed, _, _} = Update#nonce_limiter_update.session_key,
-    IsPartial  = Update#nonce_limiter_update.is_partial,
+    IsPartial = Update#nonce_limiter_update.is_partial,
     Session = Update#nonce_limiter_update.session,
     StepNumber = Session#vdf_session.step_number,
-    NSteps = length(Session#vdf_session.steps),
+    Steps = Session#vdf_session.steps,
+    NSteps = length(Steps),
     Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map),
-
-    UpdateOutput = hd(Checkpoints),
-
-    SessionOutput = hd(Session#vdf_session.steps),
-
-    ?assertNotEqual(Checkpoints, Session#vdf_session.steps),
-    %% #nonce_limiter_update.checkpoints should be the checkpoints of the last step so
-    %% the head of checkpoints should match the head of the session's steps
-    ?assertEqual(UpdateOutput, SessionOutput),
-
+    ets:insert(Updates, {Seed, StepNumber, Checkpoints, Steps}),
     case ets:lookup(computed_output, Seed) of
         [{Seed, FirstStepNumber, LatestStepNumber}] ->
-            %% VDF can advance faster than HTTP pushes, so partial updates may skip
-            %% steps; track the high-water mark rather than requiring adjacency.
+            %% VDF can advance faster than HTTP pushes, so partial updates may
+            %% skip steps; track the high-water mark rather than requiring
+            %% adjacency.
             ets:insert(computed_output, {Seed, FirstStepNumber,
                 max(StepNumber, LatestStepNumber)}),
-            {ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
+            {200, #{}, <<>>};
         _ ->
             case IsPartial of
                 true ->
-                    Response = #nonce_limiter_update_response{ session_found = false },
-                    Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
-                    {ok, cowboy_req:reply(202, #{}, Bin, Req), State};
+                    Response = #nonce_limiter_update_response{
+                        session_found = false },
+                    Bin = ar_serialize:nonce_limiter_update_response_to_binary(
+                        Response),
+                    {202, #{}, Bin};
                 false ->
-                    ets:insert(computed_output, {Seed, StepNumber - NSteps + 1, StepNumber}),
-                    {ok, cowboy_req:reply(200, #{}, <<>>, Req), State}
+                    ets:insert(computed_output,
+                        {Seed, StepNumber - NSteps + 1, StepNumber}),
+                    {200, #{}, <<>>}
             end
     end.
+
+%% @doc Return the {Seed, StepNumber} of the pushed updates whose checkpoints
+%% equal the session steps.
+updates_with_checkpoints_equal_to_steps(Updates) ->
+    [{Seed, StepNumber} || {Seed, StepNumber, Checkpoints, Steps}
+        <- ets:tab2list(Updates), Checkpoints == Steps].
+
+%% @doc Return the {Seed, StepNumber} of the pushed updates whose checkpoints
+%% are not those of the last step, i.e. whose head differs from the head of
+%% the session steps.
+updates_with_mismatched_output(Updates) ->
+    [{Seed, StepNumber} || {Seed, StepNumber, Checkpoints, Steps}
+        <- ets:tab2list(Updates), not same_head(Checkpoints, Steps)].
+
+same_head([Output | _], [Output | _]) ->
+    true;
+same_head(_, _) ->
+    false.
 
 get_computed_output(Seed) ->
     await_computed_output(Seed, 10_000),

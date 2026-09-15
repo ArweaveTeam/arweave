@@ -1,0 +1,142 @@
+%%% @doc Tests for the HTTP client interface against a stub HTTP
+%%% server (`ar_test_http_server') rather than a full node.
+%%%
+%%% Since we aren't querying a node running our own code, we
+%%% can mock any
+-module(ar_http_iface_client_tests).
+-test_category([fast]).
+
+-include_lib("eunit/include/eunit.hrl").
+
+get_peers_test_() ->
+    {timeout, 30,
+     {foreach, fun setup/0, fun cleanup/1,
+      [
+       fun(Config) -> fun() -> test_get_peers(Config) end end,
+       fun(Config) ->
+           fun() -> test_get_peers_rejects_non_ip_literals(Config) end
+       end,
+       fun(Config) -> fun() -> test_get_peers_rejects_bad_ports(Config) end end
+      ]}}.
+
+setup() ->
+    {ok, Peer, Ref, Table} = ar_test_http_server:start(#{}),
+    [{peer, Peer}, {ref, Ref}, {table, Table}].
+
+cleanup(Config) ->
+    Ref = proplists:get_value(ref, Config),
+    Table = proplists:get_value(table, Config),
+    ar_test_http_server:stop(Ref, Table),
+    ok.
+
+%% Test cases
+test_get_peers(Config) ->
+    %% Valid
+    Peer = proplists:get_value(peer, Config),
+    Table = proplists:get_value(table, Config),
+    ok = mock_get_peers_response(
+             Table,
+             ar_serialize:jsonify([<<"127.0.0.1:1984">>, <<"10.0.0.1:1985">>])),
+    %% A bit of a self check here: webservice returns 200.
+    ?assertMatch({ok, {{<<"200">>, _}, _, _Body, _, _}},
+                 ar_http:req(#{method => get,
+                               peer => Peer,
+                               path => "/peers",
+                               connect_timeout => 500,
+                               timeout => 2 * 1000
+                              })),
+    %% IPs are parsed
+    ?assertEqual([{127, 0, 0, 1, 1984}, {10, 0, 0, 1, 1985}],
+                 ar_http_iface_client:get_peers(Peer)),
+
+    %% 128 items accepted
+    IPList = lists:map(fun(_) ->
+                           <<"127.0.0.1:1984">>
+                       end, lists:seq(1,1000)),
+    Body1000 = ar_serialize:jsonify(IPList),
+    ok = mock_get_peers_response(Table, Body1000),
+    Result1000 = lists:map(fun(_) ->
+                           {127,0,0,1,1984}
+                       end, lists:seq(1,1000)),
+    ?assertEqual(Result1000, ar_http_iface_client:get_peers(Peer)),
+
+    %% One is too long
+    ok = mock_get_peers_response(
+             Table,
+             ar_serialize:jsonify([<<"127.0.0.1:1984">>, <<"12312312310.1231230.1231230.1231231:11231231985">>])),
+    ?assertEqual([{127,0,0,1,1984}], ar_http_iface_client:get_peers(Peer)),
+
+    %% One can't be parsed into IP+Port tuple
+    ok = mock_get_peers_response(
+             Table,
+             ar_serialize:jsonify([<<"127.0.0.1:1984">>, <<"randomstuff">>])),
+    ?assertEqual([{127,0,0,1,1984}], ar_http_iface_client:get_peers(Peer)),
+
+    %% One can't be parsed into IP+Port tuple
+    ok = mock_get_peers_response(
+             Table,
+             ar_serialize:jsonify([<<"127.0.0.1:1984">>, <<"127.0.0.1asd:1984">>])),
+    ?assertEqual([{127,0,0,1,1984}], ar_http_iface_client:get_peers(Peer)),
+
+    %% One weird one
+    ok = mock_get_peers_response(
+             Table,
+             ar_serialize:jsonify([<<"127.0.0.1:1984">>, <<"127.0.0.1111:1984">>])),
+    ?assertEqual([{127,0,0,1,1984}], ar_http_iface_client:get_peers(Peer)),
+
+    %% List too long
+    IPListTooLong1 = lists:map(fun(_) ->
+                           <<"127.0.0.1:1984">>
+                       end, lists:seq(1,1001)),
+    BodyTooLong1 = ar_serialize:jsonify(IPListTooLong1),
+    ok = mock_get_peers_response(Table, BodyTooLong1),
+    %% It will cut the list to 1000. - the same as the valid one.
+    ?assertEqual(1000, length(ar_http_iface_client:get_peers(Peer))),
+
+    IPListTooLong2 = lists:map(fun(_) ->
+                           <<"127.0.0.1:1984">>
+                       end, lists:seq(1,2000)),
+    BodyTooLong2 = ar_serialize:jsonify(IPListTooLong2),
+    ok = mock_get_peers_response(Table, BodyTooLong2),
+    %% It will cut the list to 1000. - the same as the valid one.
+
+    ok.
+
+%% Remote peer lists only ever carry dotted-quad IPv4 literals. Names that
+%% need the resolver, and forms only the relaxed inet parser accepts, must
+%% be dropped without a DNS query.
+test_get_peers_rejects_non_ip_literals(Config) ->
+    Peer = proplists:get_value(peer, Config),
+    Table = proplists:get_value(table, Config),
+    lists:foreach(
+        fun(Bad) ->
+            ok = mock_get_peers_response(
+                     Table,
+                     ar_serialize:jsonify([<<"127.0.0.1:1984">>, Bad])),
+            ?assertEqual({Bad, [{127, 0, 0, 1, 1984}]},
+                         {Bad, ar_http_iface_client:get_peers(Peer)})
+        end,
+        [<<"localhost:1984">>, <<"127.1:1984">>, <<"0x7f.0.0.1:1984">>,
+         <<"0177.0.0.1:1984">>]).
+
+%% The port must be an integer in 1..65535 with nothing else in the field.
+test_get_peers_rejects_bad_ports(Config) ->
+    Peer = proplists:get_value(peer, Config),
+    Table = proplists:get_value(table, Config),
+    lists:foreach(
+        fun(Bad) ->
+            ok = mock_get_peers_response(
+                     Table,
+                     ar_serialize:jsonify([<<"127.0.0.1:1984">>, Bad])),
+            ?assertEqual({Bad, [{127, 0, 0, 1, 1984}]},
+                         {Bad, ar_http_iface_client:get_peers(Peer)})
+        end,
+        [<<"127.0.0.1:0">>, <<"127.0.0.1:65536">>, <<"127.0.0.1:-1">>,
+         <<"127.0.0.1:1984abc">>]).
+
+%% Private
+mock_get_peers_response(Table, Body) ->
+    ar_test_http_server:set_route(
+        Table,
+        {<<"GET">>, <<"/peers">>},
+        {200, #{<<"content-type">> => <<"application/json">>}, Body}).
