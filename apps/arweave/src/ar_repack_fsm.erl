@@ -8,7 +8,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -moduledoc """
-    Maintain a finite state machine (FSM) to track the state each chunk passes through as
+Maintain a finite state machine (FSM) to track the state each chunk passes through as
 it is repacked.
 
 State Transition Diagram:
@@ -55,7 +55,7 @@ needs_chunk
                                                                                                                                  - write_chunk: Terminal state, chunk will be written
                                                                                                                                  - write_entropy: Terminal state, only entropy will be written
                                                                                                                                  - ignore: Terminal state, no action needed
-                                                                                                                                 """.
+""".
 
 %% @doc: Repeatedly call next_state until the state no longer changes.
 -spec crank_state(#repack_chunk{}) -> #repack_chunk{}.
