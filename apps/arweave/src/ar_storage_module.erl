@@ -532,20 +532,22 @@ disk_dir_name_test() ->
 
 range_helpers_test() ->
     arweave_config:with_test_config(fun() ->
-        Module = {1_000_000, 1, unpacked},
+        %% A one-megabyte range starting at one megabyte, in byte notation.
+        Module = {1_000_000, 2_000_000, unpacked},
         StoreID = id(Module),
         ok = arweave_config:force_config(#{
-            [storage_modules] => [arweave_config:storage_module_to_config(Module)]
+            [storage_modules] => [Module]
         }),
         RawRange = module_range(Module),
+        ?assertEqual({1_000_000, 2_000_000 + ?OVERLAP}, RawRange),
         ?assertEqual(RawRange, get_range_safe(StoreID)),
         {RangeStart, RangeEnd} = RawRange,
         ?assertEqual(
             {max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
                 ar_block:get_chunk_padded_offset(RangeEnd)},
             get_padded_range(StoreID)),
-        ?assertEqual(not_found, get_range_safe(missing_store)),
-        ?assertEqual({-1, -1}, get_padded_range(missing_store)),
+        ?assertEqual(not_found, get_range_safe("missing_store")),
+        ?assertEqual({-1, -1}, get_padded_range("missing_store")),
         ?assertEqual({0, infinity}, get_range_safe(?DEFAULT_MODULE)),
         ?assertEqual({-1, -1}, get_padded_range(?DEFAULT_MODULE))
     end).

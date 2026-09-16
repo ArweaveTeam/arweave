@@ -33,6 +33,7 @@ all() ->
         debug_toggle_updates_store_and_handler,
         with_test_config_restores_debug_side_effect,
         logging_path_coerces_to_list,
+        with_test_config_restores_logging_path,
         logging_formatter_and_limits_update,
         logger_set_with_no_live_handler_stores_anyway,
         debug_handler_toggle_via_logging_spec,
@@ -68,6 +69,23 @@ with_test_config_restores_debug_side_effect(_Config) ->
 logging_path_coerces_to_list(_Config) ->
     ok = arweave_config:set([logging, path], <<"/tmp/arweave-logs">>),
     ?assertEqual("/tmp/arweave-logs", arweave_config:get([logging, path])),
+    ok = arweave_config:set([logging, path], "./logs"),
+    ?assertEqual("./logs", arweave_config:get([logging, path])),
+    ok.
+
+with_test_config_restores_logging_path(_Config) ->
+    lists:foreach(fun(OriginalPath) ->
+        ok = arweave_config:set([logging, path], OriginalPath),
+        arweave_config:with_test_config(fun() ->
+            ok = arweave_config:set([logging, path], <<"/tmp/changed-logs">>)
+        end),
+        ?assertEqual(OriginalPath, arweave_config:get([logging, path])),
+        ?assertError(test_failure, arweave_config:with_test_config(fun() ->
+            ok = arweave_config:set([logging, path], <<"/tmp/changed-logs">>),
+            error(test_failure)
+        end)),
+        ?assertEqual(OriginalPath, arweave_config:get([logging, path]))
+    end, ["./logs", "/tmp/original-logs"]),
     ok.
 
 logging_formatter_and_limits_update(_Config) ->

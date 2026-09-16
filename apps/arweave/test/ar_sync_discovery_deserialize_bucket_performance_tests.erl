@@ -92,7 +92,7 @@ run_test(EndpointType) ->
         memory_snapshot(?SYNC_BUCKET_CACHE_TABLE),
     {InsertMs, ok} = timer:tc(fun() ->
         gen_server:cast(ar_sync_discovery,
-            {cache_sync_buckets, Mode, TablePeer, Buckets}),
+            {job_result, TablePeer, {sync_buckets, Mode, Buckets}}),
         _ = sys:get_state(ar_sync_discovery, infinity),
         ok
     end),
