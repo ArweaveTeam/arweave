@@ -225,9 +225,9 @@ parse(["data_cache_size_limit", Num | Rest]) ->
     parse(Rest);
 parse(["packing_cache_size_limit", Num | Rest]) ->
     V = list_to_integer(Num),
-    %% Both the legacy option and [packing, cache_size] are counts of chunks
-    %% (ar_packing_server:set_cache_size/1 takes chunks) — no unit conversion.
-    _ = arweave_config:set([packing, cache_size], V),
+    %% Legacy chunks become MiB, rounding up just like the sync cache option.
+    _ = arweave_config:set([packing, cache_size],
+        ?LEGACY_CHUNKS_TO_CACHE_MIB(V)),
     parse(Rest);
 parse(["mining_cache_size_mb", Num | Rest]) ->
     V = list_to_integer(Num),
@@ -832,4 +832,3 @@ get_list(Key) ->
         L when is_list(L) -> L;
         _ -> []
     end.
-

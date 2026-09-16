@@ -1287,10 +1287,7 @@ handle_disk_pool_actions(
   _OldState) ->
     lists:foreach(
       fun(StoreID) ->
-              %% Increment once per cast because each worker later decrements the counter.
-              ar_data_sync:increment_chunk_cache_size(),
-              gen_server:cast(ar_data_sync:name(StoreID),
-                              {pack_and_store_chunk, PackArgs})
+              ar_data_sync:pack_and_store_chunk(StoreID, PackArgs)
       end,
       StoreIDs
      ),

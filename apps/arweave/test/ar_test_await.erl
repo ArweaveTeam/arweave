@@ -40,6 +40,7 @@
     partition_empty/3,              %% (Node, PartitionNumber, Packing)
     partition_at_size/4,            %% (Node, PartitionNumber, Packing, Size)
     disk_pool_chunk_count/1,        %% (Pred)
+    sync_fetches_drained/1,         %% (SchedulerPID)
     application_stopped/2,          %% (App, Timeout)
     ar_kv_stopped/1,                %% (Timeout)
 
@@ -378,6 +379,12 @@ application_stopped(App, Timeout) ->
     do_until_true(application_stopped,
         fun() -> not is_pid(application_controller:get_master(App)) end,
         Timeout).
+
+%% @doc Wait until the scheduler has no active network fetch workers.
+sync_fetches_drained(SchedulerPID) ->
+    until(sync_fetches_drained, fun() ->
+        gen_server:call(SchedulerPID, inflight_count) =:= 0
+    end).
 
 %% @doc Wait until the supervised `ar_kv' process and ETS table are gone.
 -spec ar_kv_stopped(Timeout :: non_neg_integer()) -> ok | {error, {timeout, term()}}.

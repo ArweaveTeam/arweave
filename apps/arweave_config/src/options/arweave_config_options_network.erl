@@ -110,7 +110,7 @@ specs() ->
             legacy => 'http_api.tcp.listener_shutdown',
             short_description =>
                 <<"HTTP server listener shutdown timeout in "
-                  "seconds.">>
+                  "milliseconds (or infinity).">>
         },
         #{
             enabled => true,
@@ -246,9 +246,13 @@ specs() ->
             default => ?DEFAULT_HTTP_CONNECTIONS_PER_PEER,
             type => pos_integer,
             short_description =>
-                <<"Maximum parallel HTTP client connections per peer. The pool "
-                  "grows toward this only for peers under sustained load and "
-                  "shrinks idle peers back to one.">>
+                <<"Maximum parallel HTTP client connections per peer.">>,
+            long_description =>
+                <<"The pool grows under sustained load and shrinks idle "
+                  "peers back to one connection. Values below 1 or infinity "
+                  "use one connection. This limits connections, not sync "
+                  "tasks; fetch concurrency is managed automatically. "
+                  "Applies to all outgoing peer HTTP requests.">>
         },
         #{
             enabled => true,

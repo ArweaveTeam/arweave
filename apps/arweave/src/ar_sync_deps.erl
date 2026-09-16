@@ -11,7 +11,6 @@
         rate_fetched_data/5, get_chunk_binary/3,
         is_chunk_cache_full/0, chunk_cache_size/0, chunk_cache_size/1,
         chunk_cache_size_limit/0,
-        increment_chunk_cache_size/1,
         is_disk_space_sufficient/1, is_footprint_record_initialized/1,
         store_fetched_chunk/5, unsynced_intervals/3,
         unsynced_footprint_intervals/3,
@@ -46,10 +45,6 @@
 -callback chunk_cache_size() -> non_neg_integer().
 -callback chunk_cache_size(StoreID :: term()) -> non_neg_integer().
 -callback chunk_cache_size_limit() -> pos_integer().
-%% The store's write throughput in bytes/ms, or undefined before it has
-%% written anything. A capacity, not a utilisation: an idle store keeps the
-%% rate it last demonstrated.
--callback increment_chunk_cache_size(StoreID :: term()) -> ok.
 -callback is_disk_space_sufficient(StoreID :: term()) -> term().
 -callback is_footprint_record_initialized(StoreID :: term()) -> boolean().
 
@@ -116,7 +111,6 @@ is_chunk_cache_full() -> (m()):is_chunk_cache_full().
 chunk_cache_size() -> (m()):chunk_cache_size().
 chunk_cache_size(StoreID) -> (m()):chunk_cache_size(StoreID).
 chunk_cache_size_limit() -> (m()):chunk_cache_size_limit().
-increment_chunk_cache_size(StoreID) -> (m()):increment_chunk_cache_size(StoreID).
 is_disk_space_sufficient(StoreID) -> (m()):is_disk_space_sufficient(StoreID).
 is_footprint_record_initialized(StoreID) ->
     (m()):is_footprint_record_initialized(StoreID).

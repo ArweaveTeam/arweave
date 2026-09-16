@@ -15,7 +15,7 @@
         rate_fetched_data/5, get_chunk_binary/3,
         is_chunk_cache_full/0, chunk_cache_size/0, chunk_cache_size/1,
         chunk_cache_size_limit/0,
-        increment_chunk_cache_size/1, is_disk_space_sufficient/1,
+        is_disk_space_sufficient/1,
         is_footprint_record_initialized/1,
         store_fetched_chunk/5, unsynced_intervals/3,
         unsynced_footprint_intervals/3,
@@ -68,10 +68,6 @@ chunk_cache_size(StoreID) ->
 chunk_cache_size_limit() ->
     ar_sync_sim_world:get(cache_limit).
 
-increment_chunk_cache_size(StoreID) ->
-    ar_sync_sim_world:increment_chunk_cache_size(StoreID),
-    ok.
-
 is_disk_space_sufficient(_StoreID) ->
     true.
 
@@ -81,6 +77,7 @@ is_footprint_record_initialized(_StoreID) ->
 %% The disk model: writes complete through the REAL scheduler transition
 %% after a short simulated delay; a wedged store retries until it lifts.
 store_fetched_chunk(StoreID, Peer, Byte, _Proof, TaskRef) ->
+    ar_sync_sim_world:increment_chunk_cache_size(StoreID),
     ok = ar_sync_sim_world:wait_for_entropy(Peer, Byte),
     {ok, _} = ar_timer:apply_after(?WRITE_LATENCY_MS, ?MODULE,
         complete_write, [StoreID, Byte, TaskRef]),

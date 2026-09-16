@@ -25,12 +25,14 @@ specs() ->
             type => pos_integer,
             legacy => disk_pool_jobs,
             short_description =>
-                <<"Number of disk-pool jobs.">>,
+                <<"Number of concurrent disk-pool scan loops.">>,
             long_description =>
-                <<"Disk-pool jobs scan the disk pool to index "
+                <<"Scan loops index "
                   "no-longer-pending or orphaned chunks, schedule "
                   "packing for chunks with a sufficient number of "
-                  "confirmations, and remove abandoned chunks.">>
+                  "confirmations, and remove abandoned chunks. Set to 0 "
+                  "to disable scanning. Independent of "
+                  "sync.max_download_rate.">>
         },
         #{
             enabled => true,

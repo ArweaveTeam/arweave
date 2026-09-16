@@ -5,11 +5,11 @@
 -include_lib("arweave/include/ar_verify_chunks.hrl").
 
 %% Convert a legacy cache limit (in chunks) to the new-style MiB option using
-%% CEILING division with a floor of 1, so a small legacy count never rounds down
-%% to a smaller capacity - or to 0, which is invalid for the positive-integer
-%% option. Chunks is always a bound variable at the call sites (no double-eval).
+%% ceiling division so positive counts never round down; zero stays zero.
+%% Chunks is always a bound variable at the call sites (no double-eval).
 -define(LEGACY_CHUNKS_TO_CACHE_MIB(Chunks),
-    max(1, (Chunks + (?MiB div ?DATA_CHUNK_SIZE) - 1) div (?MiB div ?DATA_CHUNK_SIZE))).
+    ((Chunks + (?MiB div ?DATA_CHUNK_SIZE) - 1)
+        div (?MiB div ?DATA_CHUNK_SIZE))).
 
 %% The polling frequency in seconds.
 -define(DEFAULT_POLLING_INTERVAL, 2).

@@ -142,26 +142,23 @@ load_legacy_json(_Config) ->
     ok.
 
 legacy_cache_limit_rounds_up(_Config) ->
-    arweave_config:with_test_config(fun() ->
-        ok = arweave_config_format_legacy_cli:parse(["data_cache_size_limit", "5"]),
-        ?assertEqual(2, arweave_config:get([sync, cache_size]))
-    end),
-    %% [packing, cache_size] stays in chunks (ar_packing_server takes chunks):
-    %% the legacy value passes through without unit conversion.
-    arweave_config:with_test_config(fun() ->
-        ok = arweave_config_format_legacy_cli:parse(["packing_cache_size_limit", "5"]),
-        ?assertEqual(5, arweave_config:get([packing, cache_size]))
-    end),
-    arweave_config:with_test_config(fun() ->
-        {ok, _} = arweave_config_format_legacy_json:parse(
-            <<"{\"data_cache_size_limit\":5}">>),
-        ?assertEqual(2, arweave_config:get([sync, cache_size]))
-    end),
-    arweave_config:with_test_config(fun() ->
-        {ok, _} = arweave_config_format_legacy_json:parse(
-            <<"{\"packing_cache_size_limit\":5}">>),
-        ?assertEqual(5, arweave_config:get([packing, cache_size]))
-    end),
+    %% Four 256 KiB chunks fit in a MiB. Partial MiB round up; zero stays zero.
+    lists:foreach(fun({Legacy, Key, Chunks, MiB}) ->
+        arweave_config:with_test_config(fun() ->
+            ok = arweave_config_format_legacy_cli:parse(
+                [Legacy, integer_to_list(Chunks)]),
+            ?assertEqual(MiB, arweave_config:get(Key))
+        end),
+        arweave_config:with_test_config(fun() ->
+            JSON = jiffy:encode(#{ list_to_binary(Legacy) => Chunks }),
+            {ok, _} = arweave_config_format_legacy_json:parse(JSON),
+            ?assertEqual(MiB, arweave_config:get(Key))
+        end)
+    end, [{Legacy, Key, Chunks, MiB}
+        || {Legacy, Key} <- [
+            {"data_cache_size_limit", [sync, cache_size]},
+            {"packing_cache_size_limit", [packing, cache_size]}],
+           {Chunks, MiB} <- [{0, 0}, {1, 1}, {4, 1}, {5, 2}, {20000, 5000}]]),
     ok.
 
 load_cli_and_legacy_cli(_Config) ->
@@ -677,7 +674,7 @@ integer_keyword_cases() ->
         {"diff", "42", [genesis, difficulty], 42},
         {"hashing_threads", "8", [mining, hashing_threads], 8},
         {"data_cache_size_limit", "10000", [sync, cache_size], 2500},
-        {"packing_cache_size_limit", "20000", [packing, cache_size], 20000},
+        {"packing_cache_size_limit", "20000", [packing, cache_size], 5000},
         {"mining_cache_size_mb", "3", [mining, cache_size], 3},
         {"max_emitters", "4", [gossip, tx, max_emitters], 4},
         {"disk_space_check_frequency", "10", [disk_space_check_frequency], 10000},

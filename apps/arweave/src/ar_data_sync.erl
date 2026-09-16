@@ -30,14 +30,11 @@
          get_tx_offset/1, get_tx_offset_data_in_range/2,
          request_tx_data_removal/3, request_data_removal/4,
         record_chunk_cache_size_metric/0, is_chunk_cache_full/0,
-        chunk_cache_size/0, chunk_cache_size/1,
         is_disk_space_sufficient/1,
          init_sync_status/1,
          get_chunk_by_byte/2, advance_chunks_index_cursor/1, has_data_root/2,
          read_chunk_with_full_metadata/2, read_chunk_with_datapath/2,
          write_chunk/5, read_data_path/2,
-        increment_chunk_cache_size/0, increment_chunk_cache_size/1,
-        decrement_chunk_cache_size/0, decrement_chunk_cache_size/1,
          get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
         is_footprint_record_initialized/1, is_footprint_record_supported/3,
          set_chunk_cache_size_limit/1,
@@ -54,7 +51,7 @@
 -export([init_kv/2, open_store_dbs/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([store_fetched_chunk/5]).
+-export([store_fetched_chunk/5, pack_and_store_chunk/2]).
 
 -include("ar.hrl").
 -include("ar_sup.hrl").
@@ -135,8 +132,20 @@ invalidate_bad_data_record(AbsoluteEndOffset, ChunkSize, StoreID, ChunkDataKey, 
 
 %% @doc Store a chunk fetched for a scheduler-owned sync task.
 store_fetched_chunk(StoreID, Peer, Byte, Proof, TaskRef) ->
-    gen_server:cast(?MODULE:name(StoreID),
-        {store_fetched_chunk, Peer, Byte, Proof, TaskRef}).
+    case ar_sync_chunk_cache:reserve(StoreID) of
+        {ok, PID} ->
+            gen_server:cast(PID,
+                {store_fetched_chunk, Peer, Byte, Proof, TaskRef});
+        {error, not_initialized} ->
+            ar_sync:task_write_failed(TaskRef)
+    end.
+
+%% @doc Account for and enqueue a chunk copied locally or read from the disk pool.
+pack_and_store_chunk(StoreID, Args) ->
+    case ar_sync_chunk_cache:reserve(StoreID) of
+        {ok, PID} -> gen_server:cast(PID, {pack_and_store_chunk, Args});
+        {error, not_initialized} -> ok
+    end.
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification. A small chunk
@@ -514,28 +523,9 @@ split_sync_memory(TotalChunks) ->
 is_chunk_cache_full() ->
     case ets:lookup(ar_data_sync_state, chunk_cache_size_limit) of
         [{_, Limit}] ->
-            case ets:lookup(ar_data_sync_state, chunk_cache_size) of
-                [{_, Size}] when Size >= Limit ->
-                    true;
-                _ ->
-                    false
-            end;
+            ar_sync_chunk_cache:size() >= Limit;
         _ ->
             true
-    end.
-
-%% @doc Return the total number of fetched chunks waiting on write paths.
-chunk_cache_size() ->
-    case ets:lookup(ar_data_sync_state, chunk_cache_size) of
-        [{chunk_cache_size, Size}] -> Size;
-        [] -> 0
-    end.
-
-%% @doc Return the number of fetched chunks waiting on StoreID's write path.
-chunk_cache_size(StoreID) ->
-    case ets:lookup(ar_data_sync_state, {chunk_cache_size, StoreID}) of
-        [{{chunk_cache_size, StoreID}, Size}] -> Size;
-        [] -> 0
     end.
 
 -ifdef(AR_TEST).
@@ -766,37 +756,10 @@ write_chunk(Offset, ChunkMetadata, Chunk, Packing, StoreID) ->
       } = ChunkMetadata,
     write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, StoreID).
 
-%% The fetched-chunk cache is tracked two ways: a global counter (the aggregate
-%% chunk_cache_size metric and the OOM backstop in ar_sync_scheduler) and a
-%% per-store counter (observability for which stores are filling the async write
-%% pipeline). Sync and chunk-copy chunks bump both with their target StoreID via
-%% the /1 variants; the disk-pool path uses the /0 variants (global only - not
-%% attributed to a single store). Decrements floor at 0 so an unmatched decrement
-%% can't drive a counter negative.
-decrement_chunk_cache_size() ->
-    ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, -1, 0, 0},
-        {chunk_cache_size, 0}).
-
-decrement_chunk_cache_size(StoreID) ->
-    decrement_chunk_cache_size(),
-    ets:update_counter(ar_data_sync_state, {chunk_cache_size, StoreID},
-        {2, -1, 0, 0}, {{chunk_cache_size, StoreID}, 0}).
-
-increment_chunk_cache_size() ->
-    ets:update_counter(ar_data_sync_state, chunk_cache_size, {2, 1}, {chunk_cache_size, 1}).
-
-increment_chunk_cache_size(StoreID) ->
-    increment_chunk_cache_size(),
-    %% Default 0 (not 1): unlike the global counter, per-store keys aren't
-    %% pre-inserted at init, so the first increment for a store hits this default
-    %% and the op is applied to it - a default of 1 would over-count by one.
-    ets:update_counter(ar_data_sync_state, {chunk_cache_size, StoreID},
-        {2, 1}, {{chunk_cache_size, StoreID}, 0}).
-
 %% @doc Finish one async chunk write from the fetched-chunk pipeline.
 finish_fetched_chunk(StoreID, TaskRef) ->
-    decrement_chunk_cache_size(StoreID),
-    ar_sync:task_write_completed(TaskRef).
+    ar_sync_chunk_cache:release(),
+    ar_sync:task_write_completed(StoreID, TaskRef).
 
 %% @doc Check if the footprint record should be updated for the given chunk.
 %% We maintain the footprint record for all chunks so that footprint-based syncing
@@ -828,6 +791,7 @@ set_weave_size(WeaveSize, #data_sync_state{ store_id = StoreID } = State) ->
 %%%===================================================================
 
 init({?DEFAULT_MODULE = StoreID, _}) ->
+    ok = reset_sync_state(StoreID),
     %% Trap exit to avoid corrupting any open files on quit..
     process_flag(trap_exit, true),
     DataCacheSizeLimit = arweave_config:get([sync, cache_size]),
@@ -861,7 +825,6 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
     gen_server:cast(self(), store_sync_state),
     Limit = set_chunk_cache_size_limit(DataCacheSizeLimit),
     ar:console("~nSetting the data chunk cache size limit to ~B chunks.~n", [Limit]),
-    ets:insert(ar_data_sync_state, {chunk_cache_size, 0}),
     {ok, _} = ar_timer:apply_interval(
                 200,
                 ?MODULE,
@@ -870,8 +833,10 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
                 #{ skip_on_shutdown => false }
                ),
     gen_server:cast(self(), process_store_chunk_queue),
+    ok = ar_sync_chunk_cache:init(StoreID),
     {ok, State2};
 init({StoreID, RepackInPlacePacking}) ->
+    ok = reset_sync_state(StoreID),
     ?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
     %% Trap exit to avoid corrupting any open files on quit..
     process_flag(trap_exit, true),
@@ -903,6 +868,7 @@ init({StoreID, RepackInPlacePacking}) ->
                                              none -> none;
                                              _ -> ar_serialize:encode_packing(RepackInPlacePacking, false)
                                          end}]),
+    ok = ar_sync_chunk_cache:init(StoreID),
     {ok, State1}.
 
 handle_cast(process_store_chunk_queue, State) ->
@@ -1326,6 +1292,11 @@ terminate(Reason, #data_sync_state{ store_id = StoreID } = State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+%% @doc Discard the previous writer's reservations and active sync tasks.
+reset_sync_state(StoreID) ->
+    ar_sync_chunk_cache:reset_store(StoreID),
+    ar_sync:reset_store(StoreID).
 
 init_sync_status(StoreID) ->
     SyncStatus = case ar_sync:enabled() of
@@ -2596,20 +2567,12 @@ log_insufficient_disk_space(StoreID) ->
                {reason, insufficient_disk_space}, {storage_module, StoreID}]).
 
 record_chunk_cache_size_metric() ->
-    case ets:lookup(ar_data_sync_state, chunk_cache_size) of
-        [{_, Size}] ->
-            arweave_metrics:gauge_set(chunk_cache_size, Size);
-        _ ->
-            ok
-    end,
-    %% Emit the per-store cache fill so a saturating store is visible per storage
-    %% module. Observability only: ar_sync_scheduler gates on the global counter
-    %% (via is_chunk_cache_full/0), not on the per-store counters.
+    arweave_metrics:gauge_set(chunk_cache_size, ar_sync_chunk_cache:size()),
     lists:foreach(
-        fun([StoreID, StoreSize]) ->
+        fun({StoreID, StoreSize}) ->
             arweave_metrics:gauge_set(chunk_cache_size_by_store, [StoreID], StoreSize)
         end,
-        ets:match(ar_data_sync_state, {{chunk_cache_size, '$1'}, '$2'})).
+        ar_sync_chunk_cache:sizes()).
 
 maybe_run_footprint_record_initialization(State) ->
     #data_sync_state{ store_id = StoreID, range_start = RangeStart,
@@ -2805,21 +2768,4 @@ split_sync_memory_test() ->
     ?assertEqual(64 * ?MiB, Interval3),
     ?assertEqual(?CHUNK_CACHE_MIN_CHUNKS, Chunks3).
 
-%% The per-store cache counter (used by chunk-copy and sync) must increment and
-%% decrement the same key and floor at 0; the /0 variant must not touch it.
-per_store_chunk_cache_size_test() ->
-    catch ets:new(ar_data_sync_state, [named_table, public, set]),
-    catch ets:delete(ar_data_sync_state, {chunk_cache_size, s1}),
-    increment_chunk_cache_size(s1),
-    increment_chunk_cache_size(s1),
-    ?assertEqual(2, ets:lookup_element(ar_data_sync_state, {chunk_cache_size, s1}, 2)),
-    decrement_chunk_cache_size(s1),
-    decrement_chunk_cache_size(s1),
-    ?assertEqual(0, ets:lookup_element(ar_data_sync_state, {chunk_cache_size, s1}, 2)),
-    %% Floors at 0 - an unmatched decrement can't drive it negative.
-    decrement_chunk_cache_size(s1),
-    ?assertEqual(0, ets:lookup_element(ar_data_sync_state, {chunk_cache_size, s1}, 2)),
-    %% The global-only /0 increment does not touch the per-store counter.
-    increment_chunk_cache_size(),
-    ?assertEqual(0, ets:lookup_element(ar_data_sync_state, {chunk_cache_size, s1}, 2)).
 -endif.

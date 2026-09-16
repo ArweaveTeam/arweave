@@ -2,7 +2,8 @@
 -module(ar_sync).
 
 -export([create_ets/0, child_specs/0, enabled/0, start_store/1, set_weave_size/2,
-        task_write_completed/1,
+        reset_store/1, task_write_completed/1, task_write_completed/2,
+        task_write_failed/1,
         get_peers_for_offset/1]).
 
 -include_lib("arweave/include/ar_sup.hrl").
@@ -43,6 +44,18 @@ set_weave_size(StoreID, WeaveSize) ->
 %% @doc Notify the scheduler that one fetched chunk reached a terminal write result.
 task_write_completed(TaskRef) ->
     ar_sync_scheduler:task_write_completed(TaskRef).
+
+%% @doc Discard active work belonging to a restarting data-sync store.
+reset_store(StoreID) ->
+    ar_sync_scheduler:reset_store(StoreID).
+
+%% @doc Release a write handoff that could not reach a data-sync process.
+task_write_failed(TaskRef) ->
+    ar_sync_scheduler:task_write_failed(TaskRef).
+
+%% @doc Account for a terminal write, including local copies and disk-pool work.
+task_write_completed(StoreID, TaskRef) ->
+    ar_sync_scheduler:task_write_completed(StoreID, TaskRef).
 
 %% @doc Return peers whose coarse discovery data includes Offset.
 get_peers_for_offset(Offset) ->

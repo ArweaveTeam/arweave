@@ -14,19 +14,27 @@ specs() ->
             type => finite_pos_integer,
             legacy => data_cache_size_limit,
             short_description =>
-                <<"Total memory budget in MiB for the syncing processes' "
-                  "in-memory caches (approximate).">>,
+                <<"Memory budget in MiB for buffered sync chunks and "
+                  "cached peer intervals (approximate).">>,
             long_description =>
-                <<"Split ~90/10 between the fetched-chunk cache (downloaded "
-                  "chunks awaiting the write path) and the peer interval "
-                  "cache (warmed per-peer sync intervals; 10% share, floored "
-                  "at 64 MiB). Note: this option previously sized only the "
-                  "chunk cache; it now covers both, so the chunk cache gets "
-                  "~90% of a previously-tuned value.">>,
+                <<"Leave unset for automatic sizing from system memory; "
+                  "normally only override for advanced tuning. Split ~90/10 "
+                  "between chunks awaiting storage (including local copies "
+                  "and disk-pool handoffs) and cached peer intervals. "
+                  "Sync chunks remain counted while being packed/unpacked "
+                  "and awaiting writes. packing.cache_size separately "
+                  "limits the packing stage and can count the same chunks. "
+                  "Entropy is outside this budget and is controlled by "
+                  "packing.entropy.cache_size. This is not a total node "
+                  "memory limit. The chunk cache has a 250 MiB minimum "
+                  "(1000 chunks), and peer intervals have a 64 MiB minimum, "
+                  "so small budgets may be exceeded. Legacy "
+                  "data_cache_size_limit is still in 256 KiB chunks and is "
+                  "converted to MiB, rounding up. New-style sync.cache_size "
+                  "must be specified in MiB, not chunks or bytes.">>,
             handle_set =>
                 fun(_K, V, _S, _A) ->
-                    %% set_chunk_cache_size_limit/1 returns the resolved limit (in
-                    %% chunks), or ok only before the ETS table exists - don't match ok.
+                    %% Returns the chunk limit, or ok before ETS exists.
                     _ = ar_data_sync:set_chunk_cache_size_limit(V),
                     {store, V}
                 end
@@ -49,8 +57,8 @@ specs() ->
             type => boolean,
             legacy => sync_from_local_peers_only,
             short_description =>
-                <<"Sync data (not headers) only from local-network "
-                  "peers configured via the local_peer option.">>
+                <<"Sync data (not headers) only from peers configured in "
+                  "peers.local.">>
         },
         #{
             enabled => true,
@@ -65,12 +73,15 @@ specs() ->
                 <<"Aggregate budget for chunk fetching. `infinity` (the "
                   "default) syncs as fast as peers, disks, and the link "
                   "allow; 0 at startup disables data syncing entirely. "
+                  "Local copies, disk-pool processing, header sync, and "
+                  "entropy preparation are controlled separately. "
                   "Fetch concurrency is sized automatically from per-peer "
                   "behavior, so this rate is the only sync-throughput "
                   "dial. The rate may be changed at runtime; a runtime 0 "
                   "pauses dispatch but does not stop the sync processes. "
-                  "(Replaces the removed sync_jobs / [sync, workers] "
-                  "option.)">>
+                  "Replaces the removed sync_jobs / sync.jobs / "
+                  "sync.workers options; old worker counts cannot be "
+                  "converted to a download rate.">>
         }
     ].
 

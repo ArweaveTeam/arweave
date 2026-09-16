@@ -69,7 +69,7 @@ test_chunk_cache_leak_on_unpack_error() ->
     %% before the valid chunk appears. With correct accounting it drains
     %% after every retry and the gate just times out.
     _ = ar_test_await:until(chunk_cache_over_limit,
-            fun() -> chunk_cache_size(main) >= 2 end, 60_000),
+            fun() -> ar_sync_chunk_cache:size() >= 2 end, 60_000),
     %% Make the valid chunk available on peer1 and require main to sync it:
     %% the unpack failures must not exhaust the chunk cache budget.
     post_chunk_to_peer1(ValidProof),
@@ -81,7 +81,7 @@ test_chunk_cache_leak_on_unpack_error() ->
             end, 60_000),
     %% At most the corrupted chunk retry stays in flight.
     ok = ar_test_await:until(chunk_cache_drained,
-            fun() -> chunk_cache_size(main) =< 1 end),
+            fun() -> ar_sync_chunk_cache:size() =< 1 end),
     ?assertNot(ar_test_node:remote_call(main, ar_data_sync, is_chunk_cache_full, [])).
 
 %% @doc Mine one block on peer1 with a single fixed-data v2 tx carrying Chunks.
@@ -132,10 +132,3 @@ corrupt_stored_chunk(EndOffset) ->
     Garbage = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
     ?assertMatch({ok, _}, ar_test_node:remote_call(peer1, ar_chunk_storage,
             write_chunk, [PaddedEndOffset, Garbage, #{}, StoreID])).
-
-chunk_cache_size(Node) ->
-    case ar_test_node:remote_call(Node, ets, lookup,
-            [ar_data_sync_state, chunk_cache_size]) of
-        [{chunk_cache_size, Size}] -> Size;
-        _ -> 0
-    end.

@@ -169,10 +169,6 @@ post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
     case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
             OriginStoreID) of
         {true, Packing} ->
-            %% Count against the target store's per-store cache: pack_and_store_chunk
-            %% below runs in TargetStoreID's gen_server and decrements that same
-            %% per-store counter, so increment and decrement stay balanced per store.
-            ar_data_sync:increment_chunk_cache_size(TargetStoreID),
             UnpackedChunk = case Packing of
                 unpacked -> Chunk;
                 _ -> none
@@ -180,8 +176,7 @@ post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
             ChunkArgs = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
                 Packing, RelativeOffset, ChunkSize, Chunk, UnpackedChunk,
                 TargetStoreID, ChunkDataKey},
-            gen_server:cast(ar_data_sync:name(TargetStoreID),
-                {pack_and_store_chunk, ChunkArgs}),
+            ar_data_sync:pack_and_store_chunk(TargetStoreID, ChunkArgs),
             read_range(MessagesRemaining - 1,
                 {Start + ChunkSize, End, OriginStoreID, TargetStoreID});
         {true, _DifferentPacking} ->

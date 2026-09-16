@@ -22,11 +22,20 @@ specs() ->
             enabled => true,
             option_key => [packing, cache_size],
             runtime => true,
-            type => pos_integer,
+            type => finite_pos_integer,
             legacy => packing_cache_size_limit,
             short_description =>
-                <<"Maximum number of data chunks kept in memory by "
-                  "the packing process (approximate).">>,
+                <<"Maximum size in MiB of the in-memory cache for chunks "
+                  "being packed or unpacked (approximate).">>,
+            long_description =>
+                <<"Leave unset for automatic sizing from system memory; "
+                  "normally only override for advanced tuning. Limits "
+                  "chunks queued for or undergoing packing/unpacking, "
+                  "including work from syncing and repacking. Sync chunks "
+                  "also count toward sync.cache_size until their write "
+                  "path completes; these limits overlap rather than "
+                  "representing disjoint memory allocations. Entropy is "
+                  "controlled separately by packing.entropy.cache_size.">>,
             handle_set => fun(_K, V, _S, _A) ->
                 ok = ar_packing_server:set_cache_size(V),
                 {store, V}
@@ -63,11 +72,19 @@ specs() ->
             type => pos_integer,
             legacy => replica_2_9_entropy_cache_size_mb,
             short_description =>
-                <<"Maximum cache size in MiB allocated for entropy.">>,
+                <<"Maximum in-memory cache size in MiB for entropy shared "
+                  "by syncing and repacking.">>,
             long_description =>
-                <<"Each cached entropy is 256 MiB. The bigger the "
-                  "cache, the more replica.2.9 data can be synced "
-                  "or repacked concurrently.">>,
+                <<"Holds reusable replica.2.9 entropy, not chunk data. "
+                  "Separate from the chunk buffers limited by "
+                  "sync.cache_size and packing.cache_size. Each entropy "
+                  "is 8 MiB; one footprint needs 32 entropies (256 MiB). "
+                  "Its size determines active network-sync footprint "
+                  "capacity and automatic repack batch sizing. When tuning "
+                  "replica.2.9 throughput, start with this setting and "
+                  "normally leave the two chunk-buffer options unset. "
+                  "Leave memory available for those buffers and other "
+                  "node processes.">>,
             handle_set => fun(_K, V, _S, _A) ->
                 ok = ar_repack:recompute_sizing(),
                 {store, V}

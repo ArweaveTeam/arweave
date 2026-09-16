@@ -7,7 +7,6 @@
         rate_fetched_data/5, get_chunk_binary/3,
         is_chunk_cache_full/0, chunk_cache_size/0, chunk_cache_size/1,
         chunk_cache_size_limit/0,
-        increment_chunk_cache_size/1,
         is_disk_space_sufficient/1, is_footprint_record_initialized/1,
         store_fetched_chunk/5, unsynced_intervals/3,
         unsynced_footprint_intervals/3,
@@ -31,16 +30,13 @@ is_chunk_cache_full() ->
     ar_data_sync:is_chunk_cache_full().
 
 chunk_cache_size() ->
-    ar_data_sync:chunk_cache_size().
+    ar_sync_chunk_cache:size().
 
 chunk_cache_size(StoreID) ->
-    ar_data_sync:chunk_cache_size(StoreID).
+    ar_sync_chunk_cache:size(StoreID).
 
 chunk_cache_size_limit() ->
     ar_data_sync:chunk_cache_size_limit().
-
-increment_chunk_cache_size(StoreID) ->
-    ar_data_sync:increment_chunk_cache_size(StoreID).
 
 is_disk_space_sufficient(StoreID) ->
     ar_data_sync:is_disk_space_sufficient(StoreID).

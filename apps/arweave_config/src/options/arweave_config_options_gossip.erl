@@ -156,10 +156,12 @@ specs() ->
             type => pos_integer,
             legacy => header_sync_jobs,
             short_description =>
-                <<"Number of header-syncing jobs.">>,
+                <<"Number of concurrent header-syncing workers.">>,
             long_description =>
-                <<"Each job periodically picks the latest not-synced "
-                  "block header and downloads it from peers.">>
+                <<"Each worker periodically picks the latest not-synced "
+                  "block header and downloads it from peers. Set to 0 "
+                  "to disable header syncing. Independent of "
+                  "sync.max_download_rate.">>
         },
         #{
             enabled => true,
@@ -169,7 +171,7 @@ specs() ->
             type => pos_integer,
             legacy => disk_cache_size,
             short_description =>
-                <<"Maximum size in MiB allocated for storing recent "
+                <<"Maximum disk space in MiB allocated for storing recent "
                   "block and transaction headers.">>,
             long_description =>
                 <<"Legacy JSON / CLI spelling: `disk_cache_size_mb`.">>

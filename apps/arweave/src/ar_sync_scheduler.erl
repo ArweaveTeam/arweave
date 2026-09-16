@@ -21,7 +21,8 @@
 -export([start_link/0, register_workers/0,
         admission_headroom/1, claim_and_enqueue/2,
         tick_interval_ms/0,
-        task_fetch_completed/3, task_write_completed/1]).
+        task_fetch_completed/3, reset_store/1,
+        task_write_completed/1, task_write_completed/2, task_write_failed/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -ifdef(AR_TEST).
@@ -152,6 +153,8 @@ handle_call({admission_headroom, StoreID}, _From, State) ->
 handle_call({claim_and_enqueue, StoreID, Tasks}, _From, State) ->
     {Result, State2} = admit_tasks(StoreID, Tasks, State),
     {reply, Result, schedule_dispatch(State2)};
+handle_call({reset_store, StoreID}, _From, State) ->
+    {reply, ok, schedule_dispatch(do_reset_store(StoreID, State))};
 handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
     {reply, {error, unhandled}, State}.
@@ -167,11 +170,17 @@ handle_cast({task_fetch_completed, TaskRef, BytesFetched, FetchTiming}, State) -
 handle_cast({task_write_completed, TaskRef}, State) ->
     {noreply, schedule_dispatch(on_task_write_completed(TaskRef, State))};
 
+handle_cast({task_write_failed, TaskRef}, State) ->
+    {noreply, schedule_dispatch(on_task_write_finished(TaskRef, State))};
+
+handle_cast({store_write_completed, StoreID}, State) ->
+    {noreply, schedule_dispatch(record_store_drain(StoreID, State))};
+
 handle_cast(Cast, State) ->
     ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
     {noreply, State}.
 
-handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
+handle_info({'DOWN', Ref, process, _PID, Reason}, State) ->
     {noreply, schedule_dispatch(worker_exited(Ref, Reason, State))};
 
 handle_info(scheduler_tick, State) ->
@@ -717,6 +726,12 @@ task_fetch_completed({Pid, _Ref} = TaskRef, BytesFetched, FetchTiming)
     ok.
 
 %% @doc Register that ar_data_sync finished processing one handed-off chunk.
+task_write_completed(StoreID, undefined) ->
+    gen_server:cast(?MODULE, {store_write_completed, StoreID});
+task_write_completed(_StoreID, TaskRef) ->
+    task_write_completed(TaskRef).
+
+%% @doc Register that a scheduler-owned chunk reached a terminal write result.
 task_write_completed(undefined) ->
     ok;
 task_write_completed({Pid, _Ref} = TaskRef) when is_pid(Pid) ->
@@ -725,6 +740,38 @@ task_write_completed({Pid, _Ref} = TaskRef) when is_pid(Pid) ->
 task_write_completed(TaskRef) ->
     catch gen_server:cast(?MODULE, {task_write_completed, TaskRef}),
     ok.
+
+%% @doc Cancel old active work before a replacement store accepts handoffs.
+reset_store(StoreID) ->
+    case whereis(?MODULE) of
+        undefined -> ok;
+        PID -> gen_server:call(PID, {reset_store, StoreID}, infinity)
+    end.
+
+do_reset_store(StoreID, State) ->
+    StoreTasks = maps:filter(
+        fun(_, #task{ store_id = SID }) -> SID =:= StoreID end,
+        State#state.tasks),
+    StoreMonitors = maps:filter(
+        fun(_, {TaskRef, _}) -> maps:is_key(TaskRef, StoreTasks) end,
+        State#state.monitor_index),
+    %% A fetching task may already have handed its chunk to the old writer.
+    %% Wait for its worker to stop before allowing a new owner to accept data.
+    terminate_workers(StoreMonitors),
+    maps:foreach(fun(Ref, _) -> erlang:demonitor(Ref, [flush]) end,
+        StoreMonitors),
+    State2 = State#state{ monitor_index = maps:without(
+        maps:keys(StoreMonitors), State#state.monitor_index) },
+    maps:fold(
+        fun(_, Task, Acc) ->
+            finish_task(Task#task{ state = write_complete }, Acc)
+        end,
+        State2,
+        StoreTasks).
+
+%% @doc Release a failed handoff without crediting the store's drain rate.
+task_write_failed({PID, _Ref} = TaskRef) when is_pid(PID) ->
+    gen_server:cast(PID, {task_write_failed, TaskRef}).
 
 %% @doc Evolve peer control from the scheduler's active, inflight, and driven
 %% views. ar_sync_peer owns delivery observations and cap publication.
@@ -828,21 +875,28 @@ on_task_fetch_completed(TaskRef, BytesFetched, FetchTiming, State) ->
     end.
 
 on_task_write_completed(TaskRef, State) ->
+    case maps:get(TaskRef, State#state.tasks, not_found) of
+        #task{ state = Status, store_id = StoreID }
+                when Status =:= fetching; Status =:= writing ->
+            on_task_write_finished(TaskRef, record_store_drain(StoreID, State));
+        _ ->
+            State
+    end.
+
+on_task_write_finished(TaskRef, State) ->
     #state{ tasks = Tasks } = State,
     case maps:get(TaskRef, Tasks, not_found) of
         #task{ state = fetching } = Task ->
-            State2 = record_store_drain(Task, State),
-            put_task(Task#task{ state = write_complete }, State2);
+            put_task(Task#task{ state = write_complete }, State);
         #task{ state = writing } = Task ->
-            finish_task(Task#task{ state = write_complete },
-                record_store_drain(Task, State));
+            finish_task(Task#task{ state = write_complete }, State);
         #task{ state = write_complete } ->
             State;
         not_found ->
             State
     end.
 
-record_store_drain(#task{ store_id = StoreID }, State) ->
+record_store_drain(StoreID, State) ->
     State#state{ stores = ar_sync_store:record_write_completed(
         StoreID, State#state.stores) }.
 
@@ -2085,7 +2139,7 @@ cache_full_test_() ->
         {arweave_config, get,
             fun([packing, entropy, cache_size]) -> 1000000;
                 (K) -> meck:passthrough([K]) end},
-        {ar_data_sync, chunk_cache_size, fun() -> 1 end},
+        {ar_sync_chunk_cache, size, fun() -> 1 end},
         {ar_data_sync, chunk_cache_size_limit, fun() -> 1 end},
         {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end}
     ], fun test_cache_full/0, 30).

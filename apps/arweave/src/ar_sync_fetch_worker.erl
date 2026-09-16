@@ -91,7 +91,6 @@ do_fetch_task(Task) ->
             case FetchResult of
                 {ok, #{ chunk := Chunk } = Proof, _Time, _TransferSize} ->
                     TaskRef = Task#task.task_ref,
-                    ar_sync_deps:increment_chunk_cache_size(StoreID),
                     ar_sync_deps:store_fetched_chunk(
                         StoreID, Peer, Byte, Proof, TaskRef),
                     {ok, byte_size(Chunk), FetchTiming};
@@ -384,7 +383,6 @@ run_with_mocks(GetChunkFun, ExtraMocks, TestFun) ->
         {ar_http_iface_client, log_failed_request, fun(_, _) -> ok end},
         {ar_data_sync, store_fetched_chunk, fun(_, _, _, _, _) -> ok end},
         {ar_data_sync, is_chunk_cache_full, fun() -> false end},
-        {ar_data_sync, increment_chunk_cache_size, fun(_) -> ok end},
         {ar_peers, rate_fetched_data, fun(_, _, _, _, _) -> ok end}
     ],
     Mocks = merge_mocks(Defaults, ExtraMocks),

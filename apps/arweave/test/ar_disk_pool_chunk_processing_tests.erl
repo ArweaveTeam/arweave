@@ -194,17 +194,20 @@ test_chunk_cache_full_defers_processing() ->
     ?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
     %% Saturate the chunk cache to prevent processing.
     [{_, Limit}] = ets:lookup(ar_data_sync_state, chunk_cache_size_limit),
-    ets:insert(ar_data_sync_state, {chunk_cache_size, Limit + 100}),
-    %% Mine the remaining blocks to push past the threshold.
-    ar_test_node:mine(main),
-    ?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
-    ar_test_node:mine(main),
-    ?assertMatch({ok, _}, ar_test_await:node_height(main, 4)),
-    %% The chunk should still be in the disk pool because the cache is full.
-    timer:sleep(5_000),
-    ?assertNotEqual([], ar_disk_pool:debug_get_chunks()),
-    %% Drain the cache.
-    ets:insert(ar_data_sync_state, {chunk_cache_size, 0}),
+    %% A test-owned counter fills the cache without modifying live stores.
+    ets:insert(ar_data_sync_state, {{chunk_cache_size, self()}, Limit}),
+    try
+        %% Mine the remaining blocks to push past the threshold.
+        ar_test_node:mine(main),
+        ?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
+        ar_test_node:mine(main),
+        ?assertMatch({ok, _}, ar_test_await:node_height(main, 4)),
+        %% Observe a five-second full-cache period before allowing it to drain.
+        timer:sleep(5_000),
+        ?assertNotEqual([], ar_disk_pool:debug_get_chunks())
+    after
+        ar_sync_chunk_cache:reset(self())
+    end,
     %% The chunk should now process and leave the disk pool.
     true = wait_until_disk_pool_size(0).
 
@@ -374,18 +377,12 @@ test_multi_module_chunk_cache_accounting() ->
     %% Assert chunk cache is cleaned up. Everything async has completed by
     %% this point, so the short timeout is safe.
     ok = ar_test_await:until(chunk_cache_settled,
-        fun() -> chunk_cache_size() =:= 0 end, 10_000),
-    ?assertEqual(0, chunk_cache_size()).
+        fun() -> ar_sync_chunk_cache:size() =:= 0 end, 10_000),
+    ?assertEqual(0, ar_sync_chunk_cache:size()).
 
 %% -------------------------------------------------------------------
 %% Internal
 %% -------------------------------------------------------------------
-
-chunk_cache_size() ->
-    case ets:lookup(ar_data_sync_state, chunk_cache_size) of
-        [{_, Size}] -> Size;
-        _ -> undefined
-    end.
 
 parse_disk_pool_chunk(Bin) ->
     case binary_to_term(Bin, [safe]) of
