@@ -127,6 +127,11 @@ init([]) ->
 
 handle_call(get_state, _From, State) ->
     {reply, State, State};
+handle_call({acquire_lock, sync, _StoreID}, _From,
+        #state{initialized = false} = State) ->
+    %% Local copying must wait for the joined chain's disk-pool threshold,
+    %% even when device throttling is disabled. Preparation may start earlier.
+    {reply, false, State};
 handle_call({acquire_lock, Mode, StoreID}, _From, State) ->
     case {State#state.initialized, State#state.device_limit} of
         {false, true} ->
@@ -408,6 +413,8 @@ device_locks_test_() ->
      {timeout, 30, fun test_log_locks/0}
     ].
 
+%% @doc Preparation may start before initialization with device limits off,
+%% but copying must wait until the joined chain state is available.
 test_locks_before_device_map_without_device_limit() ->
     StoreID = "storage_module_0_unpacked",
     %% One worker leaves one prepare-lock slot available for this store.
@@ -416,11 +423,24 @@ test_locks_before_device_map_without_device_limit() ->
         device_limit = false,
         num_replica_2_9_workers = 1
     },
+    ?assertEqual(
+        {reply, false, State},
+        handle_call({acquire_lock, sync, StoreID}, self(), State)
+    ),
     {reply, true, State2} = handle_call(
         {acquire_lock, prepare, StoreID}, self(), State),
     ?assertEqual(prepare, maps:get(StoreID, State2#state.store_id_locks)),
     {noreply, State3} = handle_cast({release_lock, prepare, StoreID}, State2),
-    ?assertEqual(sync, maps:get(StoreID, State3#state.store_id_locks)).
+    ?assertEqual(sync, maps:get(StoreID, State3#state.store_id_locks)),
+    ?assertEqual(
+        {reply, false, State3},
+        handle_call({acquire_lock, sync, StoreID}, self(), State3)
+    ),
+    ReadyState = State3#state{initialized = true},
+    ?assertEqual(
+        {reply, true, ReadyState},
+        handle_call({acquire_lock, sync, StoreID}, self(), ReadyState)
+    ).
 
 test_acquire_lock() ->
     State = #state{
