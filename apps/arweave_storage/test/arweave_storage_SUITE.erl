@@ -340,8 +340,10 @@ concurrent_metadata_labels(_) ->
 %% @doc Each public storage function is a thin delegate to an app-internal
 %% module.
 public_api_delegates(_) ->
+    %% code:which/1 returns cover_compiled for instrumented modules.
+    Beam = code:where_is_file("arweave_storage.beam"),
     {ok, {arweave_storage, [{abstract_code, {raw_abstract_v1, Forms}}]}} =
-        beam_lib:chunks(code:which(arweave_storage), [abstract_code]),
+        beam_lib:chunks(Beam, [abstract_code]),
     lists:foreach(
         fun({function, _, Name, _, Clauses}) ->
             lists:foreach(

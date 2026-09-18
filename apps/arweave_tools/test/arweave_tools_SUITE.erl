@@ -189,7 +189,9 @@ doctor_command_result(Command, Module, Args) ->
 
 %% @doc Return compiled external calls targeting any of the supplied modules.
 calls_to_modules(Module, TargetModules) ->
-    case beam_lib:chunks(code:which(Module), [imports]) of
+    %% Inspect the original imports even when the module is cover-compiled.
+    Beam = code:where_is_file(atom_to_list(Module) ++ ".beam"),
+    case beam_lib:chunks(Beam, [imports]) of
         {ok, {Module, [{imports, Calls}]}} ->
             lists:filter(
                 fun({TargetModule, _Function, _Arity}) ->

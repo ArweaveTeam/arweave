@@ -109,7 +109,7 @@ outbound_calls_use_boundary(_Config) ->
     Calls = lists:flatmap(
         fun(Module) ->
             {ok, {Module, [{imports, Imports}]}} =
-                beam_lib:chunks(code:which(Module), [imports]),
+                beam_lib:chunks(beam_file(Module), [imports]),
             [
                 {Module, Dependency, Function, Arity}
              || {Dependency, Function, Arity} <- Imports,
@@ -202,8 +202,12 @@ missing_ranges_preserve_sync_filters(_Config) ->
 
 abstract_code(Module) ->
     {ok, {Module, [{abstract_code, {raw_abstract_v1, Forms}}]}} =
-        beam_lib:chunks(code:which(Module), [abstract_code]),
+        beam_lib:chunks(beam_file(Module), [abstract_code]),
     Forms.
+
+%% @doc Locate the original BEAM when cover replaces the loaded module.
+beam_file(Module) ->
+    code:where_is_file(atom_to_list(Module) ++ ".beam").
 
 dependency_calls(Module) ->
     lists:flatmap(
