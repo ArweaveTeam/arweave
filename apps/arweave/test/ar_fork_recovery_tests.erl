@@ -363,7 +363,7 @@ test_orphaned_tx_survives_pending_tx_mined_in_new_fork() ->
     ?assertEqual([TXID1], H4B#block.txs).
 
 invalid_block_with_high_cumulative_difficulty_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
+    ar_test_node:test_with_all_nodes_mocked([{arweave_constants, height_2_6, fun() -> 0 end}],
         fun() -> test_invalid_block_with_high_cumulative_difficulty() end).
 
 test_invalid_block_with_high_cumulative_difficulty() ->
@@ -456,7 +456,7 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
                             tx_path = TXPath },
                     chunk_hash = crypto:hash(sha256, Chunk) },
             B4 =
-                case ar_fork:height_2_8() of
+                case arweave_constants:height_2_8() of
                     0 ->
                         {ok, #{ chunk := UnpackedChunk } } = ar_data_sync:get_chunk(
                                 RecallByte + 1, #{ pack => true, packing => unpacked,

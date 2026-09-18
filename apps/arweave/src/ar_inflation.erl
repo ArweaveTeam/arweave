@@ -5,7 +5,7 @@
 
 -export([calculate/1, blocks_per_year/1]).
 
--include_lib("arweave/include/ar_inflation.hrl").
+-include_lib("arweave_constants/include/arweave_constants.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -28,7 +28,7 @@ calculate2(Height) when Height =< ?FORK_15_HEIGHT ->
 calculate2(Height) when Height =< ?PRE_25_BLOCKS_PER_YEAR ->
     calculate_base(Height) + ?POST_15_Y1_EXTRA;
 calculate2(Height) ->
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_constants:height_2_5() of
         true ->
             calculate_base(Height);
         false ->

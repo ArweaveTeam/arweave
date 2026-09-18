@@ -20,7 +20,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -128,7 +127,7 @@ get_current_block_hash() ->
     end.
 
 read_recent_blocks(BI, SearchDepth, CustomDir) ->
-    read_recent_blocks2(lists:sublist(BI, 2 * ar_block:get_max_tx_anchor_depth() + SearchDepth),
+    read_recent_blocks2(lists:sublist(BI, 2 * arweave_constants:get_max_tx_anchor_depth() + SearchDepth),
                         SearchDepth, 0, CustomDir).
 
 read_recent_blocks2(_BI, Depth, Skipped, _CustomDir) when Skipped > Depth orelse
@@ -146,7 +145,7 @@ read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped, CustomDir) ->
                 false ->
                     SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
                             B#block.height),
-                    case read_recent_blocks3(BI, 2 * ar_block:get_max_tx_anchor_depth() - 1,
+                    case read_recent_blocks3(BI, 2 * arweave_constants:get_max_tx_anchor_depth() - 1,
                             [B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }], CustomDir) of
                         not_found ->
                             not_found;
@@ -205,7 +204,7 @@ get_block_index_entry(Height) ->
 %% @end
 get_2_0_hash_of_1_0_block(Height) ->
     [{hash_list_2_0_for_1_0_blocks, HL}] = arweave_util:safe_ets_lookup(node_state, hash_list_2_0_for_1_0_blocks),
-    Fork_2_0 = ar_fork:height_2_0(),
+    Fork_2_0 = arweave_constants:height_2_0(),
     case Height > Fork_2_0 of
         true ->
             invalid_height;
@@ -369,14 +368,14 @@ get_partition_number(undefined) ->
 get_partition_number(infinity) ->
     infinity;
 get_partition_number(Offset) ->
-    Offset div ar_block:partition_size().
+    Offset div arweave_constants:partition_size().
 
 %% @doc Excludes the last partition as it may be incomplete and therefore provides
 %% a mining advantage (e.g. it can fit in RAM)
 get_max_partition_number(infinity) ->
     infinity;
 get_max_partition_number(PartitionUpperBound) ->
-    max(0, PartitionUpperBound div ar_block:partition_size() - 1).
+    max(0, PartitionUpperBound div arweave_constants:partition_size() - 1).
 
 %% @doc Return the current weave size. Assume the node has joined the network and
 %% initialized the state.

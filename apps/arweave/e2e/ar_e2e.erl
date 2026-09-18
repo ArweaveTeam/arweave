@@ -16,7 +16,6 @@
          wait_for_chunks_recorded/3]).
 
 -include_lib("ar.hrl").
--include_lib("ar_consensus.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -80,9 +79,9 @@ packing_type_to_packing(PackingType, Address) ->
 
 restart_node(Node, Snapshot, Overrides) when is_map(Overrides) ->
     ar_test_node:stop(Node),
-    ok = ar_test_node:remote_call(Node, arweave_config, restore,
+    ok = ar_test_node:remote_call(Node, arweave_config, internal_restore,
                                   [Snapshot#{runtime => false}]),
-    ok = ar_test_node:remote_call(Node, arweave_config, force_config,
+    ok = ar_test_node:remote_call(Node, arweave_config, internal_force_config,
                                   [Overrides]),
     ok = ar_test_node:remote_call(Node, ar, start_dependencies, []),
     ar_test_await:node_joined(Node),
@@ -108,7 +107,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
                                               [join, auto] => true
                                              }, true),
     InitialSnapshot = ar_test_node:remote_call(
-                        Node, arweave_config, snapshot, []),
+                        Node, arweave_config, internal_snapshot, []),
 
     ?LOG_INFO("Source node ~p started.", [Node]),
 
@@ -176,7 +175,7 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
         replica_2_9 ->
             ExpectedNodeName = ar_test_node:start_other_node(
                 Node, B0, BaseConfig#{ [sync, max_download_rate] => 0 }, true),
-            Snapshot = ar_test_node:remote_call(Node, arweave_config, snapshot, []),
+            Snapshot = ar_test_node:remote_call(Node, arweave_config, internal_snapshot, []),
             ar_test_await:all_entropy_prepared(Node),
             restart_node(Node, Snapshot, #{ [sync, max_download_rate] => infinity });
         _ ->
@@ -279,8 +278,8 @@ aligned_partition_size(Node, Partition, Packing) ->
     RepackInPlaceModules = [{ModuleStart, ModuleEnd, TargetPacking}
                             || {{ModuleStart, ModuleEnd, _FromPacking}, TargetPacking} <- RepackInPlaceList],
     AllStorageModules = StorageModulesList ++ RepackInPlaceModules,
-    PartitionStart = Partition * ar_block:partition_size(),
-    PartitionEnd = (Partition + 1) * ar_block:partition_size(),
+    PartitionStart = Partition * arweave_constants:partition_size(),
+    PartitionEnd = (Partition + 1) * arweave_constants:partition_size(),
     StorageModules = filter_storage_modules_by_partition(
                        PartitionStart, PartitionEnd, AllStorageModules),
     StorageModules2 = filter_storage_modules_by_packing(StorageModules, Packing),
@@ -301,11 +300,11 @@ filter_storage_modules_by_packing([], _Packing) ->
     [].
 
 aligned_partition_size2([{ModuleStart, ModuleEnd, Packing} | Modules], PartitionStart, PartitionEnd, Acc) ->
-    Overlap = ar_storage_module:get_overlap(Packing),
+    Overlap = arweave_storage:get_overlap(Packing),
     ClippedStart = max(ModuleStart, PartitionStart),
     ClippedEnd = min(ModuleEnd, PartitionEnd),
-    AlignedModuleStart = max(0, ar_block:get_chunk_padded_offset(ClippedStart) - ?DATA_CHUNK_SIZE),
-    AlignedModuleEnd = ar_block:get_chunk_padded_offset(ClippedEnd + Overlap),
+    AlignedModuleStart = max(0, arweave_constants:get_chunk_padded_offset(ClippedStart) - ?DATA_CHUNK_SIZE),
+    AlignedModuleEnd = arweave_constants:get_chunk_padded_offset(ClippedEnd + Overlap),
     AlignedModuleSize = AlignedModuleEnd - AlignedModuleStart,
     aligned_partition_size2(Modules, PartitionStart, PartitionEnd, Acc + AlignedModuleSize);
 aligned_partition_size2([], _PartitionStart, _PartitionEnd, Acc) ->
@@ -323,12 +322,12 @@ source_node_storage_modules(Node, PackingType, WalletFixture, ModuleSize) ->
     {Wallet, source_node_storage_modules(SourcePacking, ModuleSize)}.
 
 source_node_storage_modules(SourcePacking, default) ->
-    Size = ar_block:partition_size(),
+    Size = arweave_constants:partition_size(),
     lists:map(fun(I) -> {I * Size, (I + 1) * Size, SourcePacking} end,
         lists:seq(0, 4));
 
 source_node_storage_modules(SourcePacking, small) ->
-    Size = ar_block:partition_size() div 4,
+    Size = arweave_constants:partition_size() div 4,
     %% Put strict data split threshold inside the first storage module.
     [{0, Size * 2, SourcePacking}
     | lists:map(fun(I) -> {I * Size, (I + 1) * Size, SourcePacking} end,
@@ -473,7 +472,7 @@ assert_no_chunks(Node, Chunks) ->
 
 %% @doc Probe offset for each ?DATA_CHUNK_SIZE slot in a `WeaveSize'-byte
 %% genesis weave, as `ChunkEnd - ?DATA_CHUNK_SIZE + 1' (the smallest
-%% offset `ar_sync_record:is_recorded' resolves to that chunk).
+%% offset `arweave_storage:is_recorded' resolves to that chunk).
 genesis_chunk_offsets(WeaveSize) ->
     [N * ?DATA_CHUNK_SIZE - ?DATA_CHUNK_SIZE + 1
      || N <- lists:seq(1, WeaveSize div ?DATA_CHUNK_SIZE)].

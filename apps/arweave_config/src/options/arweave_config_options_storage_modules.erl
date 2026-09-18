@@ -60,7 +60,7 @@
     write_module_maps/2
 ]).
 -include("arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_constants/include/arweave_constants.hrl").
 
 specs() ->
     [

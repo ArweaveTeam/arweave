@@ -21,8 +21,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_vdf.hrl").
--include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -485,7 +483,7 @@ get_last_step_checkpoints(Info) ->
     Info#nonce_limiter_info.last_step_checkpoints.
 
 get_or_init_nonce_limiter_info(#block{ height = Height, indep_hash = H } = B) ->
-    case Height >= ar_fork:height_2_6() of
+    case Height >= arweave_constants:height_2_6() of
         true ->
             B#block.nonce_limiter_info;
         false ->
@@ -495,7 +493,7 @@ get_or_init_nonce_limiter_info(#block{ height = Height, indep_hash = H } = B) ->
     end.
 
 get_or_init_nonce_limiter_info(#block{ height = Height } = B, RecentBI) ->
-    case Height >= ar_fork:height_2_6() of
+    case Height >= arweave_constants:height_2_6() of
         true ->
             B#block.nonce_limiter_info;
         false ->
@@ -542,7 +540,7 @@ get_blocks() ->
     [B | get_blocks(B#block.previous_block, 1)].
 
 get_blocks(H, N) ->
-    case N >= ar_block:get_consensus_window_size() of
+    case N >= arweave_constants:get_consensus_window_size() of
         true ->
             [];
         false ->
@@ -717,7 +715,7 @@ handle_cast({initialize, _}, State) ->
     {noreply, State};
 
 handle_cast({account_tree_initialized, Blocks}, State) ->
-    {noreply, handle_initialized(lists:sublist(Blocks, ar_block:get_consensus_window_size()), State)};
+    {noreply, handle_initialized(lists:sublist(Blocks, arweave_constants:get_consensus_window_size()), State)};
 
 handle_cast({apply_tip, B, PrevB}, State) ->
     {noreply, apply_tip2(B, PrevB, State)};
@@ -788,7 +786,7 @@ handle_info({event, node_state, {checkpoint_block, _B}},
     %% applied yet.
     {noreply, State};
 handle_info({event, node_state, {checkpoint_block, B}}, State) ->
-    case B#block.height < ar_fork:height_2_6() of
+    case B#block.height < arweave_constants:height_2_6() of
         true ->
             {noreply, State};
         false ->
@@ -972,7 +970,7 @@ handle_initialized([B | Blocks], State) ->
     handle_initialized2(lists:reverse(Blocks2), State).
 
 take_blocks_after_fork([#block{ height = Height } = B | Blocks]) ->
-    case Height + 1 >= ar_fork:height_2_6() of
+    case Height + 1 >= arweave_constants:height_2_6() of
         true ->
             [B | take_blocks_after_fork(Blocks)];
         false ->
@@ -1046,7 +1044,7 @@ assert_step_count(StepNumber, PrevStepNumber, Steps) ->
 -endif.
 
 apply_tip(#block{ height = Height } = B, PrevB, #state{ sessions = Sessions } = State) ->
-    case Height + 1 < ar_fork:height_2_6() of
+    case Height + 1 < arweave_constants:height_2_6() of
         true ->
             State;
         false ->
@@ -1060,7 +1058,7 @@ apply_tip(#block{ height = Height } = B, PrevB, #state{ sessions = Sessions } = 
                 end,
             case gb_sets:is_empty(Sessions) of
                 true ->
-                    true = (Height + 1) == ar_fork:height_2_6(),
+                    true = (Height + 1) == arweave_constants:height_2_6(),
                     State3 = apply_base_block(B, State2),
                     State3;
                 false ->
@@ -1217,7 +1215,7 @@ schedule_step(State) ->
 get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpperBound) ->
     NextSeed = B#block.indep_hash,
     NextPartitionUpperBound = B#block.weave_size,
-    case Height + 1 == ar_fork:height_2_6() of
+    case Height + 1 == arweave_constants:height_2_6() of
         true ->
             Output = crypto:hash(sha256, Seed),
             #nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,

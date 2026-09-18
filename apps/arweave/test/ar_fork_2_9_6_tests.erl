@@ -25,7 +25,7 @@ test_rejects_format_1_txs_after_fork() ->
     {Key, LeftoverKey, B0} = new_funded_wallets(),
     ar_test_node:start(B0),
     ar_test_node:run_with_mocked([main],
-            [{ar_fork, height_2_9_6, fun() -> 2 end}], fun() ->
+            [{arweave_constants, height_2_9_6, fun() -> 2 end}], fun() ->
         %% The next block, at height 1, precedes the fork: format-1
         %% transactions are still accepted and mined.
         PreForkTX = ar_test_node:sign_v1_tx(main, Key, #{ denomination => 1 }),
@@ -67,7 +67,7 @@ test_rejects_block_with_format_1_tx_after_fork() ->
     %% peer1 stands in for a miner that ignores the fork; main runs with the
     %% test profile's activation height of 0 and must reject peer1's block.
     ar_test_node:run_with_mocked([peer1],
-            [{ar_fork, height_2_9_6, fun() -> infinity end}], fun() ->
+            [{arweave_constants, height_2_9_6, fun() -> infinity end}], fun() ->
         V1TX = ar_test_node:sign_v1_tx(peer1, Key, #{ denomination => 1 }),
         ar_test_node:assert_post_tx_to_peer(peer1, V1TX),
         ar_test_node:mine(peer1),
@@ -96,7 +96,7 @@ test_ignores_block_with_v1_denomination0_tx_after_fork_for_good() ->
     %% peer1 stands in for a miner that ignores both the fork and the
     %% deprecation of format-1 transactions without a denomination.
     ar_test_node:run_with_mocked([peer1],
-            [{ar_fork, height_2_9_6, fun() -> infinity end},
+            [{arweave_constants, height_2_9_6, fun() -> infinity end},
              {ar_tx, is_v1_denomination0_tx, fun(_TX) -> false end}], fun() ->
         V1TX = ar_test_node:sign_v1_tx(peer1, Key, #{ denomination => 0 }),
         ?assert(ar_tx:is_v1_denomination0_tx(V1TX)),

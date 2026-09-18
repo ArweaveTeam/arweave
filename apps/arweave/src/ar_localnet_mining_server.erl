@@ -9,9 +9,8 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include("ar_mining.hrl").
--include("ar_vdf.hrl").
 
 -record(state, {
                 paused = true,
@@ -126,7 +125,7 @@ mine_block3({error, Error}, _State, _MiningAddr) ->
     ?LOG_ERROR([{event, failed_to_create_localnet_block}, {step, sample_chunk_with_proof}, {reason, io_lib:format("~p", [Error])}]),
     error;
 mine_block3({RecallByte1, _Chunk1, PoA1}, State, MiningAddr) ->
-    NoncesPerChunk = ar_block:get_nonces_per_chunk(?REPLICA_2_9_PACKING_DIFFICULTY),
+    NoncesPerChunk = arweave_constants:get_nonces_per_chunk(?REPLICA_2_9_PACKING_DIFFICULTY),
     Nonce = rand:uniform(NoncesPerChunk) - 1,
     SubChunk1 = get_sub_chunk(PoA1#poa.chunk, Nonce, ?REPLICA_2_9_PACKING_DIFFICULTY),
     Stage1Data = #{
@@ -261,8 +260,11 @@ pick_random_storage_module(StorageModules) ->
     ModulesWithData =
         lists:filtermap(
           fun(Module) ->
-                  StoreID = ar_storage_module:id(Module),
-                  Intervals = ar_sync_record:get(ar_data_sync, StoreID),
+                  #store_info{id = StoreID} =
+                      arweave_storage:store_info(Module),
+                  Intervals = arweave_storage:get_sync_record(
+                      any_packing, {ar_data_sync, byte}, StoreID
+                  ),
                   case ar_intervals:is_empty(Intervals) of
                       true ->
                           false;

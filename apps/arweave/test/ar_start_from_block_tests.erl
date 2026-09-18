@@ -124,7 +124,7 @@ restart_from_block(Peer, BH) ->
     restart_from_block(Peer, BH, []).
 
 restart_from_block(Peer, BH, VDFClientPeers) ->
-    Snapshot = ar_test_node:remote_call(Peer, arweave_config, snapshot, []),
+    Snapshot = ar_test_node:remote_call(Peer, arweave_config, internal_snapshot, []),
     VDFClientConfig = vdf_client_config(VDFClientPeers),
     ok = restart_peer_with_overrides(Peer, Snapshot, maps:merge(VDFClientConfig, #{
         [join, start_from_latest_state] => false,
@@ -145,9 +145,9 @@ vdf_client_config(Peers) ->
 
 restart_peer_with_overrides(Peer, Snapshot, Overrides) ->
     ar_test_node:stop(Peer),
-    ok = ar_test_node:remote_call(Peer, arweave_config, restore,
+    ok = ar_test_node:remote_call(Peer, arweave_config, internal_restore,
         [Snapshot#{runtime => false}]),
-    ok = ar_test_node:remote_call(Peer, arweave_config, force_config,
+    ok = ar_test_node:remote_call(Peer, arweave_config, internal_force_config,
         [Overrides]),
     ok = ar_test_node:remote_call(Peer, ar, start_dependencies, []),
     ar_test_await:node_joined(Peer),

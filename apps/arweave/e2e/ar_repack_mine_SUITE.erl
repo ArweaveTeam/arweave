@@ -12,7 +12,7 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_constants/include/arweave_constants.hrl").
 
 %%====================================================================
 %% Suite metadata
@@ -120,7 +120,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
     {Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
         RepackerNode, FromPackingType, wallet_a),
     RepackerSnapshot = ar_test_node:remote_call(
-        RepackerNode, arweave_config, snapshot, []),
+        RepackerNode, arweave_config, internal_snapshot, []),
 
     [B0 | _] = Blocks,
     start_validator_node(ValidatorNode, RepackerNode, B0),
@@ -156,7 +156,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
                                                           [mining, address] => AddrB
                                                          }),
 
-    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),
+    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*arweave_constants:partition_size()),
     ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
     ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
     %% Source ends at height 6, putting the disk-pool threshold at the
@@ -174,7 +174,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
                                                           [storage_modules] => StorageModules,
                                                           [mining, address] => AddrB
                                                          }),
-    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),
+    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*arweave_constants:partition_size()),
     ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
     ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
     ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking),
@@ -193,7 +193,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
             %% Partitions 0-3 are now fully below it; partition 4 holds
             %% only the two chunks below the threshold (the chunk ending
             %% at 8126464 crosses into partition 4).
-            ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),
+            ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*arweave_constants:partition_size()),
             ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
             ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
             ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking),

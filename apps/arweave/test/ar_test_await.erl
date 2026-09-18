@@ -1,13 +1,14 @@
 %%% @doc Named, semantic waits for asynchronous test conditions
-%%% (sync-record coverage, HTTP availability, partition state, etc.),
-%%% all behind one polling primitive. Prefer a named helper; add one
+%%% (sync-record coverage, HTTP availability, partition state, etc.).
+%%% State waits share one polling primitive; reply waits receive messages.
+%%% Prefer a named helper; add one
 %%% here rather than writing a fresh `arweave_util:do_until' loop in a test.
 %%% Reserve raw `timer:sleep' for deliberately time-based behaviour,
 %%% never as a stand-in for a condition wait.
 %%%
 %%% Every public helper returns `ok' on success or
-%%% `{error, {timeout, Name}}' on deadline; helpers that yield a value
-%%% on success are typed individually below.
+%%% `{error, {timeout, Name}}' on deadline, unless documented otherwise.
+%%% Callback helpers return the callback's result and propagate its exceptions.
 %%%
 %%% Remote-observing helpers take the node first: `main' runs in this
 %%% BEAM, any other atom routes via `ar_test_node:remote_call/4'.
@@ -34,6 +35,9 @@
     http_tx_data_matches/3,         %% (Node, TXID, Expected)
     http_tx_data/2,                 %% (Node, TXID) -> {ok, Body}
     http_post_chunk_status/3,       %% (Node, Proof, Status)
+
+    %% --- Packing replies ---
+    with_packing_reply/3,           %% (Ref, Check, Timeout) -> Check(Result)
 
     %% --- Other state observables ---
     tx_offset_known/1,              %% (TXID) -> {ok, Offset} | {error, _}
@@ -85,6 +89,7 @@
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
 %% Poll interval for every wait (10 Hz).
@@ -106,7 +111,7 @@
 %%%===================================================================
 %%%
 %%% `chunk_recorded' reads the live process via
-%%% `ar_sync_record:is_recorded'; `http_chunks_recorded' /
+%%% `arweave_storage:is_recorded'; `http_chunks_recorded' /
 %%% `http_chunks_not_recorded' read an outside client's view via
 %%% `GET /sync_record' (plus `GET /footprints/...' for replica_2_9).
 %%% The two can disagree during boot or while caches warm.
@@ -166,9 +171,13 @@ entropy_prepared(Node, StoreID, Start, End) ->
     RangeSize = End - Start,
     do_until_true(entropy_prepared,
         fun() ->
-            on(Node, ar_sync_record, get_intersection_size,
-                [End, Start, ar_entropy_storage:sync_record_id(),
-                    StoreID]) >= RangeSize
+            on(
+                Node,
+                arweave_storage,
+                get_intersection_size,
+                [End, Start, any_packing,
+                    {arweave_storage:entropy_sync_record_id(), byte}, StoreID]
+            ) >= RangeSize
         end).
 
 %% @doc Inverse of `entropy_prepared/4': after `?TIMEOUT_NEGATIVE_MS'
@@ -179,8 +188,13 @@ entropy_prepared(Node, StoreID, Start, End) ->
     ok | {error, has_entropy}.
 entropy_not_prepared(Node, StoreID, Start, End) ->
     timer:sleep(?TIMEOUT_NEGATIVE_MS),
-    case on(Node, ar_sync_record, get_intersection_size,
-            [End, Start, ar_entropy_storage:sync_record_id(), StoreID]) of
+    case on(
+        Node,
+        arweave_storage,
+        get_intersection_size,
+        [End, Start, any_packing,
+            {arweave_storage:entropy_sync_record_id(), byte}, StoreID]
+    ) of
         0 -> ok;
         _ -> {error, has_entropy}
     end.
@@ -191,11 +205,12 @@ all_entropy_prepared(Node) ->
     StorageModules = on(Node, arweave_config, storage_modules, []),
     lists:foreach(
         fun({_, _, {replica_2_9, _}} = Module) ->
-                StoreID = ar_storage_module:id(Module),
+                #store_info{id = StoreID} = arweave_storage:store_info(Module),
                 %% Derive the range from `Module' directly: a registry
                 %% lookup would miss, since these modules live on `Node'
                 %% not the test runner's local BEAM.
-                {Start, End} = ar_storage_module:module_range(Module),
+                #store_info{effective_range = {Start, End}} =
+                    arweave_storage:store_info(Module),
                 ok = entropy_prepared(Node, StoreID, Start, End);
            (_) ->
                 ok
@@ -383,8 +398,22 @@ application_stopped(App, Timeout) ->
 %% @doc Wait until the scheduler has no active network fetch workers.
 sync_fetches_drained(SchedulerPID) ->
     until(sync_fetches_drained, fun() ->
-        gen_server:call(SchedulerPID, inflight_count) =:= 0
+        arweave_sync:internal_inflight_fetches(SchedulerPID) =:= 0
     end).
+
+%% @doc Check a correlated packing reply and release its cache reference afterward.
+with_packing_reply(Ref, Check, Timeout) ->
+    receive
+        %% Success and error tuples differ in arity but put Ref second.
+        {chunk, Result, CacheRef} when element(2, Result) =:= Ref ->
+            try
+                Check(Result)
+            after
+                ar_chunk_cache:release(CacheRef)
+            end
+    after Timeout ->
+        {error, {timeout, packing_reply}}
+    end.
 
 %% @doc Wait until the supervised `ar_kv' process and ETS table are gone.
 -spec ar_kv_stopped(Timeout :: non_neg_integer()) -> ok | {error, {timeout, term()}}.
@@ -737,24 +766,23 @@ on(Node, M, F, A) ->
     ar_test_node:remote_call(Node, M, F, A).
 
 
-%% Predicate for `chunk_recorded/3'. Picks `ar_sync_record:is_recorded/2'
-%% or `/3' by whether `Opts' restricts the store, tags the lookup with
-%% the packing key when given, and treats any non-`false' reply as a hit.
+%% @doc Check a chunk with optional packing and store restrictions.
 is_chunk_recorded(Node, Offset, Opts) ->
-    %% The packing-specific records are keyed by {ID, Packing, StoreID}, so a
-    %% packing plus a store id goes through is_recorded/4.
-    Args = case {maps:get(packing, Opts, any), maps:get(store_id, Opts, any)} of
-        {any, any} -> [Offset, ar_data_sync];
-        {Packing, any} -> [Offset, {ar_data_sync, Packing}];
-        {any, StoreID} -> [Offset, ar_data_sync, StoreID];
-        {Packing, StoreID} -> [Offset, Packing, ar_data_sync, StoreID]
+    Packing = case maps:get(packing, Opts, any) of
+        any -> any_packing;
+        Packing2 -> Packing2
     end,
-    on(Node, ar_sync_record, is_recorded, Args) =/= false.
+    StoreID = case maps:get(store_id, Opts, any) of
+        any -> any_store;
+        StoreID2 -> StoreID2
+    end,
+    Args = [Offset, Packing, {ar_data_sync, byte}, StoreID],
+    on(Node, arweave_storage, is_recorded, Args) =/= false.
 
 %% Decode `Options'' serialized global sync record into an `ar_intervals'
 %% set. Raises on a fetch or decode failure (a hard fault, not poll-again).
 global_sync_record(Options) ->
-    {ok, Binary} = ar_global_sync_record:get_serialized_sync_record(Options),
+    {ok, Binary} = arweave_storage:get_serialized_sync_record(Options),
     {ok, Global} = ar_intervals:safe_from_etf(Binary),
     Global.
 
@@ -795,7 +823,7 @@ has_range(Node, StartOffset, EndOffset) ->
 collect_footprint_intervals(NodeIP, StartOffset, EndOffset) ->
     StartPartition = ar_replica_2_9:get_entropy_partition(StartOffset + 1),
     LastPartition = ar_replica_2_9:get_entropy_partition(EndOffset + 1),
-    FootprintsPerPartition = ar_replica_2_9:get_footprints_per_partition(),
+    FootprintsPerPartition = arweave_constants:get_replica_2_9_footprints_per_partition(),
     collect_footprint_intervals(NodeIP, StartPartition, LastPartition,
         0, FootprintsPerPartition - 1, ar_intervals:new()).
 
@@ -811,7 +839,7 @@ collect_footprint_intervals(NodeIP, Partition, LastPartition,
     FootprintByteIntervals =
         case ar_http_iface_client:get_footprints(NodeIP, Partition, Footprint) of
             {ok, FootprintIntervals} ->
-                ar_footprint_record:footprint_intervals_to_byte_intervals(
+                arweave_storage:footprint_intervals_to_byte_intervals(
                     FootprintIntervals);
             not_found ->
                 ?LOG_INFO([{event, footprint_record_not_found},

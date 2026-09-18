@@ -27,6 +27,7 @@ all() ->
      convert_to_yaml_preserves_legacy_semantics,
      converted_json_shape,
      converted_yaml_shape,
+     shared_cache_conversion,
      store_left_untouched,
      string_format_accepted,
      unsupported_format_rejected,
@@ -79,6 +80,22 @@ store_left_untouched(Config) ->
     ?assertEqual(Before, After),
     ok.
 
+%% @doc Legacy chunk counts convert to a MiB cache budget while obsolete packing
+%% limits are ignored.
+shared_cache_conversion(Config) ->
+    %% Five legacy chunks need two whole MiB; obsolete packing settings
+    %% neither override that result nor introduce any extra config keys.
+    lists:foreach(fun({Format, Parser}) ->
+        Input = out_path(Config, "legacy_cache.json"),
+        ok = file:write_file(Input, <<"{\"data_cache_size_limit\": 5, "
+            "\"packing_cache_size_limit\": 20000}">>),
+        Output = out_path(Config, "cache." ++ atom_to_list(Format)),
+        ?assertEqual(ok, arweave_config_convert:convert(Format, Input, Output)),
+        {ok, Encoded} = file:read_file(Output),
+        ?assertEqual({ok, #{[packing, cache_size] => 2}}, Parser(Encoded))
+    end, [{json, fun arweave_config_format_json:parse/1},
+        {yaml, fun arweave_config_format_yaml:parse/1}]).
+
 %% The CLI passes the format as a string, not an atom. Before the
 %% encoder mapped strings explicitly, any string/binary format made
 %% encoder/1 recurse on itself forever (caught here by the timetrap).
@@ -114,7 +131,7 @@ empty_local_peers_becomes_empty_array(Config) ->
     Out = out_path(Config, "empty_local_peers_out.json"),
     ok = arweave_config_convert:convert(json, Input, Out),
     {ok, Raw} = file:read_file(Out),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, LeafMap} = arweave_config_format_json:parse(Raw),
         ok = arweave_config:load(LeafMap),
         ?assertEqual([], arweave_config:get([peers, local]))
@@ -258,12 +275,12 @@ convert_raw(Config, Name, LegacyJSON) ->
 %% change how the node behaves.
 assert_round_trip(Format, Parse, Config) ->
     {ok, Sanitized} = file:read_file(sanitized_legacy_path(Config)),
-    FromLegacy = arweave_config:with_test_config(fun() ->
+    FromLegacy = arweave_config:internal_with_test_config(fun() ->
         {ok, ok} = arweave_config_format_legacy_json:parse(Sanitized),
         option_values()
     end),
     Raw = convert(Format, Config),
-    FromConverted = arweave_config:with_test_config(fun() ->
+    FromConverted = arweave_config:internal_with_test_config(fun() ->
         {ok, LeafMap} = Parse(Raw),
         ok = arweave_config:load(LeafMap),
         %% Anchor the converted side to concrete expected values. The

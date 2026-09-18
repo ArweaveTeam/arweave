@@ -29,6 +29,8 @@ all() ->
         reject_mixed_dot_and_nested_conflicts,
         load_legacy_json,
         legacy_cache_limit_rounds_up,
+        obsolete_cache_options_rejected,
+        legacy_packing_cache_limit_warns_and_is_ignored,
         load_cli_and_legacy_cli,
         load_env
     ].
@@ -43,7 +45,7 @@ every_option_is_covered(_Config) ->
     assert_all_options_are_covered(full_config_yaml, full_config_data()).
 
 load_empty_json_defaults(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, LeafMap} = arweave_config_format_json:parse(
             arweave_config_test_util:read_fixture("empty_config.json")),
         ok = arweave_config:load(LeafMap),
@@ -81,7 +83,7 @@ load_json_and_yaml(_Config) ->
         ConfigLeafMap, maps:keys(ConfigLeafMap)),
     lists:foreach(
         fun({Tag, Data, Parser, _ShapeAssert}) ->
-            arweave_config:with_test_config(fun() ->
+            arweave_config:internal_with_test_config(fun() ->
                 {ok, ParsedLeafMap} = Parser(Data),
                 ok = arweave_config:load(ParsedLeafMap),
                 assert_all_options_are_covered(Tag, ParsedLeafMap),
@@ -107,7 +109,7 @@ port: 1985
 ">>}
     ],
     lists:foreach(fun({Parser, Data}) ->
-        arweave_config:with_test_config(fun() ->
+        arweave_config:internal_with_test_config(fun() ->
             {ok, LeafMap} = Parser(Data),
             ok = arweave_config:load(LeafMap),
             ?assertEqual(true, arweave_config:get([mining, enabled])),
@@ -134,7 +136,7 @@ mining:
     ok.
 
 load_legacy_json(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, _} = arweave_config_format_legacy_json:parse(
             arweave_config_test_util:legacy_fixture()),
         assert_legacy_json_subset()
@@ -144,29 +146,89 @@ load_legacy_json(_Config) ->
 legacy_cache_limit_rounds_up(_Config) ->
     %% Four 256 KiB chunks fit in a MiB. Partial MiB round up; zero stays zero.
     lists:foreach(fun({Legacy, Key, Chunks, MiB}) ->
-        arweave_config:with_test_config(fun() ->
+        arweave_config:internal_with_test_config(fun() ->
             ok = arweave_config_format_legacy_cli:parse(
                 [Legacy, integer_to_list(Chunks)]),
             ?assertEqual(MiB, arweave_config:get(Key))
         end),
-        arweave_config:with_test_config(fun() ->
+        arweave_config:internal_with_test_config(fun() ->
             JSON = jiffy:encode(#{ list_to_binary(Legacy) => Chunks }),
             {ok, _} = arweave_config_format_legacy_json:parse(JSON),
             ?assertEqual(MiB, arweave_config:get(Key))
         end)
     end, [{Legacy, Key, Chunks, MiB}
         || {Legacy, Key} <- [
-            {"data_cache_size_limit", [sync, cache_size]},
-            {"packing_cache_size_limit", [packing, cache_size]}],
+            {"data_cache_size_limit", [packing, cache_size]}],
            {Chunks, MiB} <- [{0, 0}, {1, 1}, {4, 1}, {5, 2}, {20000, 5000}]]),
     ok.
+
+%% @doc Retired cache option paths are rejected instead of creating independent
+%% budgets.
+obsolete_cache_options_rejected(_Config) ->
+    lists:foreach(fun(Key) ->
+        ?assertEqual({error, not_found}, arweave_config:set(Key, 1))
+    end, [[sync, cache_size], [chunk_cache, cache_size]]).
+
+%% @doc Legacy packing limits warn without overriding converted or explicitly
+%% configured cache size.
+legacy_packing_cache_limit_warns_and_is_ignored(_Config) ->
+    Parent = self(),
+    Ref = make_ref(),
+    Filter = fun
+        (#{level := warning, msg := {report, Report}}, _) ->
+            Parent ! {Ref, Report},
+            ignore;
+        (_, _) -> ignore
+    end,
+    ok = logger:add_primary_filter(?MODULE, {Filter, undefined}),
+    try
+        %% Twelve legacy chunks become three MiB; the obsolete packing
+        %% limit must not replace that budget or an explicit nine MiB.
+        Data = {"data_cache_size_limit", 12},
+        Packing = {"packing_cache_size_limit", 4},
+        Cases = [{undefined, [Packing], undefined},
+            {undefined, [Data, Packing], 3},
+            {undefined, [Packing, Data], 3}, {9, [Packing], 9}],
+        lists:foreach(fun({Format, {Initial, Pairs, Expected}}) ->
+            arweave_config:internal_with_test_config(fun() ->
+                case Initial of
+                    undefined -> ok;
+                    _ -> ok = arweave_config:set([packing, cache_size], Initial)
+                end,
+                case Format of
+                    cli ->
+                        Args = lists:append([[Name, integer_to_list(Value)]
+                            || {Name, Value} <- Pairs]),
+                        ?assertEqual(ok,
+                            arweave_config_format_legacy_cli:parse(Args));
+                    json ->
+                        JSON = jiffy:encode({[{list_to_binary(Name), Value}
+                            || {Name, Value} <- Pairs]}),
+                        ?assertEqual({ok, ok},
+                            arweave_config_format_legacy_json:parse(JSON))
+                end,
+                ?assertEqual(Expected,
+                    arweave_config:get([packing, cache_size])),
+                Warning = receive {Ref, Report} -> Report
+                    after 1000 -> timeout end,
+                ?assert(is_list(Warning)),
+                ?assertEqual(deprecated_config_option,
+                    proplists:get_value(event, Warning)),
+                ?assertEqual(packing_cache_size_limit,
+                    proplists:get_value(option, Warning)),
+                ?assertEqual(ignored, proplists:get_value(action, Warning))
+            end)
+        end, [{Format, Case} || Format <- [cli, json], Case <- Cases])
+    after
+        ok = logger:remove_primary_filter(?MODULE)
+    end.
 
 load_cli_and_legacy_cli(_Config) ->
     ConfigLeafMap = full_config_data(),
     {Args, Keys} = cli_args(ConfigLeafMap),
     assert_cli_shape(Args),
     Expected = arweave_config_test_util:expected_loaded_values(ConfigLeafMap, Keys),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, Map} = arweave_config_format_cli:parse(Args),
         ok = arweave_config:load(Map),
         arweave_config_test_util:assert_loaded_values(Expected),
@@ -180,7 +242,7 @@ load_env(_Config) ->
     {Vars, Keys} = env_fixture_values(ConfigLeafMap),
     assert_env_shape(Vars),
     Expected = arweave_config_test_util:expected_loaded_values(ConfigLeafMap, Keys),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         apply_env(Vars, fun() ->
             Parsed = arweave_config_format_env:parse(),
             ok = arweave_config:load(Parsed),
@@ -602,7 +664,7 @@ legacy_json_supported_pairs() ->
 assert_legacy_cli_surface() ->
     lists:foreach(
         fun({Description, Args, Assert}) ->
-            arweave_config:with_test_config(fun() ->
+            arweave_config:internal_with_test_config(fun() ->
                 case arweave_config_format_legacy_cli:parse(Args) of
                     ok -> Assert();
                     Other -> erlang:error({Description, parser_failed, Other, Args})
@@ -673,8 +735,7 @@ integer_keyword_cases() ->
         {"join_workers", "5", [join, workers], 5},
         {"diff", "42", [genesis, difficulty], 42},
         {"hashing_threads", "8", [mining, hashing_threads], 8},
-        {"data_cache_size_limit", "10000", [sync, cache_size], 2500},
-        {"packing_cache_size_limit", "20000", [packing, cache_size], 5000},
+        {"data_cache_size_limit", "10000", [packing, cache_size], 2500},
         {"mining_cache_size_mb", "3", [mining, cache_size], 3},
         {"max_emitters", "4", [gossip, tx, max_emitters], 4},
         {"disk_space_check_frequency", "10", [disk_space_check_frequency], 10000},
@@ -852,11 +913,11 @@ singleton_compound_cases() ->
                     <<"lfoR_PyKV6t7Z6Xi2QJZlZ0JWThh0Ke7Zc5Q82CSshUhFGcjiYufP234ph1mVofX">>)) end},
         {"storage_module unpacked", ["storage_module", "0,unpacked"],
             fun() ->
-                PartitionSize = ar_block:partition_size(),
+                PartitionSize = arweave_constants:partition_size(),
                 assert_storage_modules_eq([{0, PartitionSize, unpacked}]) end},
         {"defragment_module unpacked", ["defragment_module", "0,unpacked"],
             fun() ->
-                PartitionSize = ar_block:partition_size(),
+                PartitionSize = arweave_constants:partition_size(),
                 assert_defrag_modules_eq([{0, PartitionSize, unpacked}]) end}
     ].
 

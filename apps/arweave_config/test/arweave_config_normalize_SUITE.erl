@@ -35,13 +35,13 @@ all() ->
 %%====================================================================
 
 walker_smoke(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ?assertEqual(ok, arweave_config_normalize:run())
     end),
     ok.
 
 join_normalize_promotes_latest_state(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         %% Sanity: the latest-state flag defaults to false.
         ?assertEqual(false,
             arweave_config:get([join, start_from_latest_state])),
@@ -56,7 +56,7 @@ join_normalize_promotes_latest_state(_Config) ->
 %% When verify.mode is off (default `false`), normalize must leave
 %% every flag the operator set alone.
 verify_normalize_noop_when_disabled(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         %% Pre-set a couple of flags to non-default values that the
         %% active-verify path would otherwise clobber.
         ok = arweave_config:set([join, auto], false),
@@ -79,7 +79,7 @@ verify_normalize_forces_flags_log(_Config) ->
 %% the feature catalog should land at `[features, foo] = true | false`
 %% directly (no staging keys).
 classify_legacy_flag_promotes_catalog_entries(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         [Flag | _] = arweave_config_features:names(),
         discard_io(fun() ->
             arweave_config_features:classify_legacy_flag(Flag, enable)
@@ -95,7 +95,7 @@ classify_legacy_flag_promotes_catalog_entries(_Config) ->
 %% Promotion-table flags: a few `enable` / `disable` keywords map to
 %% dedicated option_keys (e.g. `randomx_jit` -> `[randomx, jit]`).
 classify_legacy_flag_promotes_dedicated_fields(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         discard_io(fun() ->
             arweave_config_features:classify_legacy_flag(randomx_jit, disable)
         end),
@@ -116,7 +116,7 @@ classify_legacy_flag_promotes_dedicated_fields(_Config) ->
 %% asserts every write took effect. `purge' and `log' share this
 %% fan-out.
 assert_verify_normalize_forces_all_flags(Mode) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         %% Leaf pre-seeds: each value is chosen so the asserted
         %% forced value differs, ensuring every assertion proves a
         %% write happened.

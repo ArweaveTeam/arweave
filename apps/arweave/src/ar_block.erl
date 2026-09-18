@@ -1,16 +1,7 @@
 -module(ar_block).
 -test_category([vdf]).
 
--ifdef(AR_TEST).
--export([override_partition_size/1, reset_all_overrides/0]).
--endif.
--export([get_consensus_window_size/0, get_max_tx_anchor_depth/0,
-         partition_size/0,
-         get_replica_2_9_entropy_sector_size/0, get_replica_2_9_entropy_partition_size/0,
-         get_sub_chunks_per_replica_2_9_entropy/0, get_replica_2_9_entropy_count/0,
-         get_replica_2_9_footprint_size/0, strict_data_split_threshold/0,
-         get_merkle_rebase_support_threshold/0,
-         block_field_size_limit/1, verify_timestamp/2, get_max_timestamp_deviation/0,
+-export([block_field_size_limit/1, verify_timestamp/2,
          verify_last_retarget/2, verify_weave_size/3,
          verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
          wallet_list_hash_fun/0,
@@ -26,17 +17,11 @@
          poa_to_list/1, shift_packing_2_5_threshold/1,
          get_packing_threshold/2, compute_next_vdf_difficulty/1,
          validate_proof_size/1, vdf_step_number/1, get_packing/3,
-         validate_replica_format/3,
-         get_max_nonce/1, get_recall_range_size/1, get_recall_byte/3,
-         get_sub_chunk_size/1, get_nonces_per_chunk/1, get_nonces_per_recall_range/1,
-         get_sub_chunk_index/2,
-         get_chunk_padded_offset/1, get_double_signing_condition/4,
+         validate_replica_format/3, get_recall_byte/3,
+         get_sub_chunk_index/2, get_double_signing_condition/4,
          get_block_bounds/2]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
--include("ar_block.hrl").
--include("ar_vdf.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -44,68 +29,12 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Return the number of blocks we track during consensus. The node
-%% does not accept new blocks originating from blocks older than the oldest
-%% block in this window.
-get_consensus_window_size() ->
-    ?STORE_BLOCKS_BEHIND_CURRENT.
-
-%% @doc Return the maximum allowed block depth of the transaction block anchor.
-get_max_tx_anchor_depth() ->
-    ar_block:get_consensus_window_size().
-
-%% @doc Expose constants through a function to allow mocking/injection in tests.
--ifdef(AR_TEST).
-%% Sim seam (house persistent_term pattern, never a mock): mainnet-geometry
-%% sim scenarios override the partition size so footprint arithmetic
-%% matches their mainnet-scale store offsets. Production compiles to the
-%% bare constant.
-partition_size() ->
-    persistent_term:get({?MODULE, partition_size}, ?PARTITION_SIZE).
-override_partition_size(Size) ->
-    persistent_term:put({?MODULE, partition_size}, Size).
-reset_all_overrides() ->
-    persistent_term:erase({?MODULE, partition_size}),
-    ok.
--else.
-partition_size() -> ?PARTITION_SIZE.
--endif.
-strict_data_split_threshold() -> ?STRICT_DATA_SPLIT_THRESHOLD.
-get_merkle_rebase_support_threshold() -> ?MERKLE_REBASE_SUPPORT_THRESHOLD.
-
-%% @doc Return the 2.9 entropy sector size - the largest total size in bytes of the contiguous
-%% area where the 2.9 entropy of every chunk is unique.
--spec get_replica_2_9_entropy_sector_size() -> pos_integer().
-get_replica_2_9_entropy_sector_size() ->
-    ar_replica_2_9:entropy_count() * ?SUB_CHUNK_SIZE.
-
-%% @doc Return the size of the 2.9 entropy partition.
--spec get_replica_2_9_entropy_partition_size() -> pos_integer().
-get_replica_2_9_entropy_partition_size() ->
-    ar_replica_2_9:entropy_count() * ar_replica_2_9:entropy_size().
-
-%% @doc Return the number of sub-chunks per entropy. We'll generally create 32x entropies
-%% in order to fully encipher this many chunks.
--spec get_sub_chunks_per_replica_2_9_entropy() -> pos_integer().
-get_sub_chunks_per_replica_2_9_entropy() ->
-    ar_replica_2_9:get_footprint_size().
-
-%% @doc Return the total size in bytes for a full footprint of entropy.
--spec get_replica_2_9_footprint_size() -> pos_integer().
-get_replica_2_9_footprint_size() ->
-    ar_replica_2_9:entropy_size() * ?SUB_CHUNK_COUNT.
-
-%% @doc Return the number of entropies per partition.
--spec get_replica_2_9_entropy_count() -> pos_integer().
-get_replica_2_9_entropy_count() ->
-    ar_replica_2_9:get_footprints_per_partition().
-
 %% @doc Check whether the block fields conform to the specified size limits.
 block_field_size_limit(B = #block{ reward_addr = unclaimed }) ->
     block_field_size_limit(B#block{ reward_addr = <<>> });
 block_field_size_limit(B) ->
     DiffBytesLimit =
-        case ar_fork:height_1_8() of
+        case arweave_constants:height_1_8() of
             Height when B#block.height >= Height ->
                 78;
             _ ->
@@ -167,7 +96,7 @@ block_field_size_limit(B) ->
 %% deviate JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each
 %% other.
 verify_timestamp(#block{ timestamp = Timestamp }, #block{ timestamp = PrevTimestamp }) ->
-    MaxNodesClockDeviation = get_max_timestamp_deviation(),
+    MaxNodesClockDeviation = arweave_constants:get_max_timestamp_deviation(),
     case Timestamp >= PrevTimestamp - MaxNodesClockDeviation of
         false ->
             false;
@@ -175,11 +104,6 @@ verify_timestamp(#block{ timestamp = Timestamp }, #block{ timestamp = PrevTimest
             CurrentTime = os:system_time(seconds),
             Timestamp =< CurrentTime + MaxNodesClockDeviation
     end.
-
-%% @doc Return the largest possible value by which the previous block's timestamp
-%% may exceed the next block's timestamp.
-get_max_timestamp_deviation() ->
-    ?JOIN_CLOCK_TOLERANCE * 2 + ?CLOCK_DRIFT_MAX.
 
 %% @doc Verify the retarget timestamp on NewB is correct.
 verify_last_retarget(NewB, OldB) ->
@@ -200,7 +124,7 @@ verify_weave_size(NewB, OldB, TXs) ->
                   0,
                   TXs
                  ),
-    (NewB#block.height < ar_fork:height_2_6() orelse BlockSize == NewB#block.block_size)
+    (NewB#block.height < arweave_constants:height_2_6() orelse BlockSize == NewB#block.block_size)
         andalso NewB#block.weave_size == OldB#block.weave_size + BlockSize.
 
 %% @doc Verify the new cumulative difficulty is computed correctly.
@@ -214,7 +138,7 @@ verify_cumulative_diff(NewB, OldB) ->
 
 %% @doc Verify the root of the new block tree is computed correctly.
 verify_block_hash_list_merkle(NewB, CurrentB) ->
-    true = NewB#block.height > ar_fork:height_2_0(),
+    true = NewB#block.height > arweave_constants:height_2_0(),
     NewB#block.hash_list_merkle == ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle,
             {CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
             fun ar_unbalanced_merkle:hash_block_index_entry/1).
@@ -288,7 +212,7 @@ compute_next_vdf_difficulty(PrevB) ->
                 false ->
                     NextVDFDifficulty;
                 true ->
-                    case Height < ar_fork:height_2_7_1() of
+                    case Height < arweave_constants:height_2_7_1() of
                         true ->
                             HistoryPart = lists:nthtail(?VDF_HISTORY_CUT,
                                                         ar_block_time_history:get_history(PrevB)),
@@ -355,7 +279,7 @@ validate_proof_size(PoA) ->
 
 %% @doc Compute the block identifier (also referred to as "independent hash").
 indep_hash(B) ->
-    case B#block.height >= ar_fork:height_2_6() of
+    case B#block.height >= arweave_constants:height_2_6() of
         true ->
             H = ar_block:generate_signed_hash(B),
             indep_hash2(H, B#block.signature);
@@ -411,7 +335,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
     {RebaseThresholdBin, DataPathBin, TXPathBin, DataPath2Bin, TXPath2Bin,
      ChunkHashBin, Chunk2HashBin, BlockTimeHistoryHashBin,
      VDFDifficultyBin, NextVDFDifficultyBin} =
-        case Height >= ar_fork:height_2_7() of
+        case Height >= arweave_constants:height_2_7() of
             true ->
                 {encode_int(RebaseThreshold, 16), ar_serialize:encode_bin(DataPath, 24),
                  ar_serialize:encode_bin(TXPath, 24),
@@ -426,7 +350,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
                 {<<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>, <<>>}
         end,
     {PackingDifficultyBin, UnpackedChunkHashBin, UnpackedChunk2HashBin} =
-        case Height >= ar_fork:height_2_8() of
+        case Height >= arweave_constants:height_2_8() of
             true ->
                 {<< PackingDifficulty:8 >>,
                  ar_serialize:encode_bin(UnpackedChunkHash, 8),
@@ -435,7 +359,7 @@ generate_signed_hash(#block{ previous_block = PrevH, timestamp = TS,
                 {<<>>, <<>>, <<>>}
         end,
     ReplicaFormatBin =
-        case Height >= ar_fork:height_2_9() of
+        case Height >= arweave_constants:height_2_9() of
             true ->
                 << ReplicaFormat:8 >>;
             false ->
@@ -488,7 +412,7 @@ indep_hash2(SignedH, Signature) ->
 
 %% @doc Compute the block identifier of a pre-2.6 block.
 indep_hash(BDS, B) ->
-    case B#block.height >= ar_fork:height_2_4() of
+    case B#block.height >= arweave_constants:height_2_4() of
         true ->
             ar_deep_hash:hash([BDS, B#block.hash, B#block.nonce,
                                ar_block:poa_to_list(B#block.poa)]);
@@ -502,7 +426,7 @@ get_block_signature_preimage(CDiff, PrevCDiff, Preimage, Height) ->
     EncodedPrevCDiff = ar_serialize:encode_int(PrevCDiff, 16),
     SignaturePreimage = << EncodedCDiff/binary,
                            EncodedPrevCDiff/binary, Preimage/binary >>,
-    case Height >= ar_fork:height_2_9() of
+    case Height >= arweave_constants:height_2_9() of
         false ->
             SignaturePreimage;
         true ->
@@ -527,7 +451,7 @@ verify_signature(BlockPreimage, PrevCDiff,
   when byte_size(Signature) == ?ECDSA_SIG_SIZE, byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE ->
     SignaturePreimage = get_block_signature_preimage(CDiff, PrevCDiff,
             << PrevSolutionH/binary, BlockPreimage/binary >>, Height),
-    case Height >= ar_fork:height_2_9() of
+    case Height >= arweave_constants:height_2_9() of
         true ->
             ar_wallet:to_address(RewardKey) == RewardAddr andalso
                 ar_wallet:verify(RewardKey, SignaturePreimage, Signature);
@@ -539,7 +463,7 @@ verify_signature(_BlockPreimage, _PrevCDiff, _B) ->
 
 %% @doc Return the key suitable for ar_wallet:sign/3 from the given public key.
 get_reward_key(Pub, Height) ->
-    case Height >= ar_fork:height_2_9() of
+    case Height >= arweave_constants:height_2_9() of
         false ->
             {?DEFAULT_KEY_TYPE, Pub};
         true ->
@@ -580,7 +504,7 @@ generate_block_data_segment(BDSBase, B) ->
 %% previous block prefixes the solution hash preimage of the new block.
 generate_block_data_segment_base(B) ->
     GetTXID = fun(TXID) when is_binary(TXID) -> TXID; (TX) -> TX#tx.id end,
-    case B#block.height >= ar_fork:height_2_4() of
+    case B#block.height >= arweave_constants:height_2_4() of
         true ->
             Props = [
                      integer_to_binary(B#block.height),
@@ -598,7 +522,7 @@ generate_block_data_segment_base(B) ->
                      encode_tags(B)
                     ],
             Props2 =
-                case B#block.height >= ar_fork:height_2_5() of
+                case B#block.height >= arweave_constants:height_2_5() of
                     true ->
                         {RateDividend, RateDivisor} = B#block.usd_to_ar_rate,
                         {ScheduledRateDividend, ScheduledRateDivisor} =
@@ -640,8 +564,8 @@ generate_block_data_segment_base(B) ->
 -ifdef(LOCALNET).
 get_recall_range(H0, PartitionNumber, PartitionUpperBound, not_set, not_set) ->
     RecallRange1Offset = binary:decode_unsigned(binary:part(H0, 0, 8), big),
-    RecallRange1Start = PartitionNumber * ar_block:partition_size()
-        + RecallRange1Offset rem min(ar_block:partition_size(), PartitionUpperBound),
+    RecallRange1Start = PartitionNumber * arweave_constants:partition_size()
+        + RecallRange1Offset rem min(arweave_constants:partition_size(), PartitionUpperBound),
     RecallRange2Start = binary:decode_unsigned(H0, big) rem PartitionUpperBound,
     {RecallRange1Start, RecallRange2Start};
 
@@ -652,8 +576,8 @@ get_recall_range(_H0, _PartitionNumber, _PartitionUpperBound, RecallRange1, Reca
 -else.
 get_recall_range(H0, PartitionNumber, PartitionUpperBound, _RecallRange1, _RecallRange2) ->
     RecallRange1Offset = binary:decode_unsigned(binary:part(H0, 0, 8), big),
-    RecallRange1Start = PartitionNumber * ar_block:partition_size()
-        + RecallRange1Offset rem min(ar_block:partition_size(), PartitionUpperBound),
+    RecallRange1Start = PartitionNumber * arweave_constants:partition_size()
+        + RecallRange1Offset rem min(arweave_constants:partition_size(), PartitionUpperBound),
     RecallRange2Start = binary:decode_unsigned(H0, big) rem PartitionUpperBound,
     {RecallRange1Start, RecallRange2Start}.
 -endif.
@@ -671,19 +595,14 @@ get_packing(_PackingDifficulty, MiningAddress, 1) ->
     {replica_2_9, MiningAddress}.
 
 validate_replica_format(Height, PackingDifficulty, 1) ->
-    Height >= ar_fork:height_2_9()
+    Height >= arweave_constants:height_2_9()
         andalso PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY;
 validate_replica_format(Height, 0, 0) ->
     %% Support for spora_2_6 discontinued at
-    %% ar_fork:height_2_8() + ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS.
-    Height - ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS < ar_fork:height_2_8();
+    %% arweave_constants:height_2_8() + ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS.
+    Height - ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS < arweave_constants:height_2_8();
 validate_replica_format(_, _, _) ->
     false.
-
-get_recall_range_size(0) ->
-    ?LEGACY_RECALL_RANGE_SIZE;
-get_recall_range_size(PackingDifficulty) ->
-    ?RECALL_RANGE_SIZE div PackingDifficulty.
 
 get_recall_byte(RecallRangeStart, Nonce, 0) ->
     RecallRangeStart + Nonce * ?DATA_CHUNK_SIZE;
@@ -691,49 +610,11 @@ get_recall_byte(RecallRangeStart, Nonce, _PackingDifficulty) ->
     ChunkNumber = Nonce div ?SUB_CHUNK_COUNT,
     RecallRangeStart + ChunkNumber * ?DATA_CHUNK_SIZE.
 
-%% @doc Return the number of bytes per sub-chunk. This also drives how far each mining nonce
-%% increments the recall byte.
-get_sub_chunk_size(0) ->
-    ?DATA_CHUNK_SIZE;
-get_sub_chunk_size(_PackingDifficulty) ->
-    ?SUB_CHUNK_SIZE.
-
-%% @doc Return the number of mining nonces contained in each data chunk.
-get_nonces_per_chunk(0) ->
-    1;
-get_nonces_per_chunk(_PackingDifficulty) ->
-    ?SUB_CHUNK_COUNT.
-
-get_nonces_per_recall_range(PackingDifficulty) ->
-    %% Call ar_block: here so that it is mockable in tests on all nodes.
-    max(1, ar_block:get_recall_range_size(PackingDifficulty) div get_sub_chunk_size(PackingDifficulty)).
-
-%% @doc For packing difficulty 0 (aka spora_2_6 packing), there is one nonce per chunk, so
-%% the max nonce is the same as the max chunk number. For packing difficulty >= 1 (aka
-%% the 2.9 replication), there are ?SUB_CHUNK_COUNT
-%% nonces per chunk.
-get_max_nonce(PackingDifficulty) ->
-    %% The max(...) is included mostly for testing, where the recall range can be less than
-    %% a chunk.
-    max(get_nonces_per_chunk(PackingDifficulty) - 1,
-        get_nonces_per_recall_range(PackingDifficulty) - 1).
-
 %% @doc Return the 0-based sub-chunk index the mining nonce is pointing to.
 get_sub_chunk_index(0, _Nonce) ->
     -1;
 get_sub_chunk_index(_PackingDifficulty, Nonce) ->
     Nonce rem ?SUB_CHUNK_COUNT.
-
-%% @doc Return Offset if it is smaller than or equal to ar_block:strict_data_split_threshold().
-%% Otherwise, return the offset of the last byte of the chunk + the size of the padding.
--spec get_chunk_padded_offset(Offset :: non_neg_integer()) -> non_neg_integer().
-get_chunk_padded_offset(Offset) ->
-    case Offset > ar_block:strict_data_split_threshold() of
-        true ->
-            ar_poa:get_padded_offset(Offset, ar_block:strict_data_split_threshold());
-        false ->
-            Offset
-    end.
 
 %% @doc Return true if the given cumulative difficulty - previous cumulative difficulty
 %% pairs satisfy the double signing condition.
@@ -786,7 +667,7 @@ get_block_bounds_from_cache(RecallByte, B, CacheTab) ->
 %%%===================================================================
 
 validate_tags_size(B) ->
-    case B#block.height >= ar_fork:height_2_5() of
+    case B#block.height >= arweave_constants:height_2_5() of
         true ->
             Tags = B#block.tags,
             validate_tags_length(Tags, 0) andalso byte_size(list_to_binary(Tags)) =< 2048;
@@ -848,7 +729,7 @@ generate_size_tagged_list_from_txs(TXs, Height) ->
                 fun(TX, {Pos, List}) ->
                         DataSize = TX#tx.data_size,
                         End = Pos + DataSize,
-                        case Height >= ar_fork:height_2_5() of
+                        case Height >= arweave_constants:height_2_5() of
                             true ->
                                 Padding = ar_tx:get_weave_size_increase(DataSize, Height)
                                     - DataSize,
@@ -885,7 +766,7 @@ do_generate_hash_list_for_block(IndepHash, [_ | Rest]) ->
     do_generate_hash_list_for_block(IndepHash, Rest).
 
 encode_tags(B) ->
-    case B#block.height >= ar_fork:height_2_5() of
+    case B#block.height >= arweave_constants:height_2_5() of
         true ->
             B#block.tags;
         false ->
@@ -903,7 +784,7 @@ poa_to_list(POA) ->
 %% @doc Compute the 2.5 packing threshold.
 get_packing_threshold(B, SearchSpaceUpperBound) ->
     #block{ height = Height, packing_2_5_threshold = PrevPackingThreshold } = B,
-    Fork_2_5 = ar_fork:height_2_5(),
+    Fork_2_5 = arweave_constants:height_2_5(),
     case Height + 1 == Fork_2_5 of
         true ->
             SearchSpaceUpperBound;
@@ -920,7 +801,7 @@ get_packing_threshold(B, SearchSpaceUpperBound) ->
 shift_packing_2_5_threshold(0) ->
     0;
 shift_packing_2_5_threshold(Threshold) ->
-    TargetTime = ar_consensus:target_block_time(ar_fork:height_2_5()),
+    TargetTime = ar_consensus:target_block_time(arweave_constants:height_2_5()),
     Shift = (?DATA_CHUNK_SIZE) * (?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND) * TargetTime,
     max(0, Threshold - Shift).
 
@@ -968,7 +849,7 @@ test_hash_list_gen() ->
                  generate_hash_list_for_block(B2#block.indep_hash, BI2)).
 
 generate_size_tagged_list_from_txs_test() ->
-    Fork_2_5 = ar_fork:height_2_5(),
+    Fork_2_5 = arweave_constants:height_2_5(),
     ?assertEqual([], generate_size_tagged_list_from_txs([], Fork_2_5)),
     ?assertEqual([], generate_size_tagged_list_from_txs([], Fork_2_5 - 1)),
     EmptyV1Root = (ar_tx:generate_chunk_tree(#tx{}))#tx.data_root,
@@ -999,13 +880,13 @@ generate_size_tagged_list_from_txs_test() ->
 validate_replica_format_test_() ->
     [
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_fork, height_2_8, fun() -> 10 end},
-                                              {ar_fork, height_2_9, fun() -> 20 end}
+                                              {arweave_constants, height_2_8, fun() -> 10 end},
+                                              {arweave_constants, height_2_9, fun() -> 20 end}
                                              ],
                                              fun test_validate_replica_format/0, 30)
     ].
 test_validate_replica_format() ->
-    Post29Height = ar_fork:height_2_9() + 5,
+    Post29Height = arweave_constants:height_2_9() + 5,
     %% post-2.9, before spora expiration: spora_2_6 and replica_2_9
     ?assertEqual(true, validate_replica_format(Post29Height, 0, 0)),
     ?assertEqual(true, validate_replica_format(Post29Height,
@@ -1015,7 +896,7 @@ test_validate_replica_format() ->
     ?assertEqual(false, validate_replica_format(Post29Height, 0, 1)),
     ?assertEqual(false, validate_replica_format(Post29Height, 1, 1)),
     %% post-2.9, post-spora expiration: replica_2_9 only
-    SporaExpiration = ar_fork:height_2_8() + ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS,
+    SporaExpiration = arweave_constants:height_2_8() + ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS,
     ?assertEqual(false, validate_replica_format(SporaExpiration, 0, 0)),
     ?assertEqual(false, validate_replica_format(SporaExpiration, 1, 0)),
     ?assertEqual(false, validate_replica_format(SporaExpiration, 0, 1)),

@@ -2,9 +2,9 @@
 -test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
 %%% Tests for `storage_modules[].footprint_limit`. Test geometry: 512 KiB
 %%% sectors holding two chunks, four sectors per partition, partitions of
@@ -22,20 +22,21 @@ repack_in_place_test_() ->
 
 sync_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_9_6, fun() -> infinity end}],
+        [{arweave_constants, height_2_9_6, fun() -> infinity end}],
         fun test_sync/0, 480).
 
 %% Entropy is prepared for the first footprint of every sector and for
 %% nothing else, and the preparation completes.
 test_entropy_preparation() ->
     Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-    P = ar_block:partition_size(),
+    P = arweave_constants:partition_size(),
     start_main(Addr, [
         {0, P, unpacked},
         #{partition => 1, packing_format => replica_2_9,
             packing_address => Addr, footprint_limit => 1}
     ]),
-    StoreID = ar_storage_module:id({P, 2 * P, {replica_2_9, Addr}}),
+    #store_info{id = StoreID} =
+        arweave_storage:store_info({P, 2 * P, {replica_2_9, Addr}}),
     %% Partition 1 starts at 2,000,000, so its buckets sit 97,152 bytes into
     %% each sector: the first bucket of sector N ends at 2359296 + N * 524288
     %% and the second at 2621440 + N * 524288.
@@ -50,14 +51,14 @@ test_entropy_preparation() ->
 %% reports completion.
 test_repack_in_place() ->
     Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-    P = ar_block:partition_size(),
+    P = arweave_constants:partition_size(),
     start_main(Addr, [{0, P, unpacked}]),
-    StoreID = ar_storage_module:id({0, P, unpacked}),
+    #store_info{id = StoreID} = arweave_storage:store_info({0, P, unpacked}),
     %% The three genesis chunks end at 262144 (sector 0, first),
     %% 524288 (sector 0, second) and 786432 (sector 1, first).
     ok = ar_test_await:chunk_recorded(main, 524288, #{store_id => StoreID}),
-    %% force_config lifts the runtime lock; the store survives the restart.
-    ok = arweave_config:force_config(#{
+    %% internal_force_config lifts the runtime lock; the store survives restart.
+    ok = arweave_config:internal_force_config(#{
         [storage_modules] => [],
         [repack_modules] => [
             #{partition => 0, from_format => unpacked,
@@ -79,7 +80,7 @@ test_repack_in_place() ->
 test_sync() ->
     Addr = ar_test_node:generate_address(main),
     PeerAddr = ar_test_node:generate_address(peer1),
-    P = ar_block:partition_size(),
+    P = arweave_constants:partition_size(),
     %% The main node mines (its packed module) and syncs the data the peer
     %% serves into its limited module. The module is partition 1, past the
     %% genesis data, so the node start does not wait for genesis chunks the
@@ -93,7 +94,8 @@ test_sync() ->
             [Limited | ar_test_node:wide_storage_modules(Addr, [0])]},
         peer_config => #{[storage_modules] => [{0, 3 * P, unpacked}]}
     }),
-    StoreID = ar_storage_module:id({P, 2 * P, unpacked}),
+    #store_info{id = StoreID} =
+        arweave_storage:store_info({P, 2 * P, unpacked}),
     %% Five filler chunks move the weave from 786432 past the start of
     %% partition 1 (2,000,000) to 2097152.
     post_chunks(Wallet, 5, 1),
@@ -179,6 +181,8 @@ assert_each(Await, Items) ->
 %% The device lock status gauge of the main node for the given store and
 %% mode (prepare | repack | sync).
 device_lock_status(StoreID, Mode) ->
-    Label = ar_test_node:remote_call(main, ar_storage_module, label, [StoreID]),
+    #store_info{label = Label} = ar_test_node:remote_call(
+        main, arweave_storage, store_info, [StoreID]
+    ),
     ar_test_node:remote_call(main, prometheus_gauge, value,
         [device_lock_status, [Label, Mode]]).

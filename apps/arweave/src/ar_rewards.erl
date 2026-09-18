@@ -14,23 +14,23 @@
 
 reward_history_length(Height) ->
     min(
-        Height - ar_fork:height_2_6() + 1, %% included for compatibility with unit tests
-        case Height >= ar_fork:height_2_8() of
+        Height - arweave_constants:height_2_6() + 1, %% included for compatibility with unit tests
+        case Height >= arweave_constants:height_2_8() of
             true ->
-                ar_consensus:reward_history_blocks(Height) + ar_block:get_consensus_window_size();
+                ar_consensus:reward_history_blocks(Height) + arweave_constants:get_consensus_window_size();
             false ->
-                ar_consensus:legacy_reward_history_blocks(Height) + ar_block:get_consensus_window_size()
+                ar_consensus:legacy_reward_history_blocks(Height) + arweave_constants:get_consensus_window_size()
         end
     ).
 
 expected_hashes_length(Height) ->
-    case Height >= ar_fork:height_2_8() of
+    case Height >= arweave_constants:height_2_8() of
         true ->
             %% Take one more block.reward_history_hash because after 2.8 we use
             %% the previous reward history hash to compute the new one.
-            ar_block:get_consensus_window_size() + 1;
+            arweave_constants:get_consensus_window_size() + 1;
         false ->
-            ar_block:get_consensus_window_size()
+            arweave_constants:get_consensus_window_size()
         end.
 
 %% @doc The reward history that gets cached in #block and returned by /reward_history has
@@ -53,7 +53,7 @@ buffered_reward_history_length(Height) ->
 %%
 %% The expectation is that RewardHistory is at least
 %% reward_history_length/1 long, and that Blocks is no longer than
-%% ar_block:get_consensus_window_size(). If so then each block.reward_history value will be at least
+%% arweave_constants:get_consensus_window_size(). If so then each block.reward_history value will be at least
 %% ?REWARD_HISTORY_BLOCKS long.
 set_reward_history([], _RewardHistory) ->
     [];
@@ -72,7 +72,7 @@ trim_locked_rewards(Height, RewardHistory) ->
     lists:sublist(RewardHistory, LockRewardsLength).
 
 %% @doc Trim RewardHistory to the values that will be stored in the block. This is the
-%% sliding window plus a buffer of ar_block:get_consensus_window_size() values.
+%% sliding window plus a buffer of arweave_constants:get_consensus_window_size() values.
 trim_reward_history(Height, RewardHistory) ->
     lists:sublist(RewardHistory, reward_history_length(Height)).
 
@@ -86,7 +86,7 @@ trim_buffered_reward_history(Height, RewardHistory) ->
 %% by any node will be shorter than the full expected length — specifically 21,600
 %% blocks plus the number of blocks elapsed since the 2.8 activation.
 interim_reward_history_bi(Height, BI) ->
-    InterimRewardHistoryLength = (Height - ar_fork:height_2_8()) + 21600,
+    InterimRewardHistoryLength = (Height - arweave_constants:height_2_8()) + 21600,
     lists:sublist(trim_buffered_reward_history(Height, BI), InterimRewardHistoryLength).
 
 get_oldest_locked_address(B) ->
@@ -133,7 +133,7 @@ validate_reward_history_hashes(Height, RewardHistory, [H, PrevH | ExpectedHashes
     end;
 validate_reward_history_hashes(Height, RewardHistory, [H]) ->
     %% After 2.8 we always include one extra hash to the list so we cannot end up here.
-    true = Height < ar_fork:height_2_8(),
+    true = Height < arweave_constants:height_2_8(),
     validate_reward_history_hash(Height, not_set, H, RewardHistory).
 
 validate_reward_history_hash(Height, PreviousRewardHistoryHash, H, RewardHistory) ->
@@ -144,7 +144,7 @@ validate_reward_history_hash(Height, PreviousRewardHistoryHash, H, RewardHistory
             trim_locked_rewards(Height, RewardHistory)).
 
 reward_history_hash(Height, PreviousRewardHistoryHash, History) ->
-    case Height >= ar_fork:height_2_8() of
+    case Height >= arweave_constants:height_2_8() of
         true ->
             Element = encode_reward_history_element(hd(History)),
             Preimage = << Element/binary, PreviousRewardHistoryHash/binary >>,

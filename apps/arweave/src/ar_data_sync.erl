@@ -1,21 +1,5 @@
-%%% @doc Per-storage-module owner for chunk sync state and writes.
-%%%
-%%% Responsibilities:
-%%% - Own the module's sync record, chunk indexes, RocksDB handles, disk-space
-%%%   state, and final chunk write path.
-%%% - Coordinate local copy first: ar_chunk_copy fills gaps from sibling
-%%%   storage modules when possible.
-%%% - Coordinate network sync next:
-%%%   - ar_sync_discovery keeps a cache of what peers can serve.
-%%%   - ar_sync_store_sweeper identifies this module's unsynced intervals.
-%%%   - ar_sync_chunk_picker resolves peer availability,
-%%%     claim work, and enqueue tasks in ar_sync_scheduler.
-%%%   - ar_sync_scheduler admits tasks and spawns transient ar_sync_fetch_worker
-%%%     processes that fetch chunks from peers.
-%%% - Accept fetched chunks back here to store validated data.
-%%%
-%%% The default module also owns chain-tip/header-facing state used by the rest
-%%% of the node; configured storage modules own their local data range only.
+%%% @doc Per-store packing, storage, indexes, and persisted sync records.
+%%% Network sync and ingestion are owned by arweave_sync.
 -module(ar_data_sync).
 -test_category([fast]).
 
@@ -29,18 +13,13 @@
          get_tx_data/1, get_tx_data/2,
          get_tx_offset/1, get_tx_offset_data_in_range/2,
          request_tx_data_removal/3, request_data_removal/4,
-        record_chunk_cache_size_metric/0, is_chunk_cache_full/0,
         is_disk_space_sufficient/1,
          init_sync_status/1,
          get_chunk_by_byte/2, advance_chunks_index_cursor/1, has_data_root/2,
          read_chunk_with_full_metadata/2, read_chunk_with_datapath/2,
          write_chunk/5, read_data_path/2,
          get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
-        is_footprint_record_initialized/1, is_footprint_record_supported/3,
-         set_chunk_cache_size_limit/1,
-        chunk_cache_size_limit/0,
-
-        interval_cache_size_limit/0,
+        is_footprint_record_initialized/1,
          migration_db/1]).
 
 %% Exported for ar_disk_pool
@@ -48,21 +27,18 @@
          delete_chunk_metadata/2, update_chunks_index/3, get_tx_offset/2]).
 
 %% For data-doctor tools
--export([init_kv/2, open_store_dbs/2]).
+-export([init_kv/2, open_store_dbs/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([store_fetched_chunk/5, pack_and_store_chunk/2]).
+-export([store_chunk/4, cancel_store_requests/2, validate_fetched_chunk/3,
+        validate_chunk_id_size/3]).
 
 -include("ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include("ar_sup.hrl").
 -include("ar_poa.hrl").
 -include("ar_data_sync.hrl").
 
-
--ifdef(AR_TEST).
--include_lib("eunit/include/eunit.hrl").
--export([force_chunk_cache_size_limit/1]).
--endif.
 
 %% The key for storing migration cursor in the migrations_index database.
 -define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
@@ -81,7 +57,8 @@
 name(StoreID) when is_atom(StoreID) ->
     list_to_atom("ar_data_sync_" ++ atom_to_list(StoreID));
 name(StoreID) ->
-    list_to_atom("ar_data_sync_" ++ ar_storage_module:label(StoreID)).
+    #store_info{label = Label} = arweave_storage:store_info(StoreID),
+    list_to_atom("ar_data_sync_" ++ Label).
 
 start_link(Name, Args) ->
     gen_server:start_link({local, Name}, ?MODULE, Args, []).
@@ -90,8 +67,9 @@ start_link(Name, Args) ->
 register_workers() ->
     StorageModuleWorkers = lists:map(
                              fun(StorageModule) ->
-                                     StoreID = ar_storage_module:id(StorageModule),
-                                     StoreLabel = ar_storage_module:label(StoreID),
+                                     #store_info{
+                                         id = StoreID, label = StoreLabel
+                                     } = arweave_storage:store_info(StorageModule),
                                      Name = list_to_atom("ar_data_sync_" ++ StoreLabel),
                                      ?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, none}])
                              end,
@@ -101,7 +79,8 @@ register_workers() ->
                                                   ar_data_sync_default, [ar_data_sync_default, {?DEFAULT_MODULE, none}]),
     RepackInPlaceWorkers = lists:map(
                              fun({StorageModule, TargetPacking}) ->
-                                     StoreID = ar_storage_module:id(StorageModule),
+                                     #store_info{id = StoreID} =
+                                         arweave_storage:store_info(StorageModule),
                                      Name = ar_data_sync:name(StoreID),
                                      ?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, TargetPacking}])
                              end,
@@ -130,22 +109,33 @@ add_tip_block(BlockTXPairs, RecentBI) ->
 invalidate_bad_data_record(AbsoluteEndOffset, ChunkSize, StoreID, ChunkDataKey, Case) ->
     invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, ChunkDataKey, Case}).
 
-%% @doc Store a chunk fetched for a scheduler-owned sync task.
-store_fetched_chunk(StoreID, Peer, Byte, Proof, TaskRef) ->
-    case ar_sync_chunk_cache:reserve(StoreID) of
-        {ok, PID} ->
-            gen_server:cast(PID,
-                {store_fetched_chunk, Peer, Byte, Proof, TaskRef});
-        {error, not_initialized} ->
-            ar_sync:task_write_failed(TaskRef)
+%% @doc Pack and store a chunk via a PID or registered name, replying to the
+%% supplied opaque request ID.
+store_chunk(undefined, _Args, _ReplyTo, _CacheRef) ->
+    {error, not_initialized};
+store_chunk(Name, Args, ReplyTo, CacheRef) when is_atom(Name) ->
+    store_chunk(whereis(Name), Args, ReplyTo, CacheRef);
+store_chunk(Writer, Args, {Client, Ref}, CacheRef) when is_pid(Writer) ->
+    case ar_chunk_cache:add_reference(CacheRef, Writer) of
+        {ok, StorageCacheRef} ->
+            ar_chunk_cache:mark_cached(StorageCacheRef),
+            gen_server:cast(
+                Writer,
+                {store_chunk, Args, {Client, Ref, StorageCacheRef}}
+            );
+        {error, expired} ->
+            case Client of
+                none ->
+                    ok;
+                _ ->
+                    Client ! {chunk_store_result, Ref, {error, cancelled}},
+                    ok
+            end
     end.
 
-%% @doc Account for and enqueue a chunk copied locally or read from the disk pool.
-pack_and_store_chunk(StoreID, Args) ->
-    case ar_sync_chunk_cache:reserve(StoreID) of
-        {ok, PID} -> gen_server:cast(PID, {pack_and_store_chunk, Args});
-        {error, not_initialized} -> ok
-    end.
+%% @doc Discard pending requests from a stopped client before it releases memory.
+cancel_store_requests(Writer, Client) ->
+    gen_server:call(Writer, {cancel_store_requests, Client}, infinity).
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification. A small chunk
@@ -271,17 +261,27 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
     IsRecorded =
         case {RequestOrigin, Pack} of
             {miner, _} ->
-                StorageModules = ar_storage_module:get_all(Offset),
-                ar_sync_record:is_recorded_any(Offset, ar_data_sync, StorageModules);
+                StorageModules = arweave_storage:covering_stores(Offset, any_packing),
+                arweave_storage:is_recorded_any(Offset, {ar_data_sync, byte}, StorageModules);
             {_, false} ->
-                ar_sync_record:is_recorded(Offset, {ar_data_sync, Packing});
+                arweave_storage:is_recorded(
+                    Offset,
+                    Packing,
+                    {ar_data_sync, byte},
+                    any_store
+                );
             {_, true} ->
-                ar_sync_record:is_recorded(Offset, ar_data_sync)
+                arweave_storage:is_recorded(
+                    Offset,
+                    any_packing,
+                    {ar_data_sync, byte},
+                    any_store
+                )
         end,
     SeekOffset =
         case maps:get(bucket_based_offset, Options, true) of
             true ->
-                ar_chunk_storage:get_chunk_seek_offset(Offset);
+                arweave_storage:get_chunk_seek_offset(Offset);
             false ->
                 Offset
         end,
@@ -290,16 +290,28 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
             get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
                       RequestOrigin);
         {true, StoreID} ->
-            UnpackedReply = ar_sync_record:is_recorded(Offset, {ar_data_sync, unpacked}),
+            UnpackedReply = arweave_storage:is_recorded(
+                Offset,
+                unpacked,
+                {ar_data_sync, byte},
+                any_store
+            ),
             log_chunk_error(RequestOrigin, chunk_record_not_associated_with_packing,
                             [{store_id, StoreID}, {seek_offset, SeekOffset},
                              {is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}]),
             {error, chunk_not_found};
         Reply ->
-            UnpackedReply = ar_sync_record:is_recorded(Offset, {ar_data_sync, unpacked}),
-            Modules = ar_storage_module:get_all(Offset),
-            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
-            RootRecords = [ets:lookup(sync_records, {ar_data_sync, ID})
+            UnpackedReply = arweave_storage:is_recorded(
+                Offset,
+                unpacked,
+                {ar_data_sync, byte},
+                any_store
+            ),
+            Modules = arweave_storage:covering_stores(Offset, any_packing),
+            ModuleIDs = [(arweave_storage:store_info(Module))#store_info.id || Module <- Modules],
+            RootRecords = [{ID, arweave_storage:sync_record_exists(
+                any_packing, {ar_data_sync, byte}, ID
+            )}
                            || ID <- ModuleIDs],
             case RequestOrigin of
                 miner ->
@@ -318,11 +330,16 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 %% @doc Fetch the merkle proofs for the chunk corresponding to Offset.
 get_chunk_proof(Offset, Options) ->
     RequestOrigin = maps:get(origin, Options, unknown),
-    IsRecorded = ar_sync_record:is_recorded(Offset, ar_data_sync),
+    IsRecorded = arweave_storage:is_recorded(
+        Offset,
+        any_packing,
+        {ar_data_sync, byte},
+        any_store
+    ),
     SeekOffset =
         case maps:get(bucket_based_offset, Options, true) of
             true ->
-                ar_chunk_storage:get_chunk_seek_offset(Offset);
+                arweave_storage:get_chunk_seek_offset(Offset);
             false ->
                 Offset
         end,
@@ -401,132 +418,6 @@ request_tx_data_removal(TXID, Ref, ReplyTo) ->
 request_data_removal(Start, End, Ref, ReplyTo) ->
     remove_range(Start, End, Ref, ReplyTo).
 
-%% @doc Resolve the sync memory budget and store both caches' limits in the
-%% shared ar_data_sync_state table; returns the resolved chunk-cache limit (in
-%% chunks). [sync, cache_size] (MiB) is the TOTAL sync memory budget, split by
-%% split_sync_memory/1 between the fetched-chunk cache (~90%) and the peer
-%% interval cache (10%, floored — see the split's doc); an undefined value
-%% falls back to the total-memory heuristic in default_chunk_cache_size_limit/0
-%% as the total. Called at init and on every runtime change to
-%% [sync, cache_size] (a runtime change re-derives both limits; discovery's
-%% trim check picks the new interval cap up on its next pass). A no-op until
-%% ar_sup has created the table: config is loaded — firing this option's
-%% handle_set — before the supervision tree starts, so the table may not exist
-%% yet; init sets it once it does.
-set_chunk_cache_size_limit(Configured) ->
-    case ets:whereis(ar_data_sync_state) of
-        undefined ->
-            ok;
-        _ ->
-            TotalChunks =
-                case Configured of
-                    undefined ->
-                        default_chunk_cache_size_limit();
-                    MiB ->
-                        MiB * (?MiB div ?DATA_CHUNK_SIZE)
-                end,
-            {Limit, IntervalCacheBytes} = split_sync_memory(TotalChunks),
-            ets:insert(ar_data_sync_state, [
-                {chunk_cache_size_limit, Limit},
-                {interval_cache_size_limit, IntervalCacheBytes}]),
-            arweave_metrics:gauge_set(chunk_cache_size_limit, Limit),
-            Limit
-    end.
-
-%% Auto-size the fetched-chunk cache (default_chunk_cache_size_limit/0) when
-%% [sync, cache_size] is not explicitly configured. The cache buffers
-%% fetched-but-unwritten chunks - too small and workers thrash on
-%% is_chunk_cache_full/0, throttling throughput. Fetch concurrency is sized
-%% automatically (there is no worker-count dial), so the default is a fixed
-%% working buffer capped at ?CHUNK_CACHE_MEMORY_FRACTION of TOTAL memory
-%% (not free memory, which is volatile at startup); a cached chunk costs its
-%% raw size (256 KiB). Operators size it explicitly via [sync, cache_size].
--define(CHUNK_CACHE_DEFAULT_CHUNKS, 2000).
--define(CHUNK_CACHE_MIN_CHUNKS, 1000).
--define(CHUNK_CACHE_MEMORY_FRACTION, 0.1).
--define(CHUNK_CACHE_FALLBACK_TOTAL_MEMORY, 2000000000). % 2 GB if total_memory unknown
-
-default_chunk_cache_size_limit() ->
-    Total = proplists:get_value(total_memory,
-        memsup:get_system_memory_data(), ?CHUNK_CACHE_FALLBACK_TOTAL_MEMORY),
-    default_chunk_cache_size_limit(Total).
-
-default_chunk_cache_size_limit(Total) ->
-    MemCapChunks = erlang:floor(Total * ?CHUNK_CACHE_MEMORY_FRACTION / ?DATA_CHUNK_SIZE),
-    max(?CHUNK_CACHE_MIN_CHUNKS, min(MemCapChunks, ?CHUNK_CACHE_DEFAULT_CHUNKS)).
-
-%% The peer interval cache's share of the sync memory budget, and its floor.
-%% The floor matters: undersizing evicts warmed intervals before the sweep
-%% consumes them, throttling sync while discovery re-warms at extra request
-%% cost — measured live, a 24 MiB interval cache starved an 800-worker node to
-%% ~40% throughput while 48 MiB fed 100+ MiB/s. The 10% share puts a
-%% deliberately-sized budget (e.g. 4 GiB auto at 800 workers -> 410 MiB) well
-%% above the measured resident need at full rate (~48 MiB), leaving headroom
-%% for the one driver that cannot be sized ahead of time (peers per frontier).
--define(INTERVAL_CACHE_SHARE, 0.1).
--define(INTERVAL_CACHE_MIN_BYTES, 64 * ?MiB).
-
-%% @doc The peer interval cache's byte limit: its carve-out of the
-%% [sync, cache_size] budget (split_sync_memory/1). Read by ar_sync_discovery's
-%% trim check. Before the budget is stored (early boot, tests), derive it
-%% directly, falling back to the floor if even that fails (memsup may not be
-%% running) rather than crashing the caller.
--ifdef(AR_TEST).
-%% @doc Test-only: overwrite the chunk cache limit ETS row directly,
-%% bypassing the configured derivation and its ?CHUNK_CACHE_MIN_CHUNKS
-%% floor (a 1-chunk cache is the leak test's premise).
-force_chunk_cache_size_limit(Chunks) ->
-    ets:insert(ar_data_sync_state, {chunk_cache_size_limit, Chunks}),
-    arweave_metrics:gauge_set(chunk_cache_size_limit, Chunks),
-    ok.
--endif.
-
-%% @doc The fetched-chunk cache limit in chunks (the is_chunk_cache_full/0
-%% threshold), with the same fallbacks as the interval getter below.
-chunk_cache_size_limit() ->
-    try ets:lookup(ar_data_sync_state, chunk_cache_size_limit) of
-        [{_, Limit}] ->
-            Limit;
-        _ ->
-            {Limit, _} = split_sync_memory(default_chunk_cache_size_limit()),
-            Limit
-    catch _:_ ->
-        ?CHUNK_CACHE_MIN_CHUNKS
-    end.
-
-interval_cache_size_limit() ->
-    try ets:lookup(ar_data_sync_state, interval_cache_size_limit) of
-        [{_, Bytes}] ->
-            Bytes;
-        _ ->
-            {_, Bytes} = split_sync_memory(default_chunk_cache_size_limit()),
-            Bytes
-    catch _:_ ->
-        ?INTERVAL_CACHE_MIN_BYTES
-    end.
-
-%% @doc Split the sync memory budget (in chunks) between the two sync caches:
-%% the peer interval cache takes ?INTERVAL_CACHE_SHARE (floored at
-%% ?INTERVAL_CACHE_MIN_BYTES), the fetched-chunk cache takes the remainder
-%% (floored at ?CHUNK_CACHE_MIN_CHUNKS). Returns
-%% {ChunkCacheChunks, IntervalCacheBytes}.
-split_sync_memory(TotalChunks) ->
-    TotalBytes = TotalChunks * ?DATA_CHUNK_SIZE,
-    IntervalCacheBytes = max(?INTERVAL_CACHE_MIN_BYTES,
-        round(TotalBytes * ?INTERVAL_CACHE_SHARE)),
-    ChunkCacheChunks = max(?CHUNK_CACHE_MIN_CHUNKS,
-        (TotalBytes - IntervalCacheBytes) div ?DATA_CHUNK_SIZE),
-    {ChunkCacheChunks, IntervalCacheBytes}.
-
-%% @doc Return true if the in-memory data chunk cache is full. A cache whose
-%% limit is not initialized yet is reported full so callers back off and retry.
-is_chunk_cache_full() ->
-    case ets:lookup(ar_data_sync_state, chunk_cache_size_limit) of
-        [{_, Limit}] ->
-            ar_sync_chunk_cache:size() >= Limit;
-        _ ->
-            true
-    end.
 
 -ifdef(AR_TEST).
 is_disk_space_sufficient(StoreID) ->
@@ -675,7 +566,7 @@ read_chunk(Offset, ChunkDataKey, StoreID) ->
         {ok, Chunk, DataPath} ->
             {ok, {Chunk, DataPath}};
         {stored_elsewhere, DataPath} ->
-            case ar_chunk_storage:get(Offset - 1, StoreID) of
+            case arweave_storage:get_chunk(Offset - 1, StoreID) of
                 not_found ->
                     not_found;
                 {_EndOffset, Chunk} ->
@@ -728,7 +619,7 @@ get_chunk_data_with_retry(ChunkDataKey, StoreID, Attempts) ->
             Other
     end.
 
-%% @doc Retry `ar_chunk_storage:get/2' in the same `chunks_index'-before-data
+%% @doc Retry `arweave_storage:get_chunk/2' in the same `chunks_index'-before-data
 %% race as `get_chunk_data_with_retry/2', for chunks whose bytes live in
 %% chunk_storage (e.g. replica_2_9): the index entry and `stored_elsewhere'
 %% data path can land before the enciphered chunk is written, so a single read
@@ -738,9 +629,9 @@ get_chunk_storage_with_retry(Offset, StoreID) ->
     get_chunk_storage_with_retry(Offset, StoreID, ?READ_CHUNK_RETRY_ATTEMPTS).
 
 get_chunk_storage_with_retry(Offset, StoreID, 0) ->
-    ar_chunk_storage:get(Offset, StoreID);
+    arweave_storage:get_chunk(Offset, StoreID);
 get_chunk_storage_with_retry(Offset, StoreID, Attempts) ->
-    case ar_chunk_storage:get(Offset, StoreID) of
+    case arweave_storage:get_chunk(Offset, StoreID) of
         not_found ->
             timer:sleep(?READ_CHUNK_RETRY_DELAY_MS),
             get_chunk_storage_with_retry(Offset, StoreID, Attempts - 1);
@@ -756,19 +647,14 @@ write_chunk(Offset, ChunkMetadata, Chunk, Packing, StoreID) ->
       } = ChunkMetadata,
     write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, StoreID).
 
-%% @doc Finish one async chunk write from the fetched-chunk pipeline.
-finish_fetched_chunk(StoreID, TaskRef) ->
-    ar_sync_chunk_cache:release(),
-    ar_sync:task_write_completed(StoreID, TaskRef).
-
-%% @doc Check if the footprint record should be updated for the given chunk.
-%% We maintain the footprint record for all chunks so that footprint-based syncing
-%% correctly identifies already-synced chunks. Note: in the early weave (before the
-%% strict data split threshold), multiple small chunks may map to the same bucket,
-%% making the footprint record imprecise. This is acceptable since footprint syncing
-%% is primarily for replica 2.9 data and small chunks can use "normal" syncing.
-is_footprint_record_supported(_AbsoluteOffset, _ChunkSize, _Packing) ->
-    true.
+%% @doc Release a finished request's cache reference and reply to its client.
+finish_store_request({PID, Ref, CacheRef}, Result) ->
+    ar_chunk_cache:release(CacheRef),
+    case PID of
+        none -> ok;
+        _ -> PID ! {chunk_store_result, Ref, Result}
+    end,
+    ok.
 
 %% @doc Return whether the store's existing sync record has been migrated to
 %% the footprint record.
@@ -783,7 +669,7 @@ migration_db(StoreID) ->
 %% the matching sync sweeper. The sweeper caches the current disk-pool threshold
 %% alongside the weave size when it handles the cast.
 set_weave_size(WeaveSize, #data_sync_state{ store_id = StoreID } = State) ->
-    ar_sync:set_weave_size(StoreID, WeaveSize),
+    arweave_sync:set_weave_size(StoreID, WeaveSize),
     State#data_sync_state{ weave_size = WeaveSize }.
 
 %%%===================================================================
@@ -791,10 +677,9 @@ set_weave_size(WeaveSize, #data_sync_state{ store_id = StoreID } = State) ->
 %%%===================================================================
 
 init({?DEFAULT_MODULE = StoreID, _}) ->
-    ok = reset_sync_state(StoreID),
+    ok = arweave_sync:register_store(StoreID),
     %% Trap exit to avoid corrupting any open files on quit..
     process_flag(trap_exit, true),
-    DataCacheSizeLimit = arweave_config:get([sync, cache_size]),
     [ok, ok, ok] = ar_events:subscribe([node_state, disksup, chunk_copy]),
     State = init_kv(#data_sync_state{}, StoreID),
 
@@ -810,7 +695,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
       maps:get(disk_pool_data_roots, StateMap), StoreID),
     WeaveSize = maps:get(weave_size, StateMap),
     %% Initialize the threshold before asking the sweeper to cache both bounds.
-    ar_sync:set_weave_size(StoreID, WeaveSize),
+    arweave_sync:set_weave_size(StoreID, WeaveSize),
     %% Called for its side effect: publish the initial device-lock sync metric.
     init_sync_status(StoreID),
     State2 = State#data_sync_state{
@@ -823,25 +708,19 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
                {range_start, State2#data_sync_state.range_start},
                {range_end, State2#data_sync_state.range_end}]),
     gen_server:cast(self(), store_sync_state),
-    Limit = set_chunk_cache_size_limit(DataCacheSizeLimit),
-    ar:console("~nSetting the data chunk cache size limit to ~B chunks.~n", [Limit]),
-    {ok, _} = ar_timer:apply_interval(
-                200,
-                ?MODULE,
-                record_chunk_cache_size_metric,
-                [],
-                #{ skip_on_shutdown => false }
-               ),
     gen_server:cast(self(), process_store_chunk_queue),
-    ok = ar_sync_chunk_cache:init(StoreID),
     {ok, State2};
 init({StoreID, RepackInPlacePacking}) ->
-    ok = reset_sync_state(StoreID),
+    ok = arweave_sync:register_store(StoreID),
     ?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
     %% Trap exit to avoid corrupting any open files on quit..
     process_flag(trap_exit, true),
     [ok, ok, ok] = ar_events:subscribe([node_state, disksup, chunk_copy]),
-    {RangeStart2, RangeEnd2} = ar_storage_module:get_padded_range(StoreID),
+    {RangeStart2, RangeEnd2} =
+        case arweave_storage:store_info(StoreID) of
+            #store_info{padded_range = Range} -> Range;
+            not_found -> {-1, -1}
+        end,
     State0 = #data_sync_state{
                 store_id = StoreID,
                 footprint_limit = ar_footprint_limit:get(StoreID),
@@ -868,7 +747,6 @@ init({StoreID, RepackInPlacePacking}) ->
                                              none -> none;
                                              _ -> ar_serialize:encode_packing(RepackInPlacePacking, false)
                                          end}]),
-    ok = ar_sync_chunk_cache:init(StoreID),
     {ok, State1}.
 
 handle_cast(process_store_chunk_queue, State) ->
@@ -906,7 +784,14 @@ handle_cast({join, RecentBI}, State) ->
 
 handle_cast({cut, Start}, #data_sync_state{ store_id = StoreID,
                                             range_end = End } = State) ->
-    case ar_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
+    case arweave_storage:get_next_interval(
+        synced,
+        Start,
+        End,
+        any_packing,
+        {ar_data_sync, byte},
+        StoreID
+    ) of
         not_found ->
             ok;
         _Interval ->
@@ -922,8 +807,10 @@ handle_cast({cut, Start}, #data_sync_state{ store_id = StoreID,
                     init:stop(1);
                 true ->
                     ok = delete_chunk_metadata_range(Start, End, State),
-                    ok = ar_chunk_storage:cut(Start, StoreID),
-                    ok = ar_sync_record:cut(Start, ar_data_sync, StoreID)
+                    ok = arweave_storage:cut_sync_record(
+                        Start, {ar_chunk_storage, byte}, StoreID
+                    ),
+                    ok = arweave_storage:cut_sync_record(Start, {ar_data_sync, byte}, StoreID)
             end
     end,
     {noreply, State};
@@ -958,69 +845,18 @@ handle_cast({invalidate_bad_data_record, Args}, State) ->
     do_invalidate_bad_data_record(Args),
     {noreply, State};
 
-%% The two-element form is the legacy TaskRef-less cast still used by the
-%% chunk-copy and disk-pool paths.
-handle_cast({pack_and_store_chunk, Args}, State) ->
-    handle_cast({pack_and_store_chunk, Args, undefined}, State);
-
-handle_cast({pack_and_store_chunk, Args, TaskRef} = Cast,
-            #data_sync_state{ store_id = StoreID } = State) ->
-    case is_disk_space_sufficient(StoreID) of
-        true ->
-            pack_and_store_chunk(Args, TaskRef, State);
-        _ ->
-            arweave_util:cast_after(30000, self(), Cast),
-            {noreply, State}
+handle_cast({retry_store_chunk, Ref}, State) ->
+    #data_sync_state{packing_map = PackingMap} = State,
+    case maps:take(Ref, PackingMap) of
+        {{store_retry, Args, ReplyTo}, PackingMap2} ->
+            handle_cast({store_chunk, Args, ReplyTo},
+                State#data_sync_state{packing_map = PackingMap2});
+        error -> {noreply, State}
     end;
 
-handle_cast({store_fetched_chunk, Peer, Byte, Proof, TaskRef} = Cast, State) ->
-    {store_fetched_chunk, Peer, Byte, Proof, TaskRef} = Cast,
-    #{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
-    SeekByte = ar_chunk_storage:get_chunk_seek_offset(Byte + 1) - 1,
-    case validate_proof(SeekByte, Proof, Peer) of
-        {need_unpacking, AbsoluteEndOffset, ChunkProof2} ->
-            #chunk_proof{
-               block_start_offset = BlockStartOffset,
-               tx_start_offset = TXStartOffset,
-               tx_end_offset = TXEndOffset,
-               chunk_end_offset = ChunkEndOffset,
-               chunk_id = ChunkID,
-               metadata = #chunk_metadata{
-                             tx_root = TXRoot,
-                             data_root = DataRoot,
-                             chunk_size = ChunkSize
-                            }
-              } = ChunkProof2,
-            TXSize = TXEndOffset - TXStartOffset,
-            AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
-            ChunkArgs = {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
-            Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
-                    Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
-            unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, TaskRef, State);
-        false ->
-            finish_fetched_chunk(State#data_sync_state.store_id, TaskRef),
-            process_invalid_fetched_chunk(Peer, Byte, State);
-        {true, ChunkProof2} ->
-            #chunk_proof{
-               block_start_offset = BlockStartOffset,
-               tx_start_offset = TXStartOffset,
-               tx_end_offset = TXEndOffset,
-               chunk_end_offset = ChunkEndOffset,
-               chunk_id = ChunkID,
-               metadata = #chunk_metadata{
-                             tx_root = TXRoot,
-                             data_root = DataRoot,
-                             chunk_size = ChunkSize
-                            }
-              } = ChunkProof2,
-            TXSize = TXEndOffset - TXStartOffset,
-            AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
-            AbsoluteEndOffset = AbsoluteTXStartOffset + ChunkEndOffset,
-            ChunkArgs = {unpacked, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
-            Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
-                    Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
-            process_valid_fetched_chunk(ChunkArgs, Args, TaskRef, State)
-    end;
+handle_cast({store_chunk, Args, ReplyTo}, State) ->
+    Outcome = process_store_request(Args, ReplyTo, State),
+    {noreply, continue_store_request(ReplyTo, Outcome)};
 
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
     PID ! {removed_range, Ref},
@@ -1034,8 +870,8 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
             {noreply, State};
         {ok, #chunk_metadata{ chunk_size = ChunkSize },
          #chunk_offsets{ absolute_offset = AbsoluteEndOffset }} ->
-            PaddedStartOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
-            PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
+            PaddedStartOffset = arweave_constants:get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
+            PaddedOffset = arweave_constants:get_chunk_padded_offset(AbsoluteEndOffset),
             %% 1) store updated sync record
             %% 2) remove chunk
             %% 3) update chunks_index
@@ -1043,19 +879,19 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
             %% The order is important - in case the VM crashes,
             %% we will not report false positives to peers,
             %% and the chunk can still be removed upon retry.
-            RemoveFromFootprint = ar_footprint_record:delete(PaddedOffset, StoreID),
+            RemoveFromFootprint = arweave_storage:delete_footprint(PaddedOffset, StoreID),
             RemoveFromSyncRecord =
                 case RemoveFromFootprint of
                     ok ->
-                        ar_sync_record:delete(PaddedOffset,
-                                              PaddedStartOffset, ar_data_sync, StoreID);
+                        arweave_storage:delete_sync_record(PaddedOffset,
+                                              PaddedStartOffset, {ar_data_sync, byte}, StoreID);
                     Error ->
                         Error
                 end,
             RemoveFromChunkStorage =
                 case RemoveFromSyncRecord of
                     ok ->
-                        ar_chunk_storage:delete(PaddedOffset, StoreID);
+                        arweave_storage:delete_chunk(PaddedOffset, StoreID);
                     Error2 ->
                         Error2
                 end,
@@ -1087,28 +923,22 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
             {noreply, State}
     end;
 
-handle_cast({expire_repack_request, Key}, State) ->
-    #data_sync_state{ packing_map = PackingMap } = State,
+handle_cast({expire, repack, {EndOffset, Packing, Ref}}, State) ->
+    #data_sync_state{packing_map = PackingMap} = State,
+    Key = {EndOffset, Packing},
     case maps:get(Key, PackingMap, not_found) of
-        {pack_chunk, {_, DataPath, Offset, DataRoot, _, _, _}, TaskRef} ->
-            finish_fetched_chunk(State#data_sync_state.store_id, TaskRef),
+        {pack_chunk, {Ref, {_, DataPath, Offset, DataRoot, _, _, _}}, ReplyTo} ->
+            finish_store_request(ReplyTo, {error, packing_timeout}),
             DataPathHash = crypto:hash(sha256, DataPath),
-            ?LOG_DEBUG([{event, expired_repack_chunk_request},
-                        {data_path_hash, arweave_util:encode(DataPathHash)},
-                        {data_root, arweave_util:encode(DataRoot)},
-                        {relative_offset, Offset}]),
-            State2 = State#data_sync_state{ packing_map = maps:remove(Key, PackingMap) },
-            {noreply, State2};
-        _ ->
-            {noreply, State}
-    end;
-
-handle_cast({expire_unpack_request, Key}, State) ->
-    #data_sync_state{ packing_map = PackingMap } = State,
-    case maps:get(Key, PackingMap, not_found) of
-        {unpack_fetched_chunk, _Args, TaskRef} ->
-            finish_fetched_chunk(State#data_sync_state.store_id, TaskRef),
-            State2 = State#data_sync_state{ packing_map = maps:remove(Key, PackingMap) },
+            ?LOG_DEBUG([
+                {event, expired_repack_chunk_request},
+                {data_path_hash, arweave_util:encode(DataPathHash)},
+                {data_root, arweave_util:encode(DataRoot)},
+                {relative_offset, Offset}
+            ]),
+            State2 = State#data_sync_state{
+                packing_map = maps:remove(Key, PackingMap)
+            },
             {noreply, State2};
         _ ->
             {noreply, State}
@@ -1123,6 +953,15 @@ handle_cast(Cast, State) ->
     ?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
     {noreply, State}.
 
+handle_call({cancel_store_requests, Client}, _From, State) ->
+    #data_sync_state{packing_map = PackingMap, store_chunk_queue = Queue} =
+        State,
+    PackingMap2 = cancel_packing_requests(Client, PackingMap),
+    Queue2 = cancel_queued_chunks(Client, Queue),
+    {reply, ok, State#data_sync_state{
+        packing_map = PackingMap2,
+        store_chunk_queue = Queue2
+    }};
 handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
     #data_sync_state{ store_id = StoreID } = State,
     {reply, ar_data_roots:add_block(B, SizeTaggedTXs, StoreID), State};
@@ -1130,6 +969,28 @@ handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
     {reply, ok, State}.
+
+handle_info({chunk, Result, CacheRef}, State) ->
+    try
+        handle_info({chunk, Result}, State)
+    after
+        ar_chunk_cache:release(CacheRef)
+    end;
+
+handle_info(
+    {chunk, {repack_error, {EndOffset, Packing, Ref}, Reason}},
+    #data_sync_state{packing_map = Map} = State
+) ->
+    Key = {EndOffset, Packing},
+    case maps:get(Key, Map, undefined) of
+        {pack_chunk, {Ref, _}, ReplyTo} ->
+            finish_store_request(ReplyTo, {error, Reason}),
+            {noreply, State#data_sync_state{
+                packing_map = maps:remove(Key, Map)
+            }};
+        _ ->
+            {noreply, State}
+    end;
 
 handle_info({event, node_state, {initialized, B}}, State) ->
     {noreply, set_weave_size(B#block.weave_size, State)};
@@ -1140,63 +1001,30 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 handle_info({event, node_state, _}, State) ->
     {noreply, State};
 
-%% ar_chunk_copy has finished. The `complete' event fires only after every
-%% dispatched read is acknowledged, so the workers' `pack_and_store_chunk'
-%% casts are already queued in this mailbox ahead of the network-sync loops.
+%% Local-copy reads have finished; their handoffs retain sync reservations
+%% until storage finishes, even as network discovery starts.
 handle_info({event, chunk_copy, {complete, StoreID}},
             #data_sync_state{ store_id = StoreID } = State) ->
     %% Start the work-discovery loop; it discovers work and pushes tasks
     %% through the sync pipeline.
-    ar_sync:start_store(StoreID),
+    arweave_sync:start_store(StoreID),
     {noreply, State};
 handle_info({event, chunk_copy, _}, State) ->
     {noreply, State};
 
-handle_info({chunk, {unpacked, Key, ChunkArgs}}, State) ->
-    #data_sync_state{ packing_map = PackingMap } = State,
-    case maps:get(Key, PackingMap, not_found) of
-        {unpack_fetched_chunk, Args, TaskRef} ->
-            State2 = State#data_sync_state{ packing_map = maps:remove(Key, PackingMap) },
-            process_unpacked_chunk(ChunkArgs, Args, TaskRef, State2);
-        Result ->
-            {Packing, _U, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
-            Reason = missing_unpacked_chunk,
-            arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
-            ?LOG_DEBUG([{event, skipping_synced_chunk},
-                        {reason, Reason}, {key, Key},
-                        {packing, ar_serialize:encode_packing(Packing, true)},
-                        {absolute_offset, AbsoluteEndOffset},
-                        {chunk_size, ChunkSize}, {result, Result}]),
-            {noreply, State}    end;
-
-handle_info({chunk, {unpack_error, Key, ChunkArgs, Error}}, State) ->
-    #data_sync_state{ packing_map = PackingMap } = State,
-    case maps:get(Key, PackingMap, not_found) of
-        {unpack_fetched_chunk, Args, TaskRef} ->
-            {Packing, _Chunk1, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
-            {_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot,
-             _Chunk2, _ChunkID, _ChunkEndOffset, Peer, _Byte} = Args,
-            ?LOG_WARNING([{event, got_invalid_packed_chunk},
-                          {peer, arweave_util:format_peer(Peer)},
-                          {absolute_end_offset, AbsoluteEndOffset},
-                          {packing, ar_serialize:encode_packing(Packing, true)},
-                          {chunk_size, ChunkSize},
-                          {error, io_lib:format("~p", [Error])}]),
-            State2 = State#data_sync_state{ packing_map = maps:remove(Key, PackingMap) },
-            ar_peers:issue_warning(Peer, chunk, Error),
-            finish_fetched_chunk(State#data_sync_state.store_id, TaskRef),
-            {noreply, State2};
-        _ ->
-            {noreply, State}
-    end;
-
-handle_info({chunk, {packed, Key, ChunkArgs}}, State) ->
-    #data_sync_state{ packing_map = PackingMap } = State,
+handle_info(
+    {chunk, {packed, {EndOffset, RequestedPacking, Ref}, ChunkArgs}}, State
+) ->
+    #data_sync_state{packing_map = PackingMap} = State,
+    Key = {EndOffset, RequestedPacking},
     Packing = element(1, ChunkArgs),
     case maps:get(Key, PackingMap, not_found) of
-        {pack_chunk, Args, TaskRef} when element(1, Args) == Packing ->
-            State2 = State#data_sync_state{ packing_map = maps:remove(Key, PackingMap) },
-            {noreply, store_chunk(ChunkArgs, Args, TaskRef, State2)};
+        {pack_chunk, {Ref, Args}, ReplyTo} when element(1, Args) == Packing ->
+            State2 = State#data_sync_state{
+                packing_map = maps:remove(Key, PackingMap)
+            },
+            Outcome = enqueue_chunk(ChunkArgs, Args, ReplyTo, State2),
+            {noreply, continue_store_request(ReplyTo, Outcome)};
         _ ->
             {noreply, State}
     end;
@@ -1293,18 +1121,10 @@ terminate(Reason, #data_sync_state{ store_id = StoreID } = State) ->
 %%% Private functions.
 %%%===================================================================
 
-%% @doc Discard the previous writer's reservations and active sync tasks.
-reset_sync_state(StoreID) ->
-    ar_sync_chunk_cache:reset_store(StoreID),
-    ar_sync:reset_store(StoreID).
-
 init_sync_status(StoreID) ->
-    SyncStatus = case ar_sync:enabled() of
-                     true -> paused;
-                     false -> off
-                 end,
-    ar_device_lock:set_device_lock_metric(StoreID, sync, SyncStatus),
-    SyncStatus.
+    %% The sweeper checks the live download rate before acquiring its lock.
+    ar_device_lock:set_device_lock_metric(StoreID, sync, paused),
+    paused.
 do_log_chunk_error(LogType, Event, ExtraLogData) ->
     LogData = [{event, Event}, {tags, [solution_proofs]} | ExtraLogData],
     case LogType of
@@ -1333,7 +1153,7 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
             %% final chunk lands. Anywhere else a mismatch is genuine corruption, so
             %% invalidate immediately and keep the retry (and its delay) off the
             %% normal read path. Checking only on a mismatch keeps the happy path free.
-            case ar_storage_module:is_repack_in_place(StoreID) of
+            case (arweave_storage:store_info(StoreID))#store_info.repack_in_place of
                 true ->
                     retry_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking,
                                     StoreID, RequestOrigin, ?READ_CHUNK_RETRY_ATTEMPTS);
@@ -1530,8 +1350,8 @@ read_chunk_with_metadata(
             %% isn't stored.
             {error, chunk_not_found};
         {error, Err} ->
-            Modules = ar_storage_module:get_all(SeekOffset),
-            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+            Modules = arweave_storage:covering_stores(SeekOffset, any_packing),
+            ModuleIDs = [(arweave_storage:store_info(Module))#store_info.id || Module <- Modules],
             log_chunk_error(RequestOrigin, failed_to_fetch_chunk_metadata,
                             [{seek_offset, SeekOffset},
                              {store_id, StoreID},
@@ -1560,8 +1380,8 @@ read_chunk_with_metadata(
                 end,
             case ReadResult of
                 not_found ->
-                    Modules = ar_storage_module:get_all(SeekOffset),
-                    ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+                    Modules = arweave_storage:covering_stores(SeekOffset, any_packing),
+                    ModuleIDs = [(arweave_storage:store_info(Module))#store_info.id || Module <- Modules],
                     log_chunk_error(RequestOrigin, failed_to_read_chunk_data_path,
                                     [{seek_offset, SeekOffset},
                                      {absolute_offset, AbsoluteEndOffset},
@@ -1581,12 +1401,14 @@ read_chunk_with_metadata(
                                      {absolute_end_offset, Offset}]),
                     {error, failed_to_read_chunk};
                 {ok, {Chunk, DataPath}} ->
-                    case ar_sync_record:is_recorded(Offset, StoredPacking, ar_data_sync,
+                    case arweave_storage:is_recorded(Offset, StoredPacking, {ar_data_sync, byte},
                                                     StoreID) of
                         false ->
-                            Modules = ar_storage_module:get_all(SeekOffset),
-                            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
-                            RootRecords = [ets:lookup(sync_records, {ar_data_sync, ID})
+                            Modules = arweave_storage:covering_stores(SeekOffset, any_packing),
+                            ModuleIDs = [(arweave_storage:store_info(Module))#store_info.id || Module <- Modules],
+                            RootRecords = [{ID, arweave_storage:sync_record_exists(
+                                any_packing, {ar_data_sync, byte}, ID
+                            )}
                                            || ID <- ModuleIDs],
                             log_chunk_error(RequestOrigin, chunk_metadata_read_sync_record_race_condition,
                                             [{seek_offset, SeekOffset},
@@ -1640,14 +1462,20 @@ is_stale_invalidation(AbsoluteEndOffset, StoreID, ObservedChunkDataKey) ->
     end.
 
 invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
-    PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
+    PaddedEndOffset = arweave_constants:get_chunk_padded_offset(AbsoluteEndOffset),
     StartOffset = AbsoluteEndOffset - ChunkSize,
     ?LOG_WARNING([{event, invalidating_bad_data_record}, {type, Type},
                   {range_start, StartOffset}, {range_end, PaddedEndOffset},
                   {store_id, StoreID}]),
     case remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) of
         ok ->
-            ar_sync_record:add(PaddedEndOffset, StartOffset, invalid_chunks, StoreID),
+            arweave_storage:add_sync_record(
+                PaddedEndOffset,
+                StartOffset,
+                any_packing,
+                {invalid_chunks, byte},
+                StoreID
+            ),
             case delete_invalid_metadata(AbsoluteEndOffset, StoreID) of
                 ok ->
                     ok;
@@ -1663,11 +1491,11 @@ invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
     end.
 
 remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
-    Remove1 = ar_footprint_record:delete(PaddedEndOffset, StoreID),
+    Remove1 = arweave_storage:delete_footprint(PaddedEndOffset, StoreID),
     Remove2 =
         case Remove1 of
             ok ->
-                ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+                arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_data_sync, byte}, StoreID);
             Error ->
                 Error
         end,
@@ -1675,22 +1503,22 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
     Remove3 =
         case {Remove2, IsSmallChunkBeforeThreshold} of
             {ok, false} ->
-                ar_sync_record:delete(PaddedEndOffset, StartOffset,
-                                      ar_chunk_storage, StoreID);
+                arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset,
+                                      {ar_chunk_storage, byte}, StoreID);
             _ ->
                 Remove2
         end,
     Remove4 =
         case {Remove3, IsSmallChunkBeforeThreshold} of
             {ok, false} ->
-                ar_entropy_storage:delete_record(PaddedEndOffset, StartOffset, StoreID);
+                arweave_storage:delete_entropy_record(PaddedEndOffset, StartOffset, StoreID);
             _ ->
                 Remove3
         end,
     case {Remove4, IsSmallChunkBeforeThreshold} of
         {ok, false} ->
-            ar_sync_record:delete(PaddedEndOffset, StartOffset,
-                                  ar_chunk_storage_replica_2_9_1_unpacked, StoreID);
+            arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset,
+                                  {ar_chunk_storage_replica_2_9_1_unpacked, byte}, StoreID);
         _ ->
             Remove4
     end.
@@ -1840,8 +1668,8 @@ remove_range(Start, End, Ref, ReplyTo) ->
                         end
                 end
         end,
-    StorageModules = ar_storage_module:get_all(Start, End),
-    StoreIDs = [?DEFAULT_MODULE | [ar_storage_module:id(M) || M <- StorageModules]],
+    StorageModules = arweave_storage:intersecting_stores(Start, End, any_packing),
+    StoreIDs = [?DEFAULT_MODULE | [(arweave_storage:store_info(M))#store_info.id || M <- StorageModules]],
     RefL = [make_ref() || _ <- StoreIDs],
     PID = spawn(fun() -> ReplyFun(ReplyFun, sets:from_list(RefL)) end),
     lists:foreach(
@@ -1852,8 +1680,7 @@ remove_range(Start, End, Ref, ReplyTo) ->
      ).
 
 init_kv(State, StoreID) ->
-    DataDir = arweave_config:get([data_dir]),
-    ok = open_store_dbs(DataDir, StoreID),
+    ok = open_store_dbs(StoreID),
     ar_disk_pool:move_index(StoreID),
     State#data_sync_state{
       chunks_index = {chunks_index, StoreID},
@@ -1862,7 +1689,7 @@ init_kv(State, StoreID) ->
       tx_offset_index = {tx_offset_index, StoreID}
      }.
 
-open_store_dbs(DataDir, StoreID) ->
+open_store_dbs(StoreID) ->
     BasicOpts = [{max_open_files, max_open_files()}],
     BloomFilterOpts = [
                        {block_based_table_options, [
@@ -1884,14 +1711,8 @@ open_store_dbs(DataDir, StoreID) ->
                                ar_disk_pool:column_family(BasicOpts ++ BloomFilterOpts),
                                {"migrations_index", BasicOpts}
                               ],
-    Dir =
-        case StoreID of
-            ?DEFAULT_MODULE ->
-                filename:join(DataDir, ?ROCKS_DB_DIR);
-            _ ->
-                filename:join([ar_chunk_storage:storage_module_path(
-                    DataDir, StoreID), ?ROCKS_DB_DIR])
-        end,
+    #store_info{path = Path} = arweave_storage:store_info(StoreID),
+    Dir = filename:join(Path, ?ROCKS_DB_DIR),
     ok = ar_kv:open(#{
                       path => filename:join(Dir, "ar_data_sync_db"),
                       cf_descriptors => ColumnFamilyDescriptors,
@@ -1936,8 +1757,10 @@ remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
     {ok, OrphanedDataRoots} =
         ar_data_roots:remove_range(BlockStartOffset, WeaveSize, StoreID),
     ok = delete_chunk_metadata_range(BlockStartOffset, WeaveSize, State),
-    ok = ar_chunk_storage:cut(BlockStartOffset, StoreID),
-    ok = ar_sync_record:cut(BlockStartOffset, ar_data_sync, StoreID),
+    ok = arweave_storage:cut_sync_record(
+        BlockStartOffset, {ar_chunk_storage, byte}, StoreID
+    ),
+    ok = arweave_storage:cut_sync_record(BlockStartOffset, {ar_data_sync, byte}, StoreID),
     ar_events:send(sync_record, {global_cut, BlockStartOffset}),
     ar_disk_pool:reset_orphaned_data_roots_timestamps(OrphanedDataRoots),
     ok.
@@ -1948,7 +1771,7 @@ cut_orphaned_storage_modules(BlockStartOffset, WeaveSize)
 cut_orphaned_storage_modules(BlockStartOffset, _WeaveSize) ->
     lists:foreach(
       fun(Module) ->
-              gen_server:cast(name(ar_storage_module:id(Module)), {cut, BlockStartOffset})
+              gen_server:cast(name((arweave_storage:store_info(Module))#store_info.id), {cut, BlockStartOffset})
       end,
       arweave_config:storage_modules()),
     ok.
@@ -1958,7 +1781,7 @@ store_sync_state(#data_sync_state{ store_id = ?DEFAULT_MODULE } = State) ->
     DiskPoolDataRoots = ar_disk_pool:get_data_roots(),
     StoredState = #{ block_index => BI, disk_pool_data_roots => DiskPoolDataRoots,
                      %% Storing it for backwards-compatibility.
-                     strict_data_split_threshold => ar_block:strict_data_split_threshold() },
+                     strict_data_split_threshold => arweave_constants:strict_data_split_threshold() },
     case ar_storage:write_term(data_sync_state, StoredState) of
         {error, enospc} ->
             ?LOG_WARNING([{event, failed_to_dump_state}, {reason, disk_full},
@@ -1971,31 +1794,30 @@ store_sync_state(#data_sync_state{ store_id = ?DEFAULT_MODULE } = State) ->
 store_sync_state(State) ->
     State.
 
-%% @doc Look to StoreID to find data that TargetStoreID is missing.
-%% Args:
-%%   StoreID - The ID of the storage module to sync to (this module is missing data)
-%%   OtherStoreID - The ID of the storage module to sync from (this module might have the data)
-%%   RangeStart - The start offset of the range to check
-%%   RangeEnd - The end offset of the range to check
-unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, TaskRef, State) ->
-    #data_sync_state{ packing_map = PackingMap } = State,
-    case maps:is_key({AbsoluteEndOffset, unpacked}, PackingMap) of
-        true ->
-            finish_fetched_chunk(State#data_sync_state.store_id, TaskRef),
-            {noreply, State};
-        false ->
-            case ar_packing_server:is_buffer_full() of
-                true ->
-                    arweave_util:cast_after(1000, self(), Cast),
-                    {noreply, State};
-                false ->
-                    ar_packing_server:request_unpack({AbsoluteEndOffset, unpacked}, ChunkArgs),
-                    {noreply, State#data_sync_state{
-                                packing_map = PackingMap#{
-                                                          {AbsoluteEndOffset, unpacked} => {unpack_fetched_chunk,
-                                        Args, TaskRef} } }}
-            end
+%% @doc Validate fetched proof paths and return protocol metadata to the caller.
+validate_fetched_chunk(Peer, Byte, Proof) ->
+    SeekByte = arweave_storage:get_chunk_seek_offset(Byte + 1) - 1,
+    case validate_proof(SeekByte, Proof, Peer) of
+        false -> false;
+        {true, ChunkProof} -> fetched_chunk_metadata(valid, Proof, ChunkProof, Peer, Byte);
+        {need_unpacking, _, ChunkProof} ->
+            fetched_chunk_metadata(needs_unpacking, Proof, ChunkProof, Peer, Byte)
     end.
+
+fetched_chunk_metadata(Status, Proof, ChunkProof, Peer, Byte) ->
+    #{data_path := DataPath, tx_path := TXPath, chunk := Chunk,
+        packing := Packing} = Proof,
+    #chunk_proof{block_start_offset = BlockStartOffset,
+        tx_start_offset = TXStartOffset, tx_end_offset = TXEndOffset,
+        chunk_end_offset = ChunkEndOffset, chunk_id = ChunkID,
+        metadata = #chunk_metadata{tx_root = TXRoot, data_root = DataRoot,
+            chunk_size = ChunkSize}} = ChunkProof,
+    TXSize = TXEndOffset - TXStartOffset,
+    AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
+    AbsoluteEndOffset = AbsoluteTXStartOffset + ChunkEndOffset,
+    {Status, {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
+        {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
+            Chunk, ChunkID, ChunkEndOffset, Peer, Byte}}.
 
 validate_proof(SeekByte, Proof, Peer) ->
     #{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
@@ -2150,11 +1972,11 @@ write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, StoreID) 
 write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing,
                             StoreID) ->
     ShouldStoreInChunkStorage =
-        ar_chunk_storage:is_storage_supported(Offset, ChunkSize, Packing),
+        arweave_storage:is_storage_supported(Offset, ChunkSize, Packing),
     case {ShouldStoreInChunkStorage, is_binary(DataPath)} of
         {true, true} ->
-            PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
-            case ar_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID) of
+            PaddedOffset = arweave_constants:get_chunk_padded_offset(Offset),
+            case put_chunk_with_entropy(PaddedOffset, Chunk, Packing, StoreID) of
                 {ok, NewPacking} ->
                     case put_chunk_data(ChunkDataKey, StoreID, DataPath) of
                         ok -> {ok, NewPacking};
@@ -2166,14 +1988,14 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
             %% If ar_data_sync:write_chunk/7 is called directly without a DataPath, we
             %% should just update chunk storage without modifying chunk_data_db. This
             %% can happen, for example, durin grepack in place.
-            PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
-            ar_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID);
+            PaddedOffset = arweave_constants:get_chunk_padded_offset(Offset),
+            put_chunk_with_entropy(PaddedOffset, Chunk, Packing, StoreID);
         {false, true} ->
             case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
                 ok ->
                     arweave_metrics:counter_inc(chunks_stored, [
-                                                           ar_storage_module:packing_label(Packing),
-                                                           ar_storage_module:label(StoreID)]),
+                                                           arweave_storage:packing_label(Packing),
+                                                           (arweave_storage:store_info(StoreID))#store_info.label]),
                     {ok, Packing};
                 Error -> Error
             end;
@@ -2181,6 +2003,19 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
             %% For chunks which are only stored in chunk_data_db, we currently require that
             %% both the Chunk and the DataPath are present.
             {error, invalid_data_path}
+    end.
+
+%% @doc Repair missing prepared entropy outside the storage process and retry.
+put_chunk_with_entropy(Offset, Chunk, Packing, StoreID) ->
+    case arweave_storage:put_chunk(Offset, Chunk, Packing, StoreID) of
+        {error, {missing_entropy, RewardAddr}} ->
+            case arweave_entropy:generate_chunk(Offset, RewardAddr) of
+                {error, _} = Error -> Error;
+                Entropy ->
+                    arweave_storage:put_chunk(Offset,
+                        {chunk_with_entropy, Chunk, Entropy}, Packing, StoreID)
+            end;
+        Result -> Result
     end.
 
 update_chunks_index(Args, UpdateFootprint, StoreID) ->
@@ -2198,13 +2033,19 @@ update_chunks_index2(Args, UpdateFootprint, StoreID) ->
     Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, Offset, ChunkSize},
     case put_chunk_metadata(AbsoluteEndOffset, StoreID, Metadata) of
         ok ->
-            StartOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
-            PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
-            case ar_sync_record:add(PaddedOffset, StartOffset, Packing, ar_data_sync, StoreID) of
+            StartOffset = arweave_constants:get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
+            PaddedOffset = arweave_constants:get_chunk_padded_offset(AbsoluteEndOffset),
+            case arweave_storage:add_sync_record(
+                PaddedOffset,
+                StartOffset,
+                Packing,
+                {ar_data_sync, byte},
+                StoreID
+            ) of
                 ok ->
                     case UpdateFootprint of
                         true ->
-                            case ar_footprint_record:add(PaddedOffset, Packing, StoreID) of
+                            case arweave_storage:add_footprint(PaddedOffset, Packing, StoreID) of
                                 ok ->
                                     ok;
                                 {error, Reason} ->
@@ -2229,84 +2070,60 @@ pick_missing_blocks([{H, WeaveSize, _} | CurrentBI], BlockTXPairs) ->
             {WeaveSize, lists:reverse(After)}
     end.
 
-process_invalid_fetched_chunk(Peer, Byte, State) ->
-    %% Not necessarily a malicious peer, it might happen
-    %% if the chunk is recent and from a different fork.
-    process_invalid_fetched_chunk(Peer, Byte, State, got_invalid_proof_from_peer, []).
-process_invalid_fetched_chunk(Peer, Byte, State, Event, ExtraLogs) ->
-    #data_sync_state{ weave_size = WeaveSize } = State,
-    arweave_metrics:counter_inc(sync_chunks_skipped, [Event]),
-    ?LOG_WARNING([{event, skipping_synced_chunk},
-                  {reason, Event}, {peer, arweave_util:format_peer(Peer)},
-                  {byte, Byte}, {weave_size, WeaveSize} | ExtraLogs]),
-    {noreply, State}.
-
-process_valid_fetched_chunk(ChunkArgs, Args, TaskRef, State) ->
-    #data_sync_state{ store_id = StoreID } = State,
-    DiskPoolThreshold = ar_disk_pool:get_threshold(),
-    {Packing, UnpackedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
-    {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot, Chunk, _ChunkID,
-     ChunkEndOffset, Peer, Byte} = Args,
-    case is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) of
+process_store_request(
+    Args,
+    {Client, _, _} = ReplyTo,
+    #data_sync_state{store_id = StoreID} = State
+) ->
+    case Client =:= none orelse is_process_alive(Client) of
         false ->
-            Reason = got_too_big_proof_from_peer,
-            arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
-            ?LOG_WARNING([{event, skipping_synced_chunk},
-                          {reason, Reason},
-                          {peer, arweave_util:format_peer(Peer)},
-                          {absolute_end_offset, AbsoluteEndOffset},
-                          {store_id, StoreID}]),
-            finish_fetched_chunk(StoreID, TaskRef),
-            {noreply, State};
+            {finished, {error, cancelled}, State};
         true ->
-            case ar_sync_record:is_recorded(Byte + 1, ar_data_sync, StoreID) of
-                {true, _} ->
-                    Reason = chunk_already_synced,
-                    arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
-                    ?LOG_DEBUG([{event, skipping_synced_chunk},
-                                {reason, Reason},
-                                {peer, arweave_util:format_peer(Peer)},
-                                {absolute_end_offset, AbsoluteEndOffset},
-                                {store_id, StoreID}]),
-                    %% The chunk has been synced by another job already.
-                    finish_fetched_chunk(StoreID, TaskRef),
-                    {noreply, State};
-                false ->
-                    true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
-                    case AbsoluteEndOffset >= DiskPoolThreshold of
-                        true ->
-                            ar_disk_pool:add_chunk(DataRoot, DataPath, UnpackedChunk,
-                                                   ChunkEndOffset - 1, TXSize, Peer),
-                            finish_fetched_chunk(StoreID, TaskRef),
-                            {noreply, State};
-                        false ->
-                            pack_and_store_chunk({DataRoot, AbsoluteEndOffset, TXPath, TXRoot,
-                                                  DataPath, Packing, ChunkEndOffset, ChunkSize, Chunk,
-                                    UnpackedChunk, none, none}, TaskRef, State)
-                    end
+            case is_disk_space_sufficient(StoreID) of
+                true ->
+                    pack_and_store_chunk(Args, ReplyTo, State);
+                _ ->
+                    retry_store_chunk(30000, Args, ReplyTo, State)
             end
     end.
 
-pack_and_store_chunk(Args = {_, AbsoluteEndOffset, _, _, _, _, _, _, _, _, _, _},
-        TaskRef, #data_sync_state{ store_id = StoreID,
-            footprint_limit = Limit } = State) ->
+%% @doc Finish the request or keep its cache reference for pending work.
+continue_store_request(ReplyTo, {finished, Result, State}) ->
+    finish_store_request(ReplyTo, Result),
+    State;
+continue_store_request(_ReplyTo, {pending, write, State}) ->
+    %% Enqueueing may finish this request and earlier queued requests.
+    %% Each write releases its own reference when the queue is drained.
+    process_store_chunk_queue(State);
+continue_store_request(_ReplyTo, {pending, _Stage, State}) ->
+    %% Packing jobs and retries keep the request in packing_map.
+    State.
+
+pack_and_store_chunk(
+    Args = {_, AbsoluteEndOffset, _, _, _, _, _, _, _, _, _, _},
+    ReplyTo,
+    #data_sync_state{
+        store_id = StoreID,
+        footprint_limit = Limit
+    } = State
+) ->
     case should_skip_chunk(AbsoluteEndOffset, Limit) of
         {true, Reason} ->
-            arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
-            ?LOG_DEBUG([{event, skipping_synced_chunk},
-                        {reason, Reason},
-                        {absolute_end_offset, AbsoluteEndOffset},
-                        {store_id, StoreID}]),
-            finish_fetched_chunk(StoreID, TaskRef),
-            {noreply, State};
+            ?LOG_DEBUG([
+                {event, skipping_synced_chunk},
+                {reason, Reason},
+                {absolute_end_offset, AbsoluteEndOffset},
+                {store_id, StoreID}
+            ]),
+            {finished, {skipped, Reason}, State};
         false ->
-            pack_and_store_chunk2(Args, TaskRef, State)
+            pack_and_store_chunk2(Args, ReplyTo, State)
     end.
 
 %% @doc Whether the module must not store the chunk: it is not yet well
 %% confirmed, or it lies past the footprints the module keeps.
 should_skip_chunk(AbsoluteEndOffset, FootprintLimit) ->
-    PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
+    PaddedOffset = arweave_constants:get_chunk_padded_offset(AbsoluteEndOffset),
     IsBeyondLimit = ar_footprint_limit:is_beyond(PaddedOffset, FootprintLimit),
     case {AbsoluteEndOffset > ar_disk_pool:get_threshold(), IsBeyondLimit} of
         {true, _} -> {true, chunk_is_above_disk_pool_threshold};
@@ -2314,11 +2131,14 @@ should_skip_chunk(AbsoluteEndOffset, FootprintLimit) ->
         {false, false} -> false
     end.
 
-pack_and_store_chunk2(Args, TaskRef, State) ->
-    {DataRoot, AbsoluteEndOffset, TXPath, TXRoot, DataPath, Packing, Offset, ChunkSize, Chunk,
-     UnpackedChunk, OriginStoreID, OriginChunkDataKey} = Args,
-    #data_sync_state{ store_id = StoreID, packing_map = PackingMap } = State,
-    RequiredPacking = get_required_chunk_packing(AbsoluteEndOffset, ChunkSize, State),
+pack_and_store_chunk2(Args, ReplyTo, State) ->
+    {DataRoot, AbsoluteEndOffset, TXPath, TXRoot, DataPath, Packing, Offset,
+        ChunkSize, Chunk, UnpackedChunk, OriginStoreID,
+        OriginChunkDataKey} = Args,
+    #data_sync_state{store_id = StoreID, packing_map = PackingMap} = State,
+    RequiredPacking = get_required_chunk_packing(
+        AbsoluteEndOffset, ChunkSize, State
+    ),
     PackingStatus =
         case {RequiredPacking, Packing} of
             {Packing, Packing} ->
@@ -2328,101 +2148,164 @@ pack_and_store_chunk2(Args, TaskRef, State) ->
         end,
     case PackingStatus of
         {ready, {StoredPacking, StoredChunk}} ->
-            ChunkArgs = {StoredPacking, StoredChunk, AbsoluteEndOffset, TXRoot, ChunkSize},
-            {noreply, store_chunk(ChunkArgs, {StoredPacking, DataPath, Offset, DataRoot,
-                    TXPath, OriginStoreID, OriginChunkDataKey}, TaskRef, State)};
+            ChunkArgs =
+                {StoredPacking, StoredChunk, AbsoluteEndOffset, TXRoot,
+                    ChunkSize},
+            enqueue_chunk(
+                ChunkArgs,
+                {StoredPacking, DataPath, Offset, DataRoot, TXPath,
+                    OriginStoreID, OriginChunkDataKey},
+                ReplyTo,
+                State
+            );
         {need_packing, RequiredPacking} ->
-            case maps:is_key({AbsoluteEndOffset, RequiredPacking}, PackingMap) of
+            case
+                maps:is_key({AbsoluteEndOffset, RequiredPacking}, PackingMap)
+            of
                 true ->
                     Reason = chunk_already_being_packed,
-                    arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
-                    ?LOG_DEBUG([{event, skipping_synced_chunk},
-                                {reason, Reason},
-                                {absolute_end_offset, AbsoluteEndOffset},
-                                {store_id, StoreID}]),
-                    finish_fetched_chunk(StoreID, TaskRef),
-                    {noreply, State};
+                    ?LOG_DEBUG([
+                        {event, skipping_synced_chunk},
+                        {reason, Reason},
+                        {absolute_end_offset, AbsoluteEndOffset},
+                        {store_id, StoreID}
+                    ]),
+                    {finished, {skipped, Reason}, State};
                 false ->
-                    case ar_packing_server:is_buffer_full() of
-                        true ->
-                            arweave_util:cast_after(1000, self(),
-                                {pack_and_store_chunk, Args, TaskRef}),
-                            {noreply, State};
-                        false ->
-                            {Packing2, Chunk2} =
-                                case UnpackedChunk of
-                                    none ->
-                                        {Packing, Chunk};
-                                    _ ->
-                                        {unpacked, UnpackedChunk}
-                                end,
-                            ar_packing_server:request_repack({AbsoluteEndOffset, RequiredPacking},
-                                                             {RequiredPacking, Packing2, Chunk2, AbsoluteEndOffset,
-                                                              TXRoot, ChunkSize}),
-                            PackingArgs = {pack_chunk, {RequiredPacking, DataPath,
-                                                        Offset, DataRoot, TXPath, OriginStoreID,
-                                    OriginChunkDataKey}, TaskRef},
-                            {noreply, State#data_sync_state{
-                                        packing_map = PackingMap#{
-                                                                  {AbsoluteEndOffset, RequiredPacking} => PackingArgs }}}
+                    {_, _, CacheRef} = ReplyTo,
+                    {Packing2, Chunk2} =
+                        case UnpackedChunk of
+                            none -> {Packing, Chunk};
+                            _ -> {unpacked, UnpackedChunk}
+                        end,
+                    Ref = make_ref(),
+                    Key = {AbsoluteEndOffset, RequiredPacking},
+                    Result = ar_packing_server:request_repack(
+                        {AbsoluteEndOffset, RequiredPacking, Ref},
+                        self(),
+                        {RequiredPacking, Packing2, Chunk2, AbsoluteEndOffset,
+                            TXRoot, ChunkSize},
+                        CacheRef
+                    ),
+                    case Result of
+                        ok ->
+                            PackingArgs =
+                                {pack_chunk,
+                                    {Ref,
+                                        {RequiredPacking, DataPath, Offset,
+                                            DataRoot, TXPath, OriginStoreID,
+                                            OriginChunkDataKey}},
+                                    ReplyTo},
+                            {pending, packing, State#data_sync_state{
+                                packing_map = PackingMap#{Key => PackingArgs}
+                            }};
+                        busy ->
+                            retry_store_chunk(1000, Args, ReplyTo, State);
+                        {error, Reason} ->
+                            {finished, {error, Reason}, State}
                     end
             end
     end.
+
+%% @doc Keep retry payloads in the cancellable state, not in timer messages.
+retry_store_chunk(Delay, Args, ReplyTo, State) ->
+    #data_sync_state{packing_map = PackingMap} = State,
+    Ref = make_ref(),
+    arweave_util:cast_after(Delay, self(), {retry_store_chunk, Ref}),
+    {pending, retry, State#data_sync_state{
+        packing_map =
+            PackingMap#{Ref => {store_retry, Args, ReplyTo}}
+    }}.
+
+cancel_packing_requests(Client, PackingMap) ->
+    %% Packing jobs and delayed storage retries share the same reply context.
+    maps:filter(
+        fun(_Key, {_Type, _Args, ReplyTo}) ->
+            not cancel_store_request(Client, ReplyTo)
+        end,
+        PackingMap
+    ).
+
+cancel_queued_chunks(Client, Queue) ->
+    Entries = gb_sets:to_list(Queue),
+    Remaining = lists:filter(
+        fun({_Offset, _Timestamp, _Ref, _ChunkArgs, _Args, ReplyTo}) ->
+            not cancel_store_request(Client, ReplyTo)
+        end,
+        Entries
+    ),
+    gb_sets:from_list(Remaining).
+
+%% @doc Cancel a matching request and report whether it was cancelled.
+cancel_store_request(Client, {Client, _Ref, _CacheRef} = ReplyTo) ->
+    finish_store_request(ReplyTo, {error, cancelled}),
+    true;
+cancel_store_request(_Client, _ReplyTo) ->
+    false.
 
 %% @doc Write queued chunks on disk in the ascending offset order. Pop the
 %% smallest-offset chunk while the queue holds at least
 %% ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD chunks or the oldest entry has been
 %% queued for longer than ?STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD.
 process_store_chunk_queue(State) ->
-    #data_sync_state{ store_chunk_queue = Q } = State,
+    #data_sync_state{store_chunk_queue = Q} = State,
     maybe
         false ?= gb_sets:is_empty(Q),
-    Timestamp = element(2, gb_sets:smallest(Q)),
-    Now = os:system_time(millisecond),
-        true ?= gb_sets:size(Q) >= ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
-            orelse Now - Timestamp > ?STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD,
-        {{_Offset, _Timestamp, _Ref, ChunkArgs, Args, TaskRef}, Q2} =
+        Timestamp = element(2, gb_sets:smallest(Q)),
+        Now = os:system_time(millisecond),
+        true ?= gb_sets:size(Q) >= ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD orelse
+            Now - Timestamp > ?STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD,
+        {{_Offset, _Timestamp, _Ref, ChunkArgs, Args, ReplyTo}, Q2} =
             gb_sets:take_smallest(Q),
-            store_chunk2(ChunkArgs, Args, State),
-        finish_fetched_chunk(State#data_sync_state.store_id, TaskRef),
-        process_store_chunk_queue(State#data_sync_state{ store_chunk_queue = Q2 })
+        Result = store_chunk2(ChunkArgs, Args, State),
+        case Result of
+            stored ->
+                ar_chunk_cache:record_completed(
+                    State#data_sync_state.store_id
+                );
+            _ ->
+                ok
+        end,
+        finish_store_request(ReplyTo, Result),
+        process_store_chunk_queue(State#data_sync_state{store_chunk_queue = Q2})
     else
         _ ->
             State
     end.
 
-store_chunk(ChunkArgs, Args, TaskRef, State) ->
+enqueue_chunk(ChunkArgs, Args, ReplyTo, State) ->
     %% Let at least N chunks stack up, then write them in the ascending order,
     %% to reduce out-of-order disk writes causing fragmentation.
-    #data_sync_state{ store_chunk_queue = Q } = State,
+    #data_sync_state{store_chunk_queue = Q} = State,
     Now = os:system_time(millisecond),
     Offset = element(3, ChunkArgs),
-    Q2 = gb_sets:add_element({Offset, Now, make_ref(), ChunkArgs, Args, TaskRef}, Q),
-    process_store_chunk_queue(State#data_sync_state{ store_chunk_queue = Q2 }).
+    Q2 = gb_sets:add_element(
+        {Offset, Now, make_ref(), ChunkArgs, Args, ReplyTo}, Q
+    ),
+    {pending, write, State#data_sync_state{store_chunk_queue = Q2}}.
 
-%% @doc Write the chunk with its metadata and records. Fire-and-forget: always
-%% returns ok — failures are logged, not propagated (the flush loop in
-%% process_store_chunk_queue/1 discards the result).
+%% @doc Write the chunk and records, returning the terminal storage outcome.
 store_chunk2(ChunkArgs, Args, State) ->
     #data_sync_state{ store_id = StoreID } = State,
     {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
     {_Packing, DataPath, Offset, DataRoot, TXPath, OriginStoreID, OriginChunkDataKey} = Args,
-    PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
-    StartOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
+    PaddedOffset = arweave_constants:get_chunk_padded_offset(AbsoluteEndOffset),
+    StartOffset = arweave_constants:get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
     %% This will fail if DataPath is not a string - which is fine as it serves as a sanity
     %% check that store_chunk2 is called with valid arguments.
     DataPathHash = crypto:hash(sha256, DataPath),
-    ShouldStoreInChunkStorage = ar_chunk_storage:is_storage_supported(AbsoluteEndOffset,
+    ShouldStoreInChunkStorage = arweave_storage:is_storage_supported(AbsoluteEndOffset,
                                                                       ChunkSize, Packing),
+    #store_info{packing = StorePacking} = arweave_storage:store_info(StoreID),
     CleanRecord =
-        case {ShouldStoreInChunkStorage, ar_storage_module:get_packing(StoreID)} of
+        case {ShouldStoreInChunkStorage, StorePacking} of
             {true, {replica_2_9, _}} ->
                 %% The 2.9 chunk storage is write-once.
                 ok;
             _ ->
-                case ar_footprint_record:delete(PaddedOffset, StoreID) of
+                case arweave_storage:delete_footprint(PaddedOffset, StoreID) of
                     ok ->
-                        ar_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync, StoreID);
+                        arweave_storage:delete_sync_record(PaddedOffset, StartOffset, {ar_data_sync, byte}, StoreID);
                     Error ->
                         Error
                 end
@@ -2431,7 +2314,7 @@ store_chunk2(ChunkArgs, Args, State) ->
         {error, Reason} ->
             log_failed_to_store_chunk(Reason, AbsoluteEndOffset, Offset, DataRoot, DataPathHash,
                                       StoreID),
-            ok;
+            {error, Reason};
         ok ->
             ChunkDataKey =
                 case StoreID == OriginStoreID of
@@ -2451,16 +2334,23 @@ store_chunk2(ChunkArgs, Args, State) ->
             ProcessAlreadyStored =
                 case StoreIndex of
                     already_stored ->
-                        case ar_sync_record:is_recorded(PaddedOffset, Packing, ar_data_sync, StoreID) of
+                        case arweave_storage:is_recorded(
+                            PaddedOffset,
+                            Packing,
+                            {ar_data_sync, byte},
+                            StoreID
+                        ) of
                             false ->
                                 do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
                                                                StoreID, undefined,
                                                                chunk_already_stored_but_not_in_sync_record});
                             true ->
-                                case ar_footprint_record:is_recorded(PaddedOffset, StoreID) of
+                                case arweave_storage:is_recorded(
+                arweave_storage:get_footprint_offset(PaddedOffset), any_packing,
+                {ar_data_sync, footprint}, StoreID) of
                                     false ->
                                         %% Repair the broken footprint record.
-                                        ar_footprint_record:add(PaddedOffset, Packing, StoreID);
+                                        arweave_storage:add_footprint(PaddedOffset, Packing, StoreID);
                                     true ->
                                         ok
                                 end
@@ -2474,18 +2364,18 @@ store_chunk2(ChunkArgs, Args, State) ->
                     case update_chunks_index({AbsoluteEndOffset, Offset, ChunkDataKey, TXRoot,
                             DataRoot, TXPath, ChunkSize, Packing2}, true, StoreID) of
                         ok ->
-                            ok;
+                            stored;
                         {error, Reason} ->
                             log_failed_to_store_chunk(Reason, AbsoluteEndOffset, Offset, DataRoot,
                                                       DataPathHash, StoreID),
-                            ok
+                            {error, Reason}
                     end;
                 already_stored ->
-                    ok;
+                    {skipped, already_stored};
                 {error, Reason} ->
                     log_failed_to_store_chunk(Reason, AbsoluteEndOffset, Offset, DataRoot,
                                               DataPathHash, StoreID),
-                    ok
+                    {error, Reason}
             end
     end.
 
@@ -2519,12 +2409,14 @@ get_required_chunk_packing(_Offset, _ChunkSize, #data_sync_state{ store_id = ?DE
 get_required_chunk_packing(Offset, ChunkSize, State) ->
     #data_sync_state{ store_id = StoreID } = State,
     IsEarlySmallChunk =
-        Offset =< ar_block:strict_data_split_threshold() andalso ChunkSize < ?DATA_CHUNK_SIZE,
+        Offset =< arweave_constants:strict_data_split_threshold() andalso ChunkSize < ?DATA_CHUNK_SIZE,
     case IsEarlySmallChunk of
         true ->
             unpacked;
         false ->
-            case ar_storage_module:get_packing(StoreID) of
+            #store_info{packing = StorePacking} =
+                arweave_storage:store_info(StoreID),
+            case StorePacking of
                 {replica_2_9, _Addr} ->
                     unpacked_padded;
                 Packing ->
@@ -2536,18 +2428,6 @@ get_required_chunk_packing(Offset, ChunkSize, State) ->
 get_merkle_rebase_threshold() ->
     ets:lookup_element(node_state, merkle_rebase_support_threshold, 2, infinity).
 
-
-process_unpacked_chunk(ChunkArgs, Args, TaskRef, State) ->
-    {_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot, _Chunk, ChunkID,
-     _ChunkEndOffset, Peer, Byte} = Args,
-    {_Packing, Chunk, _AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
-    case validate_chunk_id_size(Chunk, ChunkID, ChunkSize) of
-        false ->
-            finish_fetched_chunk(State#data_sync_state.store_id, TaskRef),
-            process_invalid_fetched_chunk(Peer, Byte, State);
-        true ->
-            process_valid_fetched_chunk(ChunkArgs, Args, TaskRef, State)
-    end.
 
 validate_chunk_id_size(Chunk, ChunkID, ChunkSize) ->
     case ar_tx:generate_chunk_id(Chunk) == ChunkID of
@@ -2565,14 +2445,6 @@ log_sufficient_disk_space(StoreID) ->
 log_insufficient_disk_space(StoreID) ->
     ?LOG_INFO([{event, storage_module_stopped_syncing},
                {reason, insufficient_disk_space}, {storage_module, StoreID}]).
-
-record_chunk_cache_size_metric() ->
-    arweave_metrics:gauge_set(chunk_cache_size, ar_sync_chunk_cache:size()),
-    lists:foreach(
-        fun({StoreID, StoreSize}) ->
-            arweave_metrics:gauge_set(chunk_cache_size_by_store, [StoreID], StoreSize)
-        end,
-        ar_sync_chunk_cache:sizes()).
 
 maybe_run_footprint_record_initialization(State) ->
     #data_sync_state{ store_id = StoreID, range_start = RangeStart,
@@ -2618,7 +2490,14 @@ initialize_footprint_record(Cursor, State) ->
       } = State,
     BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
 
-    case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, ar_data_sync, StoreID) of
+    case arweave_storage:get_next_interval(
+        synced,
+        Cursor,
+        RangeEnd,
+        any_packing,
+        {ar_data_sync, byte},
+        StoreID
+    ) of
         not_found ->
             ok = ar_kv:put(migration_db(StoreID),
                            ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
@@ -2646,11 +2525,16 @@ initialize_footprint_record(Cursor, State) ->
 initialize_footprint_range(Start, End, _StoreID) when Start >= End ->
     ok;
 initialize_footprint_range(Start, End, StoreID) ->
-    case ar_sync_record:is_recorded(Start + 1, ar_data_sync, StoreID) of
+    case arweave_storage:is_recorded(
+        Start + 1,
+        any_packing,
+        {ar_data_sync, byte},
+        StoreID
+    ) of
         {true, unpacked_padded} ->
             ok;
         {true, Packing} ->
-            ar_footprint_record:add(Start + 1, Packing, StoreID);
+            arweave_storage:add_footprint(Start + 1, Packing, StoreID);
         _ ->
             %% false (the chunk was removed concurrently) or true without
             %% a packing (not expected for ar_data_sync) — nothing to register.
@@ -2692,6 +2576,8 @@ footprint_migration_chunks(_Offset, _RangeStart) ->
     0.
 
 -ifdef(AR_TEST).
+
+-include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
 %%% Tests.
@@ -2740,32 +2626,5 @@ with_mocked_chunks_index(CurrentKey, TestFun) ->
         [{ar_kv, get, fun(_Name, _Key) -> Reply end}],
         TestFun).
 
-default_chunk_cache_size_limit_test() ->
-    %% The fixed default binds well under the memory cap.
-    ?assertEqual(?CHUNK_CACHE_DEFAULT_CHUNKS,
-        default_chunk_cache_size_limit(64 * ?GiB)),
-    %% Small box: 10% of 2 GiB works out below MIN, so MIN wins.
-    ?assertEqual(?CHUNK_CACHE_MIN_CHUNKS,
-        default_chunk_cache_size_limit(2 * ?GiB)),
-    %% Fallback total memory (memsup unavailable) also lands at MIN.
-    ?assertEqual(?CHUNK_CACHE_MIN_CHUNKS,
-        default_chunk_cache_size_limit(?CHUNK_CACHE_FALLBACK_TOTAL_MEMORY)).
-
-%% The 90/10 sync-memory carve-out: interval cache gets 10% (floored at
-%% 64 MiB), the chunk cache the remainder (floored at MIN chunks).
-split_sync_memory_test() ->
-    %% 4 GiB budget (16000 chunks): 10% = 410 MiB interval, remainder chunks.
-    {Chunks1, Interval1} = split_sync_memory(16000),
-    ?assertEqual(round(16000 * ?DATA_CHUNK_SIZE * 0.1), Interval1),
-    ?assertEqual((16000 * ?DATA_CHUNK_SIZE - Interval1) div ?DATA_CHUNK_SIZE, Chunks1),
-    %% Small budget (512 MiB = 2000 chunks): 10% = 51 MiB < floor, so the
-    %% 64 MiB floor rules and the chunk cache absorbs the squeeze.
-    {Chunks2, Interval2} = split_sync_memory(2000),
-    ?assertEqual(64 * ?MiB, Interval2),
-    ?assertEqual(2000 - 256, Chunks2),
-    %% Degenerate budget: both floors hold (total may be exceeded — documented).
-    {Chunks3, Interval3} = split_sync_memory(100),
-    ?assertEqual(64 * ?MiB, Interval3),
-    ?assertEqual(?CHUNK_CACHE_MIN_CHUNKS, Chunks3).
 
 -endif.

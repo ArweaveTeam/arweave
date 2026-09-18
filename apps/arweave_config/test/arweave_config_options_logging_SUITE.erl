@@ -58,7 +58,7 @@ debug_toggle_updates_store_and_handler(_Config) ->
 with_test_config_restores_debug_side_effect(_Config) ->
     ?assertEqual(false, arweave_config:get([debug])),
     ?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ?assertEqual(ok, arweave_config:set([debug], true)),
         ?assertMatch({ok, _}, logger:get_handler_config(arweave_debug))
     end),
@@ -76,11 +76,11 @@ logging_path_coerces_to_list(_Config) ->
 with_test_config_restores_logging_path(_Config) ->
     lists:foreach(fun(OriginalPath) ->
         ok = arweave_config:set([logging, path], OriginalPath),
-        arweave_config:with_test_config(fun() ->
+        arweave_config:internal_with_test_config(fun() ->
             ok = arweave_config:set([logging, path], <<"/tmp/changed-logs">>)
         end),
         ?assertEqual(OriginalPath, arweave_config:get([logging, path])),
-        ?assertError(test_failure, arweave_config:with_test_config(fun() ->
+        ?assertError(test_failure, arweave_config:internal_with_test_config(fun() ->
             ok = arweave_config:set([logging, path], <<"/tmp/changed-logs">>),
             error(test_failure)
         end)),

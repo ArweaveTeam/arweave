@@ -4,7 +4,7 @@
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_constants/include/arweave_constants.hrl").
 
 suite() ->
     [{timetrap, {seconds, 60}}].
@@ -42,13 +42,13 @@ all() ->
 %%====================================================================
 
 walker_passes_on_clean_config(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ?assertEqual(ok, arweave_config_validate:run())
     end),
     ok.
 
 walker_returns_first_error(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:set([verify, mode], purge),
         ok = arweave_config:set([mining, enabled], true),
         case arweave_config_validate:run() of
@@ -60,7 +60,7 @@ walker_returns_first_error(_Config) ->
     ok.
 
 walker_catches_exceptions(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Target = arweave_config_options_misc,
         ok = meck:new(Target, [passthrough]),
         try
@@ -74,7 +74,7 @@ walker_catches_exceptions(_Config) ->
     ok.
 
 validator_cm_requires_secret(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:set([cm, enabled], true),
         case arweave_config_validate:run() of
             {error, _} -> ok;
@@ -85,7 +85,7 @@ validator_cm_requires_secret(_Config) ->
     ok.
 
 validator_storage_modules_dedup(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Module = #{
             partition => 0,
             packing_format => unpacked,
@@ -103,7 +103,7 @@ validator_storage_modules_dedup(_Config) ->
 %% An arbitrary (unaligned) byte range is valid and converts to the
 %% runtime {RangeStart, RangeEnd, Packing} tuple as-is.
 validator_storage_modules_arbitrary_range(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Module = #{
             range_start => 3_000_000_000_000,
             range_end => 5_000_000_000_000,
@@ -132,7 +132,7 @@ validator_storage_modules_arbitrary_range(_Config) ->
     ok.
 
 validator_storage_modules_rejects_empty_range(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Module = #{
             range_start => 1000,
             range_end => 1000,
@@ -149,7 +149,7 @@ validator_storage_modules_rejects_empty_range(_Config) ->
     ok.
 
 validator_storage_modules_rejects_partition_and_range(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Module = #{
             partition => 0,
             range_start => 0,
@@ -169,7 +169,7 @@ validator_storage_modules_rejects_partition_and_range(_Config) ->
 %% Same archetype (replica.2.9 -> replica.2.9) on every module, but with different source
 %% and target addresses per module - this must be allowed.
 validator_repack_allows_differing_addresses(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         AddrA = crypto:strong_rand_bytes(32),
         AddrB = crypto:strong_rand_bytes(32),
         AddrC = crypto:strong_rand_bytes(32),
@@ -191,7 +191,7 @@ validator_repack_allows_differing_addresses(_Config) ->
 
 %% Mixing archetypes (replica.2.9 -> unpacked vs unpacked -> replica.2.9) must be rejected.
 validator_repack_rejects_mixed_archetypes(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         AddrA = crypto:strong_rand_bytes(32),
         AddrB = crypto:strong_rand_bytes(32),
         Module0 = #{
@@ -214,7 +214,7 @@ validator_repack_rejects_mixed_archetypes(_Config) ->
     ok.
 
 validator_storage_modules_footprint_limit(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Addr = crypto:strong_rand_bytes(32),
         P = ?PARTITION_SIZE,
         Limited = #{
@@ -254,7 +254,7 @@ validator_storage_modules_footprint_limit(_Config) ->
 %% The test profile is not a testnet build, so any testnet setting is
 %% rejected; the retarget-height rule only applies to testnet builds.
 validator_testnet_options_need_testnet_build(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ?assertEqual(ok, arweave_config_validate:run()),
         ok = arweave_config:set([testnet, fork_height], 1710010),
         ?assertMatch({error, _}, arweave_config_validate:run()),
@@ -266,7 +266,7 @@ validator_testnet_options_need_testnet_build(_Config) ->
     ok.
 
 validator_repack_modules_footprint_limit(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Addr = crypto:strong_rand_bytes(32),
         P = ?PARTITION_SIZE,
         Repack = #{
@@ -293,4 +293,3 @@ validator_repack_modules_footprint_limit(_Config) ->
         ?assertMatch({error, _}, arweave_config_validate:run())
     end),
     ok.
-

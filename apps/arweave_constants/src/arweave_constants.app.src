@@ -1,0 +1,8 @@
+{application, arweave_constants, [
+    {description, "Arweave protocol constants"},
+    {vsn, "2.9.7-alpha1"},
+    {applications, [kernel, stdlib]},
+    {modules, []},
+    {registered, []},
+    {env, []}
+]}.

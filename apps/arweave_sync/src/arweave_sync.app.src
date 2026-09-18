@@ -1,0 +1,18 @@
+{application, arweave_sync, [
+    {description, "Arweave network chunk synchronization"},
+    {vsn, "2.9.7-alpha1"},
+    {mod, {arweave_sync, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        arweave_constants,
+        os_mon,
+        arweave_config,
+        arweave_metrics,
+        arweave_util,
+        arweave_storage
+    ]},
+    {modules, []},
+    {registered, []},
+    {env, []}
+]}.

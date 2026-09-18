@@ -4,14 +4,16 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -import(ar_test_node, [test_with_all_nodes_mocked/2]).
 
 syncs_after_joining_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_5, fun() -> 0 end}],
-        fun test_syncs_after_joining/0, ?TEST_NODE_TIMEOUT).
+    ar_test_node:test_with_all_nodes_mocked(
+        [{arweave_constants, height_2_5, fun() -> 0 end}],
+        fun test_syncs_after_joining/0,
+        ?TEST_NODE_TIMEOUT
+    ).
 
 test_syncs_after_joining() ->
     test_syncs_after_joining(original_split).

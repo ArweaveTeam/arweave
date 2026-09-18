@@ -59,7 +59,7 @@ loaded_option_values(ExcludedKeys) ->
             not lists:member(Key, ExcludedKeys)]).
 
 expected_loaded_values(ConfigLeafMap, Keys) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:load(ConfigLeafMap),
         maps:from_list([{Key, arweave_config:get(Key)} || Key <- Keys])
     end).
@@ -107,6 +107,8 @@ assert_legacy_json_values(ExpectedStorageModules) ->
     ?assertEqual(17, arweave_config:get([mining, hashing_threads])),
     ?assertEqual(10000000, arweave_config:get([sync, max_download_rate])),
     ?assertEqual(true, arweave_config:get([sync, local_peers_only])),
+    %% The legacy fixture's 10,000 data-cache chunks become 2,500 MiB.
+    ?assertEqual(2500, arweave_config:get([packing, cache_size])),
     ?assertEqual(false, arweave_config:get([join, auto])),
     ?assertEqual(9, arweave_config:get([join, workers])),
     %% The fixture's trusted-peer list also holds a hostname, whose
@@ -158,13 +160,13 @@ assert_legacy_json_shaped_values() ->
 %% current notation without a directory rename - i.e. the
 %% partition-sized ones. This is the module set the converter accepts.
 partition_sized_legacy_storage_modules() ->
-    PartitionSize = ar_block:partition_size(),
+    PartitionSize = arweave_constants:partition_size(),
     [Module || {Start, End, _Packing} = Module <- legacy_storage_modules(),
         End - Start =:= PartitionSize].
 
 %% The legacy fixture's storage modules, as runtime range tuples.
 legacy_storage_modules() ->
-    PartitionSize = ar_block:partition_size(),
+    PartitionSize = arweave_constants:partition_size(),
     MiningAddr = legacy_mining_addr(),
     [
         {0, PartitionSize, unpacked},

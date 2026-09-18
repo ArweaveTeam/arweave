@@ -185,7 +185,7 @@ test_does_not_store_small_chunks_split({Title, DataSize, FirstSize, SecondSize, 
     %% In practice the chunks are above the strict data split threshold so those
     %% which do not pass strict validation will not be stored.
     timer:sleep(2000),
-    GenesisOffset = ar_block:strict_data_split_threshold(),
+    GenesisOffset = arweave_constants:strict_data_split_threshold(),
     lists:foreach(
         fun ({Offset, 404}) ->
                 ?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
@@ -362,7 +362,7 @@ test_accepts_chunks(Split) ->
     ?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
     [{Offset, FirstProof}, {_, SecondProof}, {_, ThirdProof}] =
             ar_test_data_sync:build_proofs(TX, Chunks, [TX], 0, 0),
-    EndOffset = Offset + ar_block:strict_data_split_threshold(),
+    EndOffset = Offset + arweave_constants:strict_data_split_threshold(),
     %% Post the third proof to the disk pool.
     ?assertMatch(
         {ok, {{<<"200">>, _}, _, _, _, _}},
@@ -396,7 +396,7 @@ test_accepts_chunks(Split) ->
     ?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, ar_test_node:get_chunk(main, EndOffset + 1)),
     TXSize = byte_size(binary:list_to_bin(Chunks)),
     ExpectedOffsetInfo = ar_serialize:jsonify(#{
-        offset => integer_to_binary(TXSize + ar_block:strict_data_split_threshold()),
+        offset => integer_to_binary(TXSize + arweave_constants:strict_data_split_threshold()),
         size => integer_to_binary(TXSize)
     }),
     ?assertMatch({ok, {{<<"200">>, _}, _, ExpectedOffsetInfo, _, _}},
@@ -412,7 +412,7 @@ test_accepts_chunks(Split) ->
         chunk => maps:get(chunk, SecondProof)
     },
     SecondChunk = arweave_util:decode(maps:get(chunk, SecondProof)),
-    SecondChunkOffset = ar_block:strict_data_split_threshold() + FirstChunkSize + byte_size(SecondChunk),
+    SecondChunkOffset = arweave_constants:strict_data_split_threshold() + FirstChunkSize + byte_size(SecondChunk),
     ar_test_data_sync:wait_until_syncs_chunk(SecondChunkOffset, ExpectedSecondProof),
     ok = ar_test_await:http_tx_data_matches(main, TX#tx.id,
         arweave_util:encode(binary:list_to_bin(Chunks))),

@@ -7,7 +7,7 @@
 
 v1_transactions_after_2_0_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            [{arweave_constants, height_2_9_6, fun() -> infinity end}],
             fun test_v1_transactions_after_2_0/0, 420).
 
 test_v1_transactions_after_2_0() ->

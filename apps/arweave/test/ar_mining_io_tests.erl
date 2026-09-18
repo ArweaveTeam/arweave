@@ -2,11 +2,10 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(WEAVE_SIZE, trunc(2.5 * ar_block:partition_size())).
+-define(WEAVE_SIZE, trunc(2.5 * arweave_constants:partition_size())).
 
 chunks_read(_Worker, WhichChunk, Candidate, RangeStart, ChunkOffsets) ->
     ets:insert(?MODULE, {WhichChunk, Candidate, RangeStart, ChunkOffsets}).
@@ -20,7 +19,7 @@ setup_all() ->
     ar_test_node:start(B0, RewardAddr, #{[storage_modules] => StorageModules}),
     {Setup, Cleanup} = ar_test_node:mock_all_nodes([
         {ar_mining_worker, chunks_read, fun chunks_read/5},
-        {ar_block, partition_size, fun() -> 8 * 262144 end}
+        {arweave_constants, partition_size, fun() -> 8 * 262144 end}
     ]),
     Functions = Setup(),
     {Cleanup, Functions}.
@@ -68,19 +67,19 @@ test_read_recall_range() ->
         {?DATA_CHUNK_SIZE*3, Chunk3}]}]),
 
     ?assertEqual(true, ar_mining_io:read_recall_range(chunk2, self(), Candidate,
-        ar_block:partition_size() - ?DATA_CHUNK_SIZE)),
+        arweave_constants:partition_size() - ?DATA_CHUNK_SIZE)),
     wait_for_io(1),
     [Chunk4, Chunk5] = get_recall_chunks(),
-    assert_chunks_read([{chunk2, Candidate, ar_block:partition_size() - ?DATA_CHUNK_SIZE, [
-        {ar_block:partition_size(), Chunk4},
-        {ar_block:partition_size() + ?DATA_CHUNK_SIZE, Chunk5}]}]),
+    assert_chunks_read([{chunk2, Candidate, arweave_constants:partition_size() - ?DATA_CHUNK_SIZE, [
+        {arweave_constants:partition_size(), Chunk4},
+        {arweave_constants:partition_size() + ?DATA_CHUNK_SIZE, Chunk5}]}]),
 
-    ?assertEqual(true, ar_mining_io:read_recall_range(chunk2, self(), Candidate, ar_block:partition_size())),
+    ?assertEqual(true, ar_mining_io:read_recall_range(chunk2, self(), Candidate, arweave_constants:partition_size())),
     wait_for_io(1),
     [Chunk5, Chunk6] = get_recall_chunks(),
-    assert_chunks_read([{chunk2, Candidate, ar_block:partition_size(), [
-        {ar_block:partition_size() + ?DATA_CHUNK_SIZE, Chunk5},
-        {ar_block:partition_size() + (2*?DATA_CHUNK_SIZE), Chunk6}]}]),
+    assert_chunks_read([{chunk2, Candidate, arweave_constants:partition_size(), [
+        {arweave_constants:partition_size() + ?DATA_CHUNK_SIZE, Chunk5},
+        {arweave_constants:partition_size() + (2*?DATA_CHUNK_SIZE), Chunk6}]}]),
 
     ?assertEqual(true, ar_mining_io:read_recall_range(chunk1, self(), Candidate,
         ?WEAVE_SIZE - ?DATA_CHUNK_SIZE)),
@@ -98,26 +97,26 @@ test_partitions() ->
     ar_mining_io:set_largest_seen_upper_bound(0),
     ?assertEqual([], ar_mining_io:get_partitions()),
 
-    ar_mining_io:set_largest_seen_upper_bound(ar_block:partition_size()),
+    ar_mining_io:set_largest_seen_upper_bound(arweave_constants:partition_size()),
     ?assertEqual([], ar_mining_io:get_partitions(0)),
     ?assertEqual([
             {0, MiningAddress, 0}],
         ar_mining_io:get_partitions()),
 
-    ar_mining_io:set_largest_seen_upper_bound(trunc(2.5 * ar_block:partition_size())),
+    ar_mining_io:set_largest_seen_upper_bound(trunc(2.5 * arweave_constants:partition_size())),
     ?assertEqual([
             {0, MiningAddress, 0}],
-        ar_mining_io:get_partitions(ar_block:partition_size())),
+        ar_mining_io:get_partitions(arweave_constants:partition_size())),
     ?assertEqual([
             {0, MiningAddress, 0},
             {1, MiningAddress, 0}],
         ar_mining_io:get_partitions()),
 
-    ar_mining_io:set_largest_seen_upper_bound(trunc(5 * ar_block:partition_size())),
+    ar_mining_io:set_largest_seen_upper_bound(trunc(5 * arweave_constants:partition_size())),
     ?assertEqual([
             {0, MiningAddress, 0},
             {1, MiningAddress, 0}],
-        ar_mining_io:get_partitions(trunc(2.5 * ar_block:partition_size()))),
+        ar_mining_io:get_partitions(trunc(2.5 * arweave_constants:partition_size()))),
     ?assertEqual([
             {0, MiningAddress, 0},
             {1, MiningAddress, 0},
@@ -131,11 +130,11 @@ test_partitions() ->
             {2, MiningAddress, 0},
             {3, MiningAddress, 0},
             {4, MiningAddress, 0}],
-        ar_mining_io:get_partitions(trunc(5 * ar_block:partition_size()))).
+        ar_mining_io:get_partitions(trunc(5 * arweave_constants:partition_size()))).
 
 get_minable_storge_modules_test() ->
     Addr = arweave_config:get([mining, address]),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Input = [
             {0, 100, {spora_2_6, Addr}},
             {0, 200, unpacked},
@@ -145,7 +144,7 @@ get_minable_storge_modules_test() ->
             {0, 100, {spora_2_6, Addr}},
             {0, 300, {replica_2_9, Addr}}
         ],
-        ok = arweave_config:force_config(#{
+        ok = arweave_config:internal_force_config(#{
             [storage_modules] => Input
         }),
         ?assertEqual(Expected, ar_mining_io:get_minable_storage_modules())
@@ -153,14 +152,14 @@ get_minable_storge_modules_test() ->
 
 get_packing_test() ->
     Addr = arweave_config:get([mining, address]),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Input = [
             {0, 100, unpacked},
             {0, 200, {spora_2_6, Addr}},
             {0, 300, {replica_2_9, Addr}}
         ],
         Expected = {spora_2_6, Addr},
-        ok = arweave_config:force_config(#{
+        ok = arweave_config:internal_force_config(#{
             [storage_modules] => Input
         }),
         ?assertEqual(Expected, ar_mining_io:get_packing())

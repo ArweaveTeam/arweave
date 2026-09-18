@@ -20,6 +20,7 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -64,12 +65,12 @@ start_link() ->
 %% on-disk modules for unsynced intervals and dispatch read-range workers as
 %% their source modules free up. Publishes `{chunk_copy, {complete, StoreID}}'
 %% via `ar_events' once scanning is done AND every worker has exited. Returns
-%% `ignore' when chunk-copy is disabled (syncing disabled).
+%% `ignore' when the copy server is not running.
 start_copy(StoreID) ->
     case whereis(?MODULE) of
         undefined ->
             ignore;
-        _Pid ->
+        _PID ->
             gen_server:cast(?MODULE, {start_copy, StoreID}),
             ok
     end.
@@ -117,17 +118,25 @@ terminate(Reason, _State) ->
 %% overlapping this StoreID's range.
 do_start_copy(StoreID, State) ->
     %% Match ar_data_sync's range adjustment.
-    {RangeStart2, RangeEnd2} = ar_storage_module:get_padded_range(StoreID),
-    SyncStatus = ar_data_sync:init_sync_status(StoreID),
-    OtherStorageModules = [ar_storage_module:id(M)
-                           || M <- ar_storage_module:get_all(RangeStart2, RangeEnd2),
-                              ar_storage_module:id(M) /= StoreID],
+    {RangeStart2, RangeEnd2} =
+        case arweave_storage:store_info(StoreID) of
+            #store_info{padded_range = Range} -> Range;
+            not_found -> {-1, -1}
+        end,
+    ar_device_lock:set_device_lock_metric(StoreID, sync, paused),
+    StorageModules = arweave_storage:intersecting_stores(RangeStart2, RangeEnd2, any_packing),
+    StoreInfos = [arweave_storage:store_info(M) || M <- StorageModules],
+    OtherStorageModules = [
+        OtherStoreID
+     || #store_info{id = OtherStoreID} <- StoreInfos,
+        OtherStoreID /= StoreID
+    ],
     CopyState = #copy_state{
-                   range_start = RangeStart2,
-                   range_end = RangeEnd2,
-                   sync_status = SyncStatus,
-                   pending_modules = [?DEFAULT_MODULE | OtherStorageModules]
-                  },
+        range_start = RangeStart2,
+        range_end = RangeEnd2,
+        sync_status = paused,
+        pending_modules = [?DEFAULT_MODULE | OtherStorageModules]
+    },
     gen_server:cast(?MODULE, {step, StoreID}),
     save_progress(StoreID, CopyState, State).
 
@@ -246,8 +255,14 @@ determine_intervals_to_copy_from_module(_StoreID, _OtherStoreID, RangeStart,
 determine_intervals_to_copy_from_module(StoreID, OtherStoreID, RangeStart,
                                         RangeEnd, Intervals) ->
     FindNextMissing =
-        case ar_sync_record:get_next_synced_interval(RangeStart, RangeEnd, ar_data_sync,
-                                                     StoreID) of
+        case arweave_storage:get_next_interval(
+            synced,
+            RangeStart,
+            RangeEnd,
+            any_packing,
+            {ar_data_sync, byte},
+            StoreID
+        ) of
             not_found ->
                 {request, {RangeStart, RangeEnd}};
             {End, Start} when Start =< RangeStart ->
@@ -260,8 +275,14 @@ determine_intervals_to_copy_from_module(StoreID, OtherStoreID, RangeStart,
             determine_intervals_to_copy_from_module(StoreID, OtherStoreID, End2,
                                                     RangeEnd, Intervals);
         {request, {Cursor, RightBound}} ->
-            case ar_sync_record:get_next_synced_interval(Cursor, RightBound, ar_data_sync,
-                                                         OtherStoreID) of
+            case arweave_storage:get_next_interval(
+                synced,
+                Cursor,
+                RightBound,
+                any_packing,
+                {ar_data_sync, byte},
+                OtherStoreID
+            ) of
                 not_found ->
                     determine_intervals_to_copy_from_module(StoreID, OtherStoreID,
                                                             RightBound, RangeEnd, Intervals);

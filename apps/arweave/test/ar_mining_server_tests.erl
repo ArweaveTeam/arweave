@@ -3,7 +3,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -24,30 +23,30 @@
 setup_all() ->
     [B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
     RewardAddr = ar_test_node:generate_address(main),
-    Config = arweave_config:snapshot(),
+    Config = arweave_config:internal_snapshot(),
     %% We'll use partition 0 for any unsynced ranges.
     StorageModules = [
-        {ar_block:partition_size(), 2 * ar_block:partition_size(),
+        {arweave_constants:partition_size(), 2 * arweave_constants:partition_size(),
             {spora_2_6, RewardAddr}},
-        {2 * ar_block:partition_size(), 3 * ar_block:partition_size(),
+        {2 * arweave_constants:partition_size(), 3 * arweave_constants:partition_size(),
             {spora_2_6, RewardAddr}}
     ],
     ar_test_node:start(B0, RewardAddr, #{[storage_modules] => StorageModules}),
     Config.
 
 cleanup_all(Config) ->
-    ok = arweave_config:restore(Config).
+    ok = arweave_config:internal_restore(Config).
 
 %% @doc Setup the environment so we can control VDF step generation.
 setup_pool_client() ->
     [B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
     RewardAddr = ar_test_node:generate_address(main),
-    Config = arweave_config:snapshot(),
+    Config = arweave_config:internal_snapshot(),
     %% We'll use partition 0 for any unsynced ranges.
     StorageModules = [
-        {ar_block:partition_size(), 2 * ar_block:partition_size(),
+        {arweave_constants:partition_size(), 2 * arweave_constants:partition_size(),
             {spora_2_6, RewardAddr}},
-        {2 * ar_block:partition_size(), 3 * ar_block:partition_size(),
+        {2 * arweave_constants:partition_size(), 3 * arweave_constants:partition_size(),
             {spora_2_6, RewardAddr}}
     ],
     ar_test_node:start(B0, RewardAddr,
@@ -64,7 +63,7 @@ setup_pool_client() ->
     Config.
 
 cleanup_pool_client(Config) ->
-    ok = arweave_config:restore(Config).
+    ok = arweave_config:internal_restore(Config).
 
 setup_one() ->
     ets:new(mock_counter, [set, public, named_table]),
@@ -253,7 +252,7 @@ do_test_chunk_cache_size_with_mocks(H1s, H2s, RecallRange2s, FirstChunks) ->
             end
         },
         {
-            ar_chunk_storage, get_range,
+            arweave_storage, get_chunk_range,
             fun (RangeStart, Size, StoreID) ->
                 Count = increment_mock_counter(get_range),
                 FirstChunk = get_mock_value(Count, FirstChunks),

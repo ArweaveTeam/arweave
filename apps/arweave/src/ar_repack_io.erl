@@ -7,6 +7,7 @@
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_repack.hrl").
 
@@ -30,7 +31,8 @@ start_link(Name, StoreID) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-    list_to_atom("ar_repack_io_" ++ ar_storage_module:label(StoreID)).
+    #store_info{label = Label} = arweave_storage:store_info(StoreID),
+    list_to_atom("ar_repack_io_" ++ Label).
 
 init(StoreID) ->
     State = #state{ store_id = StoreID },
@@ -44,16 +46,46 @@ init(StoreID) ->
 %% - A list of offsets determined by the replica.2.9 entropy footprint pattern.
 %% - A set of consecutive chunks following each offset. The number of consecutive chunks
 %%   read for each footprint offset is the ReadBatchSize derived by ar_repack and passed in.
--spec read_footprint(
-        [non_neg_integer()], non_neg_integer(), non_neg_integer(), non_neg_integer(),
-        ar_storage_module:store_id()) ->
-          ok.
-read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, StoreID) ->
-    gen_server:cast(name(StoreID),
-                    {read_footprint, FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize}).
+read_footprint(
+    FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, StoreID
+) ->
+    Jobs = [
+        ar_repack:get_read_range(Offset, FootprintEnd, ReadBatchSize)
+     || Offset <- FootprintOffsets,
+        Offset >= FootprintStart,
+        Offset =< FootprintEnd
+    ],
+    gen_server:cast(name(StoreID), {read_ranges, Jobs, self()}).
 
 write_queue(WriteQueue, Packing, StoreID) ->
-    gen_server:cast(name(StoreID), {write_queue, WriteQueue, Packing}).
+    case whereis(name(StoreID)) of
+        undefined ->
+            {error, not_initialized};
+        PID ->
+            Queue2 = transfer_write_queue(WriteQueue, PID),
+            gen_server:cast(PID, {write_queue, Queue2, Packing})
+    end.
+
+transfer_write_queue(WriteQueue, PID) ->
+    Entries = gb_sets:to_list(WriteQueue),
+    CacheRefs = [Chunk#repack_chunk.cache_ref || {_, Chunk} <- Entries],
+    {ok, Transferred} = ar_chunk_cache:transfer_many(CacheRefs, PID),
+    gb_sets:from_list(
+        lists:zipwith(
+            fun({Offset, Chunk}, CacheRef) ->
+                {Offset, Chunk#repack_chunk{cache_ref = CacheRef}}
+            end,
+            Entries,
+            Transferred
+        )
+    ).
+
+read_jobs([], _End, _Window) -> [];
+read_jobs(Offsets, End, Window) ->
+    {Batch, Rest} = lists:split(min(Window, length(Offsets)), Offsets),
+    [First | _] = Batch,
+    {Start, RangeEnd, _} = ar_repack:get_read_range(First, End, length(Batch)),
+    [{Start, RangeEnd, Batch} | read_jobs(Rest, End, Window)].
 
 
 %%%===================================================================
@@ -64,11 +96,22 @@ handle_call(Request, _From, #state{} = State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
     {reply, ok, State}.
 
-handle_cast(
-  {read_footprint, FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize},
-  #state{} = State) ->
-    do_read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, State),
+handle_cast({read_ranges, [], _Owner}, State) ->
     {noreply, State};
+handle_cast({read_ranges, [{Start, End, Offsets} | Rest], Owner}, State)
+        when length(Offsets) > 1 ->
+    Limit = max(1, ar_chunk_cache:limit()),
+    case length(Offsets) > Limit of
+        true ->
+            %% A range larger than the entire cache can never be admitted.
+            Jobs = read_jobs(Offsets, End, Limit),
+            gen_server:cast(self(), {read_ranges, Jobs ++ Rest, Owner}),
+            {noreply, State};
+        false ->
+            read_admitted_range({Start, End, Offsets}, Rest, Owner, State)
+    end;
+handle_cast({read_ranges, [Job | Rest], Owner}, State) ->
+    read_admitted_range(Job, Rest, Owner, State);
 
 handle_cast({write_queue, WriteQueue, Packing}, #state{} = State) ->
     process_write_queue(WriteQueue, Packing, State),
@@ -92,45 +135,36 @@ terminate(Reason, #state{} = State) ->
 %%% Private functions.
 %%%===================================================================
 
-do_read_footprint([], _FootprintStart, _FootprintEnd, _ReadBatchSize, #state{}) ->
-    ok;
-do_read_footprint([
-                   BucketEndOffset | FootprintOffsets], FootprintStart, FootprintEnd, ReadBatchSize,
-                  #state{} = State)
-  when BucketEndOffset < FootprintStart ->
-    %% Advance until we hit a chunk covered by the current storage module
-    do_read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, State);
-do_read_footprint(
-  [BucketEndOffset | _FootprintOffsets], _FootprintStart, FootprintEnd, _ReadBatchSize,
-  #state{} )
-  when BucketEndOffset > FootprintEnd ->
-    ok;
-do_read_footprint(
-  [BucketEndOffset | FootprintOffsets], FootprintStart, FootprintEnd, ReadBatchSize,
-  #state{} = State) ->
-    #state{
-       store_id = StoreID
-      } = State,
+read_admitted_range(Job = {_, _, Offsets}, Rest, Owner, State) ->
+    case is_process_alive(Owner) of
+        false -> {noreply, State};
+        true ->
+            case ar_chunk_cache:reserve(State#state.store_id, length(Offsets)) of
+                full ->
+                    gen_server:cast(Owner, flush_write_queue),
+                    arweave_util:cast_after(200, self(),
+                        {read_ranges, [Job | Rest], Owner});
+                {ok, CacheRef} ->
+                    try do_read_range(Job, Owner, CacheRef, State)
+                    after ar_chunk_cache:release(CacheRef) end,
+                    gen_server:cast(self(), {read_ranges, Rest, Owner})
+            end,
+            {noreply, State}
+    end.
 
-    StartTime = erlang:monotonic_time(),
-    {ReadRangeStart, ReadRangeEnd, _ReadRangeOffsets} = ar_repack:get_read_range(
-                                                          BucketEndOffset, FootprintEnd, ReadBatchSize),
+do_read_range({ReadRangeStart, ReadRangeEnd, Offsets}, Owner, CacheRef,
+        #state{store_id = StoreID} = State) ->
+    Started = erlang:monotonic_time(),
     ReadRangeSizeInBytes = ReadRangeEnd - ReadRangeStart,
-    OffsetChunkMap =
-        case catch ar_chunk_storage:get_range(ReadRangeStart, ReadRangeSizeInBytes, StoreID) of
-            [] ->
-                #{};
-            {'EXIT', _Exc} ->
-                log_error(failed_to_read_chunk_range, State, [
-                                                              {read_range_start, ReadRangeStart},
-                                                              {read_range_end, ReadRangeEnd},
-                                                              {read_range_size_bytes, ReadRangeSizeInBytes}
-                                                             ]),
-                #{};
-            Range ->
-                maps:from_list(Range)
-        end,
-
+    OffsetChunkMap = case catch arweave_storage:get_chunk_range(
+            ReadRangeStart, ReadRangeSizeInBytes, StoreID) of
+        Range when is_list(Range) -> maps:from_list(Range);
+        Error ->
+            log_error(failed_to_read_chunk_range, State,
+                [{range_start, ReadRangeStart}, {range_end, ReadRangeEnd},
+                    {reason, Error}]),
+            #{}
+    end,
     OffsetMetadataMap =
         case ar_data_sync:get_chunk_metadata_range(ReadRangeStart+1, ReadRangeEnd, StoreID) of
             {ok, MetadataMap} ->
@@ -138,48 +172,30 @@ do_read_footprint(
             {error, invalid_iterator} ->
                 #{};
             {error, Reason} ->
-                log_warning(failed_to_read_chunk_metadata, State, [
-                                                                   {read_range_start, ReadRangeStart},
-                                                                   {read_range_end, ReadRangeEnd},
-                                                                   {reason, Reason}
-                                                                  ]),
+                log_warning(failed_to_read_chunk_metadata, State,
+                    [{range_start, ReadRangeStart}, {reason, Reason}]),
                 #{}
         end,
-
-    ChunkReadSizeInBytes = maps:fold(
-                             fun(_Key, Value, Acc) -> Acc + byte_size(Value) end,
-                             0,
-                             OffsetChunkMap
-                            ),
-    EndTime = erlang:monotonic_time(),
-    ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
-    arweave_metrics:histogram_observe(
-      repack_read_duration_milliseconds, [ar_storage_module:label(StoreID)],
-      EndTime - StartTime),
-    log_debug(read_footprint, State, [
-                                      {bucket_end_offset, BucketEndOffset},
-                                      {read_range_start, ReadRangeStart},
-                                      {read_range_end, ReadRangeEnd},
-                                      {read_range_size_bytes, ReadRangeSizeInBytes},
-                                      {chunk_read_size_bytes, ChunkReadSizeInBytes},
-                                      {chunks_read, maps:size(OffsetChunkMap)},
-                                      {metadata_read, maps:size(OffsetMetadataMap)},
-                                      {footprint_start, FootprintStart},
-                                      {footprint_end, FootprintEnd},
-                                      {remaining_offsets, length(FootprintOffsets)},
-                                      {time_taken, ElapsedTime},
-                                      {rate, (ChunkReadSizeInBytes / ?MiB / ElapsedTime) * 1000}
-                                     ]),
-
-    ar_repack:chunk_range_read(
-      BucketEndOffset, OffsetChunkMap, OffsetMetadataMap, State#state.store_id),
-    read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, StoreID).
+    arweave_metrics:histogram_observe(repack_read_duration_milliseconds,
+        [(arweave_storage:store_info(StoreID))#store_info.label],
+        erlang:convert_time_unit(erlang:monotonic_time() - Started,
+            native, millisecond)),
+    case ar_chunk_cache:transfer(CacheRef, Owner) of
+        {ok, OwnedCacheRef} ->
+            ar_chunk_cache:mark_cached(OwnedCacheRef),
+            gen_server:cast(Owner, {chunk_range_read, Offsets, OffsetChunkMap,
+                OffsetMetadataMap, OwnedCacheRef});
+        {error, expired} -> ok
+    end.
 
 process_write_queue(WriteQueue, Packing, #state{} = State) ->
     StartTime = erlang:monotonic_time(),
     gb_sets:fold(
       fun({_BucketEndOffset, RepackChunk}, _) ->
-              write_repack_chunk(RepackChunk, Packing, State)
+              try write_repack_chunk(RepackChunk, Packing, State)
+              after
+                  ar_chunk_cache:release(RepackChunk#repack_chunk.cache_ref)
+              end
       end,
       ok,
       WriteQueue
@@ -202,7 +218,7 @@ write_repack_chunk(RepackChunk, Packing, #state{} = State) ->
             {replica_2_9, RewardAddr} = Packing,
             Entropy = RepackChunk#repack_chunk.target_entropy,
             BucketEndOffset = RepackChunk#repack_chunk.offsets#chunk_offsets.bucket_end_offset,
-            ar_entropy_storage:store_entropy(Entropy, BucketEndOffset, StoreID, RewardAddr);
+            arweave_storage:store_entropy(Entropy, BucketEndOffset, StoreID, RewardAddr);
         write_chunk ->
             write_chunk(RepackChunk, Packing, State);
         _ ->
@@ -233,7 +249,8 @@ write_chunk(RepackChunk, TargetPacking, #state{} = State) ->
                   AbsoluteOffset, Metadata, Chunk, TargetPacking, StoreID),
             case WriteResult of
                 {ok, TargetPacking} ->
-                    add_to_sync_record(Offsets, Metadata, TargetPacking, StoreID);
+                    add_to_sync_record(Offsets, Metadata, TargetPacking, StoreID),
+                    ar_chunk_cache:record_completed(StoreID);
                 {ok, WrongPacking} ->
                     %% This shouldn't ever happen - the only time write_chunk should change
                     %% the packing is when writing to unpacked_padded.
@@ -260,24 +277,24 @@ remove_from_sync_record(Offsets, StoreID) ->
 
     StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 
-    DeleteEntropyRecord = ar_entropy_storage:delete_record(PaddedEndOffset, StoreID),
+    DeleteEntropyRecord = arweave_storage:delete_entropy_record(PaddedEndOffset, StoreID),
     DeleteFootprint =
         case DeleteEntropyRecord of
             ok ->
-                ar_footprint_record:delete(PaddedEndOffset, StoreID);
+                arweave_storage:delete_footprint(PaddedEndOffset, StoreID);
             Error ->
                 Error
         end,
     DeleteSyncRecord =
         case DeleteFootprint of
             ok ->
-                ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+                arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_data_sync, byte}, StoreID);
             Error2 ->
                 Error2
         end,
     case DeleteSyncRecord of
         ok ->
-            ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
+            arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_chunk_storage, byte}, StoreID);
         Error3 ->
             Error3
     end.
@@ -292,16 +309,11 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
       } = Metadata,
 
     StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-    ar_sync_record:add(PaddedEndOffset, StartOffset, Packing, ar_data_sync, StoreID),
-    case ar_data_sync:is_footprint_record_supported(PaddedEndOffset, ChunkSize, Packing) of
-        true ->
-            ar_footprint_record:add(PaddedEndOffset, Packing, StoreID);
-        false ->
-            ok
-    end,
+    arweave_storage:add_sync_record(PaddedEndOffset, StartOffset, Packing, {ar_data_sync, byte}, StoreID),
+    arweave_storage:add_footprint(PaddedEndOffset, Packing, StoreID),
 
     IsStorageSupported =
-        ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),
+        arweave_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),
     IsReplica29 = case Packing of
                       {replica_2_9, _} -> true;
                       _ -> false
@@ -309,7 +321,7 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
 
     case IsStorageSupported andalso IsReplica29 of
         true ->
-            ar_entropy_storage:add_record(BucketEndOffset, Packing, StoreID);
+            arweave_storage:add_entropy_record(BucketEndOffset, Packing, StoreID);
         _ -> ok
     end.
 

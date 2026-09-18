@@ -80,10 +80,14 @@ assert_clear_error_codes(TXID) ->
     ok.
 
 tx_db_test_() ->
-    {setup, fun setup_ets/0, fun(Cleanup) -> Cleanup() end,
-        fun(_) -> [ar_test_util:with_mocked(
-                [{ar_fork, height_2_9_6, fun() -> infinity end}],
-                fun test_tx_db/0)] end}.
+    {setup, fun setup_ets/0, fun(Cleanup) -> Cleanup() end, fun(_) ->
+        [
+            ar_test_util:with_mocked(
+                [{arweave_constants, height_2_9_6, fun() -> infinity end}],
+                fun test_tx_db/0
+            )
+        ]
+    end}.
 
 test_tx_db() ->
     {_, Pub1 = {_, Owner1}} = ar_wallet:new(),

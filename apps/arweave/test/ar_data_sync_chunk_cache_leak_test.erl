@@ -2,20 +2,35 @@
 -test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
-%%% Fetched chunks that fail unpacking must not leak chunk cache counts:
-%%% ar_data_sync's unpack_error handler has to decrement the cache size like
-%%% every other terminal path, or the leaked counts exceed the chunk cache
-%%% limit and ar_sync_scheduler stops dispatching forever. The test corrupts
-%%% a packed chunk on peer1 and requires that a valid chunk appearing
-%%% afterwards still syncs. The one-chunk cache is forced through the
-%%% AR_TEST override — the configured limit floors at 1000 chunks.
+%%% Failed unpacking must release shared admission, allowing a valid chunk
+%%% offered afterwards to sync even with only one lifecycle reservation.
+%%% Corrupt packed bytes preserve peer metadata but fail padding validation.
 
 chunk_cache_leak_on_unpack_error_test_() ->
-    {timeout, 600, fun test_chunk_cache_leak_on_unpack_error/0}.
+    {timeout, 600, fun() ->
+        Parent = self(),
+        ar_test_util:new_mock(ar_peers, [passthrough]),
+        ar_test_util:mock_function(
+            ar_peers,
+            issue_warning,
+            fun
+                (Peer, chunk, Error) ->
+                    Parent ! {unpack_failed, Error},
+                    meck:passthrough([Peer, chunk, Error]);
+                (Peer, DataType, Error) ->
+                    meck:passthrough([Peer, DataType, Error])
+            end
+        ),
+        try
+            test_chunk_cache_leak_on_unpack_error()
+        after
+            ar_test_util:unmock_module(ar_peers)
+        end
+    end}.
 
 test_chunk_cache_leak_on_unpack_error() ->
     Addr = ar_test_node:generate_address(main),
@@ -28,16 +43,15 @@ test_chunk_cache_leak_on_unpack_error() ->
         peer_addr => PeerAddr,
         config => #{
             [storage_modules] =>
-                [{0, 10 * ar_block:partition_size(), unpacked}]
+                [{0, 10 * arweave_constants:partition_size(), unpacked}]
         },
         peer_config => ar_test_node:storage_module_config(PeerAddr, [0])
     }),
-    %% The one-chunk cache: forced directly — the configured limit floors
-    %% at 1000 chunks, which would never stall on a single leak.
-    ok = ar_data_sync:force_chunk_cache_size_limit(1),
+    %% One MiB admits one 768 KiB lifecycle reservation.
+    ok = arweave_config:set([packing, cache_size], 1),
     %% Fill the weave up to the strict data split threshold so both target
     %% chunks land bucket-padded in peer1's ar_chunk_storage.
-    StrictThreshold = ar_block:strict_data_split_threshold(),
+    StrictThreshold = arweave_constants:strict_data_split_threshold(),
     ?assertEqual(0, StrictThreshold rem ?DATA_CHUNK_SIZE),
     FillerChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)
             || _ <- lists:seq(1, StrictThreshold div ?DATA_CHUNK_SIZE)],
@@ -64,25 +78,39 @@ test_chunk_cache_leak_on_unpack_error() ->
             #{ packing => PeerPacking }),
     corrupt_stored_chunk(CorruptedEndOffset),
     ar_test_node:connect_to_peer(peer1),
-    %% Ordering gate, not an assertion: with the leak present the cache size
-    %% settles over the limit here, guaranteeing the cache is exhausted
-    %% before the valid chunk appears. With correct accounting it drains
-    %% after every retry and the gate just times out.
-    _ = ar_test_await:until(chunk_cache_over_limit,
-            fun() -> ar_sync_chunk_cache:size() >= 2 end, 60_000),
+    %% Prove the failure path ran before introducing the valid chunk.
+    receive
+        {unpack_failed, invalid_padding} -> ok
+    after 60_000 -> ?assert(false, "Corrupt chunk never failed unpacking")
+    end,
     %% Make the valid chunk available on peer1 and require main to sync it:
     %% the unpack failures must not exhaust the chunk cache budget.
     post_chunk_to_peer1(ValidProof),
-    ok = ar_test_await:chunk_recorded(peer1, ValidEndOffset,
-            #{ packing => PeerPacking }),
-    ok = ar_test_await:until(valid_chunk_synced,
-            fun() ->
-                ar_sync_record:is_recorded(ValidEndOffset, ar_data_sync) =/= false
-            end, 60_000),
-    %% At most the corrupted chunk retry stays in flight.
-    ok = ar_test_await:until(chunk_cache_drained,
-            fun() -> ar_sync_chunk_cache:size() =< 1 end),
-    ?assertNot(ar_test_node:remote_call(main, ar_data_sync, is_chunk_cache_full, [])).
+    ok = ar_test_await:chunk_recorded(
+        peer1,
+        ValidEndOffset,
+        #{packing => PeerPacking}
+    ),
+    ok = ar_test_await:until(
+        valid_chunk_synced,
+        fun() ->
+            arweave_storage:is_recorded(
+                ValidEndOffset,
+                any_packing,
+                {ar_data_sync, byte},
+                any_store
+            ) =/= false
+        end,
+        60_000
+    ),
+    %% Stop new fetches before asserting zero outstanding reservations.
+    ar_test_node:disconnect_from(peer1),
+    ok = ar_test_await:until(
+        chunk_cache_drained,
+        fun() -> ar_chunk_cache:reserved_size() =:= 0 end
+    ),
+    {ok, CacheRef} = ar_chunk_cache:reserve(test_store),
+    ar_chunk_cache:release(CacheRef).
 
 %% @doc Mine one block on peer1 with a single fixed-data v2 tx carrying Chunks.
 mine_block_with_chunks(Wallet, Chunks) ->
@@ -125,10 +153,21 @@ post_chunk_to_peer1(Proof) ->
 %% @doc Overwrite the packed chunk bytes in peer1's chunk storage. Metadata
 %% and sync records stay intact, so peer1 keeps serving the chunk.
 corrupt_stored_chunk(EndOffset) ->
-    PaddedEndOffset = ar_block:get_chunk_padded_offset(EndOffset),
-    [StorageModule | _] = ar_test_node:remote_call(peer1, ar_storage_module,
-            get_all, [PaddedEndOffset]),
-    StoreID = ar_storage_module:id(StorageModule),
+    PaddedEndOffset = arweave_constants:get_chunk_padded_offset(EndOffset),
+    [StorageModule | _] = ar_test_node:remote_call(
+        peer1,
+        arweave_storage,
+        covering_stores,
+        [PaddedEndOffset, any_packing]
+    ),
+    #store_info{id = StoreID} = arweave_storage:store_info(StorageModule),
     Garbage = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-    ?assertMatch({ok, _}, ar_test_node:remote_call(peer1, ar_chunk_storage,
-            write_chunk, [PaddedEndOffset, Garbage, #{}, StoreID])).
+    ?assertMatch(
+        {ok, _},
+        ar_test_node:remote_call(
+            peer1,
+            arweave_storage,
+            internal_write_chunk,
+            [PaddedEndOffset, Garbage, StoreID]
+        )
+    ).

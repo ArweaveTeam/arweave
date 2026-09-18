@@ -14,7 +14,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 %% MAX_CHUNK_SIZE in apps/arweave/c_src/randomx/rx512/ar_rx512_nif.c.
 -define(MAX_CHUNK_SIZE, (256 * 1024)).

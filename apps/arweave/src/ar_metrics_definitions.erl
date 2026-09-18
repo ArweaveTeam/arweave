@@ -5,7 +5,7 @@
 %%% prometheus module implementing the metric (e.g. `prometheus_counter',
 %%% `prometheus_gauge', `prometheus_histogram') and `Definition' is the
 %%% proplist accepted by that module's `new/1' function. The `name'
-%%% property is mandatory and is used by `arweave_metrics:cleanup/0' to
+%%% property is mandatory and is used by `arweave_metrics:internal_cleanup/0' to
 %%% deregister the metric.
 %%%
 -module(ar_metrics_definitions).
@@ -512,15 +512,15 @@ all_metrics() ->
         {prometheus_gauge, [{name, packing_buffer_size},
             {help, "The number of chunks in the packing server queue."}]},
         {prometheus_gauge, [{name, chunk_cache_size},
-            {help, "Fetched chunks accepted into the async write pipeline but not "
-                    "yet fully processed."}]},
+            {help, "Shared chunk lifecycle reservations across fetching, copying, "
+                    "disk-pool storage and repacking."}]},
         {prometheus_gauge, [{name, chunk_cache_size_limit},
-            {help, "The global fetched-chunk cache limit in chunks (the resolved "
-                    "[sync, cache_size])."}]},
+            {help, "Shared chunk lifecycle capacity from packing.cache_size, "
+                    "including transformation workspace per reservation."}]},
         {prometheus_gauge, [{name, chunk_cache_size_by_store},
             {labels, [store_id]},
-            {help, "Fetched chunks accepted into this storage module's async write "
-                    "pipeline but not yet fully processed."}]},
+            {help, "Shared reservations for local chunk processing in this store, "
+                    "excluding outstanding reads and network fetches."}]},
         {prometheus_counter, [{name, chunks_stored},
             {labels, [packing, store_id]},
             {help, "The counter is incremented every time a chunk is written to "
@@ -548,7 +548,7 @@ all_metrics() ->
             {name, chunk_storage_put_duration_milliseconds},
             {labels, [store_id]},
             {buckets, [1, 5, 25, 100, 500, 2000, 10000, 45000, 180000]},
-            {help, "Caller-observed ar_chunk_storage:put latency (ms): queue wait "
+            {help, "Caller-observed arweave_storage:put_chunk latency (ms): queue wait "
                     "behind the per-store server plus the write."}
         ]},
         {prometheus_histogram, [
@@ -566,7 +566,7 @@ all_metrics() ->
             {help, "Distinct peers currently tracked by sync discovery."}]},
         {prometheus_gauge, [{name, chunk_interval_cache_size},
             {labels, [unit]},
-            {help, "Size of ar_sync_discovery's chunk interval cache "
+            {help, "Size of arweave_sync_discovery's chunk interval cache "
                     "(per-(peer, location, mode) entries). 'unit' is 'rows' "
                     "(row count) or 'bytes' (ets:info memory * wordsize, "
                     "capped by the cache byte limit)."}]},
@@ -581,7 +581,7 @@ all_metrics() ->
                     "'state' is 'pending' or 'inflight'."}]},
         {prometheus_counter, [{name, chunk_interval_cache_evictions},
             {labels, [reason]},
-            {help, "Cumulative rows evicted from ar_sync_discovery's chunk "
+            {help, "Cumulative rows evicted from arweave_sync_discovery's chunk "
                     "interval cache, labeled by eviction reason."}]},
         {prometheus_counter, [{name, sync_chunks_skipped},
             {labels, [reason]},

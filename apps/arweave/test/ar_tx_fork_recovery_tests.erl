@@ -11,7 +11,7 @@
 
 recovers_from_forks_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            [{arweave_constants, height_2_9_6, fun() -> infinity end}],
             fun() -> recovers_from_forks(7) end, ?TEST_NODE_TIMEOUT).
 
 re_admits_orphaned_tx_after_fork_recovery_test_() ->
@@ -207,7 +207,7 @@ anchor_depth_boundary_after_fork_recovery() ->
     _ = ar_test_node:start(B0),
     _ = ar_test_node:start_peer(peer1, B0),
     ar_test_node:connect_to_peer(peer1),
-    Depth = ar_block:get_max_tx_anchor_depth(),
+    Depth = arweave_constants:get_max_tx_anchor_depth(),
     %% Build a shared chain tall enough to have a full anchor window: both nodes
     %% stay in sync up to height Depth.
     lists:foreach(

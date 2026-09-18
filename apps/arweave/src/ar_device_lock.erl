@@ -9,6 +9,7 @@
 -export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2, terminate/2]).
 
 -include("ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 
 -include_lib("eunit/include/eunit.hrl").
@@ -93,7 +94,7 @@ set_device_lock_metric(StoreID, Mode, Status) ->
                      complete -> 2;
                      _ -> -2
                  end,
-    StoreIDLabel = ar_storage_module:label(StoreID),
+    #store_info{label = StoreIDLabel} = arweave_storage:store_info(StoreID),
     arweave_metrics:gauge_set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
 
 %% @doc Update the number of replica 2.9 entropy workers at runtime.
@@ -187,7 +188,8 @@ initialize_state(State) ->
     RepackInPlaceModules = arweave_config:repack_modules(module_only),
     StoreIDToDevice = lists:foldl(
                         fun(Module, Acc) ->
-                                StoreID = ar_storage_module:id(Module),
+                                #store_info{id = StoreID} =
+                                    arweave_storage:store_info(Module),
                                 Device = get_system_device(Module),
                                 ?LOG_INFO([
                                            {event, storage_module_device}, {store_id, StoreID}, {device, Device}]),
@@ -207,9 +209,10 @@ initialize_state(State) ->
     State2.
 
 get_system_device(StorageModule) ->
-    DataDir = arweave_config:get([data_dir]),
-    StoreID = ar_storage_module:id(StorageModule),
-    Path = ar_chunk_storage:get_chunk_storage_path(DataDir, StoreID),
+    #store_info{
+        id = StoreID,
+        chunk_storage_path = Path
+    } = arweave_storage:store_info(StorageModule),
     Device = arweave_util:get_system_device(Path),
     case Device of
         "" -> StoreID;  % If the command fails or returns an empty string, return StoreID

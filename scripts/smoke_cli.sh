@@ -268,7 +268,7 @@ cleanup() {
 	for d in "${TMP_DIRS[@]}"; do
 		[ -e "$d" ] && rm -rf "$d"
 	done
-	# ar_doctor_inspect:bitmap writes bitmap_<StoreID>.ppm to cwd.
+	# The doctor bitmap command writes bitmap_<StoreID>.ppm to cwd.
 	rm -f "$ROOT"/bitmap_*.ppm 2>/dev/null || true
 }
 
@@ -372,7 +372,7 @@ else
 fi
 
 # Light RandomX init (rx512, large_pages=0, hw_aes=0) keeps this in
-# the tens of seconds. Exercises ar:benchmark_hash → ar_bench_hash.
+# the tens of seconds. Exercises the tools CLI and runtime hash calibration.
 run_check "benchmark-hash" 1 "Hashing benchmark" -- \
 	./bin/benchmark-hash randomx 512 jit 1 large_pages 0 hw_aes 0
 
@@ -399,6 +399,15 @@ DOC_SRC=$(mktmp doctor-src)
 run_check "data-doctor (no args)" 1 "data-doctor merge" -- \
 	./bin/data-doctor
 
+run_check "data-doctor (unknown command)" 1 "data-doctor merge" -- \
+	./bin/data-doctor xyzzy_smoke_does_not_exist
+
+# A recognized command must propagate its own failure as exit 1, not just
+# reject invalid arguments. The empty data directory has no snapshot to export.
+run_check "data-doctor snapshot (empty data dir)" 1 \
+	"Snapshot failed: .* has no rocksdb directory" -- \
+	./bin/data-doctor snapshot "$DOC_DATA" "$DOC_DATA/snapshot"
+
 # Argument-boundary regression: a quoted JSON storage_module argument
 # must reach the doctor as ONE argument. If the launcher (bin/arweave,
 # bin/data-doctor) re-splits it on whitespace, parse_storage_module_arg
@@ -420,7 +429,7 @@ run_check "data-doctor merge JSON arg boundary" 1 \
 # integration is covered by the other doctor smokes.
 
 # Bogus hash → ar_storage:read_block returns unavailable → "Block …
-# not found" path. ar_data_doctor:main considers a successful lookup
+# not found" path. The doctor dispatcher considers a successful lookup
 # (even if it returns "not found") to be the success case and exits 0.
 BOGUS_HASH="$(printf 'A%.0s' {1..43})"
 run_check "data-doctor dump" 0 "not found" -- \
@@ -429,7 +438,7 @@ run_check "data-doctor dump" 0 "not found" -- \
 # TODO: `inspect bitmap` against an empty data_dir hits a
 # {badmatch, 262144} in ar_chunk_storage:get_chunk_byte_from_bucket_end/1
 # (chunk_visualization assumes chunks above the strict-split threshold).
-# Skip in the smoke until ar_doctor_inspect is robust to empty stores.
+# Skip in the smoke until the inspect command is robust to empty stores.
 #
 # TODO: `inspect chunks` always tries to fetch from arweave.net via
 # HTTP for cross-comparison — a network dependency that's both flaky in

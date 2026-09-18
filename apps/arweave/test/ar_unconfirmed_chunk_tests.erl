@@ -25,11 +25,11 @@
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
 -import(ar_test_node, [disconnect_from/1, connect_to_peer/1]).
 
@@ -169,7 +169,7 @@ wait_until_tx_index_fallback(AbsoluteEndOffset) ->
     ok.
 
 wait_until_storage_module_offset(AbsoluteEndOffset, StorageModule) ->
-    StoreID = ar_storage_module:id(StorageModule),
+    #store_info{id = StoreID} = arweave_storage:store_info(StorageModule),
     ok = ar_test_await:chunk_recorded(main, AbsoluteEndOffset, #{ store_id => StoreID }),
     ok.
 

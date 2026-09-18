@@ -30,6 +30,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -record(state, {
                 os,
@@ -413,15 +414,15 @@ skip_to_eol([_ | T]) ->
     skip_to_eol(T).
 
 get_storage_modules_paths() ->
-    DataDir = arweave_config:get([data_dir]),
+    #store_info{path = DataDir} = arweave_storage:store_info(?DEFAULT_MODULE),
     SMDirs = lists:map(
-               fun(StorageModule) ->
-                       StoreID = ar_storage_module:id(StorageModule),
-                       {StoreID, ar_chunk_storage:storage_module_path(
-                                   DataDir, StoreID)}
-               end,
-               arweave_config:storage_modules()
-              ),
+        fun(StorageModule) ->
+            #store_info{id = StoreID, path = Path} =
+                arweave_storage:store_info(StorageModule),
+            {StoreID, Path}
+        end,
+        arweave_config:storage_modules()
+    ),
     [{?DEFAULT_MODULE, DataDir} | SMDirs].
 
 ensure_storage_modules_paths() ->

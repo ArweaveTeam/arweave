@@ -4,6 +4,12 @@ Read this before running, adding, modifying, or disabling any test.
 
 ## Running tests
 
+Tests in `apps/arweave` use EUnit. All tests in other applications must use
+Common Test, including tests for app-internal functions; do not embed EUnit
+testcases in those applications' source modules. Including `eunit.hrl` for
+assertion macros in CT suites or helpers is fine. Do not add `*_SUITE.erl`
+files under `apps/arweave`.
+
 Use `./bin/test` for EUnit-style test modules:
 
 ```bash
@@ -20,8 +26,8 @@ Use `./bin/test` for EUnit-style test modules:
 ### Sandboxed agent environments
 
 `./bin/test` always starts the BEAM as a named distributed Erlang node, even for
-local `fast` modules such as `ar_sync_sim_tests`. The launcher and EPMD must bind
-loopback TCP sockets. In an agent execution sandbox that restricts socket
+local `fast` modules such as `ar_merkle`. The launcher and EPMD must
+bind loopback TCP sockets. In an agent execution sandbox that restricts socket
 creation, request unsandboxed execution for `./bin/test` on the first attempt
 instead of waiting for the restricted run to fail. The usual pre-test symptom is
 an `inet_tcp` register/listen `eacces` error; it does not indicate a simulator or
@@ -80,7 +86,7 @@ Test behavior is driven by two module attributes placed directly below the
 
 ```erlang
 %%% @doc Pure utility module — safe to batch with siblings.
--module(arweave_util).
+-module(ar_merkle).
 -test_category([fast]).
 ```
 
@@ -170,7 +176,7 @@ aren't booted.
 %% In a `-test_category([fast])' module:
 state_transition_test_() ->
     ar_test_util:with_mocked([
-        {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+        {arweave_constants, strict_data_split_threshold, fun() -> 700_000 end}
     ], fun test_state_transitions/0, 30).
 ```
 

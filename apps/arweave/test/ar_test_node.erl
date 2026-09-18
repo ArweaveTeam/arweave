@@ -46,7 +46,7 @@
         test_with_all_nodes_mocked/3]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include("ar_mining.hrl").
 
 
@@ -314,7 +314,7 @@ update_config(Overrides) when is_map(Overrides) ->
         [disable_device_limit]                  => true,
         [network, client, http, keepalive]      => ?TEST_HTTP_CLIENT_KEEPALIVE
     }),
-    case arweave_config:force_config(Final) of
+    case arweave_config:internal_force_config(Final) of
         ok ->
             ?LOG_INFO("Updated Config:"),
             arweave_config:log(),
@@ -358,7 +358,7 @@ start_node(B0, Overrides, WaitUntilSync) when is_map(Overrides) ->
 start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
     %% Set weave larger than what we'll cover with the 3 nodes so that every node can find
     %% a solution.
-    [B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ar_block:partition_size() * 5),
+    [B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), arweave_constants:partition_size() * 5),
     ExitPeer = peer_ip(peer1),
     ValidatorPeer = peer_ip(main),
     MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
@@ -489,11 +489,11 @@ mock_to_force_cross_node_h2() ->
 %% @doc Mock out packing-related constants to replicate mainnet behavior.
 mainnet_packing_mocks() ->
     [
-        {ar_block, partition_size, fun() -> 3_600_000_000_000 end},
-        {ar_block, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
-        {ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
-        {ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
-        {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
+        {arweave_constants, partition_size, fun() -> 3_600_000_000_000 end},
+        {arweave_constants, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
+        {arweave_storage, get_overlap, fun(_) -> 104_857_600 end},
+        {arweave_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
+        {arweave_constants, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
     ].
 
 get_difficulty_for_invalid_hash() ->
@@ -532,7 +532,7 @@ clean_up_and_stop() ->
     %% (main) or `try_boot_peer/3' (peers), so per-VM scaffolding
     %% (`[data_dir]', `[port]', ...) survives reset via the same path
     %% the node uses at first boot. No test-only env handling.
-    ok = arweave_config:restore(#{store => [], runtime => false}),
+    ok = arweave_config:internal_restore(#{store => [], runtime => false}),
     ok = arweave_config:bootstrap([]),
     ok.
 
@@ -571,7 +571,7 @@ write_genesis_files(DataDir, B0) ->
         ok = ar_kv:put(block_index_db, << 0:256 >>,
                 term_to_binary({H, WeaveSize, TXRoot, <<>>})),
         ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
-        case ar_fork:height_2_7() of
+        case arweave_constants:height_2_7() of
             0 ->
                 ok = ar_kv:put(block_time_history_db, H,
                         term_to_binary(hd(B0#block.block_time_history)));
@@ -630,8 +630,8 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
     %% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
     %% Note that replica_2_9 modules do not have ?OVERLAP.
     RangeNumber = lists:nth(N, [0, 2, 4]),
-    [{RangeNumber * ar_block:partition_size(),
-        (RangeNumber + 1) * ar_block:partition_size(),
+    [{RangeNumber * arweave_constants:partition_size(),
+        (RangeNumber + 1) * arweave_constants:partition_size(),
         storage_module_packing(RewardAddr, 0)}].
 
 remote_call(Node, Module, Function, Args) ->
@@ -1094,8 +1094,8 @@ join(JoinOnNode, Rejoin, Overrides) when is_map(Overrides) ->
             %% mode, which the boot validators (e.g.
             %% `ar_node_worker:validate_trusted_peers/1') expect during
             %% ar_sup init.
-            Snapshot = arweave_config:snapshot(),
-            ok = arweave_config:restore(Snapshot#{runtime => false});
+            Snapshot = arweave_config:internal_snapshot(),
+            ok = arweave_config:internal_restore(Snapshot#{runtime => false});
         false ->
             clean_up_and_stop()
     end,
@@ -1127,7 +1127,7 @@ storage_module_packing(RewardAddr, _Index, Options) ->
         replica_2_9 ->
             {replica_2_9, RewardAddr};
         not_set ->
-            case ar_fork:height_2_9() of
+            case arweave_constants:height_2_9() of
                 0 -> {replica_2_9, RewardAddr};
                 _ -> {spora_2_6, RewardAddr}
             end
@@ -1149,13 +1149,13 @@ storage_module_config(RewardAddr, Partitions, Options) ->
     }.
 
 %% @doc Return wide runtime module tuples `{RangeStart, RangeEnd,
-%% Packing}`. Each module spans `10 * ar_block:partition_size()`.
+%% Packing}`. Each module spans `10 * arweave_constants:partition_size()`.
 %% Use `storage_module_config/2,3` when building override maps.
 wide_storage_modules(RewardAddr, Partitions) ->
     wide_storage_modules(RewardAddr, Partitions, #{}).
 
 wide_storage_modules(RewardAddr, Partitions, Options) ->
-    Size = 10 * ar_block:partition_size(),
+    Size = 10 * arweave_constants:partition_size(),
     [{Partition * Size, (Partition + 1) * Size,
             storage_module_packing(RewardAddr, Partition, Options)}
         || Partition <- Partitions].
@@ -1219,7 +1219,7 @@ wait_until_syncs_genesis_data() ->
     %% copy the missing data over from each other. This procedure is executed on startup
     %% but the disk pool did not have any data at the time.
     [
-        ar_chunk_copy:start_copy(ar_storage_module:id(M))
+        ar_chunk_copy:start_copy((arweave_storage:store_info(M))#store_info.id)
         || M <- StorageModules
     ],
     [wait_until_syncs_data(Start, End, WeaveSize, Packing)

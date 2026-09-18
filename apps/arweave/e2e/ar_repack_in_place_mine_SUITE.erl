@@ -10,6 +10,7 @@
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -111,7 +112,7 @@ do_repack_in_place_mine(FromPackingType, ToPackingType, ModuleSize) ->
     {Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
                                  RepackerNode, FromPackingType, wallet_a, ModuleSize),
     RepackerSnapshot = ar_test_node:remote_call(
-                         RepackerNode, arweave_config, snapshot, []),
+                         RepackerNode, arweave_config, internal_snapshot, []),
 
     [B0 | _] = Blocks,
     start_validator_node(ValidatorNode, RepackerNode, B0),
@@ -147,18 +148,20 @@ do_repack_in_place_mine(FromPackingType, ToPackingType, ModuleSize) ->
 
     ar_test_node:stop(RepackerNode),
 
-    DataDir = ar_test_node:remote_call(
-                RepackerNode, arweave_config, get, [[data_dir]]),
-    lists:foreach(fun({SourceModule, Packing}) ->
-                          {ModuleStart, ModuleEnd, _Packing} = SourceModule,
-                          SourceID = ar_storage_module:id(SourceModule),
-                          SourcePath = ar_chunk_storage:storage_module_path(DataDir, SourceID),
-
-                          TargetModule = {ModuleStart, ModuleEnd, Packing},
-                          TargetID = ar_storage_module:id(TargetModule),
-                          TargetPath = ar_chunk_storage:storage_module_path(DataDir, TargetID),
-                          ok = file:rename(SourcePath, TargetPath)
-                  end, RepackInPlaceStorageModules),
+    lists:foreach(
+        fun({SourceModule, Packing}) ->
+            {ModuleStart, ModuleEnd, _Packing} = SourceModule,
+            #store_info{path = SourcePath} = ar_test_node:remote_call(
+                RepackerNode, arweave_storage, store_info, [SourceModule]
+            ),
+            TargetModule = {ModuleStart, ModuleEnd, Packing},
+            #store_info{path = TargetPath} = ar_test_node:remote_call(
+                RepackerNode, arweave_storage, store_info, [TargetModule]
+            ),
+            ok = file:rename(SourcePath, TargetPath)
+        end,
+        RepackInPlaceStorageModules
+    ),
 
     ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
                                                           [storage_modules] => FinalStorageModules,
@@ -188,7 +191,7 @@ start_validator_node(ValidatorNode, RepackerNode, B0) ->
     ok.
 
 %% @doc Map each `{Block, EndOffset, ChunkSize}' chunk to a probe offset
-%% `ar_sync_record:is_recorded/2' resolves to its slot. The chunk's
+%% `arweave_storage:is_recorded/4' resolves to its slot. The chunk's
 %% first byte lands inside the padded slot for both full and partial
 %% chunks.
 chunk_probe_offsets(Chunks) ->

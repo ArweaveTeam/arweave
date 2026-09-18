@@ -68,7 +68,7 @@ verify_block_txs([TX | TXs],
                         Size
                 end,
             NewCount = C + 1,
-            AboveFork1_8 = Height >= ar_fork:height_1_8(),
+            AboveFork1_8 = Height >= arweave_constants:height_1_8(),
             CountExceedsLimit = NewCount > ?BLOCK_TX_COUNT_LIMIT,
             SizeExceedsLimit = NewSize > ?BLOCK_TX_DATA_SIZE_LIMIT,
             case {AboveFork1_8, CountExceedsLimit, SizeExceedsLimit} of
@@ -124,7 +124,7 @@ verify_anchor(TX, Height, FloatingWallets, BlockAnchors, RecentTXMap, Mempool) w
         is_list(BlockAnchors),
         is_map(RecentTXMap),
         is_map(Mempool) ->
-    ShouldContinue = case ar_fork:height_1_8() of
+    ShouldContinue = case arweave_constants:height_1_8() of
         H when Height >= H ->
             %% Only verify after fork 1.8 otherwise it causes a soft fork
             %% since current nodes can accept blocks with a chain of last_tx

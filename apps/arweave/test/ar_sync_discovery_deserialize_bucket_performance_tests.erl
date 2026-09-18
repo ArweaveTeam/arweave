@@ -4,9 +4,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("ar.hrl").
--include("ar_sync.hrl").
--include("ar_sync_buckets.hrl").
-
+-include_lib("arweave_sync/include/arweave_sync.hrl").
+-include_lib("arweave/include/ar_sync_buckets.hrl").
 
 max_bucket_advertisement_performance_test_() ->
     Mocks = [
@@ -39,8 +38,12 @@ setup_nodes() ->
     }).
 
 cleanup_nodes(_) ->
-    catch ar_test_node:remote_call(peer1, ar_test_util, unmock_module,
-            [ar_global_sync_record]),
+    catch ar_test_node:remote_call(
+        peer1,
+        ar_test_util,
+        unmock_module,
+        [arweave_storage]
+    ),
     cleanup_tables().
 
 make_genesis() ->
@@ -64,7 +67,6 @@ run_test(EndpointType) ->
     #{
         expected_bucket_size := ExpectedBucketSize,
         endpoint := Endpoint,
-        mocked_function := MockedFunction,
         mode := Mode
     } = endpoint_spec(EndpointType),
     {BucketCount, SerializedBuckets} = generate_max_bucket_payload(ExpectedBucketSize),
@@ -73,27 +75,29 @@ run_test(EndpointType) ->
     %% Iteration is bounded by the current weave size: a peer's payload can
     %% only expand into sub-buckets that fall within the weave we know about.
     ExpectedRows = expected_inserted_rows(EndpointType, UnboundedExpandedBucketCount),
-    install_bucket_mock(MockedFunction, SerializedBuckets),
+    install_bucket_mock(Mode, SerializedBuckets),
     %% Fetch from a real peer so the HTTP client path is unchanged, but insert
     %% under a synthetic peer so background discovery for peer1 cannot skew the
     %% ETS row-count assertion.
     FetchPeer = ar_test_node:peer_ip(peer1),
     TablePeer = table_peer(EndpointType),
-    gen_server:cast(ar_sync_discovery, {add_peers, [TablePeer]}),
-    _ = sys:get_state(ar_sync_discovery, infinity),
+    gen_server:cast(arweave_sync_discovery, {add_peers, [TablePeer]}),
+    _ = sys:get_state(arweave_sync_discovery, infinity),
     ok = ar_test_await:until(sync_bucket_jobs_finished, fun() ->
-        ar_sync_discovery:inflight_count() =:= 0
+        arweave_sync_discovery:inflight_count() =:= 0
     end),
-    _ = sys:get_state(ar_sync_discovery, infinity),
+    _ = sys:get_state(arweave_sync_discovery, infinity),
     ets:delete_all_objects(?SYNC_BUCKET_CACHE_TABLE),
     {FetchMs, {ok, Buckets}} = timer:tc(ar_http_iface_client, Endpoint, [FetchPeer]),
     BeforePeerRows = peer_rows(Mode, TablePeer),
     {_BeforeTableSize, BeforeTableMemoryWords, BeforeEtsMemory, BeforeTotalMemory, BeforeRSS} =
         memory_snapshot(?SYNC_BUCKET_CACHE_TABLE),
     {InsertMs, ok} = timer:tc(fun() ->
-        gen_server:cast(ar_sync_discovery,
-            {job_result, TablePeer, {sync_buckets, Mode, Buckets}}),
-        _ = sys:get_state(ar_sync_discovery, infinity),
+        gen_server:cast(
+            arweave_sync_discovery,
+            {job_result, TablePeer, {sync_buckets, Mode, Buckets}}
+        ),
+        _ = sys:get_state(arweave_sync_discovery, infinity),
         ok
     end),
     {_AfterTableSize, AfterTableMemoryWords, AfterEtsMemory, AfterTotalMemory, AfterRSS} =
@@ -140,7 +144,7 @@ expected_inserted_rows(sync, UnboundedExpandedBucketCount) ->
     min(UnboundedExpandedBucketCount, MaxSubBucketExclusive);
 expected_inserted_rows(footprint, UnboundedExpandedBucketCount) ->
     WeaveSize = ar_node:get_weave_size(),
-    MaxFootprintOffset = ar_footprint_record:max_offset(WeaveSize),
+    MaxFootprintOffset = arweave_storage:max_footprint_offset(WeaveSize),
     BucketSize = ar_sync_buckets:get_network_footprint_bucket_size(),
     MaxSubBucketExclusive =
         (MaxFootprintOffset + BucketSize - 1) div BucketSize,
@@ -150,7 +154,6 @@ endpoint_spec(sync) ->
     #{
         expected_bucket_size => ar_sync_buckets:get_default_sync_bucket_size(),
         endpoint => get_sync_buckets,
-        mocked_function => get_serialized_sync_buckets,
         mode => byte
     };
 endpoint_spec(footprint) ->
@@ -158,15 +161,25 @@ endpoint_spec(footprint) ->
         expected_bucket_size =>
                 ar_sync_buckets:get_network_footprint_bucket_size(),
         endpoint => get_footprint_buckets,
-        mocked_function => get_serialized_footprint_buckets,
         mode => footprint
     }.
 
-install_bucket_mock(Function, SerializedBuckets) ->
-    ok = ar_test_node:remote_call(peer1, ar_test_util, new_mock,
-            [ar_global_sync_record, [no_link, passthrough]]),
-    ok = ar_test_node:remote_call(peer1, ar_test_util, mock_function,
-            [ar_global_sync_record, Function, fun() -> {ok, SerializedBuckets} end]).
+install_bucket_mock(Mode, SerializedBuckets) ->
+    ok = ar_test_node:remote_call(
+        peer1,
+        ar_test_util,
+        new_mock,
+        [arweave_storage, [no_link, passthrough]]
+    ),
+    ok = ar_test_node:remote_call(
+        peer1,
+        ar_test_util,
+        mock_function,
+        [arweave_storage, get_serialized_buckets, fun
+            (Index) when Index =:= Mode -> {ok, SerializedBuckets};
+            (Index) -> meck:passthrough([Index])
+        end]
+    ).
 
 generate_max_bucket_payload(ExpectedBucketSize) ->
     BucketSize = ExpectedBucketSize * ?MAX_SYNC_BUCKET_SIZE_RATIO,

@@ -14,10 +14,10 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID) ->
     get_chunk_packings(ModuleStart, ModuleEnd, StoreID, false).
 get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
     Partition = ar_node:get_partition_number(ModuleStart),
-    PartitionStart = ar_chunk_storage:get_chunk_bucket_start(ModuleStart),
-    SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
+    PartitionStart = arweave_storage:get_chunk_bucket_start(ModuleStart),
+    SectorSize = arweave_constants:get_replica_2_9_entropy_sector_size(),
     BucketsPerSector = SectorSize div ?DATA_CHUNK_SIZE,
-    NumSectors = ar_block:get_replica_2_9_entropy_partition_size() div SectorSize,
+    NumSectors = arweave_constants:get_replica_2_9_entropy_partition_size() div SectorSize,
 
     case PrintProgress of
         true ->
@@ -36,9 +36,9 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
               SectorEnd = SectorStart + SectorSize,
               %% Chunk Range will be a bit larger than the sector range to make sure we don't
               %% miss any chunks.
-              ChunkRangeStart = ar_chunk_storage:get_chunk_byte_from_bucket_end(SectorStart),
+              ChunkRangeStart = arweave_storage:get_chunk_byte_from_bucket_end(SectorStart),
               ChunkRangeEnd =
-                  ar_chunk_storage:get_chunk_byte_from_bucket_end(SectorEnd) + ?DATA_CHUNK_SIZE,
+                  arweave_storage:get_chunk_byte_from_bucket_end(SectorEnd) + ?DATA_CHUNK_SIZE,
               case PrintProgress of
                   true ->
                       ar:console(
@@ -68,11 +68,15 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
                                                 % Process metadata to update the map
               UpdatedMap = maps:fold(
                              fun(AbsoluteEndOffset, Metadata, Acc) ->
-                                     BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
+                                     BucketEndOffset = arweave_storage:get_chunk_bucket_end(AbsoluteEndOffset),
                                      case maps:is_key(BucketEndOffset, Acc) of
                                          true ->
-                                             IsRecorded = ar_sync_record:is_recorded(
-                                                            AbsoluteEndOffset, ar_data_sync, StoreID),
+                                             IsRecorded = arweave_storage:is_recorded(
+                                                 AbsoluteEndOffset,
+                                                 any_packing,
+                                                 {ar_data_sync, byte},
+                                                 StoreID
+                                             ),
                                              maps:put(BucketEndOffset,
                                                       normalize_sync_record(IsRecorded, AbsoluteEndOffset, Metadata),
                                                       Acc);
@@ -151,7 +155,7 @@ normalize_sync_record(_, _, not_found) ->
     error;
 normalize_sync_record({true, Packing}, PaddedEndOffset, Metadata) ->
     #chunk_metadata{ chunk_size = ChunkSize } = Metadata,
-    case ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing) of
+    case arweave_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing) of
         true ->
             Packing;
         false ->

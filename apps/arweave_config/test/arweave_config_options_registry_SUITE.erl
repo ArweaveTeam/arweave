@@ -349,7 +349,7 @@ with_test_config_restores_handle_set_side_effect(_Config) ->
     try
         ?assertEqual(ok, arweave_config:set([side_effect], original)),
         ?assertEqual(original, persistent_term:get(Key)),
-        arweave_config:with_test_config(fun() ->
+        arweave_config:internal_with_test_config(fun() ->
             ?assertEqual(ok, arweave_config:set([side_effect], changed)),
             ?assertEqual(changed, persistent_term:get(Key))
         end),
@@ -365,7 +365,7 @@ with_test_config_restores_default_handle_set_side_effect(_Config) ->
     try
         ?assertEqual({error, undefined},
             arweave_config_store:get([side_effect])),
-        arweave_config:with_test_config(fun() ->
+        arweave_config:internal_with_test_config(fun() ->
             ?assertEqual(ok, arweave_config:set([side_effect], changed)),
             ?assertEqual(changed, persistent_term:get(Key))
         end),

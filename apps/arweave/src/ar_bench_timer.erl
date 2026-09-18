@@ -3,8 +3,6 @@
 -export([initialize/0, reset/0, record/3, start/1, stop/1, get_timing_data/0, print_timing_data/0, get_total/1, get_max/1, get_min/1, get_avg/1]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 record(Key, Fun, Args) ->
     {Time, Result} = timer:tc(Fun, Args),

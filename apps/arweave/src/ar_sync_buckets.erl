@@ -8,8 +8,7 @@
         get_network_footprint_bucket_size/0]).
 
 -include_lib("arweave/include/ar_sync_buckets.hrl").
--include_lib("arweave/include/ar_sync.hrl").
--include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -187,11 +186,20 @@ delete(Start, End, Size, Map) ->
     delete(BucketUpperBound, End, Size,
             maps:put(Bucket, max(0, Share * (1 - Decrease / Size)), Map)).
 
+-ifdef(AR_TEST).
+-include_lib("eunit/include/eunit.hrl").
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
 
-buckets_test() ->
+%% @doc Run the bucket coverage checks with the original suite's timeout.
+buckets_test_() ->
+    {timeout, 60, fun buckets/0}.
+
+%% @doc Bucket updates and size-bounded serialization preserve coverage through
+%% round trips.
+buckets() ->
     Size = 10000000000,
     B1 = {10000000000, #{}},
     ?assertException(throw, uncompressable_buckets, serialize(B1, 10)),
@@ -200,18 +208,31 @@ buckets_test() ->
     B2 = add(5, 0, B1),
     ?assertEqual(5 / Size, get(0, 10, B2)),
     B3 = add(Size * 2, Size, B2),
-    ?assertEqual({Size, #{ 0 => 5 / Size, 1 => 1 }}, B3),
+    ?assertEqual({Size, #{0 => 5 / Size, 1 => 1}}, B3),
     {B3, S3} = serialize(B3, 40),
     {ok, B3} = deserialize(S3, ?DEFAULT_SYNC_BUCKET_SIZE),
     %% The size of the serialized buckets is 31 bytes.
     DoubleSize = 2 * Size,
-    ?assertEqual({DoubleSize, #{ 0 => 0.5 + 5 / Size / 2 }}, element(1, serialize(B3, 30))),
+    ?assertEqual(
+        {DoubleSize, #{0 => 0.5 + 5 / Size / 2}}, element(1, serialize(B3, 30))
+    ),
     {_, S3_1} = serialize(B3, 30),
-    ?assertEqual({ok, {DoubleSize, #{ 0 => 0.5 + 5 / Size / 2 }}}, deserialize(S3_1, ?DEFAULT_SYNC_BUCKET_SIZE)),
-    ?assertEqual({Size, #{ 0 => 5 / Size, 1 => 0.5 }}, cut(Size + Size div 2, B3)),
-    ?assertEqual({Size, #{ 0 => (1 - (Size - 4) / Size) * (5 / Size), 1 => 0 }},
-            delete(Size * 2, 4, B3)),
-    B4 = from_intervals(gb_sets:from_list([{5, 0}, {2 * Size, Size}]), {10000000000, #{}}),
+    ?assertEqual(
+        {ok, {DoubleSize, #{0 => 0.5 + 5 / Size / 2}}},
+        deserialize(S3_1, ?DEFAULT_SYNC_BUCKET_SIZE)
+    ),
+    ?assertEqual(
+        {Size, #{0 => 5 / Size, 1 => 0.5}}, cut(Size + Size div 2, B3)
+    ),
+    ?assertEqual(
+        {Size, #{0 => (1 - (Size - 4) / Size) * (5 / Size), 1 => 0}},
+        delete(Size * 2, 4, B3)
+    ),
+    B4 = from_intervals(
+        gb_sets:from_list([{5, 0}, {2 * Size, Size}]), {10000000000, #{}}
+    ),
     ?assertEqual(B3, B4),
     B5 = from_intervals(gb_sets:from_list([{2 * Size, Size}]), B2),
     ?assertEqual(B4, B5).
+
+-endif.

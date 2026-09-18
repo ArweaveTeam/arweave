@@ -2,7 +2,6 @@
 -test_peers([peer1]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -289,49 +288,87 @@ test_request_repack() ->
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     %% unpacked -> unpacked
-    ar_packing_server:request_repack(?CHUNK_OFFSET, {
+    UnpackedRef = make_ref(),
+    ok = ar_packing_server:request_repack(UnpackedRef, {
         unpacked,
-        unpacked, UnpackedData,
-        ?CHUNK_OFFSET, TXRoot, ChunkSize}),
-    receive
-        {chunk, {packed, _, {unpacked, Unpacked1, _, _, _}}} ->
-            ?assertEqual(UnpackedData, Unpacked1)
-    after ?REQUEST_REPACK_TIMEOUT ->
-        erlang:error(timeout)
-    end,
+        unpacked,
+        UnpackedData,
+        ?CHUNK_OFFSET,
+        TXRoot,
+        ChunkSize
+    }),
+    ok = ar_test_await:with_packing_reply(
+        UnpackedRef,
+        fun(Result) ->
+            ?assertMatch(
+                {packed, UnpackedRef, {unpacked, UnpackedData, _, _, _}}, Result
+            )
+        end,
+        ?REQUEST_REPACK_TIMEOUT
+    ),
     %% unpacked -> packed
-    ar_packing_server:request_repack(?CHUNK_OFFSET, {
+    PackRef = make_ref(),
+    ok = ar_packing_server:request_repack(PackRef, {
         {spora_2_6, RewardAddress},
-        unpacked, UnpackedData,
-        ?CHUNK_OFFSET, TXRoot, ChunkSize}),
-    receive
-        {chunk, {packed, _, {{spora_2_6, RewardAddress}, Packed, _, _, _}}} ->
-            ?assertEqual(Spora26Data, Packed)
-    after ?REQUEST_REPACK_TIMEOUT ->
-        erlang:error(timeout)
-    end,
-    %% packed -> unpacked
-    ar_packing_server:request_repack(?CHUNK_OFFSET, {
         unpacked,
-        {spora_2_6, RewardAddress}, Spora26Data,
-        ?CHUNK_OFFSET, TXRoot, ChunkSize}),
-    receive
-        {chunk, {packed, _, {unpacked, Unpacked2, _, _, _}}} ->
-            ?assertEqual(UnpackedData, Unpacked2)
-    after ?REQUEST_REPACK_TIMEOUT ->
-        erlang:error(timeout)
-    end,
-    %% packed -> packed
-    ar_packing_server:request_repack(?CHUNK_OFFSET, {
+        UnpackedData,
+        ?CHUNK_OFFSET,
+        TXRoot,
+        ChunkSize
+    }),
+    ok = ar_test_await:with_packing_reply(
+        PackRef,
+        fun(Result) ->
+            ?assertMatch(
+                {packed, PackRef, {
+                    {spora_2_6, RewardAddress}, Spora26Data, _, _, _
+                }},
+                Result
+            )
+        end,
+        ?REQUEST_REPACK_TIMEOUT
+    ),
+    %% packed -> unpacked
+    UnpackRef = make_ref(),
+    ok = ar_packing_server:request_repack(UnpackRef, {
+        unpacked,
         {spora_2_6, RewardAddress},
-        {spora_2_6, RewardAddress}, Spora26Data,
-        ?CHUNK_OFFSET, TXRoot, ChunkSize}),
-    receive
-        {chunk, {packed, _, {{spora_2_6, RewardAddress}, Packed2, _, _, _}}} ->
-            ?assertEqual(Spora26Data, Packed2)
-    after ?REQUEST_REPACK_TIMEOUT ->
-        erlang:error(timeout)
-    end.
+        Spora26Data,
+        ?CHUNK_OFFSET,
+        TXRoot,
+        ChunkSize
+    }),
+    ok = ar_test_await:with_packing_reply(
+        UnpackRef,
+        fun(Result) ->
+            ?assertMatch(
+                {packed, UnpackRef, {unpacked, UnpackedData, _, _, _}}, Result
+            )
+        end,
+        ?REQUEST_REPACK_TIMEOUT
+    ),
+    %% packed -> packed
+    RepackRef = make_ref(),
+    ok = ar_packing_server:request_repack(RepackRef, {
+        {spora_2_6, RewardAddress},
+        {spora_2_6, RewardAddress},
+        Spora26Data,
+        ?CHUNK_OFFSET,
+        TXRoot,
+        ChunkSize
+    }),
+    ok = ar_test_await:with_packing_reply(
+        RepackRef,
+        fun(Result) ->
+            ?assertMatch(
+                {packed, RepackRef, {
+                    {spora_2_6, RewardAddress}, Spora26Data, _, _, _
+                }},
+                Result
+            )
+        end,
+        ?REQUEST_REPACK_TIMEOUT
+    ).
 
 test_request_unpack() ->
     UnpackedData = ar_test_util:load_fixture("ar_packing_tests/unpacked.256kb"),
@@ -342,41 +379,71 @@ test_request_unpack() ->
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     %% unpacked -> unpacked
-    ar_packing_server:request_unpack(?CHUNK_OFFSET, {
+    UnpackedRef = make_ref(),
+    ok = ar_packing_server:request_unpack(UnpackedRef, {
         unpacked,
         UnpackedData,
-        ?CHUNK_OFFSET, TXRoot, ChunkSize}),
-    receive
-        {chunk, {unpacked, _, {unpacked, Unpacked1, _, _, _}}} ->
-            ?assertEqual(UnpackedData, Unpacked1)
-    after ?REQUEST_UNPACK_TIMEOUT ->
-        erlang:error(timeout)
-    end,
+        ?CHUNK_OFFSET,
+        TXRoot,
+        ChunkSize
+    }),
+    ok = ar_test_await:with_packing_reply(
+        UnpackedRef,
+        fun(Result) ->
+            ?assertMatch(
+                {unpacked, UnpackedRef, {unpacked, UnpackedData, _, _, _}},
+                Result
+            )
+        end,
+        ?REQUEST_UNPACK_TIMEOUT
+    ),
     %% packed -> unpacked
-    ar_packing_server:request_unpack(?CHUNK_OFFSET, {
-        {spora_2_6, RewardAddress}, Spora26Data,
-        ?CHUNK_OFFSET, TXRoot, ChunkSize}),
-    receive
-        {chunk, {unpacked, _, {{spora_2_6, RewardAddress}, Unpacked2, _, _, _}}} ->
-            ?assertEqual(UnpackedData, Unpacked2)
-    after ?REQUEST_UNPACK_TIMEOUT ->
-        erlang:error(timeout)
-    end,
-    %% invalid padding
-    ar_packing_server:request_unpack(?CHUNK_OFFSET, {
-        {spora_2_6, RewardAddress}, Spora26Data,
-        ?CHUNK_OFFSET, TXRoot, ChunkSize - 10}), % reduce chunk size to create invalid padding
-    receive
-        {chunk, {unpack_error, _, {{spora_2_6, RewardAddress}, Spora26Data, _, _, _}, invalid_padding}} ->
-            ok
-    after ?REQUEST_UNPACK_TIMEOUT ->
-        erlang:error(timeout)
-    end.
+    UnpackRef = make_ref(),
+    ok = ar_packing_server:request_unpack(UnpackRef, {
+        {spora_2_6, RewardAddress},
+        Spora26Data,
+        ?CHUNK_OFFSET,
+        TXRoot,
+        ChunkSize
+    }),
+    ok = ar_test_await:with_packing_reply(
+        UnpackRef,
+        fun(Result) ->
+            ?assertMatch(
+                {unpacked, UnpackRef, {
+                    {spora_2_6, RewardAddress}, UnpackedData, _, _, _
+                }},
+                Result
+            )
+        end,
+        ?REQUEST_UNPACK_TIMEOUT
+    ),
+    %% Shorten the declared size by ten bytes to create invalid padding.
+    InvalidPaddingRef = make_ref(),
+    ok = ar_packing_server:request_unpack(InvalidPaddingRef, {
+        {spora_2_6, RewardAddress},
+        Spora26Data,
+        ?CHUNK_OFFSET,
+        TXRoot,
+        ChunkSize - 10
+    }),
+    ok = ar_test_await:with_packing_reply(
+        InvalidPaddingRef,
+        fun(Result) ->
+            ?assertMatch(
+                {unpack_error, InvalidPaddingRef,
+                    {{spora_2_6, RewardAddress}, Spora26Data, _, _, _},
+                    invalid_padding},
+                Result
+            )
+        end,
+        ?REQUEST_UNPACK_TIMEOUT
+    ).
 
 packs_chunks_depending_on_packing_threshold_test_() ->
     ar_test_node:test_with_all_nodes_mocked([
-            {ar_fork, height_2_9, fun() -> 10 end},
-            {ar_fork, height_2_9_6, fun() -> infinity end},
+            {arweave_constants, height_2_9, fun() -> 10 end},
+            {arweave_constants, height_2_9_6, fun() -> infinity end},
             {ar_retarget, is_retarget_height, fun(_Height) -> false end},
             {ar_retarget, is_retarget_block, fun(_Block) -> false end}],
             fun test_packs_chunks_depending_on_packing_threshold/0).

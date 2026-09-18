@@ -10,9 +10,9 @@
 
 syncs_headers_test_() ->
     ar_test_node:test_with_all_nodes_mocked([
-            {ar_fork, height_2_8, fun() -> 0 end},
-            {ar_fork, height_2_9, fun() -> 0 end},
-            {ar_fork, height_2_9_6, fun() -> infinity end},
+            {arweave_constants, height_2_8, fun() -> 0 end},
+            {arweave_constants, height_2_9, fun() -> 0 end},
+            {arweave_constants, height_2_9_6, fun() -> infinity end},
             {ar_retarget, is_retarget_height, fun(_Height) -> false end},
             {ar_retarget, is_retarget_block, fun(_Block) -> false end}],
             fun test_syncs_headers/0).
@@ -26,7 +26,7 @@ test_syncs_headers() ->
         addr => MainAddr,
         config => wide_replica_config(MainAddr)
     }),
-    post_random_blocks(Wallet, ar_block:get_max_tx_anchor_depth() + 5, B0),
+    post_random_blocks(Wallet, arweave_constants:get_max_tx_anchor_depth() + 5, B0),
     PeerAddr = ar_test_node:generate_address(peer1),
     ar_test_node:join_on(#{
         node => peer1,
@@ -34,7 +34,7 @@ test_syncs_headers() ->
         addr => PeerAddr,
         config => wide_replica_config(PeerAddr)
     }),
-    {ok, BI} = ar_test_await:node_height(peer1, ar_block:get_max_tx_anchor_depth() + 5),
+    {ok, BI} = ar_test_await:node_height(peer1, arweave_constants:get_max_tx_anchor_depth() + 5),
     lists:foreach(
         fun(Height) ->
             ok = ar_test_await:until(peer1_block_available,
@@ -51,7 +51,7 @@ test_syncs_headers() ->
             MainTXs = ar_storage:read_tx(B#block.txs),
             ?assertEqual(TXs, MainTXs)
         end,
-        lists:reverse(lists:seq(0, ar_block:get_max_tx_anchor_depth() + 5))
+        lists:reverse(lists:seq(0, arweave_constants:get_max_tx_anchor_depth() + 5))
     ),
     %% Throw the event to simulate running out of disk space.
     ar_disksup:pause(),
@@ -63,7 +63,7 @@ test_syncs_headers() ->
         5000
     ),
     try
-        NoSpaceHeight = ar_block:get_max_tx_anchor_depth() + 6,
+        NoSpaceHeight = arweave_constants:get_max_tx_anchor_depth() + 6,
         NoSpaceTX = sign_v1_tx(main, Wallet,
             #{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
         ar_test_node:assert_post_tx_to_peer(main, NoSpaceTX),

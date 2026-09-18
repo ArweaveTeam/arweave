@@ -234,7 +234,7 @@ do_join(Peers, B, BI) ->
     WorkerQ = queue:from_list([spawn(fun() -> worker() end)
                                || _ <- lists:seq(1, JoinWorkers)]),
     PeerQ = queue:from_list(Peers),
-    Trail = lists:sublist(tl(BI), 2 * ar_block:get_max_tx_anchor_depth()),
+    Trail = lists:sublist(tl(BI), 2 * arweave_constants:get_max_tx_anchor_depth()),
     SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
     Retries = lists:foldl(fun(Peer, Acc) -> maps:put(Peer, 5, Acc) end, #{}, Peers),
     Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs }
@@ -245,12 +245,12 @@ do_join(Peers, B, BI) ->
     ar_node_worker ! {join, B#block.height, BI, Blocks3},
     join_peers(Peers).
 
-%% @doc Get the 2 * ar_block:get_max_tx_anchor_depth() blocks preceding the head block.
-%% If the block list is shorter than 2 * ar_block:get_max_tx_anchor_depth(), simply
+%% @doc Get the 2 * arweave_constants:get_max_tx_anchor_depth() blocks preceding the head block.
+%% If the block list is shorter than 2 * arweave_constants:get_max_tx_anchor_depth(), simply
 %% get all existing blocks.
 %%
-%% The node needs 2 * ar_block:get_max_tx_anchor_depth() block anchors so that it
-%% can validate transactions even if it enters a ar_block:get_max_tx_anchor_depth()-deep
+%% The node needs 2 * arweave_constants:get_max_tx_anchor_depth() block anchors so that it
+%% can validate transactions even if it enters a arweave_constants:get_max_tx_anchor_depth()-deep
 %% fork recovery (which is the deepest fork recovery possible) immediately after
 %% joining the network.
 get_block_trail(_WorkerQ, _PeerQ, [], _Retries) ->
@@ -467,7 +467,7 @@ maybe_set_reward_history(Blocks, Peers) ->
     end.
 
 maybe_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->
-    case Height >= ar_fork:height_2_7() of
+    case Height >= arweave_constants:height_2_7() of
         true ->
             case ar_http_iface_client:get_block_time_history(
                    Peers, hd(Blocks), ar_block_time_history:get_hashes(Blocks)) of

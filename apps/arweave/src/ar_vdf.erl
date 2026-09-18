@@ -4,7 +4,6 @@
         debug_sha_verify_no_reset/6, debug_sha_verify/8, debug_sha2/3,
         step_number_to_salt_number/1, checkpoint_buffer_to_checkpoints/1]).
 
--include("ar_vdf.hrl").
 -include("ar.hrl").
 
 step_number_to_salt_number(0) ->

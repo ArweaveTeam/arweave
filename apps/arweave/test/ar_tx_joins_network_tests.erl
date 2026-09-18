@@ -10,7 +10,7 @@
 
 joins_network_successfully_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            [{arweave_constants, height_2_9_6, fun() -> infinity end}],
             fun joins_network_successfully/0, ?TEST_NODE_TIMEOUT).
 
 joins_network_successfully() ->
@@ -51,12 +51,12 @@ joins_network_successfully() ->
             {TXs ++ [{TX, AnchorType}], TX#tx.id}
         end,
         {[], <<>>},
-        lists:seq(1, ar_block:get_max_tx_anchor_depth())
+        lists:seq(1, arweave_constants:get_max_tx_anchor_depth())
     ),
     ar_test_node:join_on(#{ node => main, join_on => peer1 }),
     BI = ar_test_node:remote_call(peer1, ar_node, get_block_index, []),
     ?assertEqual(ok, ar_test_await:block_index_matches(main, BI)),
-    TX1 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(ar_block:get_max_tx_anchor_depth() + 1, BI)) }),
+    TX1 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(arweave_constants:get_max_tx_anchor_depth() + 1, BI)) }),
     {ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
         ar_test_node:post_tx_to_peer(main, TX1),
     lists:foreach(
@@ -73,7 +73,7 @@ joins_network_successfully() ->
                     ?assertMatch({ok, {{<<"400">>, _}, _,
                             <<"Invalid anchor (last_tx).">>, _, _}}, Reply);
                 block_anchor ->
-                    RecentBHL = lists:sublist(?BI_TO_BHL(BI), ar_block:get_max_tx_anchor_depth()),
+                    RecentBHL = lists:sublist(?BI_TO_BHL(BI), arweave_constants:get_max_tx_anchor_depth()),
                     case lists:member(TX#tx.last_tx, RecentBHL) of
                         true ->
                             ?assertMatch({ok, {{<<"400">>, _}, _,
@@ -89,31 +89,31 @@ joins_network_successfully() ->
     ar_test_node:disconnect_from(peer1),
 
     %% Mine on main first so its block can't be rebased once peer1's 2-block fork wins.
-    TX2 = ar_test_node:sign_tx(main, Key, #{ last_tx => element(1, lists:nth(ar_block:get_max_tx_anchor_depth(), BI)) }),
+    TX2 = ar_test_node:sign_tx(main, Key, #{ last_tx => element(1, lists:nth(arweave_constants:get_max_tx_anchor_depth(), BI)) }),
     ar_test_node:assert_post_tx_to_peer(main, TX2),
     ar_test_node:mine(),
-    ?assertMatch({ok, _}, ar_test_await:node_height(main, ar_block:get_max_tx_anchor_depth() + 1)),
+    ?assertMatch({ok, _}, ar_test_await:node_height(main, arweave_constants:get_max_tx_anchor_depth() + 1)),
 
     %% Mine two blocks on peer1 to orphan main's branch.
     ar_test_node:mine(peer1),
-    ?assertMatch({ok, _}, ar_test_await:node_height(peer1, ar_block:get_max_tx_anchor_depth() + 1)),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer1, arweave_constants:get_max_tx_anchor_depth() + 1)),
 
     %% Anchor at depth - 1 since this block lands at depth + 2.
-    TX3 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(ar_block:get_max_tx_anchor_depth() - 1, BI)) }),
+    TX3 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(arweave_constants:get_max_tx_anchor_depth() - 1, BI)) }),
     ar_test_node:assert_post_tx_to_peer(peer1, TX3),
     ar_test_node:mine(peer1),
-    {ok, BI2} = ar_test_await:node_height(peer1, ar_block:get_max_tx_anchor_depth() + 2),
+    {ok, BI2} = ar_test_await:node_height(peer1, arweave_constants:get_max_tx_anchor_depth() + 2),
 
     ar_test_node:connect_to_peer(peer1),
 
-    ?assertMatch({ok, _}, ar_test_await:node_height(main, ar_block:get_max_tx_anchor_depth() + 2)),
+    ?assertMatch({ok, _}, ar_test_await:node_height(main, arweave_constants:get_max_tx_anchor_depth() + 2)),
 
-    TX4 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(ar_block:get_max_tx_anchor_depth(), BI2)) }),
+    TX4 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(arweave_constants:get_max_tx_anchor_depth(), BI2)) }),
     ar_test_node:assert_post_tx_to_peer(peer1, TX4),
     ?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX4])),
     ar_test_node:mine(peer1),
-    {ok, BI3} = ar_test_await:node_height(peer1, ar_block:get_max_tx_anchor_depth() + 3),
-    {ok, BI3} = ar_test_await:node_height(main, ar_block:get_max_tx_anchor_depth() + 3),
+    {ok, BI3} = ar_test_await:node_height(peer1, arweave_constants:get_max_tx_anchor_depth() + 3),
+    {ok, BI3} = ar_test_await:node_height(main, arweave_constants:get_max_tx_anchor_depth() + 3),
 
     ?assertEqual([TX4#tx.id], (ar_test_await:block_stored(hd(BI3)))#block.txs),
     ?assertEqual([TX3#tx.id], (ar_test_await:block_stored(hd(BI2)))#block.txs).

@@ -6,9 +6,6 @@
         ]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_inflation.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -201,12 +198,12 @@ is_v2_pricing_height(Height) ->
         ar_pricing_transition:transition_length_2_7_2().
 
 transition_start_2_6_8() ->
-    ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START.
+    arweave_constants:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START.
 
 transition_start_2_7_2() ->
     %% Note: Even though this constant is related to the *2.7.2* fork we count the blocks
     %% since the *2.6.8* fork for easier comparison with ?PRICE_2_6_8_TRANSITION_START
-    ar_fork:height_2_6_8() + ?PRICE_2_7_2_TRANSITION_START.
+    arweave_constants:height_2_6_8() + ?PRICE_2_7_2_TRANSITION_START.
 
 transition_length_2_6_8() ->
     ?PRICE_2_6_8_TRANSITION_BLOCKS.
@@ -263,7 +260,7 @@ transition_start_price(Height) ->
 
 transition_upper_bound(Height) ->
     TransitionStart_2_7_2 = ar_pricing_transition:transition_start_2_7_2(),
-    Fork_2_7_2 = ar_fork:height_2_7_2(),
+    Fork_2_7_2 = arweave_constants:height_2_7_2(),
 
     case Height of
         _ when Height >= TransitionStart_2_7_2 ->
@@ -276,7 +273,7 @@ transition_upper_bound(Height) ->
 
 transition_lower_bound(Height) ->
     TransitionStart_2_7_2 = ar_pricing_transition:transition_start_2_7_2(),
-    Fork_2_7_2 = ar_fork:height_2_7_2(),
+    Fork_2_7_2 = arweave_constants:height_2_7_2(),
 
     case Height of
         _ when Height >= TransitionStart_2_7_2 ->

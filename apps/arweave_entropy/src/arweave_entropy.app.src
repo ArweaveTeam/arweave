@@ -1,0 +1,17 @@
+{application, arweave_entropy, [
+    {description, "Entropy generation, caching and storage preparation"},
+    {vsn, "2.9.7-alpha1"},
+    {mod, {arweave_entropy, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        arweave_constants,
+        arweave_config,
+        arweave_util,
+        arweave_metrics,
+        arweave_storage
+    ]},
+    {modules, []},
+    {registered, [arweave_entropy_sup]},
+    {env, []}
+]}.

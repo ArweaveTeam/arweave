@@ -9,6 +9,7 @@
   {applications, [
                   kernel,
                   stdlib,
+                  arweave_constants,
                   sasl,
                   b64fast,
                   cowboy,

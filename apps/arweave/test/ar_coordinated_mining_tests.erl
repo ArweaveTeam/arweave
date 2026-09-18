@@ -139,7 +139,7 @@ test_bad_secret() ->
     end.
 
 test_partition_table() ->
-    [B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), 5 * ar_block:partition_size()),
+    [B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), 5 * arweave_constants:partition_size()),
     BaseConfig = ar_test_node:base_cm_config([]),
 
     MiningAddr = maps:get([mining, address], BaseConfig),
@@ -156,26 +156,26 @@ test_partition_table() ->
 
     %% Partition jumble with 2 addresses
     PartitionJumbleModules = [
-        {0 * ar_block:partition_size(), 1 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-        {0 * ar_block:partition_size(), 1 * ar_block:partition_size(), {spora_2_6, RandomAddress}},
+        {0 * arweave_constants:partition_size(), 1 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+        {0 * arweave_constants:partition_size(), 1 * arweave_constants:partition_size(), {spora_2_6, RandomAddress}},
         {2 * 1000, 3 * 1000, {spora_2_6, MiningAddr}},
         {2 * 1000, 3 * 1000, {spora_2_6, RandomAddress}},
         {10 * 1000, 11 * 1000, {spora_2_6, MiningAddr}},
         {10 * 1000, 11 * 1000, {spora_2_6, RandomAddress}},
-        {4 * (ar_block:partition_size() * 2), 5 * (ar_block:partition_size() * 2), {spora_2_6, MiningAddr}},
-        {4 * (ar_block:partition_size() * 2), 5 * (ar_block:partition_size() * 2), {spora_2_6, RandomAddress}},
-        {18 * (ar_block:partition_size() div 10), 19 * (ar_block:partition_size() div 10), {spora_2_6, MiningAddr}},
-        {18 * (ar_block:partition_size() div 10), 19 * (ar_block:partition_size() div 10), {spora_2_6, RandomAddress}},
-        {19 * (ar_block:partition_size() div 10), 20 * (ar_block:partition_size() div 10), {spora_2_6, MiningAddr}},
-        {19 * (ar_block:partition_size() div 10), 20 * (ar_block:partition_size() div 10), {spora_2_6, RandomAddress}},
-        {20 * (ar_block:partition_size() div 10), 21 * (ar_block:partition_size() div 10), {spora_2_6, MiningAddr}},
-        {20 * (ar_block:partition_size() div 10), 21 * (ar_block:partition_size() div 10), {spora_2_6, RandomAddress}},
-        {21 * (ar_block:partition_size() div 10), 22 * (ar_block:partition_size() div 10), {spora_2_6, MiningAddr}},
-        {21 * (ar_block:partition_size() div 10), 22 * (ar_block:partition_size() div 10), {spora_2_6, RandomAddress}},
-        {30 * (ar_block:partition_size() + 1), 31 * (ar_block:partition_size() + 1), {spora_2_6, MiningAddr}},
-        {30 * (ar_block:partition_size() + 1), 31 * (ar_block:partition_size() + 1), {spora_2_6, RandomAddress}},
-        {40 * ar_block:partition_size(), 41 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-        {40 * ar_block:partition_size(), 41 * ar_block:partition_size(), {spora_2_6, RandomAddress}}
+        {4 * (arweave_constants:partition_size() * 2), 5 * (arweave_constants:partition_size() * 2), {spora_2_6, MiningAddr}},
+        {4 * (arweave_constants:partition_size() * 2), 5 * (arweave_constants:partition_size() * 2), {spora_2_6, RandomAddress}},
+        {18 * (arweave_constants:partition_size() div 10), 19 * (arweave_constants:partition_size() div 10), {spora_2_6, MiningAddr}},
+        {18 * (arweave_constants:partition_size() div 10), 19 * (arweave_constants:partition_size() div 10), {spora_2_6, RandomAddress}},
+        {19 * (arweave_constants:partition_size() div 10), 20 * (arweave_constants:partition_size() div 10), {spora_2_6, MiningAddr}},
+        {19 * (arweave_constants:partition_size() div 10), 20 * (arweave_constants:partition_size() div 10), {spora_2_6, RandomAddress}},
+        {20 * (arweave_constants:partition_size() div 10), 21 * (arweave_constants:partition_size() div 10), {spora_2_6, MiningAddr}},
+        {20 * (arweave_constants:partition_size() div 10), 21 * (arweave_constants:partition_size() div 10), {spora_2_6, RandomAddress}},
+        {21 * (arweave_constants:partition_size() div 10), 22 * (arweave_constants:partition_size() div 10), {spora_2_6, MiningAddr}},
+        {21 * (arweave_constants:partition_size() div 10), 22 * (arweave_constants:partition_size() div 10), {spora_2_6, RandomAddress}},
+        {30 * (arweave_constants:partition_size() + 1), 31 * (arweave_constants:partition_size() + 1), {spora_2_6, MiningAddr}},
+        {30 * (arweave_constants:partition_size() + 1), 31 * (arweave_constants:partition_size() + 1), {spora_2_6, RandomAddress}},
+        {40 * arweave_constants:partition_size(), 41 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+        {40 * arweave_constants:partition_size(), 41 * arweave_constants:partition_size(), {spora_2_6, RandomAddress}}
     ],
     ar_test_node:start_node(B0,
         BaseConfig#{
@@ -189,24 +189,24 @@ test_partition_table() ->
     ),
 
     %% Simulate mining start
-    PartitionUpperBound = 35 * ar_block:partition_size(), %% less than the highest configured partition
+    PartitionUpperBound = 35 * arweave_constants:partition_size(), %% less than the highest configured partition
     ar_mining_io:set_largest_seen_upper_bound(PartitionUpperBound),
     
     ?assertEqual(
         {ok, [
-            {0, ar_block:partition_size(), MiningAddr, 0},
-            {1, ar_block:partition_size(), MiningAddr, 0},
-            {2, ar_block:partition_size(), MiningAddr, 0},
-            {8, ar_block:partition_size(), MiningAddr, 0},
-            {9, ar_block:partition_size(), MiningAddr, 0},
-            {30, ar_block:partition_size(), MiningAddr, 0},
-            {31, ar_block:partition_size(), MiningAddr, 0}
+            {0, arweave_constants:partition_size(), MiningAddr, 0},
+            {1, arweave_constants:partition_size(), MiningAddr, 0},
+            {2, arweave_constants:partition_size(), MiningAddr, 0},
+            {8, arweave_constants:partition_size(), MiningAddr, 0},
+            {9, arweave_constants:partition_size(), MiningAddr, 0},
+            {30, arweave_constants:partition_size(), MiningAddr, 0},
+            {31, arweave_constants:partition_size(), MiningAddr, 0}
         ]},
         ar_http_iface_client:get_cm_partition_table(Peer)
     ).
 
 test_peers_by_partition() ->
-    PartitionUpperBound = 6 * ar_block:partition_size(),
+    PartitionUpperBound = 6 * arweave_constants:partition_size(),
     [B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(),
             PartitionUpperBound),
 
@@ -225,9 +225,9 @@ test_peers_by_partition() ->
             [peers, cm_peer] => [arweave_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
             [peers, local] => [arweave_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
             [storage_modules] => [
-                {0 * ar_block:partition_size(), 1 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-                {1 * ar_block:partition_size(), 2 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-                {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), {spora_2_6, MiningAddr}}
+                {0 * arweave_constants:partition_size(), 1 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+                {1 * arweave_constants:partition_size(), 2 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+                {2 * arweave_constants:partition_size(), 3 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}}
             ]
         },
         false]),
@@ -236,9 +236,9 @@ test_peers_by_partition() ->
             [peers, cm_peer] => [arweave_util:format_peer(Peer) || Peer <- [Peer1, Peer3]],
             [peers, local] => [arweave_util:format_peer(Peer) || Peer <- [Peer1, Peer3]],
             [storage_modules] => [
-                {1 * ar_block:partition_size(), 2 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-                {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-                {3 * ar_block:partition_size(), 4 * ar_block:partition_size(), {spora_2_6, MiningAddr}}
+                {1 * arweave_constants:partition_size(), 2 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+                {2 * arweave_constants:partition_size(), 3 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+                {3 * arweave_constants:partition_size(), 4 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}}
             ]
         },
         false]),
@@ -247,9 +247,9 @@ test_peers_by_partition() ->
             [peers, cm_peer] => [arweave_util:format_peer(Peer) || Peer <- [Peer1, Peer2]],
             [peers, local] => [arweave_util:format_peer(Peer) || Peer <- [Peer1, Peer2]],
             [storage_modules] => [
-                {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-                {3 * ar_block:partition_size(), 4 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-                {4 * ar_block:partition_size(), 5 * ar_block:partition_size(), {spora_2_6, MiningAddr}}
+                {2 * arweave_constants:partition_size(), 3 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+                {3 * arweave_constants:partition_size(), 4 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+                {4 * arweave_constants:partition_size(), 5 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}}
             ]
         },
         false]),
@@ -308,9 +308,9 @@ test_peers_by_partition() ->
             [peers, cm_peer] => [arweave_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
             [peers, local] => [arweave_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
             [storage_modules] => [
-                {0 * ar_block:partition_size(), 1 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-                {4 * ar_block:partition_size(), 5 * ar_block:partition_size(), {spora_2_6, MiningAddr}},
-                {5 * ar_block:partition_size(), 6 * ar_block:partition_size(), {spora_2_6, MiningAddr}}
+                {0 * arweave_constants:partition_size(), 1 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+                {4 * arweave_constants:partition_size(), 5 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}},
+                {5 * arweave_constants:partition_size(), 6 * arweave_constants:partition_size(), {spora_2_6, MiningAddr}}
             ]
         },
         false]),

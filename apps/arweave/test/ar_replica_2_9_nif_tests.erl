@@ -3,7 +3,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_constants/include/arweave_constants.hrl").
 
 setup_replica_2_9() ->
     FastState = ar_mine_randomx:init_fast2(rxsquared, ?RANDOMX_PACKING_KEY, 0, 0,

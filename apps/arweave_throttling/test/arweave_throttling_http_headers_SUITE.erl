@@ -16,23 +16,7 @@
 %%% @end
 %%%===================================================================
 -module(arweave_throttling_http_headers_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([
-        parse_well_formed/1,
-        parse_well_formed_list/1,
-        parse_alpha2_version/1,
-        parse_malformed_policies/1,
-        parse_case_insensitive_names/1,
-        parse_accepts_map/1,
-        parse_missing_header/1,
-        parse_malformed_limit/1,
-        update_applies_quota_on_match/1,
-        update_rejects_group_mismatch/1,
-        old_headers/1
-        ]).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

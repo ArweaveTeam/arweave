@@ -90,10 +90,10 @@
 -export([start/2, stop/1]).
 -ifdef(AR_TEST).
 -export([
-    force_config/1,
-    restore/1,
-    snapshot/0,
-    with_test_config/1
+    internal_force_config/1,
+    internal_restore/1,
+    internal_snapshot/0,
+    internal_with_test_config/1
 ]).
 -endif.
 -compile({no_auto_import,[get/1]}).
@@ -185,7 +185,7 @@ set(Key, Value) ->
 %%
 %% Load-only specs are locked once `runtime/0` has flipped the
 %% lifecycle flag; callers that need to mutate config after that point
-%% should use `with_test_config/1` (tests only).
+%% should use `internal_with_test_config/1` (tests only).
 -spec load(Map) -> Return when
     Map :: #{[term()] => term()},
     Return :: ok | {error, {[term()], term()}}.
@@ -311,7 +311,7 @@ repack_modules(Shape) ->
 %% (space-separated arguments / flat config.json). Stamped at
 %% bootstrap; false when bootstrap has not run. Drives the legacy
 %% bucket-notation directory naming in
-%% `ar_storage_module:disk_dir_name/1`.
+%% the `disk_dir_name` field of `arweave_storage:store_info/1`.
 is_legacy_launch() ->
     arweave_config:get([config_dialect]) =:= legacy.
 
@@ -338,19 +338,19 @@ stop(_Args) ->
 -ifdef(AR_TEST).
 
 %% @doc Capture the store and runtime flag as an opaque snapshot for
-%% restoration via `restore/1`, so tests can mutate config without
+%% restoration via `internal_restore/1`, so tests can mutate config without
 %% leaking into siblings.
--spec snapshot() -> #{store := list(), runtime := boolean()}.
-snapshot() ->
+internal_snapshot() ->
     #{
         store => arweave_config_store:snapshot(),
         runtime => is_runtime()
     }.
 
-%% @doc Restore a `snapshot/0`: replace every store row with the
+%% @doc Restore an `internal_snapshot/0`: replace every store row with the
 %% snapshot's rows and restore the captured runtime flag.
--spec restore(#{store := list(), runtime := boolean()}) -> ok.
-restore(#{store := StoreSnapshot, runtime := Runtime}) when is_boolean(Runtime) ->
+internal_restore(#{store := StoreSnapshot, runtime := Runtime}) when
+    is_boolean(Runtime)
+->
     ok = arweave_config_store:restore(StoreSnapshot),
     ok = arweave_config_options_registry:set_runtime(Runtime).
 
@@ -359,19 +359,18 @@ restore(#{store := StoreSnapshot, runtime := Runtime}) when is_boolean(Runtime) 
 %% options with `handle_set` callbacks are restored through the normal
 %% setter first so their runtime side effects are restored as well.
 %%
-%% Single-threaded: concurrent setters during a `with_test_config/1`
+%% Single-threaded: concurrent setters during an `internal_with_test_config/1`
 %% call are not safe.
 %%
 %% Example:
 %% ```
-%% arweave_config:with_test_config(fun() ->
-%%     ok = arweave_config:force_config(#{[storage_modules] => [...]}),
+%% arweave_config:internal_with_test_config(fun() ->
+%%     ok = arweave_config:internal_force_config(#{[storage_modules] => [...]}),
 %%     %% test body
 %% end).
 %% '''
--spec with_test_config(fun(() -> Result)) -> Result.
-with_test_config(Fun) when is_function(Fun, 0) ->
-    Snapshot = snapshot(),
+internal_with_test_config(Fun) when is_function(Fun, 0) ->
+    Snapshot = internal_snapshot(),
     OriginalValues = maps:from_list(
         arweave_config_store:items_with_prefix([])),
     try
@@ -388,12 +387,12 @@ restore_test_config(Snapshot, OriginalValues) ->
     try
         case map_size(SideEffectValues) of
             0 -> ok;
-            _ -> ok = force_config(SideEffectValues)
+            _ -> ok = internal_force_config(SideEffectValues)
         end
     after
         %% Replaying a default can create a row that was absent in the
         %% snapshot. Restore once more to preserve the exact store state.
-        restore(Snapshot)
+        internal_restore(Snapshot)
     end.
 
 restored_side_effect_values(OriginalValues, CurrentValues) ->
@@ -428,12 +427,9 @@ original_side_effect_value(Key, OriginalValues) ->
 %% `{peers, Role} => [...]`, etc.) are NOT accepted — callers should
 %% use canonical option paths such as `[peers, trusted]`.
 %%
-%% Use `with_test_config/1` when the store contents must also be
+%% Use `internal_with_test_config/1` when the store contents must also be
 %% snapshotted and restored.
--spec force_config(Map) -> Return when
-    Map :: #{[term()] => term()},
-    Return :: ok | {error, term()}.
-force_config(Map) when is_map(Map) ->
+internal_force_config(Map) when is_map(Map) ->
     WasRuntime = is_runtime(),
     case WasRuntime of
         true -> ok = arweave_config_options_registry:set_runtime(false);

@@ -1,11 +1,11 @@
 -module(ar_disk_pool_chunk_processing_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include("ar_data_sync.hrl").
 
 
@@ -162,9 +162,16 @@ test_blacklisted_byte_skipped() ->
     %% The chunk should be cleaned from the disk pool (CanRemoveFromDiskPool preserved
     %% for blacklisted offsets) but NOT stored at the blacklisted offset.
     true = wait_until_disk_pool_size(0),
-    StoreID = ar_storage_module:id(hd(StorageModules)),
-    ?assertEqual(false,
-        ar_sync_record:is_recorded(AbsoluteEndOffset, ar_data_sync, StoreID)),
+    #store_info{id = StoreID} = arweave_storage:store_info(hd(StorageModules)),
+    ?assertEqual(
+        false,
+        arweave_storage:is_recorded(
+            AbsoluteEndOffset,
+            any_packing,
+            {ar_data_sync, byte},
+            StoreID
+        )
+    ),
     %% Clean up the blacklist entry.
     ar_ets_intervals:delete(ar_tx_blacklist_offsets, AbsoluteEndOffset,
         AbsoluteEndOffset - 1).
@@ -193,9 +200,8 @@ test_chunk_cache_full_defers_processing() ->
     ar_test_node:mine(main),
     ?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
     %% Saturate the chunk cache to prevent processing.
-    [{_, Limit}] = ets:lookup(ar_data_sync_state, chunk_cache_size_limit),
-    %% A test-owned counter fills the cache without modifying live stores.
-    ets:insert(ar_data_sync_state, {{chunk_cache_size, self()}, Limit}),
+    Limit = ar_chunk_cache:limit(),
+    {ok, CacheRef} = ar_chunk_cache:reserve(test_store, Limit),
     try
         %% Mine the remaining blocks to push past the threshold.
         ar_test_node:mine(main),
@@ -206,7 +212,7 @@ test_chunk_cache_full_defers_processing() ->
         timer:sleep(5_000),
         ?assertNotEqual([], ar_disk_pool:debug_get_chunks())
     after
-        ar_sync_chunk_cache:reset(self())
+        ar_chunk_cache:release(CacheRef)
     end,
     %% The chunk should now process and leave the disk pool.
     true = wait_until_disk_pool_size(0).
@@ -218,9 +224,8 @@ test_chunk_cache_full_defers_processing() ->
 %% -------------------------------------------------------------------
 test_chunk_data_not_found_resilience() ->
     Addr = ar_test_node:generate_address(main),
-    StorageModules = [{0, 10 * ?PARTITION_SIZE,
-        ar_test_node:storage_module_packing(Addr, 0)}],
-    StoreID = ar_storage_module:id(hd(StorageModules)),
+    StorageModules = [{0, 10 * ?PARTITION_SIZE, ar_test_node:storage_module_packing(Addr, 0)}],
+    #store_info{id = StoreID} = arweave_storage:store_info(hd(StorageModules)),
     Wallet = ar_test_data_sync:setup_main_node(
         #{ addr => Addr, [storage_modules] => StorageModules }),
     #{ tx := MissingTX, data_root := MissingDataRoot,
@@ -278,9 +283,8 @@ test_chunk_data_not_found_resilience() ->
 %% -------------------------------------------------------------------
 test_may_conclude_accumulation() ->
     Addr = ar_test_node:generate_address(main),
-    StorageModules = [{0, 10 * ?PARTITION_SIZE,
-        ar_test_node:storage_module_packing(Addr, 0)}],
-    StoreID = ar_storage_module:id(hd(StorageModules)),
+    StorageModules = [{0, 10 * ?PARTITION_SIZE, ar_test_node:storage_module_packing(Addr, 0)}],
+    #store_info{id = StoreID} = arweave_storage:store_info(hd(StorageModules)),
     Wallet = ar_test_data_sync:setup_main_node(
         #{ addr => Addr, [storage_modules] => StorageModules }),
     Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
@@ -335,7 +339,7 @@ test_may_conclude_accumulation() ->
     true = wait_until_disk_pool_size(0).
 
 %% -------------------------------------------------------------------
-%% The disk pool casts pack_and_store_chunk to every storage module
+%% The disk pool hands chunks to sync ingestion for every storage module
 %% covering a matured chunk and must increment chunk_cache_size once per
 %% cast, because each ar_data_sync worker decrements it once.
 %% -------------------------------------------------------------------
@@ -347,8 +351,10 @@ test_multi_module_chunk_cache_accounting() ->
         {0, 4 * ?DATA_CHUNK_SIZE, Packing},
         {3 * ?DATA_CHUNK_SIZE, 4 * ?DATA_CHUNK_SIZE, Packing}
     ],
-    StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),
-    StoreID2 = ar_storage_module:id(lists:nth(2, StorageModules)),
+    #store_info{id = StoreID1} =
+        arweave_storage:store_info(lists:nth(1, StorageModules)),
+    #store_info{id = StoreID2} =
+        arweave_storage:store_info(lists:nth(2, StorageModules)),
     Wallet = ar_test_data_sync:setup_main_node(
         #{ addr => Addr, [storage_modules] =>
             StorageModules }),
@@ -376,9 +382,12 @@ test_multi_module_chunk_cache_accounting() ->
     true = wait_until_disk_pool_size(0),
     %% Assert chunk cache is cleaned up. Everything async has completed by
     %% this point, so the short timeout is safe.
-    ok = ar_test_await:until(chunk_cache_settled,
-        fun() -> ar_sync_chunk_cache:size() =:= 0 end, 10_000),
-    ?assertEqual(0, ar_sync_chunk_cache:size()).
+    ok = ar_test_await:until(
+        chunk_cache_settled,
+        fun() -> ar_chunk_cache:reserved_size() =:= 0 end,
+        10_000
+    ),
+    ?assertEqual(0, ar_chunk_cache:reserved_size()).
 
 %% -------------------------------------------------------------------
 %% Internal

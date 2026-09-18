@@ -1,0 +1,16 @@
+{application, arweave_storage, [
+    {description, "Chunk storage, entropy storage and persisted availability records"},
+    {vsn, "2.9.7-alpha1"},
+    {mod, {arweave_storage, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        arweave_constants,
+        arweave_config,
+        arweave_util,
+        arweave_metrics
+    ]},
+    {modules, []},
+    {registered, [arweave_storage_sup]},
+    {env, []}
+]}.

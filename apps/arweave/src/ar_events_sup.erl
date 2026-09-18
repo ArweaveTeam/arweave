@@ -49,7 +49,7 @@ init([]) ->
         %% Events: initialized, valid, invalid, validation_error, refuse_validation,
         %% computed_output.
         ?CHILD(ar_events, nonce_limiter, worker),
-        %% Events: removed_file.
+        %% Events: removed_file, data_size.
         ?CHILD(ar_events, chunk_storage, worker),
         %% Events: add_range, remove_range, global_remove_range, cut, global_cut.
         ?CHILD(ar_events, sync_record, worker),

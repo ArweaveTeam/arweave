@@ -1,9 +1,6 @@
-%%% @doc Arweave utility library application.
-%%%
-%%% This module is the application API. It exposes the utility
-%%% functions. The application does not start any process.
+%%% Public general-purpose utilities in the arweave_util library app.
+%%% The app starts no processes; its README lists the other public modules.
 -module(arweave_util).
--test_category([fast, vdf]).
 
 -export([
     assert_file_exists_and_readable/1,
@@ -25,6 +22,7 @@
     format_peer/1,
     genesis_wallets/0,
     get_system_device/1,
+    system_memory/0,
     increment_map_value/2,
     integer_to_binary/1,
     int_to_bool/1,
@@ -62,9 +60,7 @@
 ]).
 
 
-
 -include_lib("arweave/include/ar.hrl").
--include_lib("eunit/include/eunit.hrl").
 
 -define(DEFAULT_PMAP_TIMEOUT, 60_000).
 
@@ -249,39 +245,6 @@ parse_peer({IP, Port}, Opts) ->
     [{A, B, C, D, parse_port(Port)}];
 parse_peer(_Peer, _) ->
     throw(invalid_peer).
-
-parse_peer_test() ->
-    ?assertThrow(
-        empty_peer_string,
-        parse_peer("")
-    ),
-    ?assertThrow(
-        invalid_peer,
-        parse_peer(1)
-    ),
-    ?assertEqual(
-        [{127,0,0,1,1985}],
-        parse_peer({{127,0,0,1}, 1985})
-    ),
-
-    Opts = #{ module_resolve => ar_test_inet_mock },
-    ?assertEqual(
-        [{127,0,0,1,1984}],
-        parse_peer("single.record.local", Opts)
-    ),
-    ?assertEqual(
-        [
-            {127,0,0,2,1984},
-            {127,0,0,3,1984},
-            {127,0,0,4,1984},
-            {127,0,0,5,1984}
-        ],
-        parse_peer("multi.record.local", Opts)
-    ),
-    ?assertThrow(
-        {invalid_peer_string,_,_},
-        parse_peer("error.test.local", Opts)
-    ).
 
 
 %%--------------------------------------------------------------------
@@ -600,59 +563,6 @@ safe_format(Value, Depth, Limit) ->
             ValueStr
     end.
 
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
-
-increment_map_value_test() ->
-    %% A missing key starts at one; incrementing it again raises it to two.
-    ?assertEqual(#{key => 1}, increment_map_value(key, #{})),
-    ?assertEqual(#{key => 2}, increment_map_value(key, #{key => 1})).
-
-%% @doc Test that unique functions correctly.
-basic_unique_test() ->
-    [a, b, c] = unique([a, a, b, b, b, c, c]),
-    [a, b, c] = unique([a, b, c, c, b, a]).
-
-index_of_test() ->
-    ?assertEqual(1, index_of(a, [a, b, c])),
-    ?assertEqual(3, index_of(c, [a, b, c])),
-    ?assertEqual(1, index_of(a, [a, a])),
-    ?assertEqual(undefined, index_of(d, [a, b, c])),
-    ?assertEqual(undefined, index_of(a, [])).
-
-split_at_most_test() ->
-    ?assertEqual({[], []}, split_at_most(3, [])),
-    ?assertEqual({[], [a, b]}, split_at_most(0, [a, b])),
-    ?assertEqual({[a, b], []}, split_at_most(3, [a, b])),
-    ?assertEqual({[a, b], [c]}, split_at_most(2, [a, b, c])).
-
-basic_peer_format_test() ->
-    <<"127.0.0.1:9001">> = format_peer({127,0,0,1,9001}).
-
-%% @doc Ensure that pick_random's are actually in the starting list.
-pick_random_test() ->
-    List = [a, b, c, d, e],
-    true = lists:member(pick_random(List), List).
-
-%% @doc Test that binaries of different lengths can be encoded and decoded
-%% correctly.
-round_trip_encode_test() ->
-    lists:map(
-        fun(Bytes) ->
-            Bin = crypto:strong_rand_bytes(Bytes),
-            Bin = decode(encode(Bin))
-        end,
-        lists:seq(1, 64)
-    ).
-
-%% Test the paralell mapping functionality.
-pmap_test() ->
-    Mapper = fun(X) ->
-        timer:sleep(100 * X),
-        X * 2
-    end,
-    ?assertEqual([6, 2, 4], pmap(Mapper, [3, 1, 2])).
 
 cast_after(0, Module, Message) ->
     gen_server:cast(Module, Message);
@@ -679,20 +589,6 @@ safe_divide(A, B) ->
             Result
     end.
 
-encode_list_indices_test() ->
-    lists:foldl(
-        fun(Input, N) ->
-            ?assertEqual(Input, lists:sort(Input)),
-            Encoded = encode_list_indices(Input),
-            ?assert(byte_size(Encoded) =< 125),
-            Indices = parse_list_indices(Encoded),
-            ?assertEqual(Input, Indices, io_lib:format("Case ~B", [N])),
-            N + 1
-        end,
-        0,
-        [[], [0], [1], [999], [0, 1], lists:seq(0, 999), lists:seq(0, 999, 2),
-            lists:seq(1, 999, 3)]
-    ).
 
 %% @doc os aware way of clearing a terminal
 terminal_clear() ->
@@ -708,6 +604,51 @@ get_system_device(Path) ->
     Command = "df -P " ++ Path ++ " | awk 'NR==2 {print $1}'",
     Device = os:cmd(Command),
     string:trim(Device).
+
+%% @doc Return total memory in bytes, capped by container limits, or undefined.
+system_memory() ->
+    %% A container's limit can be smaller than the host's physical memory.
+    lists:foldl(
+        fun limit_memory/2,
+        host_memory(),
+        [
+            "/sys/fs/cgroup/memory.max",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+        ]
+    ).
+
+host_memory() ->
+    case file:read_file("/proc/meminfo") of
+        {ok, <<"MemTotal:", Rest/binary>>} ->
+            {KiB, _} = string:to_integer(string:trim(binary_to_list(Rest))),
+            KiB * 1024;
+        _ ->
+            try
+                proplists:get_value(
+                    total_memory,
+                    memsup:get_system_memory_data()
+                )
+            catch
+                _:_ -> undefined
+            end
+    end.
+
+limit_memory(Path, Total) ->
+    case file:read_file(Path) of
+        {ok, Value} ->
+            do_limit_memory(string:to_integer(binary_to_list(Value)), Total);
+        _ ->
+            Total
+    end.
+
+do_limit_memory({Bytes, _}, Total) when is_integer(Bytes), Bytes > 0 ->
+    case Total of
+        undefined -> Bytes;
+        _ -> min(Total, Bytes)
+    end;
+do_limit_memory(_, Total) ->
+    %% Missing numeric limits (including cgroup's "max") do not restrict RAM.
+    Total.
 
 print_stacktrace() ->
     try

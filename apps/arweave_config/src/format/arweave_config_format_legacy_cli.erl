@@ -7,7 +7,6 @@
     find_config_file/1
 ]).
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_verify_chunks.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -220,14 +219,16 @@ parse(["hashing_threads", Num | Rest]) ->
     parse(Rest);
 parse(["data_cache_size_limit", Num | Rest]) ->
     V = list_to_integer(Num),
-    %% Legacy value is in chunks; new-style [sync, cache_size] is in MiB (ceiling).
-    _ = arweave_config:set([sync, cache_size], ?LEGACY_CHUNKS_TO_CACHE_MIB(V)),
-    parse(Rest);
-parse(["packing_cache_size_limit", Num | Rest]) ->
-    V = list_to_integer(Num),
-    %% Legacy chunks become MiB, rounding up just like the sync cache option.
+    %% Legacy chunks become MiB, rounding up any partial MiB.
     _ = arweave_config:set([packing, cache_size],
         ?LEGACY_CHUNKS_TO_CACHE_MIB(V)),
+    parse(Rest);
+parse(["packing_cache_size_limit", _Num | Rest]) ->
+    ?LOG_WARNING([{event, deprecated_config_option},
+        {option, packing_cache_size_limit}, {action, ignored},
+        {reason, <<"Use packing.cache_size (MiB), or legacy "
+            "data_cache_size_limit (256 KiB chunks), for the shared "
+            "chunk cache.">>}]),
     parse(Rest);
 parse(["mining_cache_size_mb", Num | Rest]) ->
     V = list_to_integer(Num),

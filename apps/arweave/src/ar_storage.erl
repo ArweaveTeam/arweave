@@ -134,7 +134,7 @@ read_block_time_history(Height, BI) ->
 read_block_time_history(_Height, [], _CustomDir) ->
     [];
 read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI], CustomDir) ->
-    case Height < ar_fork:height_2_7() of
+    case Height < arweave_constants:height_2_7() of
     true ->
             [];
         false ->
@@ -153,7 +153,7 @@ read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI], CustomDir) ->
 
 %% @doc Record the entire block index on disk.
 %% Return {error, block_index_no_recent_intersection} if the local state forks away
-%% at more than ar_block:get_consensus_window_size() blocks ago.
+%% at more than arweave_constants:get_consensus_window_size() blocks ago.
 store_block_index(BI) ->
     %% Use a key that is bigger than any << Height:256 >> (<<"a">> > << Height:256 >>)
     %% to retrieve the largest stored Height.
@@ -164,7 +164,7 @@ store_block_index(BI) ->
         {ok, << StoredHeight:256 >>, _V} ->
             %% RootHeight should a historical height shared by both the stored BI and the
             %% new BI
-            RootHeight = max(0, min(StoredHeight, NewHeight) - ar_block:get_consensus_window_size()),
+            RootHeight = max(0, min(StoredHeight, NewHeight) - arweave_constants:get_consensus_window_size()),
             {ok, V} = ar_kv:get(block_index_db, << RootHeight:256 >>),
             {H, WeaveSize, TXRoot} = lists:nth(NewHeight - RootHeight + 1, BI),
         case binary_to_term(V, [safe]) of

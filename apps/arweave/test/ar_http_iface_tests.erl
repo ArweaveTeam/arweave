@@ -898,7 +898,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
         }),
     OrigSecret = arweave_config:get([internal_api_secret]),
     try
-        ok = arweave_config:force_config(#{[internal_api_secret] => <<"correct_secret">>}),
+        ok = arweave_config:internal_force_config(#{[internal_api_secret] => <<"correct_secret">>}),
         {ok, {{<<"421">>, _}, _, _, _, _}} =
             ar_http:req(#{
                 method => post,
@@ -913,7 +913,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
                 path => "/wallet",
                 headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}]
             }),
-        ok = arweave_config:force_config(#{[internal_api_secret] => not_set}),
+        ok = arweave_config:internal_force_config(#{[internal_api_secret] => not_set}),
         {CreateWalletRes} = ar_serialize:dejsonify(CreateWalletBody),
         [WalletAccessCode] = proplists:get_all_values(<<"wallet_access_code">>, CreateWalletRes),
         [Address] = proplists:get_all_values(<<"wallet_address">>, CreateWalletRes),
@@ -952,7 +952,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
                 path => "/unsigned_tx",
                 body => ar_serialize:jsonify({UnsignedTXProps})
             }),
-        ok = arweave_config:force_config(#{[internal_api_secret] => <<"correct_secret">>}),
+        ok = arweave_config:internal_force_config(#{[internal_api_secret] => <<"correct_secret">>}),
         {ok, {{<<"421">>, _}, _, _, _, _}} =
             ar_http:req(#{
                 method => post,
@@ -979,7 +979,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
                 headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
                 body => <<"{not valid json">>
             }),
-        ok = arweave_config:force_config(#{[internal_api_secret] => not_set}),
+        ok = arweave_config:internal_force_config(#{[internal_api_secret] => not_set}),
         {Res} = ar_serialize:dejsonify(Body),
         TXID = proplists:get_value(<<"id">>, Res),
         SignedTXID = arweave_util:decode(TXID),
@@ -1001,7 +1001,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
             maps:from_list(GetTXRes)
         )
     after
-        ok = arweave_config:force_config(#{[internal_api_secret] => OrigSecret})
+        ok = arweave_config:internal_force_config(#{[internal_api_secret] => OrigSecret})
     end.
 
 %% @doc Ensure the HTTP client stops fetching data from an endpoint when its data size

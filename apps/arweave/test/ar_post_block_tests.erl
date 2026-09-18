@@ -3,7 +3,7 @@
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--include("ar_consensus.hrl").
+-include_lib("arweave_constants/include/arweave_constants.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -36,7 +36,7 @@ reset_node() ->
 
 setup_all_post_2_7() ->
     {Setup, Cleanup} = ar_test_node:mock_all_nodes([
-        {ar_fork, height_2_7, fun() -> 0 end}
+        {arweave_constants, height_2_7, fun() -> 0 end}
         ]),
     Functions = Setup(),
     start_node(),
@@ -44,7 +44,7 @@ setup_all_post_2_7() ->
 
 setup_all_post_2_8() ->
     {Setup, Cleanup} = ar_test_node:mock_all_nodes([
-        {ar_fork, height_2_8, fun() -> 0 end}
+        {arweave_constants, height_2_8, fun() -> 0 end}
         ]),
     Functions = Setup(),
     start_node(),
@@ -241,7 +241,7 @@ test_recall_byte_out_of_bounds() ->
     start_node(),
     {Key, B, PrevB} = reset_node(),
     {Setup, Cleanup} = ar_test_node:mock_all_nodes([
-        {ar_block, get_recall_range_size,
+        {arweave_constants, get_recall_range_size,
             fun
                 (0) -> ?LEGACY_RECALL_RANGE_SIZE;
                 (PackingDifficulty) -> (768 * 1024) div PackingDifficulty
@@ -403,7 +403,7 @@ test_reject_block_invalid_replica_format({Key, B, PrevB}) ->
 %% ------------------------------------------------------------------------------------------
 
 add_external_block_with_invalid_timestamp_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_7, fun() -> 0 end}],
+    ar_test_node:test_with_all_nodes_mocked([{arweave_constants, height_2_7, fun() -> 0 end}],
         fun test_add_external_block_with_invalid_timestamp/0).
 
 test_add_external_block_with_invalid_timestamp() ->
@@ -614,7 +614,7 @@ test_rejects_invalid_blocks() ->
     ar_blacklist_middleware:reset().
 
 rejects_blocks_with_invalid_double_signing_proof_test_() ->
-    test_with_all_nodes_mocked([{ar_fork, height_2_9, fun() -> 0 end}],
+    test_with_all_nodes_mocked([{arweave_constants, height_2_9, fun() -> 0 end}],
         fun test_reject_block_invalid_double_signing_proof/0).
 
 rejects_blocks_with_small_rsa_keys_test_() ->
@@ -741,7 +741,7 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
     ?assertMatch(#{ Target := {1, <<>>}, BannedAddr := {_, TXID, 1, false} }, Accounts2).
 
 send_block2_test_() ->
-    test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
+    test_with_all_nodes_mocked([{arweave_constants, height_2_6, fun() -> 0 end}],
         fun() -> test_send_block2() end).
 
 test_send_block2() ->
@@ -873,7 +873,7 @@ test_send_block2() ->
             ar_serialize:binary_to_block_announcement_response(Body6)).
 
 resigned_solution_test_() ->
-    test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
+    test_with_all_nodes_mocked([{arweave_constants, height_2_6, fun() -> 0 end}],
         fun() -> test_resigned_solution() end).
 
 test_resigned_solution() ->

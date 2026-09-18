@@ -4,9 +4,7 @@
         add_mainnet_v1_genesis_txs/0]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -15,7 +13,7 @@
 %%%===================================================================
 
 %% @doc Create a genesis block. The genesis block includes one transaction with
-%% at least one small chunk and the total data size equal to ar_block:strict_data_split_threshold(),
+%% at least one small chunk and the total data size equal to arweave_constants:strict_data_split_threshold(),
 %% to test the code branches dealing with small chunks placed before the threshold.
 init() ->
     init([]).
@@ -67,7 +65,7 @@ init(WalletList, Diff, GenesisDataSize) ->
             account_tree = AccountTree
         },
     B1 =
-        case ar_fork:height_2_6() > 0 of
+        case arweave_constants:height_2_6() > 0 of
             false ->
                 RewardKey = element(2, ar_wallet:new()),
                 RewardAddr = ar_wallet:to_address(RewardKey),
@@ -95,12 +93,12 @@ init(WalletList, Diff, GenesisDataSize) ->
                 B0
         end,
     B2 =
-        case ar_fork:height_2_7() > 0 of
+        case arweave_constants:height_2_7() > 0 of
             false ->
                 InitialHistory = get_initial_block_time_history(),
                 B1#block{
                     merkle_rebase_support_threshold =
-                            ar_block:get_merkle_rebase_support_threshold(),
+                            arweave_constants:get_merkle_rebase_support_threshold(),
                     chunk_hash = crypto:strong_rand_bytes(32),
                     block_time_history = InitialHistory,
                     block_time_history_hash = ar_block_time_history:hash(InitialHistory)

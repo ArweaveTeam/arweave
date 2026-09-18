@@ -3,12 +3,6 @@
 -behaviour(application).
 -compile(warnings_as_errors).
 -export([
-         benchmark_hash/0,
-         benchmark_hash/1,
-         benchmark_packing/0,
-         benchmark_packing/1,
-         benchmark_vdf/0,
-         benchmark_vdf/1,
          console/1,
          console/2,
          create_ecdsa_wallet/0,
@@ -36,7 +30,6 @@
         ]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include("ar_verify_chunks.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -114,7 +107,7 @@ start(normal, _Args) ->
 
     %% Start other apps which we depend on.
     set_mining_address(),
-    ar_chunk_storage:run_defragmentation(),
+    arweave_storage:run_defragmentation(),
 
     %% Start Arweave. Supervisor children may run boot-time validators
     %% in their init/1 callbacks that mutate static config (e.g.,
@@ -122,6 +115,10 @@ start(normal, _Args) ->
     %% supervisor tree's child order guarantees those validators run
     %% before any downstream consumer reads the config.
     Result = ar_sup:start_link(),
+    case Result of
+        {ok, _} -> ok = arweave_sync:activate();
+        _ -> ok
+    end,
 
     %% Prometheus metrics collector - metrics should be defined 
     %% in arweave_metrics already. We only start the metrics collector
@@ -262,30 +259,6 @@ convert_config(_Args) ->
               "<InputFile> <OutputFile>~n"),
     init:stop(1).
 
-benchmark_vdf() ->
-    Args = init:get_plain_arguments(),
-    benchmark_vdf(Args).
-
-benchmark_vdf(Args) ->
-    ar_bench_vdf:run_benchmark_from_cli(Args),
-    init:stop(1).
-
-benchmark_hash() ->
-    Args = init:get_plain_arguments(),
-    benchmark_hash(Args).
-
-benchmark_hash(Args) ->
-    ar_bench_hash:run_benchmark_from_cli(Args),
-    init:stop(1).
-
-benchmark_packing() ->
-    Args = init:get_plain_arguments(),
-    benchmark_packing(Args).
-
-benchmark_packing(Args) ->
-    ar_bench_packing:run_benchmark_from_cli(Args),
-    init:stop(1).
-
 shutdown([NodeName]) ->
     rpc:cast(NodeName, init, stop, []).
 
@@ -298,6 +271,9 @@ prep_stop(State) ->
                                                 % accepting connections from other peers, and then
                                                 % start the shutdown procedure.
     ok = ranch:suspend_listener(ar_http_iface_listener),
+
+    %% Quiesce sync while the host's packing and storage services still exist.
+    ok = arweave_sync:deactivate(),
 
                                                 % all timers/intervals must be stopped.
     ar_timer:terminate_timers(),

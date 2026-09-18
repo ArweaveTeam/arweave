@@ -2,7 +2,6 @@
 -test_category([fast]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -15,7 +14,7 @@ test_verify_block_txs() ->
     Key2 = ar_wallet:new(),
     CurrentHeight = 0,
     RandomBlockAnchors =
-        [crypto:strong_rand_bytes(32) || _ <- lists:seq(1, ar_block:get_max_tx_anchor_depth())],
+        [crypto:strong_rand_bytes(32) || _ <- lists:seq(1, arweave_constants:get_max_tx_anchor_depth())],
     BlockAnchorTX = tx(Key1, fee(CurrentHeight), <<"hash">>),
     Timestamp = os:system_time(second),
     TestCases = [
@@ -208,7 +207,7 @@ test_verify_tx_reasons() ->
 
 format_1_fork_2_9_6_test_() ->
     {setup, fun ar_tx_db:setup_ets/0, fun(Cleanup) -> Cleanup() end,
-        ar_test_util:with_mocked([{ar_fork, height_2_9_6, fun() -> 5 end}],
+        ar_test_util:with_mocked([{arweave_constants, height_2_9_6, fun() -> 5 end}],
                 fun test_format_1_fork_2_9_6/0)}.
 
 %% verify_tx/2, verify_block_txs/1, and pick_txs_to_mine/1 receive the

@@ -45,14 +45,9 @@ init([]) ->
     ets:new(ar_nonce_limiter, [set, public, named_table]),
     ets:new(ar_nonce_limiter_server, [set, public, named_table]),
     ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
-    %% ar_sync_discovery* tables moved to ar_data_sync_sup (the sup that
-    %% owns the gen_server that uses them).
     ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
-    ets:new(ar_chunk_storage, [set, public, named_table]),
-    ets:new(ar_entropy_storage, [set, public, named_table]),
+    ar_chunk_cache:create_ets(),
     ets:new(ar_mining_stats, [set, public, named_table]),
-    ets:new(entropy_generation_stats, [ordered_set, public, named_table]),
-    ets:new(ar_global_sync_record, [set, public, named_table]),
     ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_disk_pool_chunks_cache, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_disk_pool_chunks_cache_reverse, [bag, public, named_table]),
@@ -93,25 +88,17 @@ init([]) ->
         ?CHILD(ar_watchdog, worker),
         ?CHILD(ar_tx_blacklist, worker),
         ?CHILD_SUP(ar_bridge_sup, supervisor),
+        ?CHILD(ar_chunk_cache, worker),
         ?CHILD_SUP(ar_packing_sup, supervisor),
-        ?CHILD_SUP(ar_sync_record_sup, supervisor),
+        arweave_storage:child_spec(),
         ?CHILD(ar_header_sync, worker),
-        %% ar_chunk_storage_sup -> ar_data_sync_sup -> ar_repack_sup start order
-        %% is intentional.
-        %% ar_chunk_storage_sup: no init-time dependencies on the other two;
-        %% ar_data_sync_sup: opens the per-store RocksDB databases
-        %% (`chunk_data_db', `tx_index', ...) in init. Its workers also call
-        %% the ar_chunk_storage workers at runtime (put/get/cut/delete);
-        %% starting ar_chunk_storage_sup first means it stops last (children
-        %% stop in reverse start order), so during shutdown those calls
-        %% target live workers instead of blocking against terminating ones;
-        %% ar_repack_sup: reads those databases in init.
-        ?CHILD_SUP(ar_chunk_storage_sup, supervisor),
+        %% Storage must outlive entropy generation, data-sync and repacking.
+        %% Data-sync opens databases used by repacking, so retain that order.
+        arweave_entropy:child_spec(),
         ?CHILD_SUP(ar_data_sync_sup, supervisor),
         ?CHILD_SUP(ar_repack_sup, supervisor),
         ?CHILD_SUP(ar_data_root_sync_sup, supervisor),
         ?CHILD_SUP(ar_verify_chunks_sup, supervisor),
-        ?CHILD(ar_global_sync_record, worker),
         ?CHILD_SUP(ar_nonce_limiter_sup, supervisor),
         mining_sup(),
         ?CHILD(ar_coordination, worker),

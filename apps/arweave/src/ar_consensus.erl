@@ -5,7 +5,6 @@
         legacy_reward_history_blocks/1]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 
 %%% The consensus parameters that differ between mainnet and a testnet: a
 %%% testnet build reads them from the `testnet` option group from its fork

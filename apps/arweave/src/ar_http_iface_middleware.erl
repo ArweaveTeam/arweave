@@ -5,12 +5,12 @@
 -export([execute/2, read_body_chunk/4]).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include("ar_mining.hrl").
 -include("ar_data_sync.hrl").
--include("ar_sync.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
 
 -include("ar_pool.hrl").
 
@@ -357,7 +357,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_sync_record),
-        {ok, Binary} ?= ar_global_sync_record:get_serialized_sync_buckets(),
+        {ok, Binary} ?= arweave_storage:get_serialized_buckets(byte),
         {200, #{}, Binary, Req}
     else
         {error, not_initialized} ->
@@ -369,7 +369,7 @@ handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
 handle(<<"GET">>, [<<"footprint_buckets">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_sync_record),
-        {ok, Binary} ?= ar_global_sync_record:get_serialized_footprint_buckets(),
+        {ok, Binary} ?= arweave_storage:get_serialized_buckets(footprint),
         {200, #{}, Binary, Req}
     else
         {error, not_initialized} ->
@@ -382,7 +382,7 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
     Options = #{ format => content_type_format(Req), random_subset => true },
     maybe
         ok ?= acquire_http_semaphore(get_sync_record),
-        {ok, Binary} ?= ar_global_sync_record:get_serialized_sync_record(Options),
+        {ok, Binary} ?= arweave_storage:get_serialized_sync_record(Options),
         {200, #{}, Binary, Req}
     else
         {error, timeout} ->
@@ -454,13 +454,13 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedEnd, EncodedLimi
 
 %% Return the information about the presence of the data from the given footprint
 %% in the given partition. The returned intervals contain global footprint record
-%% offsets, as computed by ar_footprint_record:get_offset/1, of the chunks belonging
-%% to the given footprint and present on this node. Each interval is a
+%% offsets, as computed by arweave_storage:get_footprint_offset/1, of the chunks
+%% belonging to the given footprint and present on this node. Each interval is a
 %% ["Start", "End"] pair where Start is excluded and End is included. Adjacent
 %% offsets in the record do not denote adjacent chunks in the weave: the footprint
 %% is constructed like a replica 2.9 entropy footprint where chunks are spread out
 %% across the partition, so consecutive record offsets are separated by
-%% ar_block:get_replica_2_9_entropy_count() chunks.
+%% arweave_constants:get_replica_2_9_footprints_per_partition() chunks.
 %% Note that we do not only record footprints for replica_2_9 storage modules, but
 %% for any packing, because we want to make it convenient for any client to fetch
 %% the data from us. The response does not identify the packing.
@@ -959,7 +959,7 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_reward_history),
         {ok, BH} ?= arweave_util:safe_decode(EncodedBH),
-        Fork_2_6 = ar_fork:height_2_6(),
+        Fork_2_6 = arweave_constants:height_2_6(),
         case ar_block_cache:get_block_and_status(block_cache, BH) of
             {#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
               when (Status == on_chain orelse Status == validated),
@@ -981,7 +981,7 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
 handle(<<"GET">>, [<<"block_time_history">>, EncodedBH], Req, _Pid) ->
     case arweave_util:safe_decode(EncodedBH) of
         {ok, BH} ->
-            Fork_2_7 = ar_fork:height_2_7(),
+            Fork_2_7 = arweave_constants:height_2_7(),
             case ar_block_cache:get_block_and_status(block_cache, BH) of
                 {#block{ height = Height,
                          block_time_history = BlockTimeHistory }, {Status, _}}
@@ -1004,7 +1004,7 @@ handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_block_index),
-        false ?= ar_node:get_height() >= ar_fork:height_2_6(),
+        false ?= ar_node:get_height() >= arweave_constants:height_2_6(),
         BI = ar_node:get_block_index(),
         {200, #{},
          ar_serialize:jsonify(
@@ -1025,7 +1025,7 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 handle(<<"GET">>, [<<"block_index2">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_block_index),
-        false ?= ar_node:get_height() >= ar_fork:height_2_6(),
+        false ?= ar_node:get_height() >= arweave_constants:height_2_6(),
         BI = ar_node:get_block_index(),
         Bin = ar_serialize:block_index_to_binary(BI),
         {200, #{}, Bin, Req}
@@ -1479,14 +1479,14 @@ handle_get_block_index_range(Start, _End, CurrentHeight, _RecentBI, Req, _Encodi
   when Start > CurrentHeight ->
     {400, #{}, jiffy:encode(#{ error => start_too_big }), Req};
 handle_get_block_index_range(Start, End, CurrentHeight, RecentBI, Req, Encoding) ->
-    CheckpointHeight = CurrentHeight - ar_block:get_consensus_window_size() + 1,
+    CheckpointHeight = CurrentHeight - arweave_constants:get_consensus_window_size() + 1,
     RecentRange =
         case End >= CheckpointHeight of
             true ->
                 Top = min(CurrentHeight, End),
                 Range1 = lists:nthtail(CurrentHeight - Top, RecentBI),
                 lists:sublist(Range1, min(Top - Start + 1,
-                    ar_block:get_consensus_window_size() - (CurrentHeight - Top)));
+                    arweave_constants:get_consensus_window_size() - (CurrentHeight - Top)));
             false ->
                 []
         end,
@@ -1850,7 +1850,7 @@ estimate_tx_fee(Size, Addr, Type) ->
     Size2 = ar_tx:get_weave_size_increase(Size, Height + 1),
     Args = {Size2, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height + 1},
     Denomination2 =
-        case Height >= ar_fork:height_2_6() of
+        case Height >= arweave_constants:height_2_6() of
             true ->
                 Denomination;
             false ->
@@ -2084,7 +2084,7 @@ handle_post_tx_invalid_data_root_response() ->
 
 handle_get_data_sync_record(Start, Limit, Req) ->
     Options = #{ start => Start, limit => Limit, format => content_type_format(Req) },
-    case ar_global_sync_record:get_serialized_sync_record(Options) of
+    case arweave_storage:get_serialized_sync_record(Options) of
         {ok, Binary} ->
             {200, #{}, Binary, Req};
         {error, timeout} ->
@@ -2094,7 +2094,7 @@ handle_get_data_sync_record(Start, Limit, Req) ->
 handle_get_data_sync_record(Start, End, Limit, Req) ->
     Options = #{ start => Start, right_bound => End, limit => Limit,
                  format => content_type_format(Req) },
-    case ar_global_sync_record:get_serialized_sync_record(Options) of
+    case arweave_storage:get_serialized_sync_record(Options) of
         {ok, Binary} ->
             {200, #{}, Binary, Req};
         {error, timeout} ->
@@ -2102,7 +2102,7 @@ handle_get_data_sync_record(Start, End, Limit, Req) ->
     end.
 
 handle_get_footprints(Partition, FootprintNumber, Req) ->
-    FootprintsPerPartition = ar_block:get_replica_2_9_entropy_count(),
+    FootprintsPerPartition = arweave_constants:get_replica_2_9_footprints_per_partition(),
     CheckFootprintNumber =
         case FootprintNumber >= FootprintsPerPartition of
             true ->
@@ -2114,7 +2114,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
     FindStorageModules =
         case CheckFootprintNumber of
             ok ->
-                case ar_storage_module:get_all(Start, End) of
+                case arweave_storage:intersecting_stores(Start, End, any_packing) of
                     [] ->
                         {404, #{}, <<>>, Req};
                     Modules ->
@@ -2126,7 +2126,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
     FindStoreIDPacking =
         case FindStorageModules of
             {ok, StorageModules} ->
-                {ok, [{ar_storage_module:id(Module), Packing}
+                {ok, [{(arweave_storage:store_info(Module))#store_info.id, Packing}
                       || {_, _, Packing} = Module <- StorageModules]};
             Reply2 ->
                 Reply2
@@ -2140,7 +2140,11 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
                                %% packing. Chunks held in other packings (e.g. small
                                %% unpacked chunks before the strict data split threshold)
                         %% are for now only synced via the byte sync mode.
-                               Intervals = ar_footprint_record:get_intervals(Partition, FootprintNumber, Packing2, StoreID2),
+                               {IndexStart, IndexEnd} = arweave_storage:get_footprint_range(
+                                   Partition, FootprintNumber),
+                               Intervals = arweave_storage:get_intervals(
+                                   synced, IndexStart, IndexEnd, Packing2,
+                                   {ar_data_sync, footprint}, StoreID2),
                                ar_intervals:union(Acc, Intervals)
                        end,
                        ar_intervals:new(),
@@ -2175,7 +2179,12 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
                                 true
                         end,
                     {ReadPacking, CheckRecords} =
-                        case ar_sync_record:is_recorded(Offset, ar_data_sync) of
+                        case arweave_storage:is_recorded(
+                            Offset,
+                            any_packing,
+                            {ar_data_sync, byte},
+                            any_store
+                        ) of
                             false ->
                                 {none, {reply, {404, #{}, <<>>, Req}}};
                             {true, _} ->
@@ -2317,7 +2326,12 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
     maybe
         ok ?= acquire_http_semaphore(get_chunk),
         CheckRecords =
-            case ar_sync_record:is_recorded(Offset, ar_data_sync) of
+            case arweave_storage:is_recorded(
+                Offset,
+                any_packing,
+                {ar_data_sync, byte},
+                any_store
+            ) of
                 false ->
                     {reply, {404, #{}, <<>>, Req}};
                 {true, _StoreID} ->
@@ -2608,8 +2622,8 @@ post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
     end.
 
 post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
-    ConfirmedHeight = ar_node:get_height() - ar_block:get_consensus_window_size(),
-    case {Encoding, ConfirmedHeight >= ar_fork:height_2_6()} of
+    ConfirmedHeight = ar_node:get_height() - arweave_constants:get_consensus_window_size(),
+    case {Encoding, ConfirmedHeight >= arweave_constants:height_2_6()} of
         {json, true} ->
             %% We gesticulate it explicitly here that POST /block is not
             %% supported after the 2.6 fork. However, this check is not strictly
@@ -2671,7 +2685,7 @@ post_block(check_transactions_are_present, {BShadow, Peer}, Req, ReceiveTimestam
     end;
 post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
     B2 =
-        case B#block.height >= ar_fork:height_2_6() of
+        case B#block.height >= arweave_constants:height_2_6() of
             true ->
                 B;
             false ->
@@ -2968,7 +2982,7 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
         B ->
             maybe
                 ok ?= acquire_http_semaphore(get_block_index),
-                false ?= ar_node:get_height() >= ar_fork:height_2_6(),
+                false ?= ar_node:get_height() >= arweave_constants:height_2_6(),
                 CurrentBI = ar_node:get_block_index(),
                 HL = ar_block:generate_hash_list_for_block(B#block.indep_hash, CurrentBI),
                 {200, #{}, ar_serialize:jsonify(lists:map(fun arweave_util:encode/1, HL)), Req}
@@ -2987,7 +3001,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
         unavailable ->
             {404, #{}, <<"Not Found.">>, Req};
         B ->
-            case {B#block.height >= ar_fork:height_2_2(),
+            case {B#block.height >= arweave_constants:height_2_2(),
                   arweave_config:get([features, serve_wallet_lists])} of
                 {true, false} ->
                     {400, #{},

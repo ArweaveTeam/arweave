@@ -221,14 +221,14 @@ with_vdf_pull_and_push_disabled(Node, Fun) when is_function(Fun, 0) ->
     %% (In the legacy config this was the `vdf_server_pull' bit of
     %% `disable'; in the per-leaf store it's the dedicated boolean.)
     Prior = ar_test_node:remote_call(Node, arweave_config, get, [[vdf, pull]]),
-    ok = ar_test_node:remote_call(Node, arweave_config, force_config,
+    ok = ar_test_node:remote_call(Node, arweave_config, internal_force_config,
         [#{[vdf, pull] => false}]),
     %% Also suspend the pull loop so peer1 cannot fetch full sessions.
     Pid = suspend_nonce_limiter_client(Node),
     try
         Fun()
     after
-        ok = ar_test_node:remote_call(Node, arweave_config, force_config,
+        ok = ar_test_node:remote_call(Node, arweave_config, internal_force_config,
             [#{[vdf, pull] => Prior}]),
         resume_nonce_limiter_client(Node, Pid)
     end.

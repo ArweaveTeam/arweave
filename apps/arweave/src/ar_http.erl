@@ -674,7 +674,7 @@ configured_local_peer_calls_throttler_test_() ->
 configured_local_peer_calls_throttler() ->
     AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
     ok = arweave_config:start(),
-    ConfigSnapshot = arweave_config:snapshot(),
+    ConfigSnapshot = arweave_config:internal_snapshot(),
     Peer = {127, 0, 0, 1, arweave_config:get([port])},
     Path = "/info",
     try
@@ -685,7 +685,7 @@ configured_local_peer_calls_throttler() ->
                                                           method => get
                                                          }, false))
     after
-        ok = arweave_config:restore(ConfigSnapshot),
+        ok = arweave_config:internal_restore(ConfigSnapshot),
         AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
         lists:foreach(fun application:stop/1, AppsNow -- AppsBefore)
     end.

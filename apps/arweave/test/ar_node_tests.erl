@@ -3,7 +3,6 @@
 
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -59,8 +58,11 @@ test_mining_reward() ->
 
 % @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
-        fun test_multi_node_mining_reward/0, ?TEST_NODE_TIMEOUT).
+    ar_test_node:test_with_all_nodes_mocked(
+        [{arweave_constants, height_2_6, fun() -> 0 end}],
+        fun test_multi_node_mining_reward/0,
+        ?TEST_NODE_TIMEOUT
+    ).
 
 test_multi_node_mining_reward() ->
     {_Priv1, Pub1} = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
@@ -110,8 +112,11 @@ replay_attack_test_() ->
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
-        fun test_wallet_transaction/0, ?TEST_NODE_TIMEOUT).
+    ar_test_node:test_with_all_nodes_mocked(
+        [{arweave_constants, height_2_6, fun() -> 0 end}],
+        fun test_wallet_transaction/0,
+        ?TEST_NODE_TIMEOUT
+    ).
 
 test_wallet_transaction() ->
     TestWalletTransaction = fun(KeyType) ->
@@ -182,18 +187,18 @@ test_persisted_mempool() ->
     }),
     {ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(main, SignedTX, false),
     ok = ar_test_await:tx_in_mempool(main, SignedTX#tx.id),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ar_test_node:stop(),
         %% Rejoin the network.
         %% Expect the pending transactions to be picked up and distributed.
-        ok = arweave_config:force_config(#{
+        ok = arweave_config:internal_force_config(#{
             [join, start_from_latest_state] => false,
             [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(peer1))]
         }),
         %% Restart in load mode (runtime => false) so boot validators can
         %% rewrite static config.
-        Snapshot = arweave_config:snapshot(),
-        ok = arweave_config:restore(Snapshot#{runtime => false}),
+        Snapshot = arweave_config:internal_snapshot(),
+        ok = arweave_config:internal_restore(Snapshot#{runtime => false}),
         ar:start_dependencies(),
         ar_test_await:node_joined(main),
         ar_test_node:connect_to_peer(peer1),

@@ -74,7 +74,7 @@ load(_Config) ->
     ok.
 
 peer_role_operations(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Peer1 = {127,0,0,1,1984},
         Peer2 = {127,0,0,2,1984},
 
@@ -99,9 +99,9 @@ force_config_runtime_guard(_Config) ->
     true = arweave_config:is_runtime(),
 
     %% `[data_dir]` is a `runtime => false` spec. Without
-    %% `force_config/1` it would be rejected because the lifecycle is
+    %% `internal_force_config/1` it would be rejected because the lifecycle is
     %% in runtime mode.
-    ok = arweave_config:force_config(#{
+    ok = arweave_config:internal_force_config(#{
         [data_dir] => <<"/tmp/test_force_config">>
     }),
     "/tmp/test_force_config" = arweave_config:get([data_dir]),
@@ -111,7 +111,7 @@ force_config_runtime_guard(_Config) ->
     ok.
 
 clear_list_value(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Peers = [{127,0,0,1,1984}, {127,0,0,2,1984}],
         ok = arweave_config:set([peers, trusted], Peers),
         2 = length(arweave_config:get([peers, trusted])),
@@ -122,7 +122,7 @@ clear_list_value(_Config) ->
     ok.
 
 list_value_writes(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         OldPeers = [{127,0,0,1,1984}, {127,0,0,2,1984}],
         ok = arweave_config:set([peers, trusted], OldPeers),
         2 = length(arweave_config:get([peers, trusted])),
@@ -153,8 +153,8 @@ list_value_writes(_Config) ->
     ok.
 
 list_root_set_get(_Config) ->
-    arweave_config:with_test_config(fun() ->
-        PartitionSize = ar_block:partition_size(),
+    arweave_config:internal_with_test_config(fun() ->
+        PartitionSize = arweave_constants:partition_size(),
         StorageMap = #{
             partition => 0,
             packing_format => unpacked,
@@ -200,7 +200,7 @@ list_root_set_get(_Config) ->
 with_test_config_isolation(_Config) ->
     OriginalDebug = arweave_config:get([debug]),
 
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:set([debug], true),
         true = arweave_config:get([debug])
     end),

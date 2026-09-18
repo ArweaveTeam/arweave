@@ -17,7 +17,7 @@ mines_blocks_under_the_size_limit_test_() ->
         {
             "Five transactions with block anchors",
             ar_test_node:test_with_all_nodes_mocked(
-                    [{ar_fork, height_2_9_6, fun() -> infinity end}],
+                    [{arweave_constants, height_2_9_6, fun() -> infinity end}],
                     PrepareTestFor(fun ar_tx_test_utils:grouped_txs/0),
                     ?TEST_NODE_TIMEOUT)
         }
@@ -25,13 +25,13 @@ mines_blocks_under_the_size_limit_test_() ->
 
 rejects_transactions_above_the_size_limit_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            [{arweave_constants, height_2_9_6, fun() -> infinity end}],
             fun test_rejects_transactions_above_the_size_limit/0,
             ?TEST_NODE_TIMEOUT).
 
 drops_v1_txs_exceeding_mempool_limit_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            [{arweave_constants, height_2_9_6, fun() -> infinity end}],
             fun test_drops_v1_txs_exceeding_mempool_limit/0,
             ?TEST_NODE_TIMEOUT).
 

@@ -15,7 +15,6 @@
 -export([jit/0, large_pages/0, hardware_aes/0, init_fast2/5, init_light2/4]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -106,7 +105,7 @@ randomx_generate_replica_2_9_entropy({_, {stub_state, _}}, Key) ->
     %% Make it fast, deterministic, and scoped by Key.
     %% Note that ?REPLICA_2_9_ENTROPY_SIZE is
     %% reduced significantly in the AR_TEST mode.
-    SubChunkCount = ar_block:get_sub_chunks_per_replica_2_9_entropy(),
+    SubChunkCount = arweave_constants:get_sub_chunks_per_replica_2_9_entropy(),
     lists:foldl(
       fun(N1, Acc) ->
               lists:foldl(

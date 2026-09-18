@@ -13,7 +13,7 @@ rejects_txs_with_outdated_anchors_test_() ->
         %% A TX anchoring the block one past get_max_tx_anchor_depth() is rejected.
         %%
         %% A TX anchoring the deepest still-valid block (the
-        %% ar_block:get_max_tx_anchor_depth()-th block from the tip) is
+        %% arweave_constants:get_max_tx_anchor_depth()-th block from the tip) is
         %% accepted. This pins both sides of the depth boundary and guards
         %% against an off-by-one in
         %% lists:sublist(BlockTXPairs, get_max_tx_anchor_depth()) inside
@@ -23,14 +23,14 @@ rejects_txs_with_outdated_anchors_test_() ->
             {ar_wallet:to_address(Pub), ?AR(20), <<>>}
         ]),
         _ = ar_test_node:start_peer(peer1, B0),
-        ar_tx_test_utils:mine_blocks(peer1, ar_block:get_max_tx_anchor_depth()),
-        {ok, BI} = ar_test_await:node_height(peer1, ar_block:get_max_tx_anchor_depth()),
+        ar_tx_test_utils:mine_blocks(peer1, arweave_constants:get_max_tx_anchor_depth()),
+        {ok, BI} = ar_test_await:node_height(peer1, arweave_constants:get_max_tx_anchor_depth()),
         TX1 = ar_test_node:sign_tx(Key, #{ last_tx => B0#block.indep_hash }),
         ?assertEqual({invalid, tx_bad_anchor},
                 ar_test_node:remote_call(peer1, ar_tx_validator, validate, [TX1])),
         {ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
             ar_test_node:post_tx_to_peer(peer1, TX1),
-        DeepestValidBH = element(1, lists:nth(ar_block:get_max_tx_anchor_depth(), BI)),
+        DeepestValidBH = element(1, lists:nth(arweave_constants:get_max_tx_anchor_depth(), BI)),
         TX2 = ar_test_node:sign_tx(Key, #{ last_tx => DeepestValidBH,
                 tags => [{<<"nonce">>, <<"depth_boundary">>}] }),
         ?assertMatch({valid, _},
@@ -88,7 +88,7 @@ rejects_replay_after_anchor_window() ->
         ar_tx_test_utils:post_tx_to_peer_once(peer1, TX),
     %% Mine enough empty blocks to push TX's block and anchor past the anchor
     %% window so its id leaves RecentTXMap and its last_tx leaves BlockAnchors.
-    TargetHeight = 1 + ar_block:get_max_tx_anchor_depth(),
+    TargetHeight = 1 + arweave_constants:get_max_tx_anchor_depth(),
     lists:foreach(
         fun(H) ->
             ar_test_node:mine(peer1),

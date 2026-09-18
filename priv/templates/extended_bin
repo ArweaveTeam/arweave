@@ -325,18 +325,18 @@ arweave_benchmark_help() {
 }
 
 arweave_benchmark_hash() {
-    ARWEAVE_OPTS="-run ar benchmark_hash"
-    ARGS=("$@")
+    ARWEAVE_OPTS="-run arweave_tools main"
+    ARGS=("benchmark" "hash" "$@")
 }
 
 arweave_benchmark_packing() {
-    ARWEAVE_OPTS="-run ar benchmark_packing"
-    ARGS=("$@")
+    ARWEAVE_OPTS="-run arweave_tools main"
+    ARGS=("benchmark" "packing" "$@")
 }
 
 arweave_benchmark_vdf() {
-    ARWEAVE_OPTS="-run ar benchmark_vdf"
-    ARGS=("$@")
+    ARWEAVE_OPTS="-run arweave_tools main"
+    ARGS=("benchmark" "vdf" "$@")
 }
 
 ######################################################################
@@ -400,8 +400,8 @@ arweave_wallet_create_ecdsa() {
 # Arweave Data Doctor Section
 ######################################################################
 arweave_doctor() {
-    ARWEAVE_OPTS="-run ar_data_doctor main"
-    ARGS=("$@")
+    ARWEAVE_OPTS="-run arweave_tools main"
+    ARGS=("doctor" "$@")
 }
 
 arweave_doctor_help() {

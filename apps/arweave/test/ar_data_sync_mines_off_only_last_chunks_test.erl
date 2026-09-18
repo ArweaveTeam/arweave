@@ -2,16 +2,18 @@
 -test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -import(ar_test_node, [test_with_all_nodes_mocked/2]).
 
 mines_off_only_last_chunks_test_() ->
-    test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
-            fun test_mines_off_only_last_chunks/0).
+    test_with_all_nodes_mocked(
+        [{arweave_constants, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
+        fun test_mines_off_only_last_chunks/0
+    ).
 
 mock_reset_frequency() ->
     {ar_nonce_limiter, get_reset_frequency, fun() -> 5 end}.
@@ -61,11 +63,19 @@ test_mines_off_only_last_chunks() ->
                     %% chunks.
                     lists:foreach(
                         fun(O) ->
-                            [ar_chunk_storage:delete(O, ar_storage_module:id(Module))
-                                    || Module <- arweave_config:storage_modules()]
+                            [
+                                arweave_storage:delete_chunk(
+                                    O,
+                                    (arweave_storage:store_info(Module))#store_info.id
+                                )
+                             || Module <- arweave_config:storage_modules()
+                            ]
                         end,
-                        lists:seq(?DATA_CHUNK_SIZE, ar_block:strict_data_split_threshold(),
-                                ?DATA_CHUNK_SIZE)
+                        lists:seq(
+                            ?DATA_CHUNK_SIZE,
+                            arweave_constants:strict_data_split_threshold(),
+                            ?DATA_CHUNK_SIZE
+                        )
                     );
                 _ ->
                     ok

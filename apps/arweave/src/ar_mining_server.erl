@@ -16,9 +16,9 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_sync.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
@@ -152,15 +152,11 @@ log_prepare_solution_failure2(Solution, FailureType, FailureReason, Source, Addi
                 {packing_difficulty, PackingDifficulty} | AdditionalLogData]),
     arweave_metrics:gauge_inc(mining_solution, [FailureReason]).
 
--spec get_packing_difficulty(Packing :: ar_storage_module:packing()) ->
-          PackingDifficulty :: non_neg_integer().
 get_packing_difficulty({replica_2_9, _}) ->
     ?REPLICA_2_9_PACKING_DIFFICULTY;
 get_packing_difficulty(_) ->
     0.
 
--spec get_packing_type(Packing :: ar_storage_module:packing()) ->
-          PackingType :: atom().
 get_packing_type({replica_2_9, _}) ->
     replica_2_9;
 get_packing_type({spora_2_6, _}) ->
@@ -364,7 +360,7 @@ terminate(Reason, _State) ->
 
 
 allow_replica_2_9_mining(Height) ->
-    Height >= ar_fork:height_2_9().
+    Height >= arweave_constants:height_2_9().
 
 get_worker(Key, State) ->
     maps:get(Key, State#state.workers, not_found).
@@ -478,7 +474,7 @@ update_cache_limits(NumActivePartitions, State) ->
 
 calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
     IdealRangesPerStep = 2,
-    RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty),
+    RecallRangeSize = arweave_constants:get_recall_range_size(PackingDifficulty),
 
     MinimumCacheLimitBytes = max(
                                ?MINIMUM_CACHE_LIMIT_BYTES,
@@ -500,7 +496,7 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
     %% Allow enough compute_h0 tasks to be queued to completely refill the chunk cache.
     VDFQueueLimit = max(
                       1,
-                      PartitionCacheLimitBytes div (2 * ar_block:get_recall_range_size(PackingDifficulty))
+                      PartitionCacheLimitBytes div (2 * arweave_constants:get_recall_range_size(PackingDifficulty))
                      ),
 
     GarbageCollectionFrequency = 4 * VDFQueueLimit * 1000,
@@ -817,8 +813,8 @@ prepare_solution(poa1, Candidate, Solution) ->
                     error
             end;
         {error, Error} ->
-            Modules = ar_storage_module:get_all(RecallByte1 + 1),
-            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+            Modules = arweave_storage:covering_stores(RecallByte1 + 1, any_packing),
+            ModuleIDs = [(arweave_storage:store_info(Module))#store_info.id || Module <- Modules],
             LogData = [{recall_byte, RecallByte1},
                        {modules_covering_recall_byte, ModuleIDs},
                        {fetch_proofs_error, io_lib:format("~p", [Error])},
@@ -831,10 +827,11 @@ prepare_solution(poa1, Candidate, Solution) ->
                     ?LOG_WARNING([{event, failed_to_find_poa1_proofs_for_h2_solution},
                                   {error, io_lib:format("~p", [Error])},
                                   {tags, [solution_proofs]} | LogData]),
-                    case ar_storage_module:get(RecallByte1 + 1, Packing) of
+                    case arweave_storage:covering_store(RecallByte1 + 1, Packing) of
                         {_ModuleStart, _ModuleEnd, Packing} = StorageModule ->
-                            StoreID = ar_storage_module:id(StorageModule),
-                            case ar_chunk_storage:get(RecallByte1, StoreID) of
+                            #store_info{id = StoreID} =
+                                arweave_storage:store_info(StorageModule),
+                            case arweave_storage:get_chunk(RecallByte1, StoreID) of
                                 not_found ->
                                     log_prepare_solution_failure(Solution,
                                                                  rejected, chunk1_for_h2_solution_not_found, miner,
@@ -874,8 +871,8 @@ prepare_solution(poa2, Candidate, Solution) ->
         {ok, PoA2} ->
             prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 });
         {error, _Error} ->
-            Modules = ar_storage_module:get_all(RecallByte2 + 1),
-            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+            Modules = arweave_storage:covering_stores(RecallByte2 + 1, any_packing),
+            ModuleIDs = [(arweave_storage:store_info(Module))#store_info.id || Module <- Modules],
             LogData = [{recall_byte2, RecallByte2}, {modules_covering_recall_byte, ModuleIDs}],
             %% If we are a coordinated miner and not an exit node - the exit
             %% node will fetch the proofs.
@@ -913,8 +910,8 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
                 {ok, PoA} ->
                     {ok, PoA};
                 {error, Error} ->
-                    Modules = ar_storage_module:get_all(RecallByte + 1),
-                    ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+                    Modules = arweave_storage:covering_stores(RecallByte + 1, any_packing),
+                    ModuleIDs = [(arweave_storage:store_info(Module))#store_info.id || Module <- Modules],
                     ?LOG_INFO([{event, failed_to_find_poa_proofs_locally},
                                {poa, PoAType},
                                {error, io_lib:format("~p", [Error])},
@@ -1100,7 +1097,7 @@ may_be_empty_poa(#poa{} = PoA) ->
 fetch_poa_from_peers(_RecallByte, PackingDifficulty) when PackingDifficulty >= 1 ->
     not_found;
 fetch_poa_from_peers(RecallByte, _PackingDifficulty) ->
-    CandidatePeers = ar_sync:get_peers_for_offset(RecallByte),
+    CandidatePeers = arweave_sync:get_peers_for_offset(RecallByte),
     Peers = ar_peers:pick_peers(CandidatePeers, ?QUERY_BEST_PEERS_COUNT),
     From = self(),
     lists:foreach(
@@ -1408,8 +1405,8 @@ calculate_cache_limits_test_() ->
     ].
 
 test_calculate_cache_limits_default() ->
-    arweave_config:with_test_config(fun() ->
-                                            ok = arweave_config:force_config(#{[mining, cache_size] => undefined}),
+    arweave_config:internal_with_test_config(fun() ->
+                                            ok = arweave_config:internal_force_config(#{[mining, cache_size] => undefined}),
                                             ?assertEqual(
                                                {
                                                 ?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
@@ -1521,8 +1518,8 @@ test_calculate_cache_limits_default() ->
                                     end).
 
 test_calculate_cache_limits_custom_low() ->
-    arweave_config:with_test_config(fun() ->
-                                            ok = arweave_config:force_config(#{[mining, cache_size] => 1}),
+    arweave_config:internal_with_test_config(fun() ->
+                                            ok = arweave_config:internal_force_config(#{[mining, cache_size] => 1}),
                                             ?assertEqual(
                                                {?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 1, 4_000},
                                                calculate_cache_limits(1, 0)
@@ -1574,8 +1571,8 @@ test_calculate_cache_limits_custom_low() ->
                                     end).
 
 test_calculate_cache_limits_custom_high() ->
-    arweave_config:with_test_config(fun() ->
-                                            ok = arweave_config:force_config(#{[mining, cache_size] => 500_000}),
+    arweave_config:internal_with_test_config(fun() ->
+                                            ok = arweave_config:internal_force_config(#{[mining, cache_size] => 500_000}),
                                             ?assertEqual(
                                                {?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 500_000, 2_000_000_000},
                                                calculate_cache_limits(1, 0)

@@ -1,20 +1,7 @@
 %%% @doc Tests for the `arweave_throttling_router' ETS routing table.
 %%% @end
 -module(arweave_throttling_router_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([
-        init_creates_tables/1,
-        update_new_unchanged_changed/1,
-        lookup_found_and_unknown/1,
-        delete_existing_and_missing/1,
-        info_reports_counts/1,
-        decrement_branches/1,
-        errors_without_tables/1,
-        cleanup_removes_tables/1
-        ]).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

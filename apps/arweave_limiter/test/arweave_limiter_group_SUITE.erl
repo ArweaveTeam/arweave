@@ -307,7 +307,7 @@ timeout_setup(Config) ->
 
     application:ensure_all_started(arweave_config),
 
-    put({?MODULE, snapshot}, arweave_config:snapshot()),
+    put({?MODULE, snapshot}, arweave_config:internal_snapshot()),
 
     set_if_defined(number_of_workers, Config),
     set_if_defined(no_limit, Config),
@@ -350,7 +350,7 @@ setup(Config) ->
 
     application:ensure_all_started(arweave_config),
 
-    put({?MODULE, snapshot}, arweave_config:snapshot()),
+    put({?MODULE, snapshot}, arweave_config:internal_snapshot()),
 
     set_if_defined(number_of_workers, Config),
     set_if_defined(no_limit, Config),
@@ -394,7 +394,7 @@ cleanup(_Config, {_LimiterPID, BeforeApps}) ->
 
     [application:stop(App) || App <- (application:which_applications() -- BeforeApps)],
     true = ets:delete(?TABLE),
-    arweave_config:restore(erase({?MODULE, snapshot})),
+    arweave_config:internal_restore(erase({?MODULE, snapshot})),
     ok.
 
 simple_sliding_happy(_Config) ->

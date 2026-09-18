@@ -115,14 +115,14 @@ vdf_algorithms_double_check_test_() ->
     {timeout, 30, fun test_vdf_algorithms_double_check/0}.
 
 test_vdf_algorithms_double_check() ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         lists:foreach(
             fun assert_vdf_algorithm_double_check/1,
             [openssl, openssllite, fused, hiopt_m4])
     end).
 
 assert_vdf_algorithm_double_check(Algorithm) ->
-    ok = arweave_config:force_config(#{
+    ok = arweave_config:internal_force_config(#{
         [features, double_check_nonce_limiter] => true,
         [vdf, algorithm] => Algorithm
     }),
@@ -140,10 +140,10 @@ double_check_reports_compute_mismatch_test_() ->
     ], fun test_double_check_reports_compute_mismatch/0, 30).
 
 test_double_check_reports_compute_mismatch() ->
-    arweave_config:with_test_config(fun do_test_double_check_reports_compute_mismatch/0).
+    arweave_config:internal_with_test_config(fun do_test_double_check_reports_compute_mismatch/0).
 
 do_test_double_check_reports_compute_mismatch() ->
-    ok = arweave_config:force_config(#{
+    ok = arweave_config:internal_force_config(#{
         [features, double_check_nonce_limiter] => true
     }),
     with_temp_cwd(fun() ->
@@ -181,10 +181,10 @@ applies_validated_steps_test_() ->
         fun test_applies_validated_steps/0, 60).
 
 test_applies_validated_steps() ->
-    arweave_config:with_test_config(fun do_test_applies_validated_steps/0).
+    arweave_config:internal_with_test_config(fun do_test_applies_validated_steps/0).
 
 do_test_applies_validated_steps() ->
-    ok = arweave_config:force_config(#{
+    ok = arweave_config:internal_force_config(#{
         [features, double_check_nonce_limiter] => true
     }),
     reset_and_pause(),

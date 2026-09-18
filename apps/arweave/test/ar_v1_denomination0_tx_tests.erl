@@ -30,7 +30,7 @@ polled_v1_denomination0_tx_is_dropped_once_test_() ->
 
 with_fork_2_9_6_disabled(TestFun) ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            [{arweave_constants, height_2_9_6, fun() -> infinity end}],
             TestFun, ?TEST_NODE_TIMEOUT).
 
 test_standalone_v1_denomination0_tx_is_dropped() ->

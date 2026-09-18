@@ -10,7 +10,7 @@ specs() ->
         %% Internal: which configuration notation this launch used.
         %% Stamped by bootstrap from the CLI dialect sniff;
         %% never set by operators. Drives the legacy bucket-notation
-        %% directory naming (ar_storage_module:disk_dir_name/1).
+        %% directory naming in arweave_storage:store_info/1.
         #{
             enabled => true,
             hidden => true,

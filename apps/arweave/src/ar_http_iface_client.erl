@@ -30,10 +30,9 @@
 
 -include("ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include("ar_consensus.hrl").
 -include("ar_data_sync.hrl").
--include("ar_sync_buckets.hrl").
--include("ar_sync.hrl").
+-include_lib("arweave/include/ar_sync_buckets.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
 -include("ar_mining.hrl").
 -include("ar_wallets.hrl").
 -include("ar_pool.hrl").
@@ -511,7 +510,7 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
     ExpectedLength = ar_rewards:buffered_reward_history_length(Height),
     DoubleCheckLength = ar_rewards:expected_hashes_length(Height),
     true = length(ExpectedRewardHistoryHashes) == min(
-                                                    Height - ar_fork:height_2_6() + 1,
+                                                    Height - arweave_constants:height_2_6() + 1,
                                                     DoubleCheckLength),
     case ar_http:req(#{
                        peer => Peer,
@@ -560,12 +559,12 @@ get_reward_history([], _B, _RewardHistoryHashes) ->
 
 get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
     #block{ height = Height, indep_hash = H } = B,
-    Fork_2_7 = ar_fork:height_2_7(),
+    Fork_2_7 = arweave_constants:height_2_7(),
     true = Height >= Fork_2_7,
     ExpectedLength = min(Height - Fork_2_7 + 1,
-                         ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
+                         ar_block_time_history:history_length() + arweave_constants:get_consensus_window_size()),
     true = length(ExpectedBlockTimeHistoryHashes) == min(Height - Fork_2_7 + 1,
-                                                         ar_block:get_consensus_window_size()),
+                                                         arweave_constants:get_consensus_window_size()),
     case ar_http:req(#{
                        peer => Peer,
                        method => get,
@@ -1152,7 +1151,7 @@ get_txs(Peers, B) ->
 get_txs(_Height, _Peers, [], TXs, _TotalSize) ->
     {ok, lists:reverse(TXs)};
 get_txs(Height, Peers, [TXID | Rest], TXs, TotalSize) ->
-    Fork_2_0 = ar_fork:height_2_0(),
+    Fork_2_0 = arweave_constants:height_2_0(),
     case get_tx(Peers, TXID) of
         #tx{ format = 2 } = TX ->
             get_txs(Height, Peers, Rest, [TX | TXs], TotalSize);

@@ -472,9 +472,9 @@ get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
 %%% Private: Validation
 %%%===================================================================
 get_padded_size(TXSize, BlockStart) ->
-    case BlockStart >= ar_block:strict_data_split_threshold() of
+    case BlockStart >= arweave_constants:strict_data_split_threshold() of
         true ->
-            ar_poa:get_padded_offset(TXSize, 0);
+            arweave_constants:get_padded_offset(TXSize, 0);
         false ->
             TXSize
     end.

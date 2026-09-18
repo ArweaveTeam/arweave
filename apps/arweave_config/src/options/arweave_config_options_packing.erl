@@ -23,22 +23,30 @@ specs() ->
             option_key => [packing, cache_size],
             runtime => true,
             type => finite_pos_integer,
-            legacy => packing_cache_size_limit,
+            legacy => data_cache_size_limit,
             short_description =>
-                <<"Maximum size in MiB of the in-memory cache for chunks "
-                  "being packed or unpacked (approximate).">>,
+                <<
+                    "Maximum in-memory chunk cache size in MiB, shared by "
+                    "syncing, copying and packing."
+                >>,
             long_description =>
-                <<"Leave unset for automatic sizing from system memory; "
-                  "normally only override for advanced tuning. Limits "
-                  "chunks queued for or undergoing packing/unpacking, "
-                  "including work from syncing and repacking. Sync chunks "
-                  "also count toward sync.cache_size until their write "
-                  "path completes; these limits overlap rather than "
-                  "representing disjoint memory allocations. Entropy is "
-                  "controlled separately by packing.entropy.cache_size.">>,
+                <<
+                    "Shared by network sync, local copying, disk-pool storage "
+                    "and repacking. Includes space for each chunk's input, "
+                    "unpacked intermediate and packed output until processing "
+                    "completes. Leave unset for automatic sizing alongside "
+                    "the separate packing.entropy.cache_size and peer-interval "
+                    "cache. This limits cached chunks, not the total data "
+                    "packed or total node memory. disk_pool.max_buffer_size "
+                    "limits pending data on disk instead. Legacy "
+                    "data_cache_size_limit counts 256 KiB chunks and is "
+                    "converted to MiB."
+                >>,
             handle_set => fun(_K, V, _S, _A) ->
-                ok = ar_packing_server:set_cache_size(V),
-                {store, V}
+                case ar_chunk_cache:configure([packing, cache_size], V) of
+                    ok -> {store, V};
+                    Error -> Error
+                end
             end
         },
         #{
@@ -75,19 +83,26 @@ specs() ->
                 <<"Maximum in-memory cache size in MiB for entropy shared "
                   "by syncing and repacking.">>,
             long_description =>
-                <<"Holds reusable replica.2.9 entropy, not chunk data. "
-                  "Separate from the chunk buffers limited by "
-                  "sync.cache_size and packing.cache_size. Each entropy "
-                  "is 8 MiB; one footprint needs 32 entropies (256 MiB). "
-                  "Its size determines active network-sync footprint "
-                  "capacity and automatic repack batch sizing. When tuning "
-                  "replica.2.9 throughput, start with this setting and "
-                  "normally leave the two chunk-buffer options unset. "
-                  "Leave memory available for those buffers and other "
-                  "node processes.">>,
+                <<
+                    "Holds reusable replica.2.9 entropy, not chunk data. "
+                    "Separate from the chunk cache limited by "
+                    "packing.cache_size. Each entropy "
+                    "is 8 MiB; one footprint needs 32 entropies (256 MiB). "
+                    "Its size determines active network-sync footprint "
+                    "capacity and automatic repack batch sizing. When tuning "
+                    "replica.2.9 throughput, start with this setting and "
+                    "normally leave packing.cache_size unset. "
+                    "Leave memory available for the chunk cache and other "
+                    "node processes."
+                >>,
             handle_set => fun(_K, V, _S, _A) ->
-                ok = ar_repack:recompute_sizing(),
-                {store, V}
+                case ar_chunk_cache:configure([packing, entropy, cache_size], V) of
+                    ok ->
+                        ok = ar_repack:recompute_sizing(),
+                        {store, V};
+                    Error ->
+                        Error
+                end
             end
         },
         #{
@@ -111,7 +126,7 @@ specs() ->
     ].
 
 validate() ->
-    ok.
+    ar_chunk_cache:validate_config().
 
 group_description() ->
     <<"Tune chunk packing and repacking behavior.">>.

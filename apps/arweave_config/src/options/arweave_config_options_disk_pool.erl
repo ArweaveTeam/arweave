@@ -42,8 +42,17 @@ specs() ->
             type => pos_integer,
             legacy => max_disk_pool_buffer_mb,
             short_description =>
-                <<"Maximum total size in MiB of pending chunks in "
-                  "the disk pool.">>
+                <<
+                    "Maximum total size in MiB of pending chunks kept "
+                    "on disk in the disk pool."
+                >>,
+            long_description =>
+                <<
+                    "Limits pending chunk data on disk, not RAM. Also "
+                    "contributes to the free-disk-space reserve. Chunks read "
+                    "from the disk pool for packing or final storage use "
+                    "the separate in-memory packing.cache_size limit."
+                >>
         },
         #{
             enabled => true,
@@ -53,8 +62,10 @@ specs() ->
             type => pos_integer,
             legacy => max_disk_pool_data_root_buffer_mb,
             short_description =>
-                <<"Maximum size in MiB per data root of pending "
-                  "chunks in the disk pool.">>
+                <<
+                    "Maximum size in MiB per data root of pending "
+                    "chunks kept on disk in the disk pool."
+                >>
         }
     ].
 

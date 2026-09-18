@@ -131,7 +131,7 @@ read_state(BI, CustomDir) ->
 %% @doc Return the part of BI the block time history is read for.
 block_time_history_bi(BI) ->
     lists:sublist(BI, ar_block_time_history:history_length()
-            + ar_block:get_consensus_window_size()).
+            + arweave_constants:get_consensus_window_size()).
 
 %% @doc Create the snapshot directory; refuse to reuse an existing one.
 ensure_dir(Dir) ->
@@ -466,7 +466,7 @@ close_dbs(Names) ->
 %% @doc Return the oldest block of the consensus window that starts at the
 %% head of Blocks, or the last block when there are fewer.
 window_base_block(Blocks) ->
-    WindowSize = ar_block:get_consensus_window_size(),
+    WindowSize = arweave_constants:get_consensus_window_size(),
     case length(Blocks) >= WindowSize of
         true ->
             lists:nth(WindowSize, Blocks);

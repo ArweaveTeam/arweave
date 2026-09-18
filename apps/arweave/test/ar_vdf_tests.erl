@@ -3,8 +3,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_vdf.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 
 -define(ENCODED_PREV_OUTPUT, <<"f_z7RLug8etm3SrmRf-xPwXEL0ZQ_xHng2A5emRDQBw">>).
 -define(RESET_SEED, <<"f_z7RLug8etm3SrmRf-xPwXEL0ZQ_xHng2A5emRDQBw">>).
@@ -238,9 +236,9 @@ compute_next_vdf_difficulty_min_test_block() ->
 
 compute_next_vdf_difficulty_2_7_test_()->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> infinity end}],
+        [{arweave_constants, height_2_6, fun() -> -1 end},
+        {arweave_constants, height_2_7, fun() -> -1 end},
+        {arweave_constants, height_2_7_1, fun() -> infinity end}],
         fun() ->
             B = compute_next_vdf_difficulty_test_block(),
             10465 = ar_block:compute_next_vdf_difficulty(B),
@@ -249,9 +247,9 @@ compute_next_vdf_difficulty_2_7_test_()->
 
 compute_next_vdf_difficulty_min_2_7_test_()->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> infinity end}],
+        [{arweave_constants, height_2_6, fun() -> -1 end},
+        {arweave_constants, height_2_7, fun() -> -1 end},
+        {arweave_constants, height_2_7_1, fun() -> infinity end}],
         fun() ->
             B = compute_next_vdf_difficulty_min_test_block(),
             ?MIN_VDF_DIFFICULTY = ar_block:compute_next_vdf_difficulty(B),
@@ -260,9 +258,9 @@ compute_next_vdf_difficulty_min_2_7_test_()->
 
 compute_next_vdf_difficulty_min_2_7_1_test_()->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> -1 end}],
+        [{arweave_constants, height_2_6, fun() -> -1 end},
+        {arweave_constants, height_2_7, fun() -> -1 end},
+        {arweave_constants, height_2_7_1, fun() -> -1 end}],
         fun() ->
             B = compute_next_vdf_difficulty_min_test_block(),
             ?MIN_VDF_DIFFICULTY = ar_block:compute_next_vdf_difficulty(B),
@@ -271,9 +269,9 @@ compute_next_vdf_difficulty_min_2_7_1_test_()->
 
 compute_next_vdf_difficulty_2_7_1_test_()->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> -1 end}],
+        [{arweave_constants, height_2_6, fun() -> -1 end},
+        {arweave_constants, height_2_7, fun() -> -1 end},
+        {arweave_constants, height_2_7_1, fun() -> -1 end}],
         fun() ->
             B = compute_next_vdf_difficulty_test_block(),
             10046 = ar_block:compute_next_vdf_difficulty(B),

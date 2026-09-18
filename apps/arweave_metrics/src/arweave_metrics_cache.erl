@@ -3,7 +3,6 @@
 %%% return quickly. Fall back to a synchronous render if the cache is
 %%% not available.
 -module(arweave_metrics_cache).
--test_category([fast]).
 
 -behaviour(gen_server).
 
@@ -12,7 +11,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl"). %% FIXME: circular dependency
--include_lib("eunit/include/eunit.hrl").
 
 %% Registry we keep pre-rendered. Everything arweave emits currently
 %% lives in the `default' registry; a scrape for any other
@@ -94,30 +92,3 @@ render() ->
                           {registry, Registry}, {class, Class}, {reason, ExcReason},
                           {stacktrace, Stacktrace}])
     end.
-
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
-
-%% @doc The endpoint is served from a body this module pre-renders in
-%% the background, so a scrape never collects or formats. Force a render
-%% and assert the plain and gzipped bodies are consistent.
-prerendered_body_test_() ->
-    {timeout, 30, fun test_prerendered_body/0}.
-
-test_prerendered_body() ->
-    ok = render_now(),
-    Cache = lookup(default),
-    ?assertMatch(#{content_type := _, identity := _, gzip := _}, Cache),
-    #{content_type := ContentType, identity := Identity, gzip := Gzip} = Cache,
-    ?assertMatch({0, _}, binary:match(iolist_to_binary(ContentType),
-                                      <<"text/plain">>)),
-    %% WS2: the gzipped body round-trips to the plain body.
-    ?assertEqual(Identity, zlib:gunzip(Gzip)),
-    %% The plain body is a real exposition carrying arweave series.
-    ?assertNotEqual(nomatch, binary:match(Identity, <<"# TYPE">>)).
-
-%% @doc A registry the background renderer does not track reports
-%% not_cached so the handler can fall back to a synchronous render.
-uncached_registry_test() ->
-    ?assertEqual(not_cached, lookup(nonexistent_registry)).

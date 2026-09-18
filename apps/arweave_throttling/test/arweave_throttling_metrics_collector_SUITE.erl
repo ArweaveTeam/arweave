@@ -18,15 +18,7 @@
 %%% @end
 %%%===================================================================
 -module(arweave_throttling_metrics_collector_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([
-    no_peers_reported/1,
-    one_peer_reported/1,
-    two_hundred_peers_reported/1
-]).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

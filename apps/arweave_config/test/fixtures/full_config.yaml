@@ -141,7 +141,7 @@ network:
       send_timeout_close: false
 packing:
   workers: 25
-  cache_size: 20000
+  cache_size: 1024
   repack:
     batch_size: 200
   entropy:
@@ -284,7 +284,6 @@ repack_modules:
     to_format: unpacked
     to_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
 sync:
-  cache_size: 10000
   request_packed_chunks: true
   local_peers_only: true
   max_download_rate: 12000000

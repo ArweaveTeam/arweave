@@ -81,17 +81,6 @@ jobs:
             --verbose \
             --logdir logs/ct
 
-      # execute eunit in standalone on only a small subset of
-      # application available. Because arweave main application is
-      # using eunit for its test suite in a specific way, testing this
-      # application will crash the test suite.
-      - name: run eunit test suite
-        id: eunit
-        run: |
-          ./rebar3 as test eunit \
-            --cover \
-            --application arweave_config
-
       # generate coverage report, it will be stored in
       # _build/test/cover directory
       - name: run cover
@@ -165,5 +154,4 @@ jobs:
           include-hidden-files: true
           path: |
             ./logs
-
 

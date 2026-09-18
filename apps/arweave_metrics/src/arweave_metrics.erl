@@ -10,9 +10,7 @@
 -export([register/0, get_status_class/1, record_rate_metric/4]).
 
 -ifdef(AR_TEST).
--export([cleanup/0]).
--else.
--compile({nowarn_unused_function, [{cleanup, 0}]}).
+-export([internal_cleanup/0]).
 -endif.
 
 %% Safe runtime metric helpers — see the "Safe metric helpers" section below.
@@ -51,8 +49,8 @@ start(_StartType, _StartArgs) ->
 
 %% @doc `application' callback.
 stop(_State) ->
-	arweave_metrics:cleanup(),
-	ok.
+    cleanup(),
+    ok.
 
 %%% Public interface.
 %% @doc Declare Arweave metrics.
@@ -176,3 +174,11 @@ histogram_observe(Name, Labels, Value) ->
 
 cleanup() ->
 	ok.
+
+-ifdef(AR_TEST).
+
+%% @doc Run metrics cleanup from test fixtures.
+internal_cleanup() ->
+    cleanup().
+
+-endif.

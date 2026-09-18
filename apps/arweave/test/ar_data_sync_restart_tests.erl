@@ -1,9 +1,8 @@
 -module(ar_data_sync_restart_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include("ar.hrl").
--include("ar_consensus.hrl").
--include("ar_sync.hrl").
 
 storage_module_kill_recovers_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun() -> restart_recovers(module, kill) end}.
@@ -23,10 +22,10 @@ restart_recovers(StoreType, CrashType) ->
         #{ addr => Addr,
             [storage_modules] => [Module, OtherModule] }),
     StoreID = case StoreType of
-        module -> ar_storage_module:id(Module);
+        module -> (arweave_storage:store_info(Module))#store_info.id;
         default -> ?DEFAULT_MODULE
     end,
-    OtherStoreID = ar_storage_module:id(OtherModule),
+    #store_info{id = OtherStoreID} = arweave_storage:store_info(OtherModule),
     %% The second chunk puts the first strictly below the mature-data bound.
     Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
         crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
@@ -41,17 +40,10 @@ restart_recovers(StoreType, CrashType) ->
     end, lists:seq(1, ?SEARCH_SPACE_UPPER_BOUND_DEPTH)),
     ?assertEqual(ok, ar_test_await:until(chunk_mature,
         fun() -> ar_disk_pool:get_threshold() > EndOffset end)),
-    Parent = self(),
     Peer = {1, 1, 1, 1, 1984},
     %% Only replace the network fetch. Proof validation, writes, scheduler,
     %% databases, and the supervised data-sync restart are all real.
-    Fetch = fun(#task{ store_id = ID, task_ref = Ref }) ->
-        ar_data_sync:store_fetched_chunk(ID, Peer, EndOffset - 1, Proof, Ref),
-        Parent ! {handed_off, Ref},
-        ar_sync_scheduler:task_fetch_completed(
-            Ref, ?DATA_CHUNK_SIZE, #fetch_timing{})
-    end,
-    ar_test_node:run_with_mocked([main], [{ar_sync_fetch_worker, run, Fetch}],
+    arweave_sync:internal_with_fetch_result(Peer, EndOffset - 1, Proof,
         fun() ->
             test_restart(StoreID, OtherStoreID, CrashType, Peer, EndOffset,
                 Proof)
@@ -59,33 +51,35 @@ restart_recovers(StoreType, CrashType) ->
 
 test_restart(StoreID, OtherStoreID, CrashType, Peer, EndOffset, Proof) ->
     RootPID = whereis(ar_sup),
-    SchedulerPID = whereis(ar_sync_scheduler),
+    SchedulerPID = arweave_sync:internal_scheduler_pid(),
     Name = ar_data_sync:name(StoreID),
     OldPID = whereis(Name),
     OtherPID = whereis(ar_data_sync:name(OtherStoreID)),
     ?assert(is_pid(RootPID)),
     ?assert(is_pid(SchedulerPID)),
-    Task = #task{ store_id = StoreID, offset = EndOffset - ?DATA_CHUNK_SIZE,
-        sources = [#task_source{ peer = Peer }] },
+    StartOffset = EndOffset - ?DATA_CHUNK_SIZE,
     ok = sys:suspend(OtherPID),
     try
         ok = sys:suspend(OldPID),
-        ar_data_sync:store_fetched_chunk(OtherStoreID, Peer, EndOffset - 1,
-            Proof, undefined),
+        ?assertEqual(ok, arweave_sync:internal_deliver_chunk(
+            OtherStoreID, Peer, EndOffset - 1, Proof)),
         case CrashType of
             exception ->
                 %% Queue a malformed internal message before the real handoff
                 %% to exercise terminate/2 as well as supervisor recovery.
                 gen_server:cast(OldPID,
-                    {store_fetched_chunk, Peer, 0, #{}, undefined});
+                    {store_chunk, malformed, {self(), make_ref(), undefined}});
             kill -> ok
         end,
         ?assertEqual({ok, 1},
-            ar_sync_scheduler:claim_and_enqueue(StoreID, [Task])),
-        receive {handed_off, _} -> ok end,
+            arweave_sync:internal_enqueue_chunk(StoreID, Peer, StartOffset)),
+        receive
+            {sync_chunk_fetched, StoreID, FirstResult} ->
+                ?assertEqual(ok, FirstResult)
+        end,
         ?assertEqual(ok, ar_test_await:sync_fetches_drained(SchedulerPID)),
-        ?assertEqual(1, ar_sync_chunk_cache:size(StoreID)),
-        ?assertEqual(1, ar_sync_chunk_cache:size(OtherStoreID)),
+        ?assertEqual(1, ar_chunk_cache:cached_size(StoreID)),
+        ?assertEqual(1, ar_chunk_cache:cached_size(OtherStoreID)),
         case CrashType of
             kill -> exit(OldPID, kill);
             exception -> ok = sys:resume(OldPID)
@@ -93,27 +87,32 @@ test_restart(StoreID, OtherStoreID, CrashType, Peer, EndOffset, Proof) ->
         ?assertEqual(ok, ar_test_await:until(data_sync_restarted, fun() ->
             case whereis(Name) of
                 PID when is_pid(PID), PID =/= OldPID ->
-                    ets:lookup(ar_data_sync_state,
-                        {chunk_cache_owner, StoreID}) =:=
-                            [{{chunk_cache_owner, StoreID}, PID}];
+                    arweave_sync:internal_store_ready(StoreID, PID);
                 _ -> false
             end
         end)),
         ?assertEqual(RootPID, whereis(ar_sup)),
-        ?assertEqual(SchedulerPID, whereis(ar_sync_scheduler)),
+        ?assertEqual(SchedulerPID, arweave_sync:internal_scheduler_pid()),
         ?assertEqual(OtherPID, whereis(ar_data_sync:name(OtherStoreID))),
-        ?assertEqual(0, ar_sync_chunk_cache:size(StoreID)),
-        ?assertEqual(1, ar_sync_chunk_cache:size(OtherStoreID)),
+        ?assertEqual(0, ar_chunk_cache:cached_size(StoreID)),
+        ?assertEqual(1, ar_chunk_cache:cached_size(OtherStoreID)),
         %% The lost write's range must be claimable and writable again.
         ?assertEqual({ok, 1},
-            ar_sync_scheduler:claim_and_enqueue(StoreID, [Task])),
-        receive {handed_off, _} -> ok end,
+            arweave_sync:internal_enqueue_chunk(StoreID, Peer, StartOffset)),
+        receive
+            {sync_chunk_fetched, StoreID, RetryResult} ->
+                ?assertEqual(ok, RetryResult)
+        end,
         ?assertEqual(ok, ar_test_await:chunk_recorded(main, EndOffset,
             #{ store_id => StoreID })),
         {ok, Metadata, _, StoredChunk} =
             ar_data_sync:read_chunk_with_full_metadata(EndOffset - 1, StoreID),
-        {true, StoredPacking} = ar_sync_record:is_recorded(
-            EndOffset, ar_data_sync, StoreID),
+        {true, StoredPacking} = arweave_storage:is_recorded(
+            EndOffset,
+            any_packing,
+            {ar_data_sync, byte},
+            StoreID
+        ),
         ?assertEqual({ok, maps:get(chunk, Proof)}, ar_packing_server:unpack(
             StoredPacking, EndOffset, Metadata#chunk_metadata.tx_root,
             StoredChunk, Metadata#chunk_metadata.chunk_size)),
@@ -122,7 +121,7 @@ test_restart(StoreID, OtherStoreID, CrashType, Peer, EndOffset, Proof) ->
             #{ store_id => OtherStoreID })),
         ?assertEqual(ok, ar_test_await:sync_fetches_drained(SchedulerPID)),
         ?assertEqual(ok, ar_test_await:until(chunk_caches_drained, fun() ->
-            ar_sync_chunk_cache:size() =:= 0
+            ar_chunk_cache:reserved_size() =:= 0
         end))
     after
         catch sys:resume(OldPID),

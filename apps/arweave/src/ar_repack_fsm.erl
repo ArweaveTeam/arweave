@@ -106,10 +106,10 @@ next_state(#repack_chunk{state = needs_chunk} = RepackChunk) ->
 
     IsTooSmall = (
       ChunkSize /= ?DATA_CHUNK_SIZE andalso
-      AbsoluteEndOffset =< ar_block:strict_data_split_threshold()
+      AbsoluteEndOffset =< arweave_constants:strict_data_split_threshold()
      ),
 
-    IsStorageSupported = ar_chunk_storage:is_storage_supported(
+    IsStorageSupported = arweave_storage:is_storage_supported(
                            AbsoluteEndOffset, ChunkSize, TargetPacking),
 
     NextState = case {IsTooSmall, SourcePacking, Chunk, IsStorageSupported} of
@@ -450,7 +450,7 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 
 state_transition_test_() ->
     ar_test_util:with_mocked([
-                              {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+                              {arweave_constants, strict_data_split_threshold, fun() -> 700_000 end}
                              ],
                              fun test_state_transitions/0, 30).
 

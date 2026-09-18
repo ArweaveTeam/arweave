@@ -50,7 +50,7 @@ read_json(Req) ->
 %% the production interval is 10 minutes.
 webhooks_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_9_6, fun() -> infinity end},
+        [{arweave_constants, height_2_9_6, fun() -> infinity end},
          {ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
         fun test_webhooks/0,
         ?TEST_NODE_TIMEOUT
@@ -59,7 +59,7 @@ webhooks_test_() ->
 test_webhooks() ->
     {_, Pub} = Wallet = ar_wallet:new(),
     [B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         test_webhooks_body(Wallet, B0)
     end).
 

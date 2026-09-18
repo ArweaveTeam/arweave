@@ -13,7 +13,6 @@
 -export([parse_peers/3]).
 -endif.
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 %%%===================================================================
@@ -94,7 +93,7 @@ parse_storage_module(IOList) ->
         [PartitionNumberBin, PackingBin, <<"repack_in_place">>, ToPackingBin] ->
             PartitionNumber = binary_to_integer(PartitionNumberBin),
             true = PartitionNumber >= 0,
-            parse_storage_module(PartitionNumber, ar_block:partition_size(), PackingBin, ToPackingBin);
+            parse_storage_module(PartitionNumber, arweave_constants:partition_size(), PackingBin, ToPackingBin);
         [RangeNumberBin, RangeSizeBin, PackingBin, <<"repack_in_place">>, ToPackingBin] ->
             RangeNumber = binary_to_integer(RangeNumberBin),
             true = RangeNumber >= 0,
@@ -104,7 +103,7 @@ parse_storage_module(IOList) ->
         [PartitionNumberBin, PackingBin] ->
             PartitionNumber = binary_to_integer(PartitionNumberBin),
             true = PartitionNumber >= 0,
-            parse_storage_module(PartitionNumber, ar_block:partition_size(), PackingBin);
+            parse_storage_module(PartitionNumber, arweave_constants:partition_size(), PackingBin);
         [RangeNumberBin, RangeSizeBin, PackingBin] ->
             RangeNumber = binary_to_integer(RangeNumberBin),
             true = RangeNumber >= 0,
@@ -381,20 +380,20 @@ parse_options([{<<"hashing_threads">>, Threads} | _], _Opts) ->
 
 parse_options([{<<"data_cache_size_limit">>, Limit} | Rest], Opts)
   when is_integer(Limit) ->
-    %% Legacy value is in chunks; new-style [sync, cache_size] is in MiB (ceiling).
-    _ = arweave_config:set([sync, cache_size], ?LEGACY_CHUNKS_TO_CACHE_MIB(Limit)),
+    %% Legacy chunks become MiB, rounding up any partial MiB.
+    _ = arweave_config:set([packing, cache_size],
+        ?LEGACY_CHUNKS_TO_CACHE_MIB(Limit)),
     parse_options(Rest, Opts);
 parse_options([{<<"data_cache_size_limit">>, Limit} | _], _Opts) ->
     {error, {bad_type, data_cache_size_limit, number}, Limit};
 
-parse_options([{<<"packing_cache_size_limit">>, Limit} | Rest], Opts)
-  when is_integer(Limit) ->
-    %% Legacy chunks become MiB, rounding up just like the sync cache option.
-    _ = arweave_config:set([packing, cache_size],
-        ?LEGACY_CHUNKS_TO_CACHE_MIB(Limit)),
+parse_options([{<<"packing_cache_size_limit">>, _Limit} | Rest], Opts) ->
+    ?LOG_WARNING([{event, deprecated_config_option},
+        {option, packing_cache_size_limit}, {action, ignored},
+        {reason, <<"Use packing.cache_size (MiB), or legacy "
+            "data_cache_size_limit (256 KiB chunks), for the shared "
+            "chunk cache.">>}]),
     parse_options(Rest, Opts);
-parse_options([{<<"packing_cache_size_limit">>, Limit} | _], _Opts) ->
-    {error, {bad_type, packing_cache_size_limit, number}, Limit};
 
 parse_options([{<<"mining_cache_size_mb">>, Limit} | Rest], Opts)
   when is_integer(Limit) ->

@@ -20,7 +20,7 @@ init_per_testcase(_TestCase, _Config) ->
     BeforeApps = application:which_applications(),
     application:ensure_all_started(arweave_config),
 
-    put({?MODULE, snapshot}, arweave_config:snapshot()),
+    put({?MODULE, snapshot}, arweave_config:internal_snapshot()),
 
     arweave_config:set([limiter, test_limiter, number_of_workers], 10),
     arweave_config:set([limiter, test_limiter_2, number_of_workers], 5),
@@ -29,7 +29,7 @@ init_per_testcase(_TestCase, _Config) ->
 end_per_testcase(_TestCase, Config) ->
     BeforeApps = ?config(before_apps, Config),
     [application:stop(App) || App <- (application:which_applications() -- BeforeApps)],
-    arweave_config:restore(erase({?MODULE, snapshot})),
+    arweave_config:internal_restore(erase({?MODULE, snapshot})),
     ok.
 
 all() ->

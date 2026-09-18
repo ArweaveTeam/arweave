@@ -7,9 +7,10 @@
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_constants/include/arweave_constants.hrl").
 
 %%====================================================================
 %% Suite metadata
@@ -241,8 +242,8 @@ do_sync_pack_mine({Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
 
     SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
 
-    RangeStart = ar_block:partition_size(),
-    RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
+    RangeStart = arweave_constants:partition_size(),
+    RangeEnd = 2*arweave_constants:partition_size() + arweave_storage:get_overlap(SinkPacking),
 
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
     ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
@@ -267,8 +268,8 @@ do_unpacked_and_packed_sync_pack_mine(
     {SinkPacking1, SinkPacking2} = start_sink_node(
         SinkNode, SourceNode, B0, PackingType1, PackingType2),
 
-    RangeStart1 = ar_block:partition_size(),
-    RangeEnd1 = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking1),
+    RangeStart1 = arweave_constants:partition_size(),
+    RangeEnd1 = 2*arweave_constants:partition_size() + arweave_storage:get_overlap(SinkPacking1),
 
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart1, RangeEnd1),
     ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking1),
@@ -292,8 +293,8 @@ do_entropy_first_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    Module = {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    Module = {arweave_constants:partition_size(), 2 * arweave_constants:partition_size(), SinkPacking},
+    #store_info{id = StoreID} = arweave_storage:store_info(Module),
     StorageModules = [ Module ],
 
     BaseOverrides = #{
@@ -307,20 +308,20 @@ do_entropy_first_sync_pack_mine(
     SinkPeerName = ar_test_node:peer_name(SinkNode),
     SinkPeerName = ar_test_node:start_other_node(SinkNode, B0, BaseOverrides, true),
     SinkSnapshot = ar_test_node:remote_call(
-        SinkNode, arweave_config, snapshot, []),
+        SinkNode, arweave_config, internal_snapshot, []),
 
-    RangeStart = ar_block:partition_size(),
-    RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
+    RangeStart = arweave_constants:partition_size(),
+    RangeEnd = 2*arweave_constants:partition_size() + arweave_storage:get_overlap(SinkPacking),
 
     ok = ar_test_await:entropy_prepared(SinkNode, StoreID, RangeStart, RangeEnd),
     ok = ar_test_await:partition_empty(SinkNode, 1, unpacked),
     ok = ar_test_await:partition_empty(SinkNode, 1, unpacked_padded),
 
     DeleteOffset1 = RangeStart + ?DATA_CHUNK_SIZE,
-    ar_test_node:remote_call(SinkNode, ar_chunk_storage, delete,
+    ar_test_node:remote_call(SinkNode, arweave_storage, delete_chunk,
         [DeleteOffset1, StoreID]),
     DeleteOffset2 = DeleteOffset1 + ?DATA_CHUNK_SIZE,
-    ar_test_node:remote_call(SinkNode, ar_chunk_storage, delete_chunk,
+    ar_test_node:remote_call(SinkNode, arweave_storage, internal_erase_chunk,
         [DeleteOffset2, StoreID]),
 
     ar_e2e:restart_node(SinkNode, SinkSnapshot,
@@ -346,8 +347,8 @@ do_entropy_last_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    Module = {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    Module = {arweave_constants:partition_size(), 2 * arweave_constants:partition_size(), SinkPacking},
+    #store_info{id = StoreID} = arweave_storage:store_info(Module),
     StorageModules = [ Module ],
 
     BaseOverrides = #{
@@ -361,10 +362,10 @@ do_entropy_last_sync_pack_mine(
     SinkPeerName = ar_test_node:peer_name(SinkNode),
     SinkPeerName = ar_test_node:start_other_node(SinkNode, B0, BaseOverrides, true),
     SinkSnapshot = ar_test_node:remote_call(
-        SinkNode, arweave_config, snapshot, []),
+        SinkNode, arweave_config, internal_snapshot, []),
 
-    RangeStart = ar_block:partition_size(),
-    RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
+    RangeStart = arweave_constants:partition_size(),
+    RangeEnd = 2*arweave_constants:partition_size() + arweave_storage:get_overlap(SinkPacking),
 
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
     ar_e2e:assert_partition_size(SinkNode, 1, unpacked_padded),
@@ -394,9 +395,9 @@ do_small_module_aligned_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    Module = {ar_block:partition_size(),
-        floor(1.5 * ar_block:partition_size()), SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    Module = {arweave_constants:partition_size(),
+        floor(1.5 * arweave_constants:partition_size()), SinkPacking},
+    #store_info{id = StoreID} = arweave_storage:store_info(Module),
     StorageModules = [ Module ],
 
     %% Sync the second half of partition 1
@@ -410,8 +411,8 @@ do_small_module_aligned_sync_pack_mine(
     SinkPeerName = ar_test_node:peer_name(SinkNode),
     SinkPeerName = ar_test_node:start_other_node(SinkNode, B0, Overrides, true),
 
-    RangeStart = ar_block:partition_size(),
-    RangeEnd = floor(1.5 * ar_block:partition_size()),
+    RangeStart = arweave_constants:partition_size(),
+    RangeEnd = floor(1.5 * arweave_constants:partition_size()),
     Partition = ar_node:get_partition_number(RangeStart),
     RangeSize = ar_e2e:aligned_partition_size(SinkNode, Partition, SinkPacking),
 
@@ -424,7 +425,7 @@ do_small_module_aligned_sync_pack_mine(
     AlignedStart = arweave_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
     AlignedEnd = arweave_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
     ok = ar_test_await:entropy_prepared(SinkNode, StoreID, AlignedStart, AlignedEnd),
-    ok = ar_test_await:entropy_not_prepared(SinkNode, StoreID, AlignedEnd, AlignedEnd + ar_block:partition_size()),
+    ok = ar_test_await:entropy_not_prepared(SinkNode, StoreID, AlignedEnd, AlignedEnd + arweave_constants:partition_size()),
 
     ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking).
 
@@ -440,9 +441,9 @@ do_small_module_unaligned_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    Module = {floor(1.5 * ar_block:partition_size()),
-        2 * ar_block:partition_size(), SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    Module = {floor(1.5 * arweave_constants:partition_size()),
+        2 * arweave_constants:partition_size(), SinkPacking},
+    #store_info{id = StoreID} = arweave_storage:store_info(Module),
     StorageModules = [ Module ],
 
     Overrides = #{
@@ -455,8 +456,8 @@ do_small_module_unaligned_sync_pack_mine(
     SinkPeerName = ar_test_node:peer_name(SinkNode),
     SinkPeerName = ar_test_node:start_other_node(SinkNode, B0, Overrides, true),
 
-    RangeStart = floor(1.5 * ar_block:partition_size()),
-    RangeEnd = 2 * ar_block:partition_size(),
+    RangeStart = floor(1.5 * arweave_constants:partition_size()),
+    RangeEnd = 2 * arweave_constants:partition_size(),
     Partition = ar_node:get_partition_number(RangeStart),
     RangeSize = ar_e2e:aligned_partition_size(SinkNode, Partition, SinkPacking),
 
@@ -485,9 +486,9 @@ do_large_module_aligned_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    ModuleSize = 2 * ar_block:partition_size(),
+    ModuleSize = 2 * arweave_constants:partition_size(),
     Module = {0, ModuleSize, SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    #store_info{id = StoreID} = arweave_storage:store_info(Module),
     StorageModules = [ Module ],
 
     Overrides = #{
@@ -548,9 +549,9 @@ do_large_module_unaligned_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    ModuleSize = floor(1.5 * ar_block:partition_size()),
+    ModuleSize = floor(1.5 * arweave_constants:partition_size()),
     Module = {ModuleSize, 2 * ModuleSize, SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    #store_info{id = StoreID} = arweave_storage:store_info(Module),
     StorageModules = [ Module ],
 
     Overrides = #{
@@ -596,7 +597,7 @@ do_disk_pool_threshold(SourcePackingType, SinkPackingType) ->
 
     SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
     ok = ar_test_await:http_chunks_recorded(SinkNode,
-        ar_block:partition_size(), 4*ar_block:partition_size()),
+        arweave_constants:partition_size(), 4*arweave_constants:partition_size()),
     %% At height 6 the disk-pool threshold sits at the depth-3 weave
     %% 6291456 (inside partition 3): partitions 1-2 are fully below it,
     %% partition 3 holds only the two chunks below the threshold, and
@@ -605,7 +606,7 @@ do_disk_pool_threshold(SourcePackingType, SinkPackingType) ->
     ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking),
     ar_test_await:partition_at_size(SinkNode, 3, SinkPacking, 2 * ?DATA_CHUNK_SIZE),
     ok = ar_test_await:partition_empty(SinkNode, 4, SinkPacking),
-    ok = ar_test_await:http_chunks_not_recorded(SinkNode, 0, ar_block:partition_size()),
+    ok = ar_test_await:http_chunks_not_recorded(SinkNode, 0, arweave_constants:partition_size()),
     ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
 
     case SinkPackingType of
@@ -618,11 +619,11 @@ do_disk_pool_threshold(SourcePackingType, SinkPackingType) ->
             %% (inside partition 4): partition 3 is now fully below it and
             %% partition 4 holds the two chunks below it.
             ok = ar_test_await:http_chunks_recorded(SinkNode,
-                ar_block:partition_size(), 4*ar_block:partition_size()),
+                arweave_constants:partition_size(), 4*arweave_constants:partition_size()),
             ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking),
             ar_e2e:assert_partition_size(SinkNode, 3, SinkPacking),
             ar_test_await:partition_at_size(SinkNode, 4, SinkPacking, 2 * ?DATA_CHUNK_SIZE),
-            ok = ar_test_await:http_chunks_not_recorded(SinkNode, 0, ar_block:partition_size())
+            ok = ar_test_await:http_chunks_not_recorded(SinkNode, 0, arweave_constants:partition_size())
     end.
 
 %% @doc Start a sink node with one storage module per partition.
@@ -632,13 +633,13 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
     SinkPacking = ar_e2e:packing_type_to_packing(PackingType, SinkAddr),
 
     StorageModules = [
-                      {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking},
-                      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), SinkPacking},
-                      {3 * ar_block:partition_size(), 4 * ar_block:partition_size(), SinkPacking},
-                      {4 * ar_block:partition_size(), 5 * ar_block:partition_size(), SinkPacking},
-                      {5 * ar_block:partition_size(), 6 * ar_block:partition_size(), SinkPacking},
-                      {6 * ar_block:partition_size(), 7 * ar_block:partition_size(), SinkPacking},
-                      {10 * ar_block:partition_size(), 11 * ar_block:partition_size(), SinkPacking}
+                      {arweave_constants:partition_size(), 2 * arweave_constants:partition_size(), SinkPacking},
+                      {2 * arweave_constants:partition_size(), 3 * arweave_constants:partition_size(), SinkPacking},
+                      {3 * arweave_constants:partition_size(), 4 * arweave_constants:partition_size(), SinkPacking},
+                      {4 * arweave_constants:partition_size(), 5 * arweave_constants:partition_size(), SinkPacking},
+                      {5 * arweave_constants:partition_size(), 6 * arweave_constants:partition_size(), SinkPacking},
+                      {6 * arweave_constants:partition_size(), 7 * arweave_constants:partition_size(), SinkPacking},
+                      {10 * arweave_constants:partition_size(), 11 * arweave_constants:partition_size(), SinkPacking}
                      ],
     NodePeerName = ar_test_node:peer_name(Node),
     NodePeerName = ar_test_node:start_other_node(Node, B0, #{
@@ -658,8 +659,8 @@ start_sink_node(Node, SourceNode, B0, PackingType1, PackingType2) ->
     SinkPacking2 = ar_e2e:packing_type_to_packing(PackingType2, SinkAddr),
 
     StorageModules = [
-                      {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking1},
-                      {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking2}
+                      {arweave_constants:partition_size(), 2 * arweave_constants:partition_size(), SinkPacking1},
+                      {arweave_constants:partition_size(), 2 * arweave_constants:partition_size(), SinkPacking2}
                      ],
 
     NodePeerName = ar_test_node:peer_name(Node),

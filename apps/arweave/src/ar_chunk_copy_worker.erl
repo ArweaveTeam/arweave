@@ -1,6 +1,6 @@
 %%% @doc Read-range worker for `ar_chunk_copy'. One process per task, spawned
 %%% via `spawn_monitor'. It reads chunks from the source module's sync record
-%%% and posts `{pack_and_store_chunk, ...}' casts to the target `ar_data_sync',
+%%% and posts admitted storage requests to the target `ar_data_sync',
 %%% which does the actual storage writes; this worker only reads.
 %%%
 %%% Exit contract (read by `ar_chunk_copy''s `'DOWN'' handler): `normal' means
@@ -19,7 +19,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
-%% `pack_and_store_chunk' casts to `ar_data_sync' before the worker yields so
+%% Storage requests sent to `ar_data_sync' before the worker yields so
 %% other tasks can run. Each cast carries at least one 256 KiB chunk; with
 %% multiple sources draining in parallel, unbounded posting can exhaust memory.
 -define(READ_RANGE_MESSAGES_PER_BATCH, 40).
@@ -40,7 +40,7 @@ run(Args) ->
 do_run({Start, End, _, _}) when Start >= End ->
     ok;
 do_run({Start, End, _, TargetStoreID} = Args) ->
-    case ar_data_sync:is_chunk_cache_full() of
+    case ar_chunk_cache:is_full() of
         true ->
             timer:sleep(200),
             do_run(Args);
@@ -68,11 +68,22 @@ read_range(_MessagesRemaining, {Start, End, _, _}) when Start >= End ->
     ok;
 read_range(MessagesRemaining,
         {Start, End, OriginStoreID, TargetStoreID} = Args) ->
-    case ar_sync_record:is_recorded(Start + 1, ar_data_sync, TargetStoreID) of
+    case arweave_storage:is_recorded(
+        Start + 1,
+        any_packing,
+        {ar_data_sync, byte},
+        TargetStoreID
+    ) of
         {true, _} ->
             %% Chunk already synced at the target — skip to next gap.
-            case ar_sync_record:get_next_unsynced_interval(
-                    Start, End, ar_data_sync, TargetStoreID) of
+            case arweave_storage:get_next_interval(
+                unsynced,
+                Start,
+                End,
+                any_packing,
+                {ar_data_sync, byte},
+                TargetStoreID
+            ) of
                 not_found ->
                     ok;
                 {_, Start2} ->
@@ -80,8 +91,12 @@ read_range(MessagesRemaining,
                         {Start2, End, OriginStoreID, TargetStoreID})
             end;
         _ ->
-            case ar_sync_record:is_recorded(Start + 1, ar_data_sync,
-                    OriginStoreID) of
+            case arweave_storage:is_recorded(
+                Start + 1,
+                any_packing,
+                {ar_data_sync, byte},
+                OriginStoreID
+            ) of
                 {true, Packing} ->
                     read_and_post_chunk(MessagesRemaining, Packing, Args);
                 SyncRecordReply ->
@@ -100,13 +115,33 @@ read_range(MessagesRemaining,
 %% the target store for packing, routing each `read_chunk_with_full_metadata/2'
 %% outcome through the range scan.
 read_and_post_chunk(MessagesRemaining, Packing,
-        {Start, End, OriginStoreID, TargetStoreID}) ->
-    PaddedEnd = ar_block:get_chunk_padded_offset(End),
+        {_, _, _, TargetStoreID} = Args) ->
+    case ar_chunk_cache:reserve(TargetStoreID) of
+        full ->
+            timer:sleep(200),
+            read_range(MessagesRemaining, Args);
+        {ok, CacheRef} ->
+            Next = try
+                do_read_and_post_chunk(MessagesRemaining, Packing, Args, CacheRef)
+            after
+                ar_chunk_cache:release(CacheRef)
+            end,
+            case Next of
+                {continue, Remaining, Args2} -> read_range(Remaining, Args2);
+                ok -> ok
+            end
+    end.
+
+continue(Remaining, Args) -> {continue, Remaining, Args}.
+
+do_read_and_post_chunk(MessagesRemaining, Packing,
+        {Start, End, OriginStoreID, TargetStoreID}, CacheRef) ->
+    PaddedEnd = arweave_constants:get_chunk_padded_offset(End),
     case ar_data_sync:read_chunk_with_full_metadata(Start + 1, OriginStoreID) of
         no_chunk ->
             %% No chunk at or after `Start + 1' in this prefix; skip ahead.
             Start2 = ar_data_sync:advance_chunks_index_cursor(Start),
-            read_range(MessagesRemaining,
+            continue(MessagesRemaining,
                 {Start2, End, OriginStoreID, TargetStoreID});
         {error, {data_missing, Metadata, Offsets}} ->
             %% Chunk data does not exist even though an entry exists in the
@@ -119,7 +154,7 @@ read_and_post_chunk(MessagesRemaining, Packing,
             ar_data_sync:invalidate_bad_data_record(
               AbsoluteOffset, ChunkSize, OriginStoreID,
               ChunkDataKey, read_range_chunk_not_found),
-            read_range(MessagesRemaining - 1,
+            continue(MessagesRemaining - 1,
                 {Start + ChunkSize, End, OriginStoreID, TargetStoreID});
         {error, {data_read_failed, Reason, Metadata2, Offsets2}} ->
             %% The chunk's stored bytes are unreadable, since we don't know
@@ -133,7 +168,7 @@ read_and_post_chunk(MessagesRemaining, Packing,
                         {absolute_end_offset, AbsoluteOffset2},
                         {chunk_data_key, arweave_util:encode(ChunkDataKey)},
                         {reason, io_lib:format("~p", [Reason])}]),
-            read_range(MessagesRemaining,
+            continue(MessagesRemaining,
                 {Start + ChunkSize2, End, OriginStoreID, TargetStoreID});
         {error, {index_read_failed, Reason}} ->
             %% The chunks_index query failed; without metadata we don't know the
@@ -142,18 +177,18 @@ read_and_post_chunk(MessagesRemaining, Packing,
             ?LOG_ERROR([{event, failed_to_query_chunk_metadata},
                 {offset, Start + 1},
                 {reason, io_lib:format("~p", [Reason])}]),
-            read_range(MessagesRemaining,
+            continue(MessagesRemaining,
                 {Start + ?DATA_CHUNK_SIZE, End, OriginStoreID, TargetStoreID});
         {ok, _Metadata, #chunk_offsets{ absolute_offset = AbsoluteOffset }, _Chunk}
                 when AbsoluteOffset > PaddedEnd ->
             ok;
         {ok, Metadata, Offsets, Chunk} ->
             post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
-                {Start, End, OriginStoreID, TargetStoreID})
+                {Start, End, OriginStoreID, TargetStoreID}, CacheRef)
     end.
 
 post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
-        {Start, End, OriginStoreID, TargetStoreID}) ->
+        {Start, End, OriginStoreID, TargetStoreID}, CacheRef) ->
     #chunk_metadata{
         chunk_data_key = ChunkDataKey,
         tx_root = TXRoot,
@@ -166,8 +201,12 @@ post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
         absolute_offset = AbsoluteOffset,
         relative_offset = RelativeOffset
     } = Offsets,
-    case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
-            OriginStoreID) of
+    case arweave_storage:is_recorded(
+        AbsoluteOffset,
+        any_packing,
+        {ar_data_sync, byte},
+        OriginStoreID
+    ) of
         {true, Packing} ->
             UnpackedChunk = case Packing of
                 unpacked -> Chunk;
@@ -176,19 +215,21 @@ post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
             ChunkArgs = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
                 Packing, RelativeOffset, ChunkSize, Chunk, UnpackedChunk,
                 TargetStoreID, ChunkDataKey},
-            ar_data_sync:pack_and_store_chunk(TargetStoreID, ChunkArgs),
-            read_range(MessagesRemaining - 1,
+            ar_data_sync:store_chunk(
+                ar_data_sync:name(TargetStoreID), ChunkArgs,
+                {none, make_ref()}, CacheRef),
+            continue(MessagesRemaining - 1,
                 {Start + ChunkSize, End, OriginStoreID, TargetStoreID});
         {true, _DifferentPacking} ->
             %% Unlucky timing — the chunk should have been repacked
             %% in the meantime.
-            read_range(MessagesRemaining,
+            continue(MessagesRemaining,
                 {Start, End, OriginStoreID, TargetStoreID});
         Reply ->
             ?LOG_ERROR([{event, chunk_record_not_found},
                 {absolute_end_offset, AbsoluteOffset},
                 {ar_sync_record_reply, io_lib:format("~p", [Reply])}]),
-            read_range(MessagesRemaining,
+            continue(MessagesRemaining,
                 {Start + ChunkSize, End, OriginStoreID, TargetStoreID})
     end.
 
@@ -202,7 +243,7 @@ post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
 disk_space_initialization_is_retried_test_() ->
     ar_test_util:with_mocked(
       [
-       {ar_data_sync, is_chunk_cache_full, fun() -> false end},
+       {ar_chunk_cache, is_full, fun() -> false end},
        {ar_data_sync, is_disk_space_sufficient,
         fun(_StoreID) ->
                 Checks = get(disk_space_checks),
@@ -289,12 +330,16 @@ past_range_reply() ->
 
 read_range_mocks(ReadFun) ->
     [
-     {ar_block, get_chunk_padded_offset, fun(Offset) -> Offset end},
-     {ar_sync_record, is_recorded, fun(_Offset, ar_data_sync, StoreID) ->
+     {ar_chunk_cache, reserve, fun(_) -> {ok, test_cache_ref} end},
+     {ar_chunk_cache, release, fun(_) -> ok end},
+     {arweave_constants, get_chunk_padded_offset, fun(Offset) -> Offset end},
+     {arweave_storage, is_recorded, fun(_Offset, any_packing, {ar_data_sync, byte}, StoreID) ->
                                            case StoreID of
                                                target_store -> false;
                                                origin_store -> {true, unpacked}
-                                           end
+                                           end;
+                                       (Offset, Packing, ID, StoreID) ->
+                                           meck:passthrough([Offset, Packing, ID, StoreID])
                                    end},
      {ar_data_sync, read_chunk_with_full_metadata, ReadFun},
      {ar_data_sync, invalidate_bad_data_record, fun(_, _, _, _, _) -> ok end}

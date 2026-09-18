@@ -4,15 +4,18 @@
   {id, "arweave_util"},
   {description, "Arweave Utility Library"},
   {vsn, "2.9.7-alpha1"},
-  {mod, {arweave_util, []}},
   {env, []},
   {applications, [
                   kernel,
                   stdlib,
-                  sasl
+                  arweave_constants,
+                  sasl,
+                  jiffy
                  ]},
   {modules, [
-             arweave_util
+             arweave_util,
+             ar_intervals,
+             ar_ets_intervals
             ]},
   {registered, [
                ]}

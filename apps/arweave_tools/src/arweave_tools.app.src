@@ -1,0 +1,15 @@
+{application, arweave_tools, [
+    {description, "Arweave command-line tools"},
+    {vsn, "2.9.7-alpha1"},
+    {applications, [
+        kernel,
+        stdlib,
+        crypto,
+        arweave_constants,
+        arweave_config,
+        arweave_util
+    ]},
+    {modules, []},
+    {registered, []},
+    {env, []}
+]}.
