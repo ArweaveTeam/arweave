@@ -258,6 +258,14 @@ helper_function() ->
 
 ## Common Test suites
 
+### Coverage in CI
+
+The push-triggered CI runs Common Test without `--cover`: cover instruments
+every executed line, which is a ~4x slowdown on the CPU-bound simulation
+suites. For a coverage report, dispatch the "Common Test with coverage (on
+demand)" workflow (`.github/workflows/common-test-cover.yml`); it uploads the
+report as a `coverage-common_test-*` artifact.
+
 ### Exports
 
 Do not export Common Test functions in separate statements. Use:

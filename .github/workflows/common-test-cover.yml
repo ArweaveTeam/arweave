@@ -1,0 +1,33 @@
+######################################################################
+# Common Test suite with coverage. On demand only.
+#
+# The push-triggered workflows run Common Test without cover because
+# cover instrumentation is a ~4x slowdown on the CPU-bound simulation
+# suites (see x-common-test.yml). Dispatch this workflow when a
+# coverage report is wanted; it uploads the report as the
+# `coverage-common_test-*` artifact and pastes the summary into the
+# job summary.
+######################################################################
+name: "Common Test with coverage (on demand)"
+
+on:
+  workflow_dispatch:
+
+# One run per branch at a time; see test-amd64-ubuntu-22.04.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Same artifact key as the push-triggered build, so a SHA the regular
+  # test workflow already built is a LAN-cache hit here.
+  build:
+    uses: ./.github/workflows/x-build.yml
+    secrets: inherit
+
+  common-test:
+    needs: [build]
+    uses: ./.github/workflows/x-common-test.yml
+    secrets: inherit
+    with:
+      cover: true
