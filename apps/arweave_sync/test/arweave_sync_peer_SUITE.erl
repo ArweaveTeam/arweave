@@ -51,6 +51,7 @@ all() ->
         aggregate_goodput_bounds_peer_sum,
         aggregate_delivery_smooths_bucket_boundary,
         goodput_probe,
+        small_failure_pressure_preserves_concurrency,
         goodput_backoff_settles_before_retry,
         queue_max_length_tracks_measured_delivery,
         recompute,
@@ -420,8 +421,8 @@ goodput_probe(_Config) ->
         Control6,
         evolve_cap_control(105.0, 1000, 0.0, false, Control6)
     ),
-    %% Ten percent worker-time pressure scaled by 1.5 cuts 15% of the
-    %% 105-request cap, rounding to 89.
+    %% Ten percent worker-time pressure asks for 15% of the 105-request cap:
+    %% remove fifteen whole requests, not the fractional sixteenth.
     PressureCut = evolve_cap_control(
         110.0,
         1000,
@@ -429,7 +430,7 @@ goodput_probe(_Config) ->
         true,
         #cap_control{cap = 105}
     ),
-    ?assertEqual(89, PressureCut#cap_control.cap),
+    ?assertEqual(90, PressureCut#cap_control.cap),
     %% One hundred percent failure pressure reaches the 50% cut clamp.
     FullCut = evolve_cap_control(0.0, 0, 1.0, true, Control0),
     ?assertEqual(50, FullCut#cap_control.cap),
@@ -461,6 +462,25 @@ goodput_probe(_Config) ->
     ),
     ?assertEqual(98, FastRejectControl#cap_control.cap),
     ?assertEqual(cooldown, FastRejectControl#cap_control.phase).
+
+%% @doc Small failure pressure cannot round a fractional cut up to a request.
+small_failure_pressure_preserves_concurrency(_Config) ->
+    %% One four-second failure among twenty equal-duration completions asks
+    %% for a 7.5% cut: 0.6 requests at the eight-request exploration cap.
+    Control = #cap_control{cap = 8},
+    {Pressure, 4000} = failure_pressure(#fetch_timing{
+        productive_ms = 19 * 4000,
+        client_error_ms = 4000
+    }),
+    SmallCut = evolve_cap_control(100.0, 19 * 4000, Pressure, true, Control),
+    ?assertEqual(8, SmallCut#cap_control.cap),
+    ?assertEqual(cooldown, SmallCut#cap_control.phase),
+    %% Ten percent pressure asks for 1.2 requests, so one is removed.
+    LargerCut = evolve_cap_control(100.0, 1000, 0.1, true, Control),
+    ?assertEqual(7, LargerCut#cap_control.cap),
+    %% An all-failure interval must still halve this small cap.
+    FullCut = evolve_cap_control(0.0, 0, 1.0, true, Control),
+    ?assertEqual(4, FullCut#cap_control.cap).
 
 %% A rejected probe holds the lower cap while old higher-cap completions and
 %% their decreasing-rate EWMA contribution settle before the next baseline.

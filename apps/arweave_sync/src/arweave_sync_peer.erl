@@ -733,8 +733,10 @@ evolve_cap_control(Rate, ProductiveMs, Pressure, Driven, Control) ->
     Cut = min(?MAX_TICK_CUT, ?FAILURE_CUT_GAIN * Pressure),
     case Pressure > 0.0 of
         true ->
+            %% Round the reduction down so a fractional request does not turn
+            %% occasional errors into repeated whole-request cuts at small caps.
             Cap = max(?CONCURRENCY_CAP_MIN,
-                round(Control#cap_control.cap * (1.0 - Cut))),
+                ceil(Control#cap_control.cap * (1.0 - Cut))),
             Control#cap_control{ cap = Cap, phase = cooldown,
                 baseline_rate = undefined, baseline_cap = undefined,
                 observations = 0 };
