@@ -78,8 +78,12 @@ test_restart(StoreID, OtherStoreID, CrashType, Peer, EndOffset, Proof) ->
                 ?assertEqual(ok, FirstResult)
         end,
         ?assertEqual(ok, ar_test_await:sync_fetches_drained(SchedulerPID)),
-        ?assertEqual(1, ar_chunk_cache:cached_size(StoreID)),
-        ?assertEqual(1, ar_chunk_cache:cached_size(OtherStoreID)),
+        %% Fetch completion only confirms the asynchronous ingestion handoff.
+        %% Wait for both ingesters to account their chunks before the crash.
+        ?assertEqual(ok, ar_test_await:until(chunks_cached, fun() ->
+            ar_chunk_cache:cached_size(StoreID) =:= 1 andalso
+                ar_chunk_cache:cached_size(OtherStoreID) =:= 1
+        end)),
         case CrashType of
             kill -> exit(OldPID, kill);
             exception -> ok = sys:resume(OldPID)
