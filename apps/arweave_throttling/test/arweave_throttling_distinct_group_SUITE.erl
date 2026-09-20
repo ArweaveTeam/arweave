@@ -1,6 +1,7 @@
 %%% @doc Tests for the `arweave_throttling_distinct_group' ETS store.
 %%% @end
 -module(arweave_throttling_distinct_group_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").

@@ -1,11 +1,29 @@
 ######################################################################
 # Common Test suite. Mostly used on Linux like systems.
 #
+# Sharding, with the same `-test_category` convention as the eunit
+# matrix in x-test-full.yml:
+#   - discover-suites scans apps/*/test/*_SUITE.erl and emits the
+#     shard matrix (scripts/list_ct_suites.sh). An untagged suite is
+#     `slow` and gets a shard of its own; a suite tagged
+#     `-test_category([fast])` is sliced round-robin into a few
+#     batched shards with the other fast suites, since most take
+#     seconds and would be all job overhead on their own.
+#   - Each shard is a plain `rebar3 ct --suite ...` against the build
+#     artifact, the same command `bin/ct` runs for a developer. The
+#     fetch-build action refreshes the native-lib stamps after
+#     extraction so rebar3's compile pre-hook is the no-op it is on a
+#     developer's machine instead of a cmake tree walk (Linux) or a
+#     rebuild (macOS) per shard. rebar3 still re-fetches its plugins
+#     per shard (~10s): shipping them would add 6MB to every artifact
+#     download a run makes, most of which never run rebar3.
+#
 # Coverage is off by default: cover instruments every executed line,
 # and on the CPU-bound simulation suites (arweave_sync_sim_SUITE) that
-# measured as a ~4x slowdown -- the same tests ran in ~7 min as eunit
-# without cover and ~32 min here with it. common-test-cover.yml runs
-# this workflow with `cover: true` on demand when a report is wanted.
+# measured as a ~3x slowdown -- 32 min for the sim suite with cover
+# against 10 min without. common-test-cover.yml runs this workflow
+# with `cover: true` on demand when a report is wanted. A cover run is
+# a single serial shard, so the report is not split across shards.
 ######################################################################
 name: "arweave-common-test-suite"
 
@@ -36,18 +54,56 @@ env:
   GIT_CONFIG_KEY_0: 'url.https://x-access-token:${{ github.token }}@github.com/.insteadOf'
   GIT_CONFIG_VALUE_0: 'https://github.com/'
 
-####################################################################
-# Test modules (note: that _tests are implicitly run by a matching
-# prefix name
-####################################################################
 jobs:
-  common-test-suite:
+  # Single cheap job that scans the source tree and emits the shard
+  # matrix as JSON. Source-only: the category attribute is read from
+  # the .erl files, so no build artifact is needed here.
+  discover-suites:
     runs-on:
       - self-hosted
       - build-runner
       - ${{ inputs.os_arch }}
       - ${{ inputs.os_name }}
       - ${{ inputs.os_release }}
+    outputs:
+      shards: ${{ steps.discover.outputs.shards }}
+    steps:
+      - name: cleanup
+        if: always()
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      # Two batches of the fast suites: together they run in ~3 min,
+      # so more shards would only add per-job overhead. A cover run
+      # collapses everything into one serial shard (see header).
+      - name: discover suites
+        id: discover
+        env:
+          BATCHES: ${{ inputs.cover && 'all' || '2' }}
+        run: |
+          shards=$(bash scripts/list_ct_suites.sh matrix "${BATCHES}")
+          echo "Discovered shards: ${shards}"
+          echo "shards=${shards}" >> "$GITHUB_OUTPUT"
+
+  common-test-suite:
+    needs: discover-suites
+    # The matrix values would otherwise be appended to the job name,
+    # and `suites` is a long comma-separated path list.
+    name: ${{ matrix.name }}
+    runs-on:
+      - self-hosted
+      - build-runner
+      - ${{ inputs.os_arch }}
+      - ${{ inputs.os_name }}
+      - ${{ inputs.os_release }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover-suites.outputs.shards) }}
     steps:
       - name: cleanup
         if: always()
@@ -68,31 +124,24 @@ jobs:
           ssh-key: ${{ secrets.CI_CACHE_SSH_KEY }}
           cache-key: build-${{ github.sha }}-${{ env.cache_key }}
 
-      # macOS reuses the build artifact across users and CMake bakes
-      # absolute paths into the prebuilt libs, so there they must be
-      # cleaned + rebuilt before the test. On Linux the artifact is built
-      # on the same toolchain image and the libs are relocatable
-      # (priv/*.so carry no RPATH, only system NEEDED) and arch-portable
-      # (RandomX builds a fixed baseline, not -march=native), so reuse
-      # them as-is -- rebuilding per case there only spawns a cc1plus CPU
-      # storm that starves the runner agent ("lost communication" severs).
-      - name: external libraries fix (macOS only)
-        if: ${{ inputs.os_name == 'macos' }}
-        run: make -C apps/arweave/lib clean
-
-      # execute common test suite with test profile; coverage only
-      # when asked for (see the header comment).
-      - name: run common test suite
-        id: common-tests
+      # Plain `ct` (not `as test ct`): the ct task already runs under
+      # the test profile, and `as` splits every argument on commas,
+      # which breaks the comma-separated `--suite` list (see bin/ct).
+      # ERL_FLAGS reaches the rebar3 VM, which is the one CT runs in,
+      # so the shard gets the shared test VM policy (+sbwt none) that
+      # keeps idle schedulers from starving the runner agent.
+      - name: run shard ${{ matrix.name }}
         env:
+          ERL_FLAGS: -args_file config/vm.args.test
           COVER_FLAG: ${{ inputs.cover && '--cover' || '' }}
         run: |
           mkdir -p logs/ct
           # shellcheck disable=SC2086
-          ./rebar3 as test ct \
+          ./rebar3 ct \
             ${COVER_FLAG} \
             --verbose \
-            --logdir logs/ct
+            --logdir logs/ct \
+            --suite "${{ matrix.suites }}"
 
       # generate coverage report, it will be stored in
       # _build/test/cover directory
@@ -106,6 +155,7 @@ jobs:
       # generate markdown/html like report to have a quick view of
       # what happened during the tests
       - name: generate workflow summary
+        if: always()
         run: |-
           if test -f ./_build/test/cover/index.html
           then
@@ -114,23 +164,14 @@ jobs:
             cat ./_build/test/cover/index.html >> $GITHUB_STEP_SUMMARY
           fi
 
-          if test -d ./_build/test/surefire
-          then
-            echo "# Eunit Report" >> $GITHUB_STEP_SUMMARY
-            echo >> $GITHUB_STEP_SUMMARY
-            for f in ./_build/test/surefire/*.xml
-            do
-              ./scripts/surefire_to_html.py "${f}" >> $GITHUB_STEP_SUMMARY
-            done
-          fi
-
-          # cth_surefire (see rebar.config) drops a junit_report.xml next to
-          # the HTML report, so a CT failure shows up here rather than only
-          # inside the uploaded log artifact.
+          # cth_surefire (see rebar.config) drops a junit_report.xml
+          # next to the HTML report, so a CT failure
+          # shows up here rather than only inside the uploaded log
+          # artifact.
           for f in ./logs/ct/*/junit_report.xml
           do
             test -f "${f}" || continue
-            echo "# Common Test Report" >> $GITHUB_STEP_SUMMARY
+            echo "# Common Test Report: ${{ matrix.name }}" >> $GITHUB_STEP_SUMMARY
             echo >> $GITHUB_STEP_SUMMARY
             ./scripts/surefire_to_html.py "${f}" >> $GITHUB_STEP_SUMMARY
           done
@@ -146,7 +187,6 @@ jobs:
           include-hidden-files: true
           path: |
             ./_build/test/cover
-            ./_build/test/surefire
 
       # Belt-and-suspenders against any test that leaves a file under
       # ./logs at mode 000 (eg. arweave_config_file_SUITE
@@ -161,12 +201,13 @@ jobs:
       # present in .tmp (temporary arweave data store)
       - name: upload artifacts in case of failure
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && failure()
         with:
-          name: "logs-common_test-${{ github.run_attempt }}-${{ job.status }}-${{ runner.name }}-${{ github.sha }}"
+          name: "logs-common_test-${{ matrix.name }}-${{ github.run_attempt }}-${{ job.status }}-${{ runner.name }}-${{ github.sha }}"
           retention-days: 7
           overwrite: true
           include-hidden-files: true
           path: |
             ./logs
-
+            *.out
+            *.dump

@@ -66,7 +66,8 @@ all() ->
         test_discovery_backlog_preserves_store_throughput,
         test_disjoint_peer_holdings,
         test_stalled_frontier_peer_does_not_hide_later_capacity,
-        test_node_config_drives_cache_capacity
+        test_node_config_drives_cache_capacity,
+        test_unaligned_store_matches_aligned_throughput
     ].
 
 init_per_suite(Config) ->
@@ -3131,6 +3132,55 @@ test_node_config_drives_cache_capacity(_Config) ->
     }),
     ?assertEqual(ExpectedChunkCacheLimit, arweave_sim:world_value(cache_limit)).
 
+%% Scenario: A store whose first partition is only partly covered syncs its
+%% tail from a byte-only peer as fast as its start (issue #1444).
+%%
+%% Context:
+%% - One unlimited byte-only peer holds all needed data, as a node syncing
+%%   custom-sized modules from LAN peers on a release without footprint
+%%   metadata does.
+%% - Mainnet partition and footprint sizes; every store starts twenty
+%%   gigabytes before a partition boundary, so its first partition is a
+%%   short partial one and the sweep crosses into a fully covered
+%%   partition within the scenario.
+%%
+%% Timeline:
+%% - Let discovery and concurrency growth settle, then measure five equal
+%%   windows that together cover the partial partition and the crossing.
+%%
+%% Contract:
+%% - C1: Byte-mode sweeping stays saturated through the end of a partially
+%%   covered partition and across the boundary.
+%%
+%% Verification:
+%% - V1: Every window's stored throughput reaches 95% of the peer's capacity.
+test_unaligned_store_matches_aligned_throughput(_Config) ->
+    arweave_config:internal_with_test_config(fun() ->
+        arweave_sim:use_mainnet_replica_2_9_sizes(),
+        MaxServeCps = 400,
+        Peers = #{?PEER_UNLIMITED => #sim_peer{max_serve_cps = MaxServeCps}},
+        %% Two gigabytes is 8,192 chunks per store, 49,152 for the six stores
+        %% that share the peer: about two minutes at capacity, so the middle
+        %% windows straddle the partition boundary and the last lie past it.
+        PartialPartitionBytes = 2 * ?GiB,
+        arweave_sync_sim:start_sim(#sim_world{
+            peers = Peers,
+            store_offset = ?MAINNET_PARTITION_SIZE - PartialPartitionBytes
+        }),
+        %% Thirty-two simulated seconds cover the scheduler evidence horizon.
+        arweave_sync_sim:run_for(32),
+        Windows = [arweave_sync_sim:run_for(50) || _ <- lists:seq(1, 5)],
+        ct:pal("stored_cps per 50 s window: ~p~nchunks stored per store: ~p", [
+            [arweave_sync_sim:metric(stored_cps, W) || W <- Windows],
+            [arweave_sync_sim:metric(chunks_stored_by_store, W) || W <- Windows]
+        ]),
+        lists:foreach(
+            fun(Window) ->
+                assert_metric_utilization(stored_cps, MaxServeCps, Window)
+            end,
+            Windows)
+    end).
+
 %%====================================================================
 %% Helpers
 %%====================================================================
@@ -3427,4 +3477,5 @@ testcase_timeout(test_metadata_scarce_store_spread) -> 400;
 testcase_timeout(test_discovery_backlog_preserves_store_throughput) -> 600;
 testcase_timeout(test_disjoint_peer_holdings) -> 500;
 testcase_timeout(test_stalled_frontier_peer_does_not_hide_later_capacity) -> 500;
-testcase_timeout(test_node_config_drives_cache_capacity) -> 30.
+testcase_timeout(test_node_config_drives_cache_capacity) -> 30;
+testcase_timeout(test_unaligned_store_matches_aligned_throughput) -> 300.

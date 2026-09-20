@@ -1,4 +1,5 @@
 -module(arweave_entropy_cache_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").

@@ -1,5 +1,6 @@
 %%% @doc arweave_config_file:parse/1 test suite.
 -module(arweave_config_file_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 

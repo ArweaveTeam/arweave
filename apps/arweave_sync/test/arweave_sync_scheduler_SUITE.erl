@@ -1,4 +1,5 @@
 -module(arweave_sync_scheduler_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("stdlib/include/assert.hrl").
 -include_lib("arweave/include/ar.hrl").

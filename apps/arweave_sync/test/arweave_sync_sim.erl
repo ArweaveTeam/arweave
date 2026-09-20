@@ -66,10 +66,11 @@ start_sim(#sim_world{} = World) ->
     stop_pipeline(),
     ok = arweave_entropy:internal_clear_cache(),
     NodeConfig0 = maps:merge(default_node_config(), World#sim_world.node_config),
-    %% Store topology is fixed for every scenario; node_config controls all other
+    %% Store count and size are fixed for every scenario, and the world may
+    %% shift them off the partition grid; node_config controls all other
     %% production settings used by the simulation.
     NodeConfig = NodeConfig0#{
-        [storage_modules] => arweave_sim:storage_modules()},
+        [storage_modules] => arweave_sim:storage_modules(World)},
     ok = arweave_config:internal_force_config(NodeConfig),
     arweave_sim:start_clock(),
     CacheBytes = arweave_config:get([packing, cache_size]) * ?MiB,

@@ -187,9 +187,11 @@ jobs:
           # The `-h' flag dereferences symlinks — rebar makes a lot of
           # absolute symlinks that don't survive transport between
           # standalone runners. `_build/default/plugins' is build-time
-          # only (rebar3 plugins like hex_core), never needed by the
-          # test BEAMs. rocksdb's prebuilt build tree + vendored source are
-          # kept so `rebar3 ct' on the common-test runners reuses the built
+          # only (rebar3 plugins like hex_core); the few jobs that run
+          # rebar3 against the artifact (the common-test shards) re-fetch
+          # them in ~10s, cheaper than +6MB on every one of the ~100
+          # artifact downloads a run makes. rocksdb's prebuilt build tree
+          # + vendored source are kept so `rebar3 ct' reuses the built
           # static lib (cmake stays a no-op) instead of rebuilding rocksdb
           # from scratch -- a cc1plus CPU storm that severs the runner.
           tar --use-compress-program='zstd -T0 -3' \

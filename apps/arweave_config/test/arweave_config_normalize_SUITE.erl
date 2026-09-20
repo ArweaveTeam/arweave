@@ -1,6 +1,7 @@
 %%% @doc Tests for `arweave_config_normalize:run/0' — the walker that
 %%% invokes each option module's optional `normalize/0' callback.
 -module(arweave_config_normalize_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

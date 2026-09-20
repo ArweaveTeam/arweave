@@ -1,4 +1,5 @@
 -module(arweave_tools_doctor_snapshot_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("arweave/include/ar.hrl").

@@ -3,6 +3,7 @@
 %%% Verifies legacy round-trip, validator semantics, and that
 %%% disabled webhooks vanish from the legacy list view.
 -module(arweave_config_options_webhooks_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include("arweave_config.hrl").
 -include_lib("common_test/include/ct.hrl").

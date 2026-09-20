@@ -1,4 +1,5 @@
 -module(arweave_limiter_group_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").

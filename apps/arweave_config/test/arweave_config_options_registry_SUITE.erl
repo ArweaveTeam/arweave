@@ -3,6 +3,7 @@
 %%% `specs/1' so behavior can be observed in isolation from the real
 %%% spec contributors.
 -module(arweave_config_options_registry_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 
 -include("arweave_config.hrl").

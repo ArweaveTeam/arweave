@@ -79,7 +79,10 @@ The test profile uses smaller values for constants such as `?PARTITION_SIZE` and
 
 CI discovers EUnit test modules by scanning `apps/*/{src,test}/*.erl` for files
 containing a `*_test/0` or `*_test_/0` function head — there is no maintained
-list of modules. See `scripts/list_test_modules.sh`.
+list of modules. See `scripts/list_test_modules.sh`. Common Test suites are
+discovered the same way, as `apps/*/test/*_SUITE.erl`, by
+`scripts/list_ct_suites.sh`, and use the same attribute and convention:
+untagged is `slow` (a shard of its own), `fast` is batched.
 
 Test behavior is driven by two module attributes placed directly below the
 `-module(...)` declaration: `-test_category([...])` and `-test_peers([...])`.
@@ -100,7 +103,7 @@ Categories are comma-separated; keep the attribute on a single line:
 | Category | Effect |
 |---|---|
 | (none — the default) | Module runs in its own shard in the main CI matrix (the `slow` path). Gets a fresh BEAM; peers are booted only if the module declares `-test_peers`. |
-| `fast` | Module runs in one of a small number of batched fast shards. Tests still get their own BEAM per module, but multiple modules share an artifact download. Use only when the module's tests don't share global state with siblings. |
+| `fast` | Module runs in one of a small number of batched fast shards. Tests still get their own BEAM per module, but multiple modules share an artifact download. A fast Common Test suite goes further and shares one CT run (one BEAM) with the other fast suites in its shard. Use only when the module's tests don't share global state with siblings. |
 | `vdf` | Module is part of the macOS VDF workflow's subset (see `x-test-vdf.yml`). Use for tests whose correctness matters to a VDF deployment. Orthogonal to `fast`/`slow`. |
 | `canary` | Module is run only by `x-test-canary.yml` (the always-fails canary check). Excluded from the main matrices. |
 
@@ -258,13 +261,29 @@ helper_function() ->
 
 ## Common Test suites
 
-### Coverage in CI
+### How CI runs them
+
+`x-common-test.yml` discovers every `apps/*/test/*_SUITE.erl` with
+`scripts/list_ct_suites.sh` and fans them out with the eunit convention: an
+untagged suite is `slow` and runs in a shard of its own; a suite tagged
+`-test_category([fast])` is sliced round-robin into a couple of batched shards
+with the other fast suites. A new suite is picked up on the next run in its
+own shard; tag it `fast` once you know it does not share global state with
+its siblings, which is what almost every suite here does.
+
+Each shard is a plain `rebar3 ct --suite <suites> --logdir logs/ct` against
+the build artifact, the same command `./bin/ct` runs locally. The
+fetch-build action runs `make --touch` over the native library Makefiles
+after extraction, so rebar3's compile pre-hook is a no-op per shard, as it
+is on a developer's machine; rebar3 re-fetches its plugins per shard (~10 s)
+because shipping them would add 6 MB to every artifact download.
 
 The push-triggered CI runs Common Test without `--cover`: cover instruments
-every executed line, which is a ~4x slowdown on the CPU-bound simulation
+every executed line, which is a ~3x slowdown on the CPU-bound simulation
 suites. For a coverage report, dispatch the "Common Test with coverage (on
-demand)" workflow (`.github/workflows/common-test-cover.yml`); it uploads the
-report as a `coverage-common_test-*` artifact.
+demand)" workflow (`.github/workflows/common-test-cover.yml`); it runs every
+suite serially in one `rebar3 ct --cover` shard and uploads the report as a
+`coverage-common_test-*` artifact.
 
 ### Exports
 

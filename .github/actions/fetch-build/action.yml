@@ -26,3 +26,31 @@ runs:
       run: |
         tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
         tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
+    # The native libraries are built by `make -C apps/arweave/lib' and
+    # `make all -C apps/arweave/c_src' from rebar3's compile pre-hooks
+    # (rebar.config), so anything that runs rebar3 here (`rebar3 ct' on
+    # the common-test shards) re-enters those Makefiles. Their stamp
+    # chains are plain mtimes, and after checkout + extraction they do
+    # not reliably read as satisfied: cmake then reconfigures and
+    # re-walks the RandomX build trees (~50s of dependency checking on
+    # Linux, no compilation) and on macOS, where the build trees carry
+    # the builder's absolute paths, fails or rebuilds outright.
+    #
+    # `make --touch' repairs this from the Makefiles themselves: it
+    # walks the dependency graph the developer wrote and touches every
+    # out-of-date target in dependency order without running a recipe,
+    # so a new library, NIF or build step needs no change here. The
+    # real make in the pre-hook is then the no-op it is on a developer's
+    # machine. make cannot touch a directory target, and the cmake
+    # trees are built through one (`build: CMakeLists.txt; mkdir $@'),
+    # so refresh every cmake build directory (wherever cmake left a
+    # CMakeCache.txt) first. `|| true': if a target is missing from the
+    # artifact the pre-hook's make builds it, which is the right
+    # fallback. Note that GNU make's touch creates a missing regular
+    # file rather than failing, so this step assumes a complete
+    # artifact, which x-build.yml's `tar -h' of ./apps produces.
+    - shell: bash
+      run: |
+        find apps/arweave/lib -name CMakeCache.txt -exec dirname {} \; | xargs -r touch
+        make --touch -C apps/arweave/lib || true
+        make --touch all -C apps/arweave/c_src || true

@@ -1,4 +1,5 @@
 -module(arweave_tools_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("stdlib/include/assert.hrl").
 

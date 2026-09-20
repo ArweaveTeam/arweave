@@ -16,6 +16,7 @@
 %%% @end
 %%%===================================================================
 -module(arweave_throttling_http_headers_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").

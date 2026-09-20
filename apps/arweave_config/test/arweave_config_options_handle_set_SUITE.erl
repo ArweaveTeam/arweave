@@ -3,6 +3,7 @@
 %%% production spec contributors (and their `handle_set' callbacks)
 %%% are registered.
 -module(arweave_config_options_handle_set_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

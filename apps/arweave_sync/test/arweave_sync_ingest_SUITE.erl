@@ -1,4 +1,5 @@
 -module(arweave_sync_ingest_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 -define(PEER, {127, 0, 0, 1, 1984}).

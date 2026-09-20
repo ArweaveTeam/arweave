@@ -1,4 +1,5 @@
 -module(arweave_entropy_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave_constants/include/arweave_constants.hrl").

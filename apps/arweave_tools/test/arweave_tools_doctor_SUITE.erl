@@ -1,4 +1,5 @@
 -module(arweave_tools_doctor_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave_storage/include/arweave_storage.hrl").
