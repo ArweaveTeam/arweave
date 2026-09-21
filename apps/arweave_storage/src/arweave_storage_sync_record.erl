@@ -17,6 +17,7 @@
     get_intervals/6,
     get_interval/4,
     get_intersection_size/5,
+    get_packings/2,
     name/1
 ]).
 
@@ -31,11 +32,24 @@
 %% The kv key of the write ahead log counter.
 -define(WAL_COUNT_KEY, <<"wal">>).
 
-%% The frequency of dumping sync records on disk.
+%% The frequency of dumping sync records on disk. A store snapshots no more
+%% often than this, and only when its write-ahead log is not empty.
 -ifdef(AR_TEST).
 -define(STORE_SYNC_RECORD_FREQUENCY_MS, 1000).
 -else.
 -define(STORE_SYNC_RECORD_FREQUENCY_MS, 60 * 1000).
+-endif.
+
+%% Building a snapshot materializes every interval of the store on the heap,
+%% ~150 bytes per interval, for seconds. Stores take turns through the
+%% ?SNAPSHOT_TOKEN_KEY row of the sync_records registry so the node pays that
+%% transient for one store at a time; a store that finds the token taken
+%% asks again after this delay.
+-define(SNAPSHOT_TOKEN_KEY, snapshot_token).
+-ifdef(AR_TEST).
+-define(SNAPSHOT_TOKEN_RETRY_MS, 100).
+-else.
+-define(SNAPSHOT_TOKEN_RETRY_MS, 1000).
 -endif.
 
 %% The intervals themselves are NOT kept in the server state. The single
@@ -233,6 +247,11 @@ do_is_recorded(Offset, Packing, ID, StoreID) ->
             ar_ets_intervals:is_inside(TID, Offset)
     end.
 
+%% @doc Return the packings the store's record has a table for.
+get_packings(Record, StoreID) ->
+    ID = record_id(Record),
+    ets:select(sync_records, [{{{ID, '$1', StoreID}, '_'}, [], ['$1']}]).
+
 %% @doc Read the next interval; any_store uses the union of matching records.
 get_next_interval(Status, Offset, End, Packing, Record, StoreID) when
     Status =:= synced; Status =:= unsynced
@@ -407,8 +426,14 @@ init(StoreID) ->
             {ok, State};
         _ ->
             ok = arweave_storage_deps:open_database(#{path => Dir, name => StateDB}),
-            gen_server:cast(self(), store_state),
-            WAL = load_sync_records(StateDB, StoreID),
+            {WAL, Sizes} = load_sync_records(StateDB, StoreID),
+            publish_data_sizes(Sizes, State),
+            %% Spread the stores' first snapshots over a period instead of
+            %% lining them all up at boot.
+            schedule_store_state(
+                ?STORE_SYNC_RECORD_FREQUENCY_MS +
+                    rand:uniform(?STORE_SYNC_RECORD_FREQUENCY_MS)
+            ),
             ?LOG_INFO([{event, ar_sync_record_initialized}, {store_id, StoreID}]),
             {ok, State#state{wal = WAL}}
     end.
@@ -429,19 +454,29 @@ handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
     {reply, ok, State}.
 
+handle_cast(store_state, #state{wal = 0} = State) ->
+    %% Nothing changed since the last snapshot.
+    schedule_store_state(?STORE_SYNC_RECORD_FREQUENCY_MS),
+    {noreply, State};
 handle_cast(store_state, State) ->
-    {_, State2} = store_state(State),
-    %% Snapshot construction materializes every fragmented interval table.
-    %% Reclaim that temporary heap before this long-lived server goes idle.
-    erlang:garbage_collect(),
-    {ok, _} = arweave_storage_deps:apply_after(
-        ?STORE_SYNC_RECORD_FREQUENCY_MS,
-        gen_server,
-        cast,
-        [self(), store_state],
-        #{skip_on_shutdown => false}
-    ),
-    {noreply, State2};
+    case acquire_snapshot_token() of
+        false ->
+            schedule_store_state(?SNAPSHOT_TOKEN_RETRY_MS),
+            {noreply, State};
+        true ->
+            {_, State2} =
+                try
+                    store_state(State)
+                after
+                    release_snapshot_token()
+                end,
+            %% Snapshot construction materializes every fragmented interval
+            %% table. Reclaim that temporary heap before this long-lived
+            %% server goes idle.
+            erlang:garbage_collect(),
+            schedule_store_state(?STORE_SYNC_RECORD_FREQUENCY_MS),
+            {noreply, State2}
+    end;
 handle_cast({add_async, Event, End, Start, ID}, State) ->
     {Reply, State2} = do_add(End, Start, ID, State),
     case Reply of
@@ -670,7 +705,8 @@ is_recorded2(Offset, Key, ID, StoreID) ->
     is_recorded2(Offset, ets:next(sync_records, Key), ID, StoreID).
 
 %% @doc Populate the ETS interval tables from the on-disk snapshot and replay
-%% the write-ahead log on top of them. Return the number of WAL entries.
+%% the write-ahead log on top of them. Return the number of WAL entries and
+%% the snapshot's data sizes by packing.
 load_sync_records(StateDB, StoreID) ->
     {SyncRecordByID, SyncRecordByIDType} =
         case arweave_storage_deps:get_database(StateDB, ?SYNC_RECORDS_KEY) of
@@ -681,7 +717,15 @@ load_sync_records(StateDB, StoreID) ->
         end,
     initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
     initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
-    replay_write_ahead_log(StateDB, StoreID).
+    {replay_write_ahead_log(StateDB, StoreID), data_sizes(SyncRecordByIDType)}.
+
+%% @doc Return [{Packing, Size}] for the ar_data_sync records of a snapshot.
+data_sizes(SyncRecordByIDType) ->
+    [
+        {Packing, ar_intervals:sum(TypeRecord)}
+     || {{ar_data_sync, Packing}, TypeRecord} <-
+            maps:to_list(SyncRecordByIDType)
+    ].
 
 replay_write_ahead_log(StateDB, StoreID) ->
     WAL =
@@ -786,13 +830,10 @@ read_sync_records_from_ets(StoreID) ->
 
 store_state(#state{in_memory = true}) ->
     ok;
+store_state(#state{wal = 0} = State) ->
+    {ok, State};
 store_state(State) ->
-    #state{
-        state_db = StateDB,
-        store_id = StoreID,
-        storage_module = StorageModule,
-        partition_number = PartitionNumber
-    } = State,
+    #state{state_db = StateDB, store_id = StoreID} = State,
     {SyncRecordByID, SyncRecordByIDType} = read_sync_records_from_ets(StoreID),
     StoreSyncRecords =
         arweave_storage_deps:put_database(
@@ -821,22 +862,63 @@ store_state(State) ->
             ]),
             {Error2, State};
         ok ->
-            maps:map(
-                fun
-                    ({ar_data_sync, Packing}, TypeRecord) ->
-                        publish_data_size(
-                            StorageModule,
-                            Packing,
-                            PartitionNumber,
-                            ar_intervals:sum(TypeRecord)
-                        );
-                    (_, _) ->
-                        ok
-                end,
-                SyncRecordByIDType
-            ),
+            publish_data_sizes(data_sizes(SyncRecordByIDType), State),
             {ok, State#state{wal = 0}}
     end.
+
+%% @doc Schedule the next snapshot attempt of this store.
+schedule_store_state(Delay) ->
+    {ok, _} = arweave_storage_deps:apply_after(
+        Delay,
+        gen_server,
+        cast,
+        [self(), store_state],
+        #{skip_on_shutdown => false}
+    ),
+    ok.
+
+%% @doc Take the node-wide snapshot token, unless a live store holds it. A
+%% holder that died mid-snapshot forfeits it. Only the atomic insert_new grants
+%% the token: the liveness check merely clears a dead holder's row, so of two
+%% stores that both find it dead, exactly one wins the retry.
+acquire_snapshot_token() ->
+    case ets:insert_new(sync_records, {?SNAPSHOT_TOKEN_KEY, self()}) of
+        true ->
+            true;
+        false ->
+            case ets:lookup(sync_records, ?SNAPSHOT_TOKEN_KEY) of
+                [{_, Holder}] when Holder == self() ->
+                    true;
+                [{_, Holder}] ->
+                    case is_process_alive(Holder) of
+                        true ->
+                            false;
+                        false ->
+                            ets:delete_object(
+                                sync_records, {?SNAPSHOT_TOKEN_KEY, Holder}
+                            ),
+                            acquire_snapshot_token()
+                    end;
+                [] ->
+                    acquire_snapshot_token()
+            end
+    end.
+
+release_snapshot_token() ->
+    ets:delete_object(sync_records, {?SNAPSHOT_TOKEN_KEY, self()}),
+    ok.
+
+publish_data_sizes(Sizes, State) ->
+    #state{
+        storage_module = StorageModule,
+        partition_number = PartitionNumber
+    } = State,
+    lists:foreach(
+        fun({Packing, Size}) ->
+            publish_data_size(StorageModule, Packing, PartitionNumber, Size)
+        end,
+        Sizes
+    ).
 
 %% @doc Return the last persisted data sizes for late subscribers.
 get_data_sizes() ->

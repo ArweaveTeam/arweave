@@ -7,7 +7,12 @@
 
 suite() -> [{timetrap, {seconds, 60}}].
 
-all() -> [get_after_add, persistence_roundtrip].
+all() -> [
+    get_after_add,
+    persistence_roundtrip,
+    snapshots_take_turns,
+    data_sizes_published_on_load
+].
 
 init_per_suite(Config) -> arweave_storage_ct_util:init_suite(Config).
 
@@ -21,6 +26,8 @@ init_per_testcase(Name, Config) ->
 end_per_testcase(Name, Config) ->
     arweave_storage_ct_util:stop_record(test_sync_record_get),
     arweave_storage_ct_util:stop_record(test_sync_record_persist),
+    arweave_storage_ct_util:stop_record(test_sync_record_turn),
+    arweave_storage_ct_util:stop_record(test_sync_record_sizes),
     arweave_storage_ct_util:end_case(Name, Config).
 
 %%====================================================================
@@ -251,9 +258,146 @@ persistence_roundtrip(_Config) ->
         end
     ).
 
+%% @doc Stores snapshot one at a time: a store that finds the snapshot token
+%% held by a live process retries after the short token delay, a token left
+%% by a dead holder is taken over, a completed snapshot schedules the next one
+%% a full period away, and a store whose WAL is empty skips the snapshot. A
+%% plain process stands in for the other store holding the token, since a
+%% real store releases it within a millisecond in the test profile.
+snapshots_take_turns(_Config) ->
+    Parent = self(),
+    StoreID = test_sync_record_turn,
+    Record = {test_sync_record_turn_id, byte},
+    StateDB = {sync_record, StoreID},
+    with_store_mocks([StoreID], [
+        {arweave_storage_deps, [
+            %% Capture the delays the stores schedule instead of running them.
+            {apply_after, fun(Delay, _M, _F, _A, _O) ->
+                Parent ! {scheduled, self(), Delay},
+                {ok, make_ref()}
+            end}
+        ]}
+    ], fun() ->
+        {ok, PID} = start_record(StoreID),
+        %% Test profile: snapshots are a second apart and the first one lands
+        %% within the second after that.
+        Period = 1000,
+        ?assert(receive_scheduled(PID) > Period),
+        ok = arweave_storage_sync_record:add(2, 0, unpacked, Record, StoreID),
+        %% A live process outside this suite holds the token.
+        Holder = spawn(fun() -> receive stop -> ok end end),
+        true = ets:insert(sync_records, {snapshot_token, Holder}),
+        gen_server:cast(PID, store_state),
+        _ = sys:get_state(PID),
+        %% WAL hasn't been snapshotted since Holder holds the token
+        ?assertEqual({ok, 1}, wal_count(StateDB)),
+        %% Rescheduled after the token retry delay, 100 ms in the test profile.
+        ?assertEqual(100, receive_scheduled(PID)),
+        %% The holder dies without releasing; the next attempt takes over.
+        exit(Holder, kill),
+        ok = ar_test_await:until(holder_dead, fun() ->
+            not is_process_alive(Holder)
+        end),
+        gen_server:cast(PID, store_state),
+        _ = sys:get_state(PID),
+        %% WAL count 0 because it has been snapshotted
+        ?assertEqual({ok, 0}, wal_count(StateDB)),
+        %% The snapshot released the token; the dead holder's row is gone with it.
+        ?assertEqual([], ets:lookup(sync_records, snapshot_token)),
+        ?assertEqual(Period, receive_scheduled(PID)),
+        %% Cast again with nothing added since the last snapshot: the empty WAL
+        %% means no snapshot is written and the next attempt is a full period out.
+        Writes = meck:num_calls(
+            arweave_storage_deps, put_database, [StateDB, <<"sync_records">>, '_']
+        ),
+        gen_server:cast(PID, store_state),
+        _ = sys:get_state(PID),
+        ?assertEqual(
+            Writes,
+            meck:num_calls(
+                arweave_storage_deps, put_database,
+                [StateDB, <<"sync_records">>, '_']
+            )
+        ),
+        ?assertEqual(Period, receive_scheduled(PID)),
+        kill(PID)
+    end).
+
+%% @doc A restarted store publishes the data sizes of its snapshot at once
+%% rather than after its first periodic snapshot.
+data_sizes_published_on_load(_Config) ->
+    StoreID = test_sync_record_sizes,
+    Record = {ar_data_sync, byte},
+    with_store_mocks([StoreID], [], fun() ->
+        {ok, PID} = start_record(StoreID),
+        ok = arweave_storage_sync_record:add(
+            3 * ?DATA_CHUNK_SIZE, 0, unpacked, Record, StoreID
+        ),
+        %% A graceful stop snapshots the record.
+        ok = gen_server:stop(PID),
+        ets:delete_all_objects(arweave_storage_data_sizes),
+        {ok, PID2} = start_record(StoreID),
+        ?assertMatch(
+            [{_, unpacked, 0, Size}] when Size == 3 * ?DATA_CHUNK_SIZE,
+            arweave_storage_sync_record:get_data_sizes()
+        ),
+        kill(PID2)
+    end).
+
 %%====================================================================
 %% Helpers
 %%====================================================================
+
+%% Run Fun with the given test stores resolving to on-disk modules under the
+%% case's data dir, plus any extra mocks.
+with_store_mocks(StoreIDs, ExtraMocks, Fun) ->
+    arweave_storage_ct_util:with_mocks(
+        [
+            {arweave_storage_module, [
+                {get_by_id, fun(StoreID) ->
+                    case lists:member(StoreID, StoreIDs) of
+                        true -> {0, arweave_constants:partition_size(), unpacked};
+                        false -> meck:passthrough([StoreID])
+                    end
+                end},
+                {info, fun(StoreID) ->
+                    case lists:member(StoreID, StoreIDs) of
+                        true ->
+                            #store_info{
+                                id = StoreID,
+                                path = filename:join([
+                                    arweave_config:get([data_dir]),
+                                    "storage_modules",
+                                    atom_to_list(StoreID)
+                                ])
+                            };
+                        false ->
+                            meck:passthrough([StoreID])
+                    end
+                end}
+            ]}
+            | ExtraMocks
+        ],
+        Fun
+    ).
+
+start_record(StoreID) ->
+    arweave_storage_sync_record:start_link(
+        arweave_storage_sync_record:name(StoreID), StoreID
+    ).
+
+receive_scheduled(PID) ->
+    receive
+        {scheduled, PID, Delay} -> Delay
+    after 1000 ->
+        erlang:error({no_snapshot_scheduled, PID})
+    end.
+
+wal_count(StateDB) ->
+    case ar_kv:get(StateDB, <<"wal">>) of
+        {ok, V} -> {ok, binary:decode_unsigned(V)};
+        Other -> Other
+    end.
 
 kill(PID) ->
     unlink(PID),
