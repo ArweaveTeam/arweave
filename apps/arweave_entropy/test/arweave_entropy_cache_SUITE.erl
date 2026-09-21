@@ -6,7 +6,7 @@
 
 suite() -> [{timetrap, {seconds, 60}}].
 
-all() -> [weighted_eviction_and_reuse].
+all() -> [weighted_eviction_and_reuse, fetched_entries_get_a_second_chance].
 
 init_per_suite(Config) ->
     {ok, Apps} = application:ensure_all_started(arweave_metrics),
@@ -109,3 +109,43 @@ weighted_eviction_and_reuse(_Config) ->
         {ok, yet_another_value},
         arweave_entropy_cache:get(yet_another_key, Table)
     ).
+
+%% @doc Eviction considers entries oldest-first, but an entry that was fetched
+%% since it was inserted (or since its last reprieve) is moved to the back
+%% and spared once instead of being evicted. An entry nobody fetched in that
+%% time is evicted right away, even if it was inserted more recently. When
+%% every entry has been fetched, each is spared at most once per clean-up, so
+%% the clean-up still ends with the requested space free.
+fetched_entries_get_a_second_chance(_Config) ->
+    Table = test_entropy_cache_second_chance,
+    OrderedKeyTable = test_entropy_cache_second_chance_keys,
+    ets:new(Table, [set, public, named_table]),
+    ets:new(OrderedKeyTable, [ordered_set, public, named_table]),
+    %% Two 64-byte entries fill the 128-byte test cache. Only the older one
+    %% is fetched before space is needed.
+    arweave_entropy_cache:put(in_use, a, 64, Table, OrderedKeyTable),
+    arweave_entropy_cache:put(idle, b, 64, Table, OrderedKeyTable),
+    ?assertEqual({ok, a}, arweave_entropy_cache:get(in_use, Table)),
+    %% Making room for a third entry spares the fetched entry and evicts the
+    %% unfetched one, although the unfetched one was inserted later.
+    arweave_entropy_cache:clean_up_space(64, 128, Table, OrderedKeyTable),
+    ?assert(ets:member(Table, {key, in_use})),
+    ?assertNot(ets:member(Table, {key, idle})),
+    ?assertEqual(64, ets:lookup_element(Table, total_size, 2)),
+    %% The spared entry is not fetched again, so the next clean-up evicts it.
+    arweave_entropy_cache:clean_up_space(128, 128, Table, OrderedKeyTable),
+    ?assertNot(ets:member(Table, {key, in_use})),
+    ?assertEqual(0, ets:lookup_element(Table, total_size, 2)),
+    %% Three fetched entries and room needed for one more: each is spared
+    %% once, after which the oldest two are evicted so that 64 bytes fit.
+    arweave_entropy_cache:put(hot1, a, 64, Table, OrderedKeyTable),
+    arweave_entropy_cache:put(hot2, b, 64, Table, OrderedKeyTable),
+    arweave_entropy_cache:put(hot3, c, 64, Table, OrderedKeyTable),
+    ?assertEqual({ok, a}, arweave_entropy_cache:get(hot1, Table)),
+    ?assertEqual({ok, b}, arweave_entropy_cache:get(hot2, Table)),
+    ?assertEqual({ok, c}, arweave_entropy_cache:get(hot3, Table)),
+    arweave_entropy_cache:clean_up_space(64, 128, Table, OrderedKeyTable),
+    ?assertEqual(64, ets:lookup_element(Table, total_size, 2)),
+    ?assertNot(ets:member(Table, {key, hot1})),
+    ?assertNot(ets:member(Table, {key, hot2})),
+    ?assert(ets:member(Table, {key, hot3})).
