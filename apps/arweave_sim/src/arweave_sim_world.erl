@@ -11,7 +11,7 @@
     start_scenario/0,
     tick_index/0,
     use_mainnet_replica_2_9_sizes/0,
-    storage_modules/0,
+    storage_modules/0, storage_modules/1, default_storage_modules/0,
     store_ranges/0,
     store_ids/0,
     weave_size/0,
@@ -135,8 +135,20 @@ tick_index() ->
     (arweave_sim_clock:monotonic_ms() - StartedMS) div
         get(tick_interval_ms).
 
-%% @doc Return the fixed runtime storage modules shared by all scenarios.
+%% @doc Return the runtime storage modules of the current world.
 storage_modules() ->
+    storage_modules(get(world)).
+
+%% @doc Return the runtime storage modules World declares, or the default
+%% layout when it declares none.
+storage_modules(#sim_world{storage_modules = default}) ->
+    default_storage_modules();
+storage_modules(#sim_world{storage_modules = Modules}) ->
+    Modules.
+
+%% @doc Return the fixed partition-aligned layout: ?SIM_STORES stores of
+%% ?SIM_STORE_SIZE bytes from ?SIM_STORE_BASE.
+default_storage_modules() ->
     [
         {
             ?SIM_STORE_BASE + N * ?SIM_STORE_SIZE,
@@ -349,11 +361,21 @@ wait_for_remote_store(Peer, Offset, Deadline) ->
     end.
 
 admit_remote_store(Peer, Offset, Second) ->
-    #sim_world{remote_store_cps = CPS} = get(world),
-    Store = Offset div ?SIM_STORE_SIZE,
+    #sim_world{remote_store_cps = CPS} = World = get(world),
+    Store = covering_store(Offset, storage_modules(World)),
     case consume_cps({store, Peer, Store}, CPS, Second) of
         available -> admitted;
         exhausted -> wait
+    end.
+
+%% @doc Return the start of the first declared store covering Offset, as
+%% arweave_storage:covering_store/2 does for the configured modules. Peers
+%% mirror the node's layout, so the store is the peer's too; an offset no
+%% store covers shares one budget.
+covering_store(Offset, Modules) ->
+    case [Start || {Start, End, _} <- Modules, Offset > Start, Offset =< End] of
+        [Start | _] -> Start;
+        [] -> not_found
     end.
 
 %% @doc Pay the configured generation time for a footprint source's entropy.

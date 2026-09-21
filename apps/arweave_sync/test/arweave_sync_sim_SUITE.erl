@@ -3163,9 +3163,17 @@ test_unaligned_store_matches_aligned_throughput(_Config) ->
         %% that share the peer: about two minutes at capacity, so the middle
         %% windows straddle the partition boundary and the last lie past it.
         PartialPartitionBytes = 2 * ?GiB,
+        %% Every store starts two gigabytes before a partition boundary, so
+        %% its first stretch is the tail of a partition, as a custom-sized
+        %% module's can be.
+        Shift = PartialPartitionBytes,
+        StorageModules = [
+            {Start - Shift, End - Shift, unpacked}
+         || {Start, End, unpacked} <- arweave_sim:default_storage_modules()
+        ],
         arweave_sync_sim:start_sim(#sim_world{
             peers = Peers,
-            store_offset = ?MAINNET_PARTITION_SIZE - PartialPartitionBytes
+            storage_modules = StorageModules
         }),
         %% Thirty-two simulated seconds cover the scheduler evidence horizon.
         arweave_sync_sim:run_for(32),

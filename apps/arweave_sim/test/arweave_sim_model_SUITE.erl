@@ -15,7 +15,8 @@ all() ->
         cache_write_and_snapshot,
         local_data_layout,
         discovery_configuration,
-        driver_controls_timing_and_ranges
+        driver_controls_timing_and_ranges,
+        declared_storage_modules
     ].
 
 init_per_suite(Config) ->
@@ -39,7 +40,12 @@ queued_rejected_and_rollover_admission(_Config) ->
     with_world(fun() ->
         %% A one-request budget makes the first admission and first overage exact.
         Capacity = 1,
-        StoreSize = ?SIM_STORE_SIZE,
+        %% The remote-store budget is per store, so probe the first chunk of
+        %% two different stores.
+        [{FirstStart, _, _}, {SecondStart, _, _} | _] =
+            arweave_sim:default_storage_modules(),
+        FirstStoreChunk = FirstStart + ?DATA_CHUNK_SIZE,
+        SecondStoreChunk = SecondStart + ?DATA_CHUNK_SIZE,
         LimitedPeer = limited_peer,
         QueuedPeer = queued_peer,
         World = #sim_world{
@@ -63,15 +69,29 @@ queued_rejected_and_rollover_admission(_Config) ->
         ?assertEqual(admitted, arweave_sim_world:admit_link(Second)),
         ?assertEqual(wait, arweave_sim_world:admit_link(Second)),
         ?assertEqual(admitted, arweave_sim_world:admit_link(NextSecond)),
-        ?assertEqual(admitted, arweave_sim_world:admit_remote_store(LimitedPeer, 0, Second)),
-        ?assertEqual(wait, arweave_sim_world:admit_remote_store(LimitedPeer, 0, Second)),
         ?assertEqual(
             admitted,
-            arweave_sim_world:admit_remote_store(LimitedPeer, StoreSize, Second)
+            arweave_sim_world:admit_remote_store(
+                LimitedPeer, FirstStoreChunk, Second
+            )
+        ),
+        ?assertEqual(
+            wait,
+            arweave_sim_world:admit_remote_store(
+                LimitedPeer, FirstStoreChunk, Second
+            )
         ),
         ?assertEqual(
             admitted,
-            arweave_sim_world:admit_remote_store(LimitedPeer, 0, NextSecond)
+            arweave_sim_world:admit_remote_store(
+                LimitedPeer, SecondStoreChunk, Second
+            )
+        ),
+        ?assertEqual(
+            admitted,
+            arweave_sim_world:admit_remote_store(
+                LimitedPeer, FirstStoreChunk, NextSecond
+            )
         ),
         Snapshot = arweave_sim_world:snapshot(),
         ?assertEqual(
@@ -322,6 +342,31 @@ driver_controls_timing_and_ranges(_Config) ->
             [{Start + 8 * QueryRangeBytes, Start}],
             ar_intervals:to_list(arweave_sim:peer_sync_intervals(Peer))
         )
+    end).
+
+%% @doc A world uses the fixed partition-aligned layout unless it declares
+%% its own storage modules, which the runtime then sees unchanged.
+declared_storage_modules(_Config) ->
+    with_world(fun() ->
+        ?assertEqual(
+            arweave_sim:default_storage_modules(),
+            arweave_sim:storage_modules()
+        ),
+        Partition = ?MAINNET_PARTITION_SIZE,
+        %% A store ending mid-partition beside one starting on a boundary.
+        Declared = [
+            {?SIM_STORE_BASE, ?SIM_STORE_BASE + Partition div 2, unpacked},
+            {?SIM_STORE_BASE + Partition, ?SIM_STORE_BASE + 2 * Partition,
+                unpacked}
+        ],
+        World = #sim_world{storage_modules = Declared},
+        arweave_sim:reset_world(World, 0, 1000, ?DATA_CHUNK_SIZE),
+        ?assertEqual(Declared, arweave_sim:storage_modules()),
+        ?assertEqual(
+            [Start || {Start, _End, unpacked} <- Declared],
+            [Start || {_ID, {Start, _End}} <- arweave_sim:store_ranges()]
+        ),
+        ?assertEqual(length(Declared), length(arweave_sim:store_ids()))
     end).
 
 %%====================================================================

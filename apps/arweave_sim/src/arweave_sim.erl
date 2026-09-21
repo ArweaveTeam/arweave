@@ -14,7 +14,7 @@
     snapshot/0
 ]).
 -export([
-    storage_modules/0,
+    storage_modules/0, storage_modules/1, default_storage_modules/0,
     store_ranges/0,
     store_ids/0,
     weave_size/0,
@@ -67,6 +67,8 @@ world_value(Key) -> arweave_sim_world:get(Key).
 snapshot() -> arweave_sim_world:snapshot().
 
 storage_modules() -> arweave_sim_world:storage_modules().
+storage_modules(World) -> arweave_sim_world:storage_modules(World).
+default_storage_modules() -> arweave_sim_world:default_storage_modules().
 store_ranges() -> arweave_sim_world:store_ranges().
 store_ids() -> arweave_sim_world:store_ids().
 weave_size() -> arweave_sim_world:weave_size().

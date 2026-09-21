@@ -81,6 +81,13 @@
     node_config = #{} :: map(),
     peers = #{} :: #{term() => #sim_peer{}},
     local_data_layout = contiguous :: contiguous | fragmented,
+    %% The node's storage modules as {Start, End, unpacked} config tuples.
+    %% `default' is ?SIM_STORES partition-aligned stores of ?SIM_STORE_SIZE
+    %% from ?SIM_STORE_BASE; a scenario declares its own to model custom-sized
+    %% modules that start or end mid-partition. The simulator stores only
+    %% unpacked chunks.
+    storage_modules = default ::
+        default | [{non_neg_integer(), non_neg_integer(), unpacked}],
     %% Time spent generating the entropy working set for one source footprint.
     %% Zero leaves entropy generation unmodelled for scenarios that do not
     %% exercise source locality.
