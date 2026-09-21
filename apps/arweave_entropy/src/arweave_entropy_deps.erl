@@ -3,6 +3,7 @@
 -export([
     generate_entropy/2,
     request_generation/3,
+    request_slice/3,
     get_entropy_key/3,
     get_entropy_partition/1,
     get_entropy_partition_range/1,
@@ -27,6 +28,9 @@ generate_entropy(_RewardAddr, Key) ->
 
 request_generation(Ref, ReplyTo, Args) ->
     ar_packing_server:request_entropy_generation(Ref, ReplyTo, Args).
+
+request_slice(Ref, ReplyTo, Args) ->
+    ar_packing_server:request_entropy_slice(Ref, ReplyTo, Args).
 
 get_entropy_key(RewardAddr, Offset, SubChunkStart) ->
     ar_replica_2_9:get_entropy_key(RewardAddr, Offset, SubChunkStart).

@@ -3,7 +3,8 @@
 -behaviour(application).
 -export([start/2, stop/1, child_spec/0]).
 -export([
-    generate/3, generate/4,
+    generate/4,
+    generate_slice/3,
     generate_chunk/2,
     generate_entropies/2, generate_entropies/4,
     generate_entropy_keys/2,
@@ -19,12 +20,14 @@ start(_Type, _Args) -> arweave_entropy_sup:start_link().
 stop(_State) -> ok.
 child_spec() -> arweave_entropy_lifecycle:child_spec().
 
-generate(RewardAddr, Offset, SubChunkStart) ->
-    arweave_entropy_generation:generate(RewardAddr, Offset, SubChunkStart).
-
 generate(RewardAddr, Offset, SubChunkStart, Cache) ->
     arweave_entropy_generation:generate(
         RewardAddr, Offset, SubChunkStart, Cache
+    ).
+
+generate_slice(RewardAddr, Offset, SubChunkStart) ->
+    arweave_entropy_generation:generate_slice(
+        RewardAddr, Offset, SubChunkStart
     ).
 
 generate_chunk(Offset, RewardAddr) ->

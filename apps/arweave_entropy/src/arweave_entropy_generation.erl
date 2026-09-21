@@ -1,7 +1,15 @@
 %%% Entropy generation, cache reuse and footprint slicing.
+%%%
+%%% A whole 8 MiB entropy stays inside this module and the footprint
+%%% preparation path. Everything that packs or unpacks a chunk asks for the
+%%% 8 KiB slice it needs through generate_slice/3, so no long-lived process
+%%% ever holds references to cached entropies; a heap that references a few
+%%% of them at once raises the VM's binary garbage collection threshold and
+%%% then carries hundreds of MiB of evicted entropies between collections.
 -module(arweave_entropy_generation).
 -export([
-    generate/3, generate/4,
+    generate/4,
+    generate_slice/3,
     generate_chunk/2,
     generate_entropies/2, generate_entropies/3,
     generate_entropy_keys/2,
@@ -13,10 +21,15 @@
 %% Retain generation history for thirty minutes to measure repeated work.
 -define(ENTROPY_GENERATION_STATS_WINDOW_MS, 1000 * 60 * 30).
 
-%% @doc Generate the 2.9 entropy.
-generate(RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
-    generate(RewardAddr, BucketEndOffset, SubChunkStartOffset, true).
+%% @doc Return the chunk's slice of the cached 2.9 entropy as a fresh binary.
+generate_slice(RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
+    Entropy = generate(RewardAddr, BucketEndOffset, SubChunkStartOffset, true),
+    Index = arweave_entropy_deps:get_slice_index(BucketEndOffset),
+    binary:copy(
+        binary:part(Entropy, Index * ?SUB_CHUNK_SIZE, ?SUB_CHUNK_SIZE)
+    ).
 
+%% @doc Generate the 2.9 entropy, reusing the cache when CacheEntropy is true.
 generate(RewardAddr, BucketEndOffset, SubChunkStartOffset, false) ->
     Key = arweave_entropy_deps:get_entropy_key(
         RewardAddr, BucketEndOffset, SubChunkStartOffset
@@ -59,31 +72,21 @@ generate(RewardAddr, BucketEndOffset, SubChunkStartOffset, true) ->
         entropy_generation_release(Key)
     end.
 
-%% @doc Generate and combine the entropy slices for one chunk.
+%% @doc Combine the cached entropy slices of every sub-chunk of one chunk.
 generate_chunk(PaddedEndOffset, RewardAddr) ->
-    Entropies = generate_entropies(RewardAddr, PaddedEndOffset),
-    case Entropies of
+    Slices = request_per_sub_chunk(
+        fun(Ref, SubChunkStart) ->
+            arweave_entropy_deps:request_slice(
+                Ref, self(), {RewardAddr, PaddedEndOffset, SubChunkStart}
+            )
+        end
+    ),
+    case Slices of
         {error, Reason} ->
             {error, Reason};
         _ ->
-            EntropyIndex = arweave_entropy_deps:get_slice_index(
-                PaddedEndOffset
-            ),
-            take_combined_entropy_by_index(Entropies, EntropyIndex)
+            iolist_to_binary(Slices)
     end.
-
-take_combined_entropy_by_index(Entropies, Index) ->
-    take_combined_entropy_by_index(Entropies, Index, []).
-
-take_combined_entropy_by_index([], _Index, Acc) ->
-    iolist_to_binary(Acc);
-take_combined_entropy_by_index([Entropy | Entropies], Index, Acc) ->
-    SubChunkSize = ?SUB_CHUNK_SIZE,
-    take_combined_entropy_by_index(
-        Entropies,
-        Index,
-        [Acc, binary:part(Entropy, Index * SubChunkSize, SubChunkSize)]
-    ).
 
 %% @doc Return a list of all BucketEndOffsets covered by the entropy needed to encipher
 %% the chunk at the given offset. The list returned may include offsets that occur before
@@ -194,28 +197,37 @@ map_entropies(
     end.
 
 do_generate_entropies(RewardAddr, BucketEndOffset, CacheEntropy) ->
+    request_per_sub_chunk(
+        fun(Ref, SubChunkStart) ->
+            arweave_entropy_deps:request_generation(
+                Ref,
+                self(),
+                {RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}
+            )
+        end
+    ).
+
+%% @doc Send one request per sub-chunk to the packing workers and collect
+%% the replies in sub-chunk order.
+request_per_sub_chunk(Request) ->
     SubChunkSize = ?SUB_CHUNK_SIZE,
-    EntropyTasks =
+    Refs =
         lists:map(
-            fun(Offset) ->
+            fun(SubChunkStart) ->
                 Ref = make_ref(),
-                arweave_entropy_deps:request_generation(
-                    Ref,
-                    self(),
-                    {RewardAddr, BucketEndOffset, Offset, CacheEntropy}
-                ),
+                Request(Ref, SubChunkStart),
                 Ref
             end,
             lists:seq(0, ?DATA_CHUNK_SIZE - SubChunkSize, SubChunkSize)
         ),
-    Entropies = collect_entropies(EntropyTasks, []),
-    case Entropies of
+    Replies = collect_entropies(Refs, []),
+    case Replies of
         {error, _Reason} ->
             flush_entropy_messages();
         _ ->
             ok
     end,
-    Entropies.
+    Replies.
 
 %% @doc Take the first slice of each entropy and combine into a single binary. This binary
 %% can be used to encipher a single chunk.

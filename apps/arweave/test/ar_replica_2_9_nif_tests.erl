@@ -62,15 +62,14 @@ test_vectors({FastState, _LightState}) ->
 
     SubChunk = << 255:(8*8192) >>,
     EntropySubChunkIndex = 1,
-    {ok, Packed} = ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk(
-        {FastState, Entropy, SubChunk, EntropySubChunkIndex}),
+    Slice = entropy_slice(Entropy, EntropySubChunkIndex),
+    Packed = ar_mine_randomx:exor_sub_chunk(SubChunk, Slice),
     PackedHashReal = crypto:hash(sha256, Packed),
     PackedHashExpd = << 15,46,184,11,124,31,150,77,199,107,221,0,136,154,61,
         146,193,198,126,52,19,7,211,28,121,108,176,15,124,33,
         48,99 >>,
     ?assertEqual(PackedHashExpd, PackedHashReal),
-    {ok, Unpacked} = ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk(
-        {FastState, Entropy, Packed, EntropySubChunkIndex}),
+    Unpacked = ar_mine_randomx:exor_sub_chunk(Packed, Slice),
     ?assertEqual(SubChunk, Unpacked),
 
     ok.
@@ -89,8 +88,8 @@ pack_sub_chunks(_SubChunk, _Entropy, Index, _PreviousSubChunk, _State)
         when Index == 1024 ->
     [];
 pack_sub_chunks(SubChunk, Entropy, Index, PreviousSubChunk, State) ->
-    {ok, PackedSubChunk} = ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk(
-            {State, Entropy, SubChunk, Index}),
+    PackedSubChunk = ar_mine_randomx:exor_sub_chunk(
+            SubChunk, entropy_slice(Entropy, Index)),
     Note = io_lib:format("Packed a sub-chunk, index=~B.~n", [Index]),
     ?assertNotEqual(PackedSubChunk, PreviousSubChunk, Note),
     [PackedSubChunk | pack_sub_chunks(SubChunk, Entropy, Index + 1, PackedSubChunk, State)].
@@ -98,8 +97,12 @@ pack_sub_chunks(SubChunk, Entropy, Index, PreviousSubChunk, State) ->
 unpack_sub_chunks([], _Index, _SubChunk, _Entropy, _State) ->
     ok;
 unpack_sub_chunks([PackedSubChunk | PackedSubChunks], Index, SubChunk, Entropy, State) ->
-    {ok, UnpackedSubChunk} = ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk(
-            {State, Entropy, PackedSubChunk, Index}),
+    UnpackedSubChunk = ar_mine_randomx:exor_sub_chunk(
+            PackedSubChunk, entropy_slice(Entropy, Index)),
     Note = io_lib:format("Unpacked a sub-chunk, index=~B.~n", [Index]),
     ?assertEqual(SubChunk, UnpackedSubChunk, Note),
     unpack_sub_chunks(PackedSubChunks, Index + 1, SubChunk, Entropy, State).
+
+%% The 8 KiB slice of an 8 MiB entropy that enciphers sub-chunk Index.
+entropy_slice(Entropy, Index) ->
+    binary:part(Entropy, Index * 8192, 8192).

@@ -35,13 +35,21 @@
 -define(DEVICE_LOCK_WAIT, 5_000).
 -endif.
 
+%% Idle time after which the server hibernates and drops its dead heap.
+-define(IDLE_HIBERNATE_MS, 10_000).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
 %% @doc Start the server.
 start_link(Name, {StoreID, Packing}) ->
-    gen_server:start_link({local, Name}, ?MODULE, {StoreID, Packing}, []).
+    %% Each footprint passes 32 8 MiB entropies through this heap. Hibernating
+    %% once idle releases the last of them instead of pinning them for the
+    %% life of the node.
+    gen_server:start_link({local, Name}, ?MODULE, {StoreID, Packing}, [
+        {hibernate_after, ?IDLE_HIBERNATE_MS}
+    ]).
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->

@@ -11,6 +11,7 @@ all() ->
         owns_tables,
         cache_api_preserves_eviction,
         cached_and_uncached_generation,
+        slice_is_detached_from_entropy,
         failed_generation_releases_lock,
         concurrent_generation_is_shared,
         dead_generator_does_not_block_reuse
@@ -83,7 +84,10 @@ owns_tables(_) ->
 %% @doc The public cache API preserves weighted eviction and clears all cached
 %% entries.
 cache_api_preserves_eviction(_) ->
-    %% Two equal weighted entries fit; a third must evict the oldest one.
+    %% Two 64-byte entries fill the 128-byte cache, so inserting a third must
+    %% evict one of them. The first entry is fetched before the insert, which
+    %% spares it from this eviction; the second entry was never fetched, so it
+    %% is the one evicted even though it is the newer of the two.
     EntryBytes = 64,
     MaxBytes = 2 * EntryBytes,
     ?assertEqual(not_found, arweave_entropy:internal_get_cached(first)),
@@ -91,12 +95,12 @@ cache_api_preserves_eviction(_) ->
     ?assertEqual(ok, arweave_entropy:internal_cache(second, ready, EntryBytes, MaxBytes)),
     ?assertEqual({ok, ready}, arweave_entropy:internal_get_cached(first)),
     ?assertEqual(ok, arweave_entropy:internal_cache(third, ready, EntryBytes, MaxBytes)),
-    ?assertEqual(not_found, arweave_entropy:internal_get_cached(first)),
-    ?assertEqual({ok, ready}, arweave_entropy:internal_get_cached(second)),
+    ?assertEqual(not_found, arweave_entropy:internal_get_cached(second)),
+    ?assertEqual({ok, ready}, arweave_entropy:internal_get_cached(first)),
     ?assertEqual({ok, ready}, arweave_entropy:internal_get_cached(third)),
     ?assertEqual(MaxBytes, arweave_entropy_cache:total_size()),
     ?assertEqual(ok, arweave_entropy:internal_clear_cache()),
-    ?assertEqual(not_found, arweave_entropy:internal_get_cached(second)),
+    ?assertEqual(not_found, arweave_entropy:internal_get_cached(first)),
     ?assertEqual(not_found, arweave_entropy:internal_get_cached(third)),
     ?assertEqual(0, arweave_entropy_cache:total_size()).
 
@@ -109,12 +113,27 @@ cached_and_uncached_generation(_) ->
         generate_entropy,
         fun(_, _) -> Entropy end
     ),
-    ?assertEqual(Entropy, arweave_entropy:generate(<<>>, 0, 0)),
-    ?assertEqual(Entropy, arweave_entropy:generate(<<>>, 0, 0)),
+    ?assertEqual(Entropy, arweave_entropy:generate(<<>>, 0, 0, true)),
+    ?assertEqual(Entropy, arweave_entropy:generate(<<>>, 0, 0, true)),
     ?assertEqual(1, meck:num_calls(arweave_entropy_deps, generate_entropy, '_')),
     ?assertEqual(Entropy, arweave_entropy:generate(<<>>, 0, 0, false)),
     ?assertEqual(2, meck:num_calls(arweave_entropy_deps, generate_entropy, '_')),
     ?assertEqual(?REPLICA_2_9_ENTROPY_SIZE, arweave_entropy_cache:total_size()).
+
+%% @doc A slice is served from the cache and shares no memory with the entropy.
+slice_is_detached_from_entropy(_) ->
+    Entropy = crypto:strong_rand_bytes(?REPLICA_2_9_ENTROPY_SIZE),
+    meck:expect(
+        arweave_entropy_deps,
+        generate_entropy,
+        fun(_, _) -> Entropy end
+    ),
+    %% Offset 0 is the first chunk of its footprint, so slice index 0.
+    Slice = arweave_entropy:generate_slice(<<>>, 0, 0),
+    ?assertEqual(binary:part(Entropy, 0, ?SUB_CHUNK_SIZE), Slice),
+    ?assertEqual(?SUB_CHUNK_SIZE, binary:referenced_byte_size(Slice)),
+    ?assertEqual(Slice, arweave_entropy:generate_slice(<<>>, 0, 0)),
+    ?assertEqual(1, meck:num_calls(arweave_entropy_deps, generate_entropy, '_')).
 
 %% @doc A generation exception releases the lock so a later request can succeed.
 failed_generation_releases_lock(_) ->
@@ -126,7 +145,7 @@ failed_generation_releases_lock(_) ->
     ?assertException(
         error,
         generation_failed,
-        arweave_entropy:generate(<<>>, 0, 0)
+        arweave_entropy:generate(<<>>, 0, 0, true)
     ),
     ?assertEqual([], ets:tab2list(arweave_entropy_generation)),
     Entropy = binary:copy(<<42>>, ?REPLICA_2_9_ENTROPY_SIZE),
@@ -135,7 +154,7 @@ failed_generation_releases_lock(_) ->
         generate_entropy,
         fun(_, _) -> Entropy end
     ),
-    ?assertEqual(Entropy, arweave_entropy:generate(<<>>, 0, 0)).
+    ?assertEqual(Entropy, arweave_entropy:generate(<<>>, 0, 0, true)).
 
 %% @doc A waiting request takes over generation after the original generator
 %% dies.
@@ -148,7 +167,7 @@ dead_generator_does_not_block_reuse(_) ->
             continue -> Entropy
         end
     end),
-    Worker = fun() -> Parent ! {result, arweave_entropy:generate(<<>>, 0, 0)} end,
+    Worker = fun() -> Parent ! {result, arweave_entropy:generate(<<>>, 0, 0, true)} end,
     First = spawn_link(Worker),
     receive
         {generating, First} -> ok
@@ -186,7 +205,7 @@ concurrent_generation_is_shared(_) ->
             continue -> Entropy
         end
     end),
-    Worker = fun() -> Parent ! {result, arweave_entropy:generate(<<>>, 0, 0)} end,
+    Worker = fun() -> Parent ! {result, arweave_entropy:generate(<<>>, 0, 0, true)} end,
     First = spawn_link(Worker),
     receive
         {generating, First} -> ok
