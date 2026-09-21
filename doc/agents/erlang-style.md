@@ -339,6 +339,24 @@ sign_verify_test({Priv, Pub}) ->
     verify(Pub, SignedData).
 ```
 
+### No tracker references
+
+Comments describe the code, not its history: never cite an issue, ticket or
+pull request number. The number means nothing to a reader without the
+tracker, trackers get migrated, and the comment goes stale while the code
+stays. State the behaviour or the reason itself; if the reason is a past
+incident, describe what happened. Commit messages are where issue numbers
+belong.
+
+```erlang
+%% Bad
+%% Store the chunk as it is (issue 1444).
+
+%% Good
+%% Store the chunk as it is: a chunk packed for this module's address is
+%% byte for byte what enciphering the unpacked chunk would produce.
+```
+
 ### Record field descriptions
 
 Document each field inline with a single `%`, as concisely as possible.

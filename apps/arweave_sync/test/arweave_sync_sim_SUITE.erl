@@ -3133,7 +3133,7 @@ test_node_config_drives_cache_capacity(_Config) ->
     ?assertEqual(ExpectedChunkCacheLimit, arweave_sim:world_value(cache_limit)).
 
 %% Scenario: A store whose first partition is only partly covered syncs its
-%% tail from a byte-only peer as fast as its start (issue #1444).
+%% tail from a byte-only peer as fast as its start.
 %%
 %% Context:
 %% - One unlimited byte-only peer holds all needed data, as a node syncing

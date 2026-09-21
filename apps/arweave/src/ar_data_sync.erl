@@ -2137,7 +2137,7 @@ pack_and_store_chunk2(Args, ReplyTo, State) ->
         OriginChunkDataKey} = Args,
     #data_sync_state{store_id = StoreID, packing_map = PackingMap} = State,
     RequiredPacking = get_required_chunk_packing(
-        AbsoluteEndOffset, ChunkSize, State
+        AbsoluteEndOffset, ChunkSize, Packing, State
     ),
     PackingStatus =
         case {RequiredPacking, Packing} of
@@ -2404,9 +2404,12 @@ log_failed_to_store_chunk(Reason, AbsoluteEndOffset, Offset, DataRoot, DataPathH
                 {data_root, arweave_util:safe_encode(DataRoot)},
                 {store_id, StoreID}]).
 
-get_required_chunk_packing(_Offset, _ChunkSize, #data_sync_state{ store_id = ?DEFAULT_MODULE }) ->
+%% @doc Return the packing a chunk arriving with Packing must have to be
+%% written into this module.
+get_required_chunk_packing(_Offset, _ChunkSize, _Packing,
+        #data_sync_state{ store_id = ?DEFAULT_MODULE }) ->
     unpacked;
-get_required_chunk_packing(Offset, ChunkSize, State) ->
+get_required_chunk_packing(Offset, ChunkSize, Packing, State) ->
     #data_sync_state{ store_id = StoreID } = State,
     IsEarlySmallChunk =
         Offset =< arweave_constants:strict_data_split_threshold() andalso ChunkSize < ?DATA_CHUNK_SIZE,
@@ -2417,10 +2420,20 @@ get_required_chunk_packing(Offset, ChunkSize, State) ->
             #store_info{packing = StorePacking} =
                 arweave_storage:store_info(StoreID),
             case StorePacking of
+                Packing ->
+                    %% Already packed for this module: store it as it is.
+                    %% A replica.2.9 module takes the unpacked chunk and
+                    %% enciphers it with its prepared entropy, but a chunk
+                    %% packed for the same address is byte for byte what
+                    %% that produces, so unpacking it first (one entropy per
+                    %% sub-chunk) is pure cost: a cross-module copy between
+                    %% same-address replica.2.9 modules ran at 1/500 of disk
+                    %% speed that way, generating entropy for every chunk.
+                    Packing;
                 {replica_2_9, _Addr} ->
                     unpacked_padded;
-                Packing ->
-                    Packing
+                _ ->
+                    StorePacking
             end
     end.
 
