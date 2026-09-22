@@ -130,9 +130,17 @@ jobs:
       # ERL_FLAGS reaches the rebar3 VM, which is the one CT runs in,
       # so the shard gets the shared test VM policy (+sbwt none) that
       # keeps idle schedulers from starving the runner agent.
+      # The path is absolute because ERL_FLAGS is an environment
+      # variable: every Erlang VM started while this step runs inherits
+      # it, and not all of them start in the repository root. CT
+      # changes into its log directory before a suite runs, so a suite
+      # that boots a peer node starts it from there, and a relative
+      # `config/vm.args.test' does not exist relative to that
+      # directory. The peer then dies with "Failed to open arguments
+      # file" before the test begins.
       - name: run shard ${{ matrix.name }}
         env:
-          ERL_FLAGS: -args_file config/vm.args.test
+          ERL_FLAGS: -args_file ${{ github.workspace }}/config/vm.args.test
           COVER_FLAG: ${{ inputs.cover && '--cover' || '' }}
         run: |
           mkdir -p logs/ct

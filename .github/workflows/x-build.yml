@@ -179,6 +179,39 @@ jobs:
         run: |
           chmod -R u+w ./_build
 
+          # Replace each dependency's .git directory with a fake one that
+          # only knows which commit is checked out.
+          #
+          # Before rebar3 runs anything, `rebar3 ct' included, it checks
+          # that every git dependency under _build/default/lib is at the
+          # commit rebar.lock names, by running `git rev-parse HEAD' in
+          # the dependency's directory. The real .git directories are too
+          # big to ship (rocksdb's alone is 38 MB), but if they are simply
+          # left out the check does not fail, it lies: git walks up until
+          # it finds this repository's own .git and reports arweave-dev's
+          # commit, which never matches the lock, so rebar3 re-fetches and
+          # rebuilds every git dependency on every job that runs against
+          # the artifact (~8 min of rocksdb on Linux; on macOS the rebuild
+          # failed outright). Offline mode would skip the check, but
+          # `rebar3 ct' ignores it.
+          #
+          # So we fake the answer instead. Git treats a directory as a
+          # repository once it holds a HEAD file and objects/ and refs/
+          # directories, and for a checked-out commit HEAD is just the
+          # SHA, so a .git holding only those three entries (a few bytes)
+          # answers `rev-parse HEAD' with the right commit and nothing
+          # else. The dependency's history is gone, but nothing on a test
+          # job needs it: the code is already built, and rebar3 only
+          # wants to know that it is the locked commit.
+          find ./_build -type d -name .git -prune | while read -r gitdir; do
+            sha=$(git -C "${gitdir%/.git}" rev-parse HEAD 2>/dev/null || true)
+            rm -rf "${gitdir}"
+            if [ -n "${sha}" ]; then
+              mkdir -p "${gitdir}/objects" "${gitdir}/refs"
+              printf '%s\n' "${sha}" > "${gitdir}/HEAD"
+            fi
+          done
+
           # zstd -T0 -3 is a noticeably better speed/ratio tradeoff
           # than gzip for BEAM trees + binary deps — roughly 2× smaller
           # output and 5-10× faster decompression on the test shards.
@@ -194,9 +227,9 @@ jobs:
           # + vendored source are kept so `rebar3 ct' reuses the built
           # static lib (cmake stays a no-op) instead of rebuilding rocksdb
           # from scratch -- a cc1plus CPU storm that severs the runner.
+          # The .git directories are the fakes written above.
           tar --use-compress-program='zstd -T0 -3' \
               --exclude='_build/default/plugins' \
-              --exclude='*/.git' \
               -chf _build.tar.zst ./_build ./bin/arweave
           tar --use-compress-program='zstd -T0 -3' \
               -chf apps.tar.zst ./apps
