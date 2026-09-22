@@ -31,6 +31,11 @@ jobs:
           submodules: "recursive"
           lfs: false
 
+      # The same dependency cache as in x-build.yml; see the comment there.
+      # Change the `otp27' in the keys below whenever the Erlang version
+      # changes, and keep the lists naming every dependency in rebar.lock,
+      # or every run recompiles all the dependencies.
+      #
       # only arweave dependencies are being cached,
       # those are not updated everyday and this is
       # unecessary to fetch them everytime.
@@ -42,6 +47,7 @@ jobs:
             _build/default/lib/b64fast
             _build/default/lib/cowboy
             _build/default/lib/cowlib
+            _build/default/lib/eqwalizer_support
             _build/default/lib/gun
             _build/default/lib/jiffy
             _build/default/lib/prometheus
@@ -53,6 +59,7 @@ jobs:
             _build/default/lib/.rebar3
             _build/default/lib/recon
             _build/default/lib/rocksdb
+            _build/default/lib/yamerl
             _build/default/plugins/
             _build/default/plugins/aleppo
             _build/default/plugins/geas
@@ -67,9 +74,10 @@ jobs:
             _build/default/plugins/samovar
             _build/default/plugins/verl
             _build/default/plugins/zipper
-          key: deps-cache-${{ hashFiles('rebar.lock') }}
-          restore-keys: |
-            deps-cache-${{ hashFiles('rebar.lock') }}
+          # No restore-keys: they match by prefix, and this key is a prefix
+          # of x-build.yml's per-platform keys for the same paths, so a
+          # miss here could restore another platform's build.
+          key: deps-cache-otp27-${{ hashFiles('rebar.lock') }}
 
       - name: Get dependencies
         if: steps.cache.outputs.cache-hit != 'true'
@@ -83,6 +91,7 @@ jobs:
             _build/default/lib/b64fast
             _build/default/lib/cowboy
             _build/default/lib/cowlib
+            _build/default/lib/eqwalizer_support
             _build/default/lib/gun
             _build/default/lib/jiffy
             _build/default/lib/prometheus
@@ -94,6 +103,7 @@ jobs:
             _build/default/lib/.rebar3
             _build/default/lib/recon
             _build/default/lib/rocksdb
+            _build/default/lib/yamerl
             _build/default/plugins/
             _build/default/plugins/aleppo
             _build/default/plugins/geas
@@ -108,7 +118,7 @@ jobs:
             _build/default/plugins/samovar
             _build/default/plugins/verl
             _build/default/plugins/zipper
-          key: deps-cache-${{ hashFiles('rebar.lock') }}
+          key: deps-cache-otp27-${{ hashFiles('rebar.lock') }}
 
       - name: Compile arweave release
         run: ./ar-rebar3 default release

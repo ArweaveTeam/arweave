@@ -16,6 +16,7 @@ lib
 /result
 .rebar3
 apps/arweave/c_src/**/*.o
+apps/arweave/c_src/**/*.d
 apps/arweave/c_src/tests/tests
 data_test_*
 erl_crash.dump

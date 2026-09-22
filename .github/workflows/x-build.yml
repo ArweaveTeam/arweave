@@ -78,6 +78,12 @@ jobs:
       # OTP, rebar3 rebuilds every cached dependency, and rocksdb's cmake
       # build tree, which records the absolute path of the runner that
       # saved it, fails on any other macOS runner account.
+      #
+      # For the same reason the lists below must name every dependency in
+      # rebar.lock. rebar3 walks the dependencies in build order and, once
+      # it meets one that needs compiling, compiles that one and every one
+      # after it; an uncached dependency is fetched and compiled on every
+      # run, so it can drag rocksdb into a rebuild.
       - name: extract cache
         uses: actions/cache@v4
         id: cache
@@ -87,6 +93,7 @@ jobs:
             _build/default/lib/b64fast
             _build/default/lib/cowboy
             _build/default/lib/cowlib
+            _build/default/lib/eqwalizer_support
             _build/default/lib/gun
             _build/default/lib/jiffy
             _build/default/lib/prometheus
@@ -98,6 +105,7 @@ jobs:
             _build/default/lib/.rebar3
             _build/default/lib/recon
             _build/default/lib/rocksdb
+            _build/default/lib/yamerl
             _build/default/plugins/
             _build/default/plugins/aleppo
             _build/default/plugins/geas
@@ -128,6 +136,7 @@ jobs:
             _build/default/lib/b64fast
             _build/default/lib/cowboy
             _build/default/lib/cowlib
+            _build/default/lib/eqwalizer_support
             _build/default/lib/gun
             _build/default/lib/jiffy
             _build/default/lib/prometheus
@@ -139,6 +148,7 @@ jobs:
             _build/default/lib/.rebar3
             _build/default/lib/recon
             _build/default/lib/rocksdb
+            _build/default/lib/yamerl
             _build/default/plugins/
             _build/default/plugins/aleppo
             _build/default/plugins/geas
