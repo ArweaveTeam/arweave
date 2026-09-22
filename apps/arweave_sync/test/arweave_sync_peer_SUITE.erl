@@ -116,7 +116,11 @@ queue_max_length_preserves_bounded_store_exploration(_Config) ->
     Source = #task_source{peer = Peer},
     %% The one-task queue limit permits one speculative store, not a second.
     Dispatches0 = arweave_sync_peer:test_dispatch(#{Peer => 1}, #{Peer => 1}),
-    ?assert(arweave_sync_peer:queue_has_capacity(store_a, arweave_sync_peer:peer_dispatch(Peer, Dispatches0))),
+    ?assert(
+        arweave_sync_peer:queue_has_capacity(
+            store_a, arweave_sync_peer:peer_dispatch(Peer, Dispatches0)
+        )
+    ),
     Task = #task{
         store_id = store_a,
         footprint = #footprint{store_id = store_a},
@@ -239,7 +243,9 @@ record_result_accumulates_observations(_Config) ->
     %% Two outcomes cover every timing category and only one delivers a chunk.
     FirstTiming = #fetch_timing{productive_ms = 100, reject_ms = 20},
     SecondTiming = #fetch_timing{productive_ms = 50, timeout_ms = 30},
-    State1 = arweave_sync_peer:record_result(Peer, ?DATA_CHUNK_SIZE, FirstTiming, arweave_sync_peer:new()),
+    State1 = arweave_sync_peer:record_result(
+        Peer, ?DATA_CHUNK_SIZE, FirstTiming, arweave_sync_peer:new()
+    ),
     State2 = arweave_sync_peer:record_result(Peer, 0, SecondTiming, State1),
     Observation = maps:get(Peer, State2#state.observations),
     ?assertEqual(?DATA_CHUNK_SIZE, Observation#observation.total_bytes),

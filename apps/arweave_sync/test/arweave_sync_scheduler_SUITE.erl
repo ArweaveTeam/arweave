@@ -718,9 +718,12 @@ task_lifecycle(_Config) ->
         ),
         %% A repeated signal is harmless.
         ?assertEqual(
-            FootprintUnpacked, arweave_sync_scheduler:on_task_unpacked(FootprintRef, FootprintUnpacked)
+            FootprintUnpacked,
+            arweave_sync_scheduler:on_task_unpacked(FootprintRef, FootprintUnpacked)
         ),
-        FootprintDone = arweave_sync_scheduler:on_task_write_completed(FootprintRef, FootprintUnpacked),
+        FootprintDone = arweave_sync_scheduler:on_task_write_completed(
+            FootprintRef, FootprintUnpacked
+        ),
         ?assertNot(maps:is_key(FootprintRef, FootprintDone#state.tasks)),
         ?assertEqual(
             0,

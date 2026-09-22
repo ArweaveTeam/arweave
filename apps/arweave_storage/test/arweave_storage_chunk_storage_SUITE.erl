@@ -558,7 +558,9 @@ not_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        arweave_storage_ct_util:expected_samples(C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1),
+        arweave_storage_ct_util:expected_samples(
+            C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1
+        ),
         arweave_storage_ct_util:chunk_samples(
             5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, ?DEFAULT_MODULE
         )
@@ -579,7 +581,9 @@ not_aligned(_Config) ->
         )
     ),
     ?assertEqual(
-        arweave_storage_ct_util:expected_samples(C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1),
+        arweave_storage_ct_util:expected_samples(
+            C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1
+        ),
         arweave_storage_ct_util:chunk_samples(
             5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, ?DEFAULT_MODULE
         )
@@ -783,7 +787,9 @@ cross_file_not_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        arweave_storage_ct_util:expected_samples(C1, arweave_config:get([chunk_storage_file_size]) + 1),
+        arweave_storage_ct_util:expected_samples(
+            C1, arweave_config:get([chunk_storage_file_size]) + 1
+        ),
         arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]) + 1, ?DEFAULT_MODULE
         )
@@ -1002,7 +1008,9 @@ cross_file_not_aligned(_Config) ->
         )
     ),
     ?assertEqual(
-        arweave_storage_ct_util:expected_samples(C1, arweave_config:get([chunk_storage_file_size]) + 1),
+        arweave_storage_ct_util:expected_samples(
+            C1, arweave_config:get([chunk_storage_file_size]) + 1
+        ),
         arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]) + 1, ?DEFAULT_MODULE
         )
@@ -1120,9 +1128,7 @@ defrag_command(Config) ->
     ?assertEqual({ok, C1}, file:pread(F2, 10000001 + 3, 262144)),
     ?assertMatch({ok, <<O1:24, _/binary>>}, file:pread(F2, 10000001, 10)),
     ?assertMatch(
-        {ok,
-            <<O1:24, C1:262144/binary, O2:24, C2:262144/binary,
-                0:((262144 + 3) * 2 * 8)>>},
+        {ok, <<O1:24, C1:262144/binary, O2:24, C2:262144/binary, 0:((262144 + 3) * 2 * 8)>>},
         file:pread(F2, 10000001, (262144 + 3) * 4)
     ),
     ?assertMatch(
@@ -1159,8 +1165,7 @@ put_to_killed_worker(_Config) ->
     register(Name, Stub),
     spawn_link(fun() ->
         TestPID !
-            {put_result,
-                arweave_storage:put_chunk(262144, <<>>, unpacked, StoreID)}
+            {put_result, arweave_storage:put_chunk(262144, <<>>, unpacked, StoreID)}
     end),
     receive
         stub_got_call -> ok

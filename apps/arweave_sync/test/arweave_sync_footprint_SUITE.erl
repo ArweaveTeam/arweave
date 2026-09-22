@@ -49,7 +49,9 @@ admit_replaces_unbound_source_snapshot(_Config) ->
         Footprint,
         [#task_source{peer = old_peer, footprint = Footprint}]
     ),
-    {ok, _ClaimedChunks, Reservations} = arweave_sync_footprint:admit(Original, arweave_sync_footprint:new()),
+    {ok, _ClaimedChunks, Reservations} = arweave_sync_footprint:admit(
+        Original, arweave_sync_footprint:new()
+    ),
     Updated = arweave_sync_footprint:new_reservation(
         StoreID,
         Footprint,
@@ -71,7 +73,9 @@ queued_reservation_can_use_available_global_slot(_Config) ->
     Bound = bound_reservation(Peer, BoundFootprint, 1),
     Queued = queued_reservation(Peer, QueuedFootprint),
     %% One bound footprint leaves the second global entropy slot available.
-    Dispatch = arweave_sync_footprint:test_dispatch(arweave_sync_footprint:test_state([Bound, Queued]), 2),
+    Dispatch = arweave_sync_footprint:test_dispatch(
+        arweave_sync_footprint:test_state([Bound, Queued]), 2
+    ),
     [Source] = arweave_sync_footprint:sources(Queued),
     ?assert(arweave_sync_footprint:is_source_compatible(Queued, Source, Dispatch)),
     ?assert(arweave_sync_footprint:has_entropy_capacity(QueuedFootprint, Source, Dispatch)).
@@ -87,7 +91,9 @@ queued_reservation_reaches_full_cache_competition(_Config) ->
     Queued = queued_reservation(Peer, QueuedFootprint),
     %% The one-slot cache is full, but compatibility must let the queued
     %% footprint reach the scheduler's bounded displacement decision.
-    Dispatch = arweave_sync_footprint:test_dispatch(arweave_sync_footprint:test_state([Bound, Queued]), 1),
+    Dispatch = arweave_sync_footprint:test_dispatch(
+        arweave_sync_footprint:test_state([Bound, Queued]), 1
+    ),
     [Source] = arweave_sync_footprint:sources(Queued),
     ?assert(arweave_sync_footprint:is_source_compatible(Queued, Source, Dispatch)),
     ?assertNot(arweave_sync_footprint:has_entropy_capacity(QueuedFootprint, Source, Dispatch)).

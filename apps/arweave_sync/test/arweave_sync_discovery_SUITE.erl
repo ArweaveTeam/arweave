@@ -397,11 +397,12 @@ removed_peer_job_results_are_ignored(_Config) ->
     Intervals = ar_intervals:from_list([{?DATA_CHUNK_SIZE, 0}]),
     TrackedState = arweave_sync_discovery:add_peer(Peer, #state{}),
     _ = arweave_sync_discovery:handle_cast(
-        {job_result, Peer,
-            {chunk_intervals, ?DEFAULT_MODULE, Offset, byte, {ok, Intervals}}},
+        {job_result, Peer, {chunk_intervals, ?DEFAULT_MODULE, Offset, byte, {ok, Intervals}}},
         TrackedState
     ),
-    ?assertEqual({hit, Intervals}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, Offset)),
+    ?assertEqual(
+        {hit, Intervals}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, Offset)
+    ),
     arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 1.0),
     {noreply, RemovedState} =
         arweave_sync_discovery:do_remove_peer(Peer, test, TrackedState),
@@ -413,8 +414,7 @@ removed_peer_job_results_are_ignored(_Config) ->
         )
     ),
     _ = arweave_sync_discovery:handle_cast(
-        {job_result, Peer,
-            {chunk_intervals, test_store, Offset, byte, {ok, Intervals}}},
+        {job_result, Peer, {chunk_intervals, test_store, Offset, byte, {ok, Intervals}}},
         RemovedState
     ),
     ?assertEqual(miss, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, Offset)),
@@ -766,8 +766,7 @@ warming_schedules_miss_but_cached_read_has_no_side_effect(_Config) ->
         ),
         _ = sys:get_state(DiscoveryPid),
         receive
-            {trace, DiscoveryPid, 'receive',
-                {'$gen_call', _, {warm_peer_ranges, _, _, _}}} ->
+            {trace, DiscoveryPid, 'receive', {'$gen_call', _, {warm_peer_ranges, _, _, _}}} ->
                 ?assert(false)
         after 0 ->
             ok
@@ -779,8 +778,7 @@ warming_schedules_miss_but_cached_read_has_no_side_effect(_Config) ->
         RefreshRequest =
             receive
                 {trace, DiscoveryPid, 'receive',
-                    {'$gen_call', _,
-                        {warm_peer_ranges, StoreID, Peers, Offset}}} ->
+                    {'$gen_call', _, {warm_peer_ranges, StoreID, Peers, Offset}}} ->
                     {StoreID, Peers, Offset}
             after 1000 ->
                 none
@@ -922,8 +920,7 @@ warming_stale_metadata_requests_refresh(_Config) ->
         ?assertEqual(ok, arweave_sync_discovery:warm_peer_ranges(?DEFAULT_MODULE, [Peer], 0)),
         receive
             {trace, DiscoveryPid, 'receive',
-                {'$gen_call', _,
-                    {warm_peer_ranges, ?DEFAULT_MODULE, [Peer], 0}}} ->
+                {'$gen_call', _, {warm_peer_ranges, ?DEFAULT_MODULE, [Peer], 0}}} ->
                 ok
         after 1000 ->
             ?assert(false)
@@ -949,7 +946,9 @@ byte_share_change_marks_chunk_intervals_stale(_Config) ->
         arweave_sync_discovery:store_row(chunk_interval, byte, 0, Peer, Intervals),
         arweave_sync_discovery:store_row(chunk_interval, byte, LastInBucket, Peer, Intervals),
         %% The first location of bucket one is outside bucket zero.
-        arweave_sync_discovery:store_row(chunk_interval, byte, ?NETWORK_DATA_BUCKET_SIZE, Peer, Intervals),
+        arweave_sync_discovery:store_row(
+            chunk_interval, byte, ?NETWORK_DATA_BUCKET_SIZE, Peer, Intervals
+        ),
         %% Another peer shares bucket zero's locations.
         arweave_sync_discovery:store_row(chunk_interval, byte, 0, OtherPeer, Intervals),
         arweave_sync_discovery:store_row(chunk_interval, byte, LastInBucket, OtherPeer, Intervals),
@@ -958,7 +957,9 @@ byte_share_change_marks_chunk_intervals_stale(_Config) ->
         ?assertMatch({hit, _}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, 0)),
         arweave_sync_discovery:mark_chunk_intervals_stale_on_share_change(byte, Peer, 0, 0.7),
         ?assertMatch({stale, _}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, 0)),
-        ?assertMatch({stale, _}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, LastInBucket)),
+        ?assertMatch(
+            {stale, _}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, LastInBucket)
+        ),
         ?assertMatch(
             {hit, _},
             arweave_sync_discovery:chunk_interval_lookup(byte, Peer, ?NETWORK_DATA_BUCKET_SIZE)
