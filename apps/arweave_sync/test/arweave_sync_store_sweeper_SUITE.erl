@@ -356,7 +356,8 @@ sweep_readiness(_Config) ->
     arweave_sync_test_util:with_mocks(
         [
             {ar_node, is_joined, fun() -> true end},
-            {ar_data_sync, is_footprint_record_initialized, fun(_) -> true end},
+            {arweave_storage, is_footprint_record_initialized,
+                fun(_) -> true end},
             {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end}
         ],
         fun() ->
@@ -399,7 +400,7 @@ sweep_readiness(_Config) ->
             ),
             meck:expect(ar_node, is_joined, fun() -> true end),
             meck:expect(
-                ar_data_sync,
+                arweave_storage,
                 is_footprint_record_initialized,
                 fun(_) -> false end
             ),
@@ -407,7 +408,7 @@ sweep_readiness(_Config) ->
                 {blocked, ?NODE_JOIN_RETRY_DELAY_MS}, can_sweep(StartedState)
             ),
             meck:expect(
-                ar_data_sync,
+                arweave_storage,
                 is_footprint_record_initialized,
                 fun(_) -> true end
             ),

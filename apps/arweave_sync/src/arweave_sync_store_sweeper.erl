@@ -238,7 +238,9 @@ can_sweep(State) ->
         WeaveSize =/= undefined andalso
             DiskPoolThreshold =/= undefined andalso
             (arweave_sync_deps:node()):is_joined() andalso
-            (arweave_sync_deps:data_sync()):is_footprint_record_initialized(StoreID),
+            (arweave_sync_deps:storage()):is_footprint_record_initialized(
+                StoreID
+            ),
     case Ready of
         false ->
             {blocked, ?NODE_JOIN_RETRY_DELAY_MS};
