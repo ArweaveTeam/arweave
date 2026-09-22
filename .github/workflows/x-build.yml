@@ -72,6 +72,12 @@ jobs:
       # only arweave dependencies are being cached,
       # those are not updated everyday and this is
       # unecessary to fetch them everytime.
+      #
+      # The cache holds built dependencies, so change the `otp27' in the
+      # keys below whenever the Erlang version changes. Under a different
+      # OTP, rebar3 rebuilds every cached dependency, and rocksdb's cmake
+      # build tree, which records the absolute path of the runner that
+      # saved it, fails on any other macOS runner account.
       - name: extract cache
         uses: actions/cache@v4
         id: cache
@@ -106,9 +112,9 @@ jobs:
             _build/default/plugins/samovar
             _build/default/plugins/verl
             _build/default/plugins/zipper
-          key: deps-cache-${{ hashFiles('rebar.lock') }}-${{ env.cache_key }}
+          key: deps-cache-otp27-${{ hashFiles('rebar.lock') }}-${{ env.cache_key }}
           restore-keys: |
-            deps-cache-${{ hashFiles('rebar.lock') }}-${{ env.cache_key }}
+            deps-cache-otp27-${{ hashFiles('rebar.lock') }}-${{ env.cache_key }}
 
       - name: Get dependencies
         if: steps.cache.outputs.cache-hit != 'true'
@@ -147,7 +153,7 @@ jobs:
             _build/default/plugins/samovar
             _build/default/plugins/verl
             _build/default/plugins/zipper
-          key: deps-cache-${{ hashFiles('rebar.lock') }}-${{ env.cache_key }}
+          key: deps-cache-otp27-${{ hashFiles('rebar.lock') }}-${{ env.cache_key }}
 
       - name: Compile arweave release
         run: ./ar-rebar3 default release
