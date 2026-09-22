@@ -31,7 +31,7 @@ run(#task{peer = Peer} = Task) ->
     %% the wall-clock input to ar_peers.
     {ElapsedUs, {Result, BytesFetched, FetchTiming}} =
         timer:tc(fun() -> fetch_task(Task) end),
-    arweave_sync_scheduler:task_fetch_completed(
+    arweave_sync_scheduler:report_fetch_completed(
         Task#task.task_ref,
         BytesFetched,
         FetchTiming

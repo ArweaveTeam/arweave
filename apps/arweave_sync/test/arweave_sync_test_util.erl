@@ -37,7 +37,7 @@ with_fetch_result(Peer, Byte, Proof, Test) ->
     Fetch = fun(#task{store_id = StoreID, task_ref = TaskRef}) ->
         Result = do_deliver_chunk(StoreID, Peer, Byte, Proof, TaskRef),
         Parent ! {sync_chunk_fetched, StoreID, Result},
-        arweave_sync_scheduler:task_fetch_completed(
+        arweave_sync_scheduler:report_fetch_completed(
             TaskRef, byte_size(maps:get(chunk, Proof)), #fetch_timing{}
         )
     end,

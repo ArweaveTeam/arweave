@@ -76,7 +76,7 @@ write_owner_restart(Config) ->
                 receive
                     continue -> ok
                 end,
-                arweave_sync_scheduler:task_fetch_completed(
+                arweave_sync_scheduler:report_fetch_completed(
                     TaskRef, ?DATA_CHUNK_SIZE, #fetch_timing{}
                 )
             end
@@ -114,10 +114,10 @@ write_owner_restart(Config) ->
                 ?assertEqual(0, ar_chunk_cache:reserved_size()),
                 %% Delayed notifications for the discarded task cannot recreate
                 %% a writing task or credit the lost write as completed work.
-                arweave_sync_scheduler:task_fetch_completed(
+                arweave_sync_scheduler:report_fetch_completed(
                     OldTaskRef, ?DATA_CHUNK_SIZE, #fetch_timing{}
                 ),
-                arweave_sync_scheduler:task_write_completed(store1, OldTaskRef),
+                arweave_sync_scheduler:report_write_completed(store1, OldTaskRef),
                 ?assertEqual(pong, gen_server:call(Scheduler, ping)),
                 ?assertEqual({ok, 1}, gen_server:call(Scheduler, Enqueue)),
                 ?assertEqual(
@@ -153,7 +153,7 @@ restart_preserves_other_stores(_Config) ->
                 receive
                     continue -> ok
                 end,
-                arweave_sync_scheduler:task_fetch_completed(
+                arweave_sync_scheduler:report_fetch_completed(
                     TaskRef, ?DATA_CHUNK_SIZE, #fetch_timing{}
                 )
             end
@@ -219,7 +219,7 @@ restart_preserves_other_stores(_Config) ->
                     )
                 ),
                 OtherWorker ! continue,
-                arweave_sync_scheduler:task_write_completed(store2, OtherRef),
+                arweave_sync_scheduler:report_write_completed(store2, OtherRef),
                 ?assertEqual(
                     ok,
                     ar_test_await:until(
@@ -257,7 +257,7 @@ restart_preserves_queued_work(_Config) ->
             run,
             fun(#task{task_ref = TaskRef}) ->
                 Parent ! {queued_task_started, TaskRef},
-                arweave_sync_scheduler:task_fetch_completed(
+                arweave_sync_scheduler:report_fetch_completed(
                     TaskRef, 0, #fetch_timing{}
                 )
             end
@@ -329,7 +329,7 @@ unavailable_write_owner(_Config) ->
             run,
             fun(#task{store_id = StoreID, task_ref = TaskRef}) ->
                 fetched(StoreID, peer1, 0, #{}, TaskRef),
-                arweave_sync_scheduler:task_fetch_completed(
+                arweave_sync_scheduler:report_fetch_completed(
                     TaskRef, ?DATA_CHUNK_SIZE, #fetch_timing{}
                 ),
                 Parent ! handoff_attempted
