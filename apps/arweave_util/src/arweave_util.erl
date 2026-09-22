@@ -54,6 +54,8 @@
     take_every_nth/2,
     terminal_clear/0,
     timestamp_to_seconds/1,
+    utc_timestamp/0,
+    format_duration_ms/1,
     invert_map/1,
     unique/1,
     pad_to_closest_multiple_equal_or_above/2
@@ -167,6 +169,25 @@ safe_ets_lookup(Table, Key) ->
 %% @doc Convert an erlang:timestamp() to seconds since the Unix Epoch.
 timestamp_to_seconds({MegaSecs, Secs, _MicroSecs}) ->
     MegaSecs * 1000000 + Secs.
+
+%% @doc The current UTC time as an RFC 3339 string, to date output that is not
+%% otherwise timestamped - console lines, for instance.
+utc_timestamp() ->
+    calendar:system_time_to_rfc3339(erlang:system_time(second), [{offset, "Z"}]).
+
+%% @doc Render a duration in milliseconds for an operator: whole seconds,
+%% minutes or hours, whichever keeps the number small.
+format_duration_ms(Ms) when Ms < 90_000 ->
+    format_duration_unit(max(1, Ms div 1000), "second");
+format_duration_ms(Ms) when Ms < 90 * 60_000 ->
+    format_duration_unit(Ms div 60_000, "minute");
+format_duration_ms(Ms) ->
+    format_duration_unit(Ms div (60 * 60_000), "hour").
+
+format_duration_unit(1, Unit) ->
+    io_lib:format("1 ~s", [Unit]);
+format_duration_unit(Count, Unit) ->
+    io_lib:format("~B ~ss", [Count, Unit]).
 
 %% @doc Convert a map from Key => Value, to Value => set(Keys)
 -spec invert_map(map()) -> map().

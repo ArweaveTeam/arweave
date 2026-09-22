@@ -17,7 +17,10 @@ all() ->
         footprint_intervals_to_byte_intervals,
         bounded_footprint_intervals_to_byte_intervals,
         footprint_geometry,
-        next_sector_start_clamps_to_partition
+        next_sector_start_clamps_to_partition,
+        initialize_records_synced_chunks,
+        initialize_skips_entropy_tail_offsets,
+        initialize_mid_partition_range
     ].
 
 init_per_suite(Config) -> arweave_storage_ct_util:init_suite(Config).
@@ -26,10 +29,18 @@ end_per_suite(Config) -> arweave_storage_ct_util:end_suite(Config).
 
 init_per_testcase(Name, Config) ->
     Config2 = arweave_storage_ct_util:init_case(Name, Config),
-    case Name of
-        N when N =:= get_unsynced_intervals; N =:= get_intervals ->
+    case
+        lists:member(Name, [
+            get_unsynced_intervals,
+            get_intervals,
+            initialize_records_synced_chunks,
+            initialize_skips_entropy_tail_offsets,
+            initialize_mid_partition_range
+        ])
+    of
+        true ->
             {ok, _} = arweave_storage:activate();
-        _ ->
+        false ->
             ok
     end,
     Config2.
@@ -37,6 +48,7 @@ init_per_testcase(Name, Config) ->
 end_per_testcase(Name, Config) ->
     arweave_storage_ct_util:stop_record(test_unsynced_store),
     arweave_storage_ct_util:stop_record(test_intervals_store),
+    arweave_storage_ct_util:stop_record(test_init_store),
     arweave_storage_ct_util:end_case(Name, Config).
 
 %%====================================================================
@@ -590,4 +602,120 @@ next_sector_start_clamps_to_partition(_Config) ->
                 0, arweave_storage_footprint_record:get_footprint(1572864)
             )
         end
+    ).
+
+%% @doc The store's sync record server builds its footprint record from the
+%% {ar_data_sync, byte} record: each chunk under the packing it is recorded
+%% with, the transitional unpacked_padded one left out, and nothing else.
+%% Partition 0 is full, partitions 1 and 2 hold a few chunks and partition 3
+%% none. Test geometry: 8 chunk offsets per partition in two footprints of
+%% four.
+initialize_records_synced_chunks(_Config) ->
+    Replica = {replica_2_9, <<"addr">>},
+    Recorded =
+        [{N * ?DATA_CHUNK_SIZE, Replica} || N <- lists:seq(1, 8)] ++
+            [
+                {10 * ?DATA_CHUNK_SIZE, Replica},
+                {12 * ?DATA_CHUNK_SIZE, Replica},
+                {19 * ?DATA_CHUNK_SIZE, unpacked}
+            ],
+    Padded = {11 * ?DATA_CHUNK_SIZE, unpacked_padded},
+    Range = {0, 4 * arweave_constants:partition_size()},
+    initialize(Range, Recorded ++ [Padded], fun() ->
+        assert_recorded(Recorded),
+        ?assertEqual(
+            false,
+            arweave_storage_footprint_record:is_recorded(
+                element(1, Padded), test_init_store
+            )
+        )
+    end).
+
+%% @doc A partition's entropy covers more footprint offsets than the partition
+%% has chunks; the surplus offsets map to chunks of the next partition and
+%% must not be recorded for them.
+initialize_skips_entropy_tail_offsets(_Config) ->
+    %% Five chunks per partition against eight footprint offsets: three
+    %% surplus offsets in every partition.
+    arweave_storage_ct_util:with_mocks(
+        [{arweave_constants, [{partition_size, fun() -> 1200000 end}]}],
+        fun() ->
+            Replica = {replica_2_9, <<"addr">>},
+            %% Every chunk of partitions 0 and 1.
+            Chunks = [{N * ?DATA_CHUNK_SIZE, Replica} || N <- lists:seq(1, 9)],
+            initialize({0, 2400000}, Chunks, fun() ->
+                assert_recorded(Chunks)
+            end)
+        end
+    ).
+
+%% @doc A store whose range starts on a partition boundary and ends inside a
+%% partition - the shapes production modules come in - records exactly its
+%% own chunks. The range (2,000,000, 5,000,000] starts at partition 1, yet its
+%% first chunk, ending at 2,097,152, has a bucket starting at 1,835,008 and so
+%% belongs to entropy partition 0; the chunk ending at 4,194,304 straddles the
+%% boundary at 4,000,000 the same way. The chunks ending at 1,835,008 and
+%% 5,242,880 lie outside the range and must be left out even though the
+%% {ar_data_sync, byte} record holds them.
+initialize_mid_partition_range(_Config) ->
+    Replica = {replica_2_9, <<"addr">>},
+    %% Every chunk end is a multiple of 262,144 in the test geometry, the
+    %% strict data split threshold (786,432) being one; 8 through 19 are the
+    %% chunks in the range.
+    InRange = [{N * ?DATA_CHUNK_SIZE, Replica} || N <- lists:seq(8, 19)],
+    OutOfRange = [
+        {7 * ?DATA_CHUNK_SIZE, Replica}, {20 * ?DATA_CHUNK_SIZE, Replica}
+    ],
+    initialize({2_000_000, 5_000_000}, InRange ++ OutOfRange, fun() ->
+        assert_recorded(InRange),
+        lists:foreach(
+            fun({EndOffset, _Packing}) ->
+                ?assertEqual(
+                    false,
+                    arweave_storage_footprint_record:is_recorded(
+                        EndOffset, test_init_store
+                    )
+                )
+            end,
+            OutOfRange
+        )
+    end).
+
+%% Build the footprint record of a store covering Range whose
+%% {ar_data_sync, byte} record holds Chunks, through its sync record server as
+%% in production, then run Assert.
+initialize(Range, Chunks, Assert) ->
+    StoreID = test_init_store,
+    arweave_storage_ct_util:with_disk_stores([StoreID], Range, [], fun() ->
+        {ok, _} = arweave_storage_ct_util:start_sync_record(StoreID),
+        arweave_storage_ct_util:add_chunks_to_sync_record(Chunks, StoreID),
+        ok = arweave_storage:initialize_footprint_record(StoreID),
+        ok = ar_test_await:until(footprint_record_initialized, fun() ->
+            arweave_storage:is_footprint_record_initialized(StoreID)
+        end),
+        Assert()
+    end).
+
+%% Each chunk is in the footprint record under its packing, and the record
+%% holds nothing else.
+assert_recorded(Chunks) ->
+    lists:foreach(
+        fun({EndOffset, Packing}) ->
+            ?assertEqual(
+                {true, Packing},
+                arweave_storage_footprint_record:is_recorded(
+                    EndOffset, test_init_store
+                )
+            )
+        end,
+        Chunks
+    ),
+    ?assertEqual(
+        length(Chunks),
+        ar_intervals:sum(footprint_record(any_packing, test_init_store))
+    ).
+
+footprint_record(Packing, StoreID) ->
+    arweave_storage_sync_record:get(
+        Packing, {ar_data_sync, footprint}, StoreID
     ).

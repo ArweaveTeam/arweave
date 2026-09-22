@@ -90,7 +90,10 @@
 %% Footprint records.
 -export([
     add_footprint/3,
-    delete_footprint/2
+    delete_footprint/2,
+    initialize_footprint_record/1,
+    mark_footprint_record_initialized/1,
+    is_footprint_record_initialized/1
 ]).
 
 %% Chunk and footprint geometry.
@@ -349,6 +352,21 @@ add_footprint(Offset, Packing, StoreID) ->
 
 delete_footprint(Offset, StoreID) ->
     arweave_storage_footprint_record:delete(Offset, StoreID).
+
+%% @doc Build the store's footprint record from its {ar_data_sync, byte} one
+%% unless it is built already.
+initialize_footprint_record(StoreID) ->
+    arweave_storage_footprint_record:start_initialization(StoreID).
+
+%% @doc Record that the store's footprint record is built, for a caller that
+%% knows it was built by other means.
+mark_footprint_record_initialized(StoreID) ->
+    arweave_storage_footprint_record:mark_initialized(StoreID).
+
+%% @doc Whether the store's footprint record has been built, which is what
+%% footprint-mode syncing waits for.
+is_footprint_record_initialized(StoreID) ->
+    arweave_storage_footprint_record:is_initialized(StoreID).
 
 %%====================================================================
 %% Chunk and footprint geometry

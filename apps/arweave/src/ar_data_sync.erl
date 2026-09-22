@@ -19,7 +19,6 @@
          read_chunk_with_full_metadata/2, read_chunk_with_datapath/2,
          write_chunk/5, read_data_path/2,
          get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
-        is_footprint_record_initialized/1,
          migration_db/1]).
 
 %% Exported for ar_disk_pool
@@ -40,15 +39,13 @@
 -include("ar_data_sync.hrl").
 
 
-%% The key for storing migration cursor in the migrations_index database.
--define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
-
-%% The number of chunks to migrate per batch during footprint migration.
--ifdef(AR_TEST).
--define(FOOTPRINT_MIGRATION_BATCH_SIZE, 10).
--else.
--define(FOOTPRINT_MIGRATION_BATCH_SIZE, 200).
--endif.
+%% The migrations_index key that 2.9.6-alpha1 through 2.9.7-alpha1 wrote when
+%% they built the footprint record chunk by chunk: <<"complete">> when they
+%% finished, a byte cursor while still running. The storage app keeps its own
+%% cursor now; this one is only read, so a downgrade to one of those releases
+%% still finds it.
+-define(LEGACY_FOOTPRINT_MIGRATION_CURSOR_KEY,
+        <<"footprint_migration_cursor">>).
 
 %%%===================================================================
 %%% Public interface.
@@ -656,12 +653,6 @@ finish_store_request({PID, Ref, CacheRef}, Result) ->
     end,
     ok.
 
-%% @doc Return whether the store's existing sync record has been migrated to
-%% the footprint record.
-is_footprint_record_initialized(StoreID) ->
-    {_Cursor, Initialized} = get_footprint_record_initialization_state(StoreID),
-    Initialized.
-
 migration_db(StoreID) ->
     {migrations_index, StoreID}.
 
@@ -726,21 +717,21 @@ init({StoreID, RepackInPlacePacking}) ->
                 footprint_limit = ar_footprint_limit:get(StoreID),
                 range_start = RangeStart2,
                 range_end = RangeEnd2,
-        %% weave_size will be set on join and forwarded to the sync sweeper.
+                %% weave_size will be set on join and forwarded to the sync sweeper.
                 weave_size = 0
                },
     State1 = init_kv(State0, StoreID),
 
     case RepackInPlacePacking of
-                 none ->
-                     gen_server:cast(self(), process_store_chunk_queue),
-            %% Called for its side effect: publish the initial device-lock
-            %% sync metric.
-            init_sync_status(StoreID),
-                     ar_chunk_copy:start_copy(StoreID),
-            maybe_run_footprint_record_initialization(State1);
+                none ->
+                    gen_server:cast(self(), process_store_chunk_queue),
+                    %% Called for its side effect: publish the initial device-lock
+                    %% sync metric.
+                    init_sync_status(StoreID),
+                    ar_chunk_copy:start_copy(StoreID),
+                    ok = run_footprint_record_initialization(StoreID);
                  _ ->
-            ar_device_lock:set_device_lock_metric(StoreID, sync, off)
+                    ar_device_lock:set_device_lock_metric(StoreID, sync, off)
              end,
     ?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID},
                {repack_in_place_packing, case RepackInPlacePacking of
@@ -753,9 +744,6 @@ handle_cast(process_store_chunk_queue, State) ->
     arweave_util:cast_after(200, self(), process_store_chunk_queue),
     {noreply, process_store_chunk_queue(State)};
 
-handle_cast({initialize_footprint_record, Cursor}, State) ->
-    State2 = initialize_footprint_record(Cursor, State),
-    {noreply, State2};
 
 handle_cast({join, RecentBI}, State) ->
     #data_sync_state{ block_index = CurrentBI, store_id = StoreID } = State,
@@ -2459,134 +2447,18 @@ log_insufficient_disk_space(StoreID) ->
     ?LOG_INFO([{event, storage_module_stopped_syncing},
                {reason, insufficient_disk_space}, {storage_module, StoreID}]).
 
-maybe_run_footprint_record_initialization(State) ->
-    #data_sync_state{ store_id = StoreID, range_start = RangeStart,
-                      range_end = RangeEnd } = State,
-    {FootprintRecordCursor, InitializationComplete} =
-        get_footprint_record_initialization_state(StoreID),
-    case InitializationComplete of
-        true ->
-            ok;
-        false ->
-            ?LOG_INFO([{event, initializing_footprint_record}, {store_id, StoreID},
-                       {cursor, FootprintRecordCursor},
-                       {range_start, RangeStart}, {range_end, RangeEnd},
-                       {start_pct, footprint_migration_pct(FootprintRecordCursor, RangeStart, RangeEnd)},
-                       {total_chunks, footprint_migration_chunks(RangeEnd, RangeStart)}]),
-            gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor})
-    end.
-
-get_footprint_record_initialization_state(StoreID) ->
-    case ar_kv:get(migration_db(StoreID), ?FOOTPRINT_MIGRATION_CURSOR_KEY) of
-        not_found ->
-            {0, false};
+%% @doc Ask storage to build the store's footprint record, unless the releases
+%% that built it chunk by chunk had already finished. Only their completion
+%% carries over: their byte cursor says nothing about how far a
+%% footprint-ordered walk got, so an interrupted one starts again.
+run_footprint_record_initialization(StoreID) ->
+    case ar_kv:get(migration_db(StoreID),
+                   ?LEGACY_FOOTPRINT_MIGRATION_CURSOR_KEY) of
         {ok, <<"complete">>} ->
-            {complete, true};
-        {ok, CursorBin} ->
-            Cursor = binary:decode_unsigned(CursorBin),
-            {Cursor, false}
-    end.
-
-%% @doc Initialize the footprint record from the ar_data_sync record.
-%% We traverse the packing-agnostic record on purpose: the footprint record
-%% must cover every synced chunk regardless of its packing, or footprint-mode
-%% syncing would keep treating locally available data as missing and re-fetch
-%% it. Each chunk is registered under its actual packing so the by-packing
-%% view of the footprint record stays truthful.
-initialize_footprint_record(complete, State) ->
-    State;
-initialize_footprint_record(Cursor, State) ->
-    #data_sync_state{
-       store_id = StoreID,
-       range_start = RangeStart,
-       range_end = RangeEnd
-      } = State,
-    BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
-
-    case arweave_storage:get_next_interval(
-        synced,
-        Cursor,
-        RangeEnd,
-        any_packing,
-        {ar_data_sync, byte},
-        StoreID
-    ) of
-        not_found ->
-            ok = ar_kv:put(migration_db(StoreID),
-                           ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
-            ?LOG_INFO([{event, footprint_record_initialized}, {store_id, StoreID},
-                       {total_chunks, footprint_migration_chunks(RangeEnd, RangeStart)}]),
-            State;
-        {IntervalEnd, IntervalStart} ->
-            Cursor2 = max(Cursor, IntervalStart),
-            EndPosition = min(Cursor2 + (BatchSize * ?DATA_CHUNK_SIZE), IntervalEnd),
-            initialize_footprint_range(Cursor2, EndPosition, StoreID),
-            NewCursor = EndPosition,
-            ok = ar_kv:put(migration_db(StoreID),
-                           ?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
-            maybe_log_footprint_migration_progress(Cursor, NewCursor, RangeStart, RangeEnd,
-                                                   StoreID),
-            arweave_util:cast_after(1_000, self(), {initialize_footprint_record, NewCursor}),
-            State
-    end.
-
-%% @doc Migrate chunks in the given range to footprint records, registering
-%% each chunk under its actual packing. Skip unpacked_padded chunks: they are
-%% a transitional state which cannot be served (see read_chunk_with_metadata/6);
-%% ar_entropy_storage adds them to the footprint record once the entropy is
-%% applied.
-initialize_footprint_range(Start, End, _StoreID) when Start >= End ->
-    ok;
-initialize_footprint_range(Start, End, StoreID) ->
-    case arweave_storage:is_recorded(
-        Start + 1,
-        any_packing,
-        {ar_data_sync, byte},
-        StoreID
-    ) of
-        {true, unpacked_padded} ->
-            ok;
-        {true, Packing} ->
-            arweave_storage:add_footprint(Start + 1, Packing, StoreID);
+            arweave_storage:mark_footprint_record_initialized(StoreID);
         _ ->
-            %% false (the chunk was removed concurrently) or true without
-            %% a packing (not expected for ar_data_sync) — nothing to register.
-            ok
-    end,
-    initialize_footprint_range(Start + ?DATA_CHUNK_SIZE, End, StoreID).
-
-%% @doc Log footprint-migration progress when the cursor crosses the next
-%% ?FOOTPRINT_MIGRATION_PROGRESS_STEP_PCT percent of the store's range.
-maybe_log_footprint_migration_progress(PrevCursor, NewCursor, RangeStart, RangeEnd, StoreID) ->
-    %% Emit a log each time a store crosses 1% of its range.
-    ProgressStepPct = 1,
-    PrevPct = footprint_migration_pct(PrevCursor, RangeStart, RangeEnd),
-    NewPct = footprint_migration_pct(NewCursor, RangeStart, RangeEnd),
-    case NewPct div ProgressStepPct > PrevPct div ProgressStepPct of
-        true ->
-            ?LOG_INFO([{event, footprint_record_initialization_progress},
-                       {store_id, StoreID}, {cursor, NewCursor},
-                       {percent_migrated, NewPct},
-                       {chunks_migrated, footprint_migration_chunks(NewCursor, RangeStart)},
-                       {total_chunks, footprint_migration_chunks(RangeEnd, RangeStart)}]);
-        false ->
-            ok
+            arweave_storage:initialize_footprint_record(StoreID)
     end.
-
-%% @doc Percentage (0-100) of the store's range scanned by the footprint migration process.
-footprint_migration_pct(Offset, RangeStart, RangeEnd)
-  when is_integer(Offset), is_integer(RangeStart), is_integer(RangeEnd),
-       RangeEnd > RangeStart, Offset > RangeStart ->
-    min(100, (Offset - RangeStart) * 100 div (RangeEnd - RangeStart));
-footprint_migration_pct(_Offset, _RangeStart, _RangeEnd) ->
-    0.
-
-%% @doc Number of chunks between RangeStart and the given offset.
-footprint_migration_chunks(Offset, RangeStart)
-  when is_integer(Offset), is_integer(RangeStart), Offset > RangeStart ->
-    (Offset - RangeStart) div ?DATA_CHUNK_SIZE;
-footprint_migration_chunks(_Offset, _RangeStart) ->
-    0.
 
 -ifdef(AR_TEST).
 

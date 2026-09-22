@@ -6,12 +6,16 @@
     init_case/2,
     end_case/2,
     with_mocks/2,
+    with_disk_stores/4,
+    start_sync_record/1,
+    add_chunks_to_sync_record/2,
     chunk_samples/2,
     expected_samples/2,
     stop_record/1
 ]).
 -include_lib("arweave/include/ar.hrl").
 -include_lib("common_test/include/ct.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 init_suite(Config) ->
     {ok, Apps} = application:ensure_all_started(arweave_storage),
@@ -101,3 +105,59 @@ chunk_samples(Offset, StoreID) ->
             Offset - ?DATA_CHUNK_SIZE div 3
         ]
     ].
+
+%% Run Fun with the given stores resolving to storage modules under the case's
+%% data dir, so their sync record servers keep a database, covering Range,
+%% plus any extra mocks.
+with_disk_stores(StoreIDs, {RangeStart, RangeEnd} = Range, ExtraMocks, Fun) ->
+    with_mocks(
+        [
+            {arweave_storage_module, [
+                {get_by_id, fun(StoreID) ->
+                    case lists:member(StoreID, StoreIDs) of
+                        true -> {RangeStart, RangeEnd, unpacked};
+                        false -> meck:passthrough([StoreID])
+                    end
+                end},
+                {info, fun(StoreID) ->
+                    case lists:member(StoreID, StoreIDs) of
+                        true ->
+                            #store_info{
+                                id = StoreID,
+                                padded_range = Range,
+                                path = filename:join([
+                                    arweave_config:get([data_dir]),
+                                    "storage_modules",
+                                    atom_to_list(StoreID)
+                                ])
+                            };
+                        false ->
+                            meck:passthrough([StoreID])
+                    end
+                end}
+            ]}
+            | ExtraMocks
+        ],
+        Fun
+    ).
+
+start_sync_record(StoreID) ->
+    arweave_storage_sync_record:start_link(
+        arweave_storage_sync_record:name(StoreID), StoreID
+    ).
+
+%% Record the chunks, given by end offset and packing, as synced in the
+%% store's {ar_data_sync, byte} sync record.
+add_chunks_to_sync_record(Chunks, StoreID) ->
+    lists:foreach(
+        fun({EndOffset, Packing}) ->
+            ok = arweave_storage:add_sync_record(
+                EndOffset,
+                EndOffset - ?DATA_CHUNK_SIZE,
+                Packing,
+                {ar_data_sync, byte},
+                StoreID
+            )
+        end,
+        Chunks
+    ).

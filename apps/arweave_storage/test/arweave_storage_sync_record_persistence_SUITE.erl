@@ -11,7 +11,8 @@ all() -> [
     get_after_add,
     persistence_roundtrip,
     snapshots_take_turns,
-    data_sizes_published_on_load
+    data_sizes_published_on_load,
+    footprint_record_built_by_its_server
 ].
 
 init_per_suite(Config) -> arweave_storage_ct_util:init_suite(Config).
@@ -28,6 +29,7 @@ end_per_testcase(Name, Config) ->
     arweave_storage_ct_util:stop_record(test_sync_record_persist),
     arweave_storage_ct_util:stop_record(test_sync_record_turn),
     arweave_storage_ct_util:stop_record(test_sync_record_sizes),
+    arweave_storage_ct_util:stop_record(test_sync_record_footprint),
     arweave_storage_ct_util:end_case(Name, Config).
 
 %%====================================================================
@@ -269,7 +271,7 @@ snapshots_take_turns(_Config) ->
     StoreID = test_sync_record_turn,
     Record = {test_sync_record_turn_id, byte},
     StateDB = {sync_record, StoreID},
-    with_store_mocks([StoreID], [
+    with_disk_store(StoreID, [
         {arweave_storage_deps, [
             %% Capture the delays the stores schedule instead of running them.
             {apply_after, fun(Delay, _M, _F, _A, _O) ->
@@ -278,7 +280,7 @@ snapshots_take_turns(_Config) ->
             end}
         ]}
     ], fun() ->
-        {ok, PID} = start_record(StoreID),
+        {ok, PID} = arweave_storage_ct_util:start_sync_record(StoreID),
         %% Test profile: snapshots are a second apart and the first one lands
         %% within the second after that.
         Period = 1000,
@@ -308,14 +310,14 @@ snapshots_take_turns(_Config) ->
         %% Cast again with nothing added since the last snapshot: the empty WAL
         %% means no snapshot is written and the next attempt is a full period out.
         Writes = meck:num_calls(
-            arweave_storage_deps, put_database, [StateDB, <<"sync_records">>, '_']
+            arweave_storage_deps, db_put, [StateDB, <<"sync_records">>, '_']
         ),
         gen_server:cast(PID, store_state),
         _ = sys:get_state(PID),
         ?assertEqual(
             Writes,
             meck:num_calls(
-                arweave_storage_deps, put_database,
+                arweave_storage_deps, db_put,
                 [StateDB, <<"sync_records">>, '_']
             )
         ),
@@ -328,15 +330,15 @@ snapshots_take_turns(_Config) ->
 data_sizes_published_on_load(_Config) ->
     StoreID = test_sync_record_sizes,
     Record = {ar_data_sync, byte},
-    with_store_mocks([StoreID], [], fun() ->
-        {ok, PID} = start_record(StoreID),
+    with_disk_store(StoreID, [], fun() ->
+        {ok, PID} = arweave_storage_ct_util:start_sync_record(StoreID),
         ok = arweave_storage_sync_record:add(
             3 * ?DATA_CHUNK_SIZE, 0, unpacked, Record, StoreID
         ),
         %% A graceful stop snapshots the record.
         ok = gen_server:stop(PID),
         ets:delete_all_objects(arweave_storage_data_sizes),
-        {ok, PID2} = start_record(StoreID),
+        {ok, PID2} = arweave_storage_ct_util:start_sync_record(StoreID),
         ?assertMatch(
             [{_, unpacked, 0, Size}] when Size == 3 * ?DATA_CHUNK_SIZE,
             arweave_storage_sync_record:get_data_sizes()
@@ -344,46 +346,58 @@ data_sizes_published_on_load(_Config) ->
         kill(PID2)
     end).
 
+%% @doc The store's own sync record server builds its footprint record, and a
+%% step left over from an overlapping chain - scheduled at a cursor the
+%% record has since moved past - neither walks nor writes, so it cannot undo
+%% the finished record.
+footprint_record_built_by_its_server(_Config) ->
+    StoreID = test_sync_record_footprint,
+    StateDB = {sync_record, StoreID},
+    CursorKey = <<"footprint_record_init_cursor">>,
+    %% Count the database writes, running them as usual.
+    with_disk_store(StoreID, [{arweave_storage_deps, []}], fun() ->
+        {ok, PID} = arweave_storage_ct_util:start_sync_record(StoreID),
+        Chunks = [{N * ?DATA_CHUNK_SIZE, unpacked} || N <- [1, 2, 3]],
+        arweave_storage_ct_util:add_chunks_to_sync_record(Chunks, StoreID),
+        ?assertNot(arweave_storage:is_footprint_record_initialized(StoreID)),
+        ok = arweave_storage:initialize_footprint_record(StoreID),
+        ok = ar_test_await:until(footprint_record_built, fun() ->
+            arweave_storage:is_footprint_record_initialized(StoreID)
+        end),
+        ?assertEqual(
+            length(Chunks),
+            ar_intervals:sum(
+                arweave_storage_sync_record:get(
+                    unpacked, {ar_data_sync, footprint}, StoreID
+                )
+            )
+        ),
+        Writes = meck:num_calls(
+            arweave_storage_deps, db_put, [StateDB, CursorKey, '_']
+        ),
+        %% A step of an older chain, still at the first cursor.
+        gen_server:cast(
+            PID, {footprint_record_initialization_step, start, false}
+        ),
+        _ = sys:get_state(PID),
+        ?assertEqual(
+            Writes,
+            meck:num_calls(
+                arweave_storage_deps, db_put, [StateDB, CursorKey, '_']
+            )
+        ),
+        ?assert(arweave_storage:is_footprint_record_initialized(StoreID)),
+        kill(PID)
+    end).
+
 %%====================================================================
 %% Helpers
 %%====================================================================
 
-%% Run Fun with the given test stores resolving to on-disk modules under the
-%% case's data dir, plus any extra mocks.
-with_store_mocks(StoreIDs, ExtraMocks, Fun) ->
-    arweave_storage_ct_util:with_mocks(
-        [
-            {arweave_storage_module, [
-                {get_by_id, fun(StoreID) ->
-                    case lists:member(StoreID, StoreIDs) of
-                        true -> {0, arweave_constants:partition_size(), unpacked};
-                        false -> meck:passthrough([StoreID])
-                    end
-                end},
-                {info, fun(StoreID) ->
-                    case lists:member(StoreID, StoreIDs) of
-                        true ->
-                            #store_info{
-                                id = StoreID,
-                                path = filename:join([
-                                    arweave_config:get([data_dir]),
-                                    "storage_modules",
-                                    atom_to_list(StoreID)
-                                ])
-                            };
-                        false ->
-                            meck:passthrough([StoreID])
-                    end
-                end}
-            ]}
-            | ExtraMocks
-        ],
-        Fun
-    ).
-
-start_record(StoreID) ->
-    arweave_storage_sync_record:start_link(
-        arweave_storage_sync_record:name(StoreID), StoreID
+%% Run Fun with StoreID as an on-disk module covering the first partition.
+with_disk_store(StoreID, ExtraMocks, Fun) ->
+    arweave_storage_ct_util:with_disk_stores(
+        [StoreID], {0, arweave_constants:partition_size()}, ExtraMocks, Fun
     ).
 
 receive_scheduled(PID) ->

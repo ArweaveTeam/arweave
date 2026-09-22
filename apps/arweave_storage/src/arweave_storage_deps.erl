@@ -2,9 +2,9 @@
 %%% Keeping these calls here makes the remaining extraction boundary explicit.
 -module(arweave_storage_deps).
 -export([
-    open_database/1,
-    get_database/2,
-    put_database/3,
+    db_open/1,
+    db_get/2,
+    db_put/3,
     send_event/2,
     subscribe/1,
     apply_after/5,
@@ -27,13 +27,13 @@
     console/2
 ]).
 
-open_database(Options) ->
+db_open(Options) ->
     ar_kv:open(Options).
 
-get_database(Database, Key) ->
+db_get(Database, Key) ->
     ar_kv:get(Database, Key).
 
-put_database(Database, Key, Value) ->
+db_put(Database, Key, Value) ->
     ar_kv:put(Database, Key, Value).
 
 send_event(Topic, Event) ->

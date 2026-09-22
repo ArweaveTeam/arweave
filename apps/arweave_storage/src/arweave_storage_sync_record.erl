@@ -18,7 +18,8 @@
     get_interval/4,
     get_intersection_size/5,
     get_packings/2,
-    name/1
+    name/1,
+    state_db/1
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -247,6 +248,11 @@ do_is_recorded(Offset, Packing, ID, StoreID) ->
             ar_ets_intervals:is_inside(TID, Offset)
     end.
 
+%% @doc The name of the store's own database, holding its record snapshot,
+%% write-ahead log and footprint-record initialization cursor.
+state_db(StoreID) ->
+    {sync_record, StoreID}.
+
 %% @doc Return the packings the store's record has a table for.
 get_packings(Record, StoreID) ->
     ID = record_id(Record),
@@ -409,7 +415,7 @@ init(StoreID) ->
                     Start div arweave_constants:partition_size()
                 }
         end,
-    StateDB = {sync_record, StoreID},
+    StateDB = state_db(StoreID),
     State = #state{
         state_db = StateDB,
         store_id = StoreID,
@@ -425,7 +431,7 @@ init(StoreID) ->
         undefined ->
             {ok, State};
         _ ->
-            ok = arweave_storage_deps:open_database(#{path => Dir, name => StateDB}),
+            ok = arweave_storage_deps:db_open(#{path => Dir, name => StateDB}),
             {WAL, Sizes} = load_sync_records(StateDB, StoreID),
             publish_data_sizes(Sizes, State),
             %% Spread the stores' first snapshots over a period instead of
@@ -454,6 +460,34 @@ handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
     {reply, ok, State}.
 
+handle_cast(
+    {footprint_record_initialization_step, Cursor, EstimateReported}, State
+) ->
+    #state{state_db = StateDB, store_id = StoreID} = State,
+    case arweave_storage_footprint_record:is_step_current(StateDB, Cursor) of
+        false ->
+            %% A newer chain of steps moved the cursor on, or finished: an
+            %% ar_data_sync restart starts a chain while this one still runs.
+            {noreply, State};
+        true ->
+            {Status, Next, Intervals} =
+                arweave_storage_footprint_record:initialization_walk(
+                    StoreID, Cursor
+                ),
+            {Added, State2} = add_footprint_record_intervals(Intervals, State),
+            ok = arweave_storage_footprint_record:initialization_step_written(
+                StateDB,
+                StoreID,
+                #{
+                    status => Status,
+                    cursor => Cursor,
+                    next => Next,
+                    added => Added,
+                    estimate_reported => EstimateReported
+                }
+            ),
+            {noreply, State2}
+    end;
 handle_cast(store_state, #state{wal = 0} = State) ->
     %% Nothing changed since the last snapshot.
     schedule_store_state(?STORE_SYNC_RECORD_FREQUENCY_MS),
@@ -709,7 +743,7 @@ is_recorded2(Offset, Key, ID, StoreID) ->
 %% the snapshot's data sizes by packing.
 load_sync_records(StateDB, StoreID) ->
     {SyncRecordByID, SyncRecordByIDType} =
-        case arweave_storage_deps:get_database(StateDB, ?SYNC_RECORDS_KEY) of
+        case arweave_storage_deps:db_get(StateDB, ?SYNC_RECORDS_KEY) of
             not_found ->
                 {#{}, #{}};
             {ok, V} ->
@@ -729,7 +763,7 @@ data_sizes(SyncRecordByIDType) ->
 
 replay_write_ahead_log(StateDB, StoreID) ->
     WAL =
-        case arweave_storage_deps:get_database(StateDB, ?WAL_COUNT_KEY) of
+        case arweave_storage_deps:db_get(StateDB, ?WAL_COUNT_KEY) of
             not_found ->
                 0;
             {ok, V} ->
@@ -741,7 +775,7 @@ replay_write_ahead_log(StateDB, StoreID) ->
 replay_write_ahead_log(N, WAL, _StateDB, _StoreID, _Module) when N > WAL ->
     WAL;
 replay_write_ahead_log(N, WAL, StateDB, StoreID, Module) ->
-    case arweave_storage_deps:get_database(StateDB, binary:encode_unsigned(N)) of
+    case arweave_storage_deps:db_get(StateDB, binary:encode_unsigned(N)) of
         not_found ->
             %% The VM crashed after recording the number.
             WAL;
@@ -836,7 +870,7 @@ store_state(State) ->
     #state{state_db = StateDB, store_id = StoreID} = State,
     {SyncRecordByID, SyncRecordByIDType} = read_sync_records_from_ets(StoreID),
     StoreSyncRecords =
-        arweave_storage_deps:put_database(
+        arweave_storage_deps:db_put(
             StateDB,
             ?SYNC_RECORDS_KEY,
             %% Fragmented records can serialize to hundreds of MB. Keep the
@@ -850,7 +884,7 @@ store_state(State) ->
             {error, _} = Error ->
                 Error;
             ok ->
-                arweave_storage_deps:put_database(
+                arweave_storage_deps:db_put(
                     StateDB, ?WAL_COUNT_KEY, binary:encode_unsigned(0)
                 )
         end,
@@ -865,6 +899,30 @@ store_state(State) ->
             publish_data_sizes(data_sizes(SyncRecordByIDType), State),
             {ok, State#state{wal = 0}}
     end.
+
+%% @doc Add the intervals one initialization step walked up, through the same
+%% path as any other add so they reach the write-ahead log. Returns how many
+%% were added, which paces the next step.
+add_footprint_record_intervals(Intervals, State) ->
+    ID = record_id({ar_data_sync, footprint}),
+    lists:foldl(
+        fun({Packing, {End, Start}}, {Added, StateAcc}) ->
+            case do_add(End, Start, Packing, ID, StateAcc) of
+                {ok, StateAcc2} ->
+                    {Added + 1, StateAcc2};
+                {Error, StateAcc2} ->
+                    ?LOG_WARNING([
+                        {event, footprint_record_initialization_add_failed},
+                        {store_id, State#state.store_id},
+                        {offset, End},
+                        {error, io_lib:format("~p", [Error])}
+                    ]),
+                    {Added, StateAcc2}
+            end
+        end,
+        {0, State},
+        Intervals
+    ).
 
 %% @doc Schedule the next snapshot attempt of this store.
 schedule_store_state(Delay) ->
@@ -951,7 +1009,7 @@ update_write_ahead_log(OpParams, StateDB, State) ->
         wal = WAL
     } = State,
     case
-        arweave_storage_deps:put_database(
+        arweave_storage_deps:db_put(
             StateDB, binary:encode_unsigned(WAL + 1), term_to_binary(OpParams)
         )
     of
@@ -959,7 +1017,7 @@ update_write_ahead_log(OpParams, StateDB, State) ->
             {Error, State};
         ok ->
             case
-                arweave_storage_deps:put_database(
+                arweave_storage_deps:db_put(
                     StateDB, ?WAL_COUNT_KEY, binary:encode_unsigned(WAL + 1)
                 )
             of

@@ -4,6 +4,12 @@
     add/3,
     add_async/4,
     delete/2,
+    start_initialization/1,
+    mark_initialized/1,
+    is_step_current/2,
+    initialization_walk/2,
+    initialization_step_written/3,
+    is_initialized/1,
     get_offset/1,
     get_padded_offset_from_footprint_offset/1,
     get_footprint/1,
@@ -22,7 +28,26 @@
 ]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("arweave_sync/include/arweave_sync.hrl").
+
+%% The key of the store's own database holding the footprint offset the
+%% initialization resumes from, or <<"complete">> once it is done.
+-define(INITIALIZATION_CURSOR_KEY, <<"footprint_record_init_cursor">>).
+
+%% The initialization advances in steps. A step walks for at most
+%% ?INITIALIZATION_STEP_BUDGET_MS, which bounds how long the store's sync
+%% record server spends in one message, and then sleeps for at least as long,
+%% so the initialization never takes more than half that server's time. A step
+%% that wrote many intervals sleeps longer still: a store adds no more than
+%% ?INITIALIZATION_ADDS_PER_SECOND intervals per second, the rate at which the
+%% per-chunk initialization of earlier releases fed the global sync record.
+-ifdef(AR_TEST).
+-define(INITIALIZATION_STEP_BUDGET_MS, 20).
+-else.
+-define(INITIALIZATION_STEP_BUDGET_MS, 100).
+-endif.
+-define(INITIALIZATION_ADDS_PER_SECOND, 200).
 
 -moduledoc """
     This module exports functions for maintaining
@@ -63,6 +88,144 @@ add_async(Tag, Offset, Packing, StoreID) ->
         {ar_data_sync, footprint},
         StoreID
     ).
+
+%% @doc Start building the store's footprint record, unless it is built
+%% already.
+start_initialization(StoreID) ->
+    case read_initialization_cursor(state_db(StoreID)) of
+        complete ->
+            ok;
+        Cursor ->
+            {RangeStart, RangeEnd} = store_range(StoreID),
+            ?LOG_INFO([
+                {event, initializing_footprint_record},
+                {store_id, StoreID},
+                {cursor, Cursor},
+                {range_start, RangeStart},
+                {range_end, RangeEnd},
+                {start_pct, initialization_pct(Cursor, StoreID)}
+            ]),
+            %% The console line waits for the first step to show how much
+            %% ground a step covers on this node.
+            schedule_initialization_step(0, StoreID, Cursor, false)
+    end.
+
+%% @doc Whether a step scheduled at Cursor is still the one to take: the
+%% persisted cursor has not moved past it, and the record is not built. Two
+%% chains of steps can overlap when the initialization is started again while
+%% one runs; of steps at the same cursor the first wins, and the rest stop.
+is_step_current(StateDB, Cursor) ->
+    read_initialization_cursor(StateDB) == Cursor.
+
+%% @doc Record that the store's footprint record is built, for a caller that
+%% knows it was built by other means.
+mark_initialized(StoreID) ->
+    write_initialization_cursor(state_db(StoreID), <<"complete">>).
+
+%% @doc Record the outcome of a step whose intervals the caller has written:
+%% persist where the walk stopped, or mark the record built, report the
+%% estimate once and schedule the next step.
+initialization_step_written(StateDB, StoreID, Step) ->
+    #{
+        status := Status,
+        cursor := Cursor,
+        next := Next,
+        added := Added,
+        estimate_reported := EstimateReported
+    } = Step,
+    case Status of
+        complete ->
+            ok = write_initialization_cursor(StateDB, <<"complete">>),
+            ?LOG_INFO([
+                {event, footprint_record_initialized}, {store_id, StoreID}
+            ]),
+            arweave_storage_deps:console(
+                "~nThe storage module ~s finished building its footprint "
+                "index and can now sync data from peers.~n",
+                [StoreID]
+            );
+        continue ->
+            ok = write_initialization_cursor(
+                StateDB, binary:encode_unsigned(Next)
+            ),
+            Delay = next_initialization_step_ms(Added),
+            EstimateReported2 =
+                EstimateReported orelse
+                    report_initialization_estimate(
+                        Cursor, Next, Delay, StoreID
+                    ),
+            schedule_initialization_step(
+                Delay, StoreID, Next, EstimateReported2
+            )
+    end.
+
+%% @doc Whether the store's footprint record has been built from its
+%% {ar_data_sync, byte} one. A store without an on-disk record - the default
+%% module - has nothing to build.
+is_initialized(StoreID) ->
+    case arweave_storage_module:get_by_id(StoreID) of
+        Module when is_atom(Module) ->
+            true;
+        _ ->
+            read_initialization_cursor(state_db(StoreID)) == complete
+    end.
+
+%% @doc Walk one step of the store's {ar_data_sync, byte} record, from Cursor
+%% (a footprint offset, or start) for at most one step's budget, and return
+%% {complete | continue, NextCursor, Intervals}: the {ar_data_sync, footprint}
+%% intervals covering the chunks it found, as [{Packing, {End, Start}}].
+%% Contiguous chunks make a single interval, and a chunk belongs to every
+%% packing it is recorded with except the transitional unpacked_padded. The
+%% caller writes them - only the store's own server can, since they go through
+%% its write-ahead log - and repeating a step is harmless.
+initialization_walk(StoreID, Cursor) ->
+    initialization_walk(
+        StoreID, store_range(StoreID), Cursor, ?INITIALIZATION_STEP_BUDGET_MS
+    ).
+
+initialization_walk(StoreID, {RangeStart, RangeEnd}, start, BudgetMs) ->
+    {First, _} = span(RangeStart, RangeEnd),
+    initialization_walk(StoreID, {RangeStart, RangeEnd}, First, BudgetMs);
+initialization_walk(StoreID, {RangeStart, RangeEnd}, Cursor, BudgetMs) ->
+    Packings = [
+        Packing
+     || Packing <- arweave_storage_sync_record:get_packings(
+            {ar_data_sync, byte}, StoreID
+        ),
+        Packing =/= unpacked_padded
+    ],
+    {_, End} = span(RangeStart, RangeEnd),
+    Ctx = #{
+        range => {RangeStart, RangeEnd},
+        end_offset => End,
+        packings => Packings,
+        store_id => StoreID,
+        deadline => erlang:monotonic_time(millisecond) + BudgetMs
+    },
+    {Next, Runs} = walk_footprints(Cursor, Ctx, #{}),
+    Status =
+        case Next >= End of
+            true -> complete;
+            false -> continue
+        end,
+    {Status, Next, intervals(Runs)}.
+
+%% Flatten the per-packing runs into the intervals to write, oldest first.
+intervals(Runs) ->
+    [
+        {Packing, Run}
+     || {Packing, PackingRuns} <- maps:to_list(Runs),
+        Run <- lists:reverse(PackingRuns)
+    ].
+
+%% @doc Return {First, End}: the start of the first footprint a chunk of the
+%% byte range can map to and the end of the last one.
+span(RangeStart, RangeEnd) ->
+    ChunksPerPartition = get_chunks_per_partition(),
+    FirstPartition = arweave_storage_deps:get_entropy_partition(RangeStart + 1),
+    LastPartition = arweave_storage_deps:get_entropy_partition(RangeEnd),
+    {FirstPartition * ChunksPerPartition,
+        (LastPartition + 1) * ChunksPerPartition}.
 
 %% @doc Get the offset of a chunk in the footprint record.
 get_offset(Offset) ->
@@ -110,6 +273,19 @@ get_next_sector_start(AbsoluteChunkEndOffset) ->
 %% @doc Get the replica 2.9 partition and footprint containing a chunk offset.
 get_location(Offset) ->
     {arweave_storage_deps:get_entropy_partition(Offset), get_footprint(Offset)}.
+
+%% @doc The footprint location of a footprint offset: the
+%% {Partition, Footprint} pair get_location/1 derives from a byte offset,
+%% computed in footprint space. It cannot go through get_location/1: a
+%% partition's entropy covers a few offsets more than the partition has
+%% chunks, those map to chunks of the next partition, and telling them apart
+%% is what comparing the two answers is for.
+get_location_from_footprint_offset(FootprintOffset) ->
+    Start = FootprintOffset - 1,
+    ChunksPerPartition = get_chunks_per_partition(),
+    FootprintSize = arweave_storage_deps:get_footprint_size(),
+    Partition = Start div ChunksPerPartition,
+    {Partition, (Start - Partition * ChunksPerPartition) div FootprintSize}.
 
 %% @doc Get the footprint bucket number of a chunk.
 get_footprint_bucket(Offset) ->
@@ -199,6 +375,196 @@ is_recorded(Offset, StoreID) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+state_db(StoreID) ->
+    arweave_storage_sync_record:state_db(StoreID).
+
+%% @doc The store's byte range, as the sync paths use it.
+store_range(StoreID) ->
+    case arweave_storage:store_info(StoreID) of
+        #store_info{padded_range = Range} -> Range;
+        not_found -> {-1, -1}
+    end.
+
+read_initialization_cursor(StateDB) ->
+    case arweave_storage_deps:db_get(StateDB, ?INITIALIZATION_CURSOR_KEY) of
+        {ok, <<"complete">>} -> complete;
+        {ok, CursorBin} -> binary:decode_unsigned(CursorBin);
+        not_found -> start
+    end.
+
+write_initialization_cursor(StateDB, Value) ->
+    arweave_storage_deps:db_put(
+        StateDB, ?INITIALIZATION_CURSOR_KEY, Value
+    ).
+
+schedule_initialization_step(Delay, StoreID, Cursor, EstimateReported) ->
+    Step = {footprint_record_initialization_step, Cursor, EstimateReported},
+    {ok, _} = arweave_storage_deps:apply_after(
+        Delay,
+        gen_server,
+        cast,
+        [arweave_storage_sync_record:name(StoreID), Step],
+        #{skip_on_shutdown => false}
+    ),
+    ok.
+
+%% @doc How long to wait before the next step: as long as a step may run, and
+%% longer when this one wrote enough intervals to exceed
+%% ?INITIALIZATION_ADDS_PER_SECOND.
+next_initialization_step_ms(Added) ->
+    max(
+        ?INITIALIZATION_STEP_BUDGET_MS,
+        Added * 1000 div ?INITIALIZATION_ADDS_PER_SECOND
+    ).
+
+%% @doc Tell the operator that the module is building its footprint index and
+%% how long it is expected to take, projecting the span left from the ground
+%% the step that just ran covered. Returns whether the estimate was reported;
+%% a step that covered nothing reports nothing and leaves it to the next one.
+report_initialization_estimate(Cursor, NewCursor, Delay, StoreID) ->
+    {RangeStart, RangeEnd} = store_range(StoreID),
+    {First, End} = span(RangeStart, RangeEnd),
+    Covered =
+        NewCursor -
+            case Cursor of
+                start -> First;
+                _ -> Cursor
+            end,
+    case Covered > 0 of
+        false ->
+            false;
+        true ->
+            Steps = (End - NewCursor + Covered - 1) div Covered,
+            RemainingMs = Steps * (?INITIALIZATION_STEP_BUDGET_MS + Delay),
+            Pct = initialization_pct(NewCursor, StoreID),
+            ?LOG_INFO([
+                {event, footprint_record_initialization_estimate},
+                {store_id, StoreID},
+                {percent_migrated, Pct},
+                {estimated_duration_ms, RemainingMs}
+            ]),
+            arweave_storage_deps:console(
+                "~nThe storage module ~s is building its footprint index "
+                "(~B% done at ~s, about ~s to go). It will not sync data "
+                "from peers until this completes; mining and copying data "
+                "from the other local modules are not affected.~n",
+                [
+                    StoreID,
+                    Pct,
+                    arweave_util:utc_timestamp(),
+                    arweave_util:format_duration_ms(RemainingMs)
+                ]
+            ),
+            true
+    end.
+
+%% @doc Percentage (0-100) of the store's footprint span the initialization
+%% cursor has passed.
+initialization_pct(start, _StoreID) ->
+    0;
+initialization_pct(Cursor, StoreID) ->
+    {RangeStart, RangeEnd} = store_range(StoreID),
+    {First, End} = span(RangeStart, RangeEnd),
+    case Cursor > First andalso End > First of
+        true -> min(100, (Cursor - First) * 100 div (End - First));
+        false -> 0
+    end.
+
+%% @doc Walk footprints from Cursor until the step's deadline passes or the
+%% span ends, returning {NextCursor, Runs}: per-packing lists of merged
+%% {End, Start} runs, latest first. The deadline is read after each footprint,
+%% a thousand-odd lookups apart, so the check costs nothing measurable and a
+%% step always covers at least one footprint.
+walk_footprints(Cursor, #{end_offset := End} = Ctx, Runs) when Cursor >= End ->
+    walk_done(Cursor, Ctx, Runs);
+walk_footprints(Cursor, #{deadline := Deadline} = Ctx, Runs) ->
+    {Next, Runs2} = walk_footprint(Cursor, Ctx, Runs),
+    case erlang:monotonic_time(millisecond) >= Deadline of
+        true -> walk_done(Next, Ctx, Runs2);
+        false -> walk_footprints(Next, Ctx, Runs2)
+    end.
+
+%% @doc Take one footprint: collect its recorded offsets, or step over a
+%% partition the {ar_data_sync, byte} record has nothing in. Returns the next
+%% cursor and the runs it extended.
+walk_footprint(Cursor, Ctx, Runs) ->
+    {Partition, Footprint} = get_location_from_footprint_offset(Cursor + 1),
+    case Footprint == 0 andalso is_partition_empty(Partition, Ctx) of
+        true ->
+            %% Skip to the next partition.
+            {(Partition + 1) * get_chunks_per_partition(), Runs};
+        false ->
+            {Start, FootprintEnd} = footprint_range(Partition, Footprint),
+            Runs2 = collect_footprint_runs(Start + 1, FootprintEnd, Ctx, Runs),
+            {FootprintEnd, Runs2}
+    end.
+
+walk_done(Cursor, #{end_offset := End}, Runs) ->
+    {min(Cursor, End), Runs}.
+
+%% @doc Whether the {ar_data_sync, byte} record holds nothing in the
+%% partition, with a chunk of slack either side since a chunk may map to a
+%% neighbouring partition.
+is_partition_empty(Partition, Ctx) ->
+    #{range := {RangeStart, RangeEnd}, store_id := StoreID} = Ctx,
+    PartitionSize = arweave_constants:partition_size(),
+    Start = max(RangeStart, Partition * PartitionSize - ?DATA_CHUNK_SIZE),
+    End = min(RangeEnd, (Partition + 1) * PartitionSize + ?DATA_CHUNK_SIZE),
+    Start >= End orelse
+        arweave_storage_sync_record:get_next_interval(
+            synced, Start, End, any_packing, {ar_data_sync, byte}, StoreID
+        ) == not_found.
+
+%% @doc Look up in the {ar_data_sync, byte} record each footprint offset in
+%% [Offset, FootprintEnd] and extend the packing runs with the recorded ones.
+%% A partition's entropy covers a few more offsets than the partition has
+%% chunks; those map to chunks of the next partition and are skipped.
+collect_footprint_runs(Offset, FootprintEnd, _Ctx, Runs) when
+    Offset > FootprintEnd
+->
+    Runs;
+collect_footprint_runs(Offset, FootprintEnd, Ctx, Runs) ->
+    #{range := {RangeStart, RangeEnd}, packings := Packings} = Ctx,
+    PaddedOffset = get_padded_offset_from_footprint_offset(Offset),
+    {Partition, _} = get_location_from_footprint_offset(Offset),
+    InRange = PaddedOffset > RangeStart andalso PaddedOffset =< RangeEnd,
+    Runs2 =
+        case
+            InRange andalso
+                arweave_storage_deps:get_entropy_partition(PaddedOffset) ==
+                    Partition
+        of
+            false ->
+                Runs;
+            true ->
+                lists:foldl(
+                    fun(Packing, Acc) ->
+                        case is_byte_recorded(PaddedOffset, Packing, Ctx) of
+                            true -> add_run(Packing, Offset, Acc);
+                            false -> Acc
+                        end
+                    end,
+                    Runs,
+                    Packings
+                )
+        end,
+    collect_footprint_runs(Offset + 1, FootprintEnd, Ctx, Runs2).
+
+is_byte_recorded(PaddedOffset, Packing, #{store_id := StoreID}) ->
+    arweave_storage_sync_record:is_recorded(
+        PaddedOffset, Packing, {ar_data_sync, byte}, StoreID
+    ).
+
+%% @doc Record footprint offset Offset for Packing, extending the latest run
+%% when it ends right before it.
+add_run(Packing, Offset, Runs) ->
+    case maps:get(Packing, Runs, []) of
+        [{Offset0, Start} | Rest] when Offset0 == Offset - 1 ->
+            Runs#{Packing => [{Offset, Start} | Rest]};
+        PackingRuns ->
+            Runs#{Packing => [{Offset, Offset - 1} | PackingRuns]}
+    end.
 
 get_chunks_per_partition() ->
     FootprintSize = arweave_storage_deps:get_footprint_size(),
