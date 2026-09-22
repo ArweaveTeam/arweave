@@ -12,7 +12,7 @@
 
 copy_into_module_spanning_partitions_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{arweave_entropy, generate, fun generate_spy/3}],
+        [{arweave_entropy, generate_slice, fun generate_slice_spy/3}],
         fun test_copy_into_module_spanning_partitions/0, ?TEST_NODE_TIMEOUT).
 
 %% A replica.2.9 module starting halfway into partition 0 and ending
@@ -21,7 +21,7 @@ copy_into_module_spanning_partitions_test_() ->
 %% from them through the local copy, including the chunks in partitions 1
 %% and 2 that lie past its start partition. The sources are packed for the
 %% same address, so the copy stores their chunks as they are: it never
-%% unpacks one, which would cost an entropy per sub-chunk.
+%% unpacks one, which would cost an entropy slice per sub-chunk.
 test_copy_into_module_spanning_partitions() ->
     Addr = ar_test_node:generate_address(main),
     P = arweave_constants:partition_size(),
@@ -68,7 +68,8 @@ test_copy_into_module_spanning_partitions() ->
     ok = ar_test_await:disk_pool_chunk_count(fun(Count) -> Count == 0 end),
     Target = {P div 2, 5 * P div 2, Packing},
     #store_info{id = TargetID} = arweave_storage:store_info(Target),
-    EntropyCallsBeforeCopy = meck:num_calls(arweave_entropy, generate, 3),
+    EntropyCallsBeforeCopy =
+        meck:num_calls(arweave_entropy, generate_slice, 3),
     ok = arweave_config:internal_force_config(#{
         [storage_modules] => Sources ++ [Target]
     }),
@@ -83,8 +84,8 @@ test_copy_into_module_spanning_partitions() ->
         end,
         Inside),
     ?assertEqual(EntropyCallsBeforeCopy,
-        meck:num_calls(arweave_entropy, generate, 3)).
+        meck:num_calls(arweave_entropy, generate_slice, 3)).
 
 %% Count sub-chunk entropy generation without changing its behaviour.
-generate_spy(RewardAddr, Offset, SubChunkStart) ->
+generate_slice_spy(RewardAddr, Offset, SubChunkStart) ->
     meck:passthrough([RewardAddr, Offset, SubChunkStart]).

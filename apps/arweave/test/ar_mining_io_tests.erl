@@ -11,20 +11,27 @@ chunks_read(_Worker, WhichChunk, Candidate, RangeStart, ChunkOffsets) ->
     ets:insert(?MODULE, {WhichChunk, Candidate, RangeStart, ChunkOffsets}).
 
 setup_all() ->
+    %% Mock before the node starts: every storage module is identified by
+    %% its range in partitions, so shrinking the partition size under a
+    %% running node leaves its storage processes under IDs that no longer
+    %% resolve, and the first write they still owe crashes them.
+    {Setup, Cleanup} = ar_test_node:mock_all_nodes([
+        {ar_mining_worker, chunks_read, fun chunks_read/5},
+        {arweave_constants, partition_size, fun() -> 8 * 262144 end}
+    ]),
+    Functions = Setup(),
     [B0] = ar_weave:init([], 1, ?WEAVE_SIZE),
     RewardAddr = ar_test_node:generate_address(main),
     StorageModules =
         [{N * 8 * 262144, (N + 1) * 8 * 262144, {spora_2_6, RewardAddr}}
             || N <- lists:seq(0, 8)],
     ar_test_node:start(B0, RewardAddr, #{[storage_modules] => StorageModules}),
-    {Setup, Cleanup} = ar_test_node:mock_all_nodes([
-        {ar_mining_worker, chunks_read, fun chunks_read/5},
-        {arweave_constants, partition_size, fun() -> 8 * 262144 end}
-    ]),
-    Functions = Setup(),
     {Cleanup, Functions}.
 
 cleanup_all({Cleanup, Functions}) ->
+    %% Stop the node while the partition size is still the one it started
+    %% with, for the same reason the mock goes in first.
+    ar_test_node:stop(),
     Cleanup(Functions).
 
 setup_one() ->
