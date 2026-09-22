@@ -5,35 +5,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_sync/include/arweave_sync.hrl").
 -include_lib("arweave_sync/include/arweave_sync_discovery.hrl").
--import(arweave_sync_discovery, [
-    add_peer/2,
-    cached_peer_ranges/5,
-    chunk_interval_lookup/3,
-    compute_job_load/1,
-    delete_expired_sync_buckets/0,
-    do_remove_peer/3,
-    enqueue_job/2,
-    enqueue_sync_bucket_jobs/1,
-    fetch_chunk_intervals/3,
-    finish_job/2,
-    get_chunk_intervals/5,
-    get_peers_for_offset/1,
-    handle_cast/2,
-    inflight_peer_store_mode_counts/1,
-    interval_location/2,
-    job_exists/2,
-    mark_chunk_intervals_stale_on_share_change/4,
-    refresh_chunk_intervals/1,
-    remove_jobs/2,
-    reset_all_caches/0,
-    row_key/4,
-    start_jobs/1,
-    store_row/5,
-    sync_bucket/2,
-    sync_bucket_job/1,
-    take_next_job/4,
-    warm_peer_ranges/3
-]).
 
 suite() -> [{timetrap, {seconds, 30}}].
 
@@ -87,7 +58,7 @@ end_per_suite(Config) ->
 
 init_per_testcase(_Case, Config) ->
     arweave_sync_deps:override_module(?MODULE),
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     {ok, PID} = arweave_sync_discovery:start_link(),
     [{discovery, PID} | Config].
 
@@ -105,10 +76,10 @@ enqueue_job_deduplicates_pending_and_inflight(_Config) ->
     Job = chunk_interval_job_for_test(peer, store, 0),
     TrackedPeers = sets:from_list([Job#discovery_job.peer]),
     State = #state{tracked_peers = TrackedPeers},
-    State2 = enqueue_job(Job, State),
+    State2 = arweave_sync_discovery:enqueue_job(Job, State),
     PendingJobs = maps:get(chunk_interval, State2#state.jobs),
     ?assertEqual(1, map_size(PendingJobs#discovery_jobs.pending)),
-    State3 = enqueue_job(Job, State2),
+    State3 = arweave_sync_discovery:enqueue_job(Job, State2),
     RefreshedJobs = maps:get(chunk_interval, State3#state.jobs),
     ?assertEqual(1, map_size(RefreshedJobs#discovery_jobs.pending)),
     RefreshedJob = maps:get(
@@ -116,11 +87,11 @@ enqueue_job_deduplicates_pending_and_inflight(_Config) ->
         RefreshedJobs#discovery_jobs.pending
     ),
     ?assertNotEqual(undefined, RefreshedJob#discovery_job.requested_at),
-    {ok, RefreshedJob, TakenJobs} = take_next_job(
+    {ok, RefreshedJob, TakenJobs} = arweave_sync_discovery:take_next_job(
         RefreshedJobs,
         #{},
         #{},
-        inflight_peer_store_mode_counts(RefreshedJobs)
+        arweave_sync_discovery:inflight_peer_store_mode_counts(RefreshedJobs)
     ),
     ?assertEqual(0, map_size(TakenJobs#discovery_jobs.pending)),
     InflightJob = RefreshedJob#discovery_job{pid = job_pid},
@@ -132,13 +103,13 @@ enqueue_job_deduplicates_pending_and_inflight(_Config) ->
             chunk_interval := InflightJobs
         }
     },
-    ?assertEqual(State4, enqueue_job(Job, State4)).
+    ?assertEqual(State4, arweave_sync_discovery:enqueue_job(Job, State4)).
 
 %% @doc Discovery ignores metadata jobs for peers outside the tracked set.
 enqueue_job_rejects_untracked_peer(_Config) ->
     Job = chunk_interval_job_for_test(peer, store, 0),
     State = #state{},
-    ?assertEqual(State, enqueue_job(Job, State)).
+    ?assertEqual(State, arweave_sync_discovery:enqueue_job(Job, State)).
 
 %% @doc Distinct readahead locations retain independent pending metadata jobs.
 enqueue_job_keeps_distinct_pending_locations(_Config) ->
@@ -156,14 +127,14 @@ enqueue_job_keeps_distinct_pending_locations(_Config) ->
             chunk_interval := #discovery_jobs{}
         }
     },
-    State3 = enqueue_job(Later, State2),
-    State4 = enqueue_job(Earlier, State3),
-    State5 = enqueue_job(Latest, State4),
+    State3 = arweave_sync_discovery:enqueue_job(Later, State2),
+    State4 = arweave_sync_discovery:enqueue_job(Earlier, State3),
+    State5 = arweave_sync_discovery:enqueue_job(Latest, State4),
     Jobs = maps:get(chunk_interval, State5#state.jobs),
     ?assertEqual(3, map_size(Jobs#discovery_jobs.pending)),
-    ?assert(job_exists(Earlier#discovery_job.key, State5)),
-    ?assert(job_exists(Later#discovery_job.key, State5)),
-    ?assert(job_exists(Latest#discovery_job.key, State5)).
+    ?assert(arweave_sync_discovery:job_exists(Earlier#discovery_job.key, State5)),
+    ?assert(arweave_sync_discovery:job_exists(Later#discovery_job.key, State5)),
+    ?assert(arweave_sync_discovery:job_exists(Latest#discovery_job.key, State5)).
 
 %% @doc New jobs are rejected once both global capacity and the store guarantee
 %% are exhausted.
@@ -201,7 +172,7 @@ enqueue_job_discards_when_pending_limit_reached(_Config) ->
     FullStoreState = lists:foldl(
         fun arweave_sync_discovery:enqueue_job/2, State2, Existing
     ),
-    ?assertEqual(FullStoreState, enqueue_job(Incoming, FullStoreState)).
+    ?assertEqual(FullStoreState, arweave_sync_discovery:enqueue_job(Incoming, FullStoreState)).
 
 %% @doc A late store receives its guaranteed queue capacity without evicting
 %% existing work.
@@ -237,7 +208,7 @@ enqueue_job_guarantees_late_store_without_eviction(_Config) ->
             chunk_interval := ChunkIntervalJobs
         }
     },
-    FullState = enqueue_job(Existing, State2),
+    FullState = arweave_sync_discovery:enqueue_job(Existing, State2),
     GuaranteedState = lists:foldl(
         fun arweave_sync_discovery:enqueue_job/2, FullState, Guaranteed
     ),
@@ -256,7 +227,7 @@ enqueue_job_guarantees_late_store_without_eviction(_Config) ->
     ),
     %% Once both the global limit and store guarantee are full, another job is
     %% dropped without moving any existing work.
-    ?assertEqual(GuaranteedState, enqueue_job(Extra, GuaranteedState)).
+    ?assertEqual(GuaranteedState, arweave_sync_discovery:enqueue_job(Extra, GuaranteedState)).
 
 %% @doc A store can use spare global queue capacity after exhausting its
 %% guaranteed share.
@@ -295,7 +266,7 @@ enqueue_job_uses_global_capacity_after_store_guarantee(_Config) ->
     State3 = lists:foldl(
         fun arweave_sync_discovery:enqueue_job/2, State2, Existing
     ),
-    State4 = enqueue_job(Incoming, State3),
+    State4 = arweave_sync_discovery:enqueue_job(Incoming, State3),
     Jobs = maps:get(chunk_interval, State3#state.jobs),
     ?assertEqual(
         ?MIN_PENDING_CHUNK_INTERVAL_JOBS_PER_STORE,
@@ -329,7 +300,7 @@ finish_job_updates_matching_kind(_Config) ->
             chunk_interval := ChunkIntervalJobs
         }
     },
-    State2 = finish_job(self(), State),
+    State2 = arweave_sync_discovery:finish_job(self(), State),
     ?assertEqual(
         SyncBucketJobs, maps:get(sync_bucket, State2#state.jobs)
     ),
@@ -342,20 +313,20 @@ finish_job_updates_matching_kind(_Config) ->
 %% additions.
 add_peer_enqueues_one_sync_bucket_job(_Config) ->
     Peer = peer,
-    State = add_peer(Peer, #state{}),
+    State = arweave_sync_discovery:add_peer(Peer, #state{}),
     Jobs = maps:get(sync_bucket, State#state.jobs),
     ?assert(sets:is_element(Peer, State#state.tracked_peers)),
     ?assertEqual(1, map_size(Jobs#discovery_jobs.pending)),
-    ?assert(job_exists({sync_bucket, Peer}, State)),
+    ?assert(arweave_sync_discovery:job_exists({sync_bucket, Peer}, State)),
     %% Re-collecting an already tracked peer must not duplicate its job.
-    ?assertEqual(State, add_peer(Peer, State)).
+    ?assertEqual(State, arweave_sync_discovery:add_peer(Peer, State)).
 
 %% @doc Bucket refreshes preserve inflight jobs and enqueue only peers without
 %% active requests.
 enqueue_sync_bucket_jobs_deduplicates_active_peers(_Config) ->
     Peer1 = peer1,
     Peer2 = peer2,
-    Job1 = (sync_bucket_job(Peer1))#discovery_job{pid = job_pid},
+    Job1 = (arweave_sync_discovery:sync_bucket_job(Peer1))#discovery_job{pid = job_pid},
     State0 = #state{tracked_peers = sets:from_list([Peer1, Peer2])},
     State = State0#state{
         jobs = (State0#state.jobs)#{
@@ -364,7 +335,7 @@ enqueue_sync_bucket_jobs_deduplicates_active_peers(_Config) ->
             }
         }
     },
-    State2 = enqueue_sync_bucket_jobs(State),
+    State2 = arweave_sync_discovery:enqueue_sync_bucket_jobs(State),
     Jobs = maps:get(sync_bucket, State2#state.jobs),
     ?assertEqual(
         #{Job1#discovery_job.key => Job1},
@@ -372,7 +343,7 @@ enqueue_sync_bucket_jobs_deduplicates_active_peers(_Config) ->
     ),
     ?assertEqual(
         #{
-            {sync_bucket, Peer2} => sync_bucket_job(Peer2)
+            {sync_bucket, Peer2} => arweave_sync_discovery:sync_bucket_job(Peer2)
         },
         Jobs#discovery_jobs.pending
     ).
@@ -405,7 +376,7 @@ remove_jobs_keeps_other_peers(_Config) ->
             RemovedInflightJob2#discovery_job.key => RemovedInflightJob2
         }
     },
-    Jobs2 = remove_jobs(RemovedPeer, Jobs),
+    Jobs2 = arweave_sync_discovery:remove_jobs(RemovedPeer, Jobs),
     State0 = #state{},
     State = State0#state{
         jobs = (State0#state.jobs)#{
@@ -413,49 +384,49 @@ remove_jobs_keeps_other_peers(_Config) ->
         }
     },
     ?assertNot(is_process_alive(RemovedJobPID)),
-    ?assertNot(job_exists(RemovedPendingJob#discovery_job.key, State)),
-    ?assertNot(job_exists(RemovedInflightJob2#discovery_job.key, State)),
-    ?assert(job_exists(KeptPendingJob#discovery_job.key, State)).
+    ?assertNot(arweave_sync_discovery:job_exists(RemovedPendingJob#discovery_job.key, State)),
+    ?assertNot(arweave_sync_discovery:job_exists(RemovedInflightJob2#discovery_job.key, State)),
+    ?assert(arweave_sync_discovery:job_exists(KeptPendingJob#discovery_job.key, State)).
 
 %% @doc Late results from a removed peer cannot repopulate its cleared metadata
 %% cache.
 removed_peer_job_results_are_ignored(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 1, 1984},
     Offset = 0,
     Intervals = ar_intervals:from_list([{?DATA_CHUNK_SIZE, 0}]),
-    TrackedState = add_peer(Peer, #state{}),
-    _ = handle_cast(
+    TrackedState = arweave_sync_discovery:add_peer(Peer, #state{}),
+    _ = arweave_sync_discovery:handle_cast(
         {job_result, Peer,
             {chunk_intervals, ?DEFAULT_MODULE, Offset, byte, {ok, Intervals}}},
         TrackedState
     ),
-    ?assertEqual({hit, Intervals}, chunk_interval_lookup(byte, Peer, Offset)),
-    store_row(sync_bucket, byte, 0, Peer, 1.0),
+    ?assertEqual({hit, Intervals}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, Offset)),
+    arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 1.0),
     {noreply, RemovedState} =
-        do_remove_peer(Peer, test, TrackedState),
-    ?assertEqual(miss, chunk_interval_lookup(byte, Peer, Offset)),
+        arweave_sync_discovery:do_remove_peer(Peer, test, TrackedState),
+    ?assertEqual(miss, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, Offset)),
     ?assertNot(
         ets:member(
             ?SYNC_BUCKET_CACHE_TABLE,
-            row_key(sync_bucket, byte, 0, Peer)
+            arweave_sync_discovery:sync_bucket_key(byte, 0, Peer)
         )
     ),
-    _ = handle_cast(
+    _ = arweave_sync_discovery:handle_cast(
         {job_result, Peer,
             {chunk_intervals, test_store, Offset, byte, {ok, Intervals}}},
         RemovedState
     ),
-    ?assertEqual(miss, chunk_interval_lookup(byte, Peer, Offset)),
+    ?assertEqual(miss, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, Offset)),
     SyncBuckets = ar_sync_buckets:from_intervals(Intervals),
-    _ = handle_cast(
+    _ = arweave_sync_discovery:handle_cast(
         {job_result, Peer, {sync_buckets, byte, SyncBuckets}},
         RemovedState
     ),
     ?assertNot(
         ets:member(
             ?SYNC_BUCKET_CACHE_TABLE,
-            row_key(sync_bucket, byte, 0, Peer)
+            arweave_sync_discovery:sync_bucket_key(byte, 0, Peer)
         )
     ).
 
@@ -481,14 +452,14 @@ take_next_job_prefers_less_loaded_peer(_Config) ->
                 Inflight3#discovery_job{pid = self()}
         }
     },
-    {PeerLoad, StoreLoad} = compute_job_load(Jobs),
+    {PeerLoad, StoreLoad} = arweave_sync_discovery:compute_job_load(Jobs),
     ?assertEqual(#{p1 => 2, p2 => 1}, PeerLoad),
     ?assertEqual(#{s1 => 2, s2 => 1}, StoreLoad),
-    {ok, Selected, _Jobs2} = take_next_job(
+    {ok, Selected, _Jobs2} = arweave_sync_discovery:take_next_job(
         Jobs,
         PeerLoad,
         StoreLoad,
-        inflight_peer_store_mode_counts(Jobs)
+        arweave_sync_discovery:inflight_peer_store_mode_counts(Jobs)
     ),
     ?assertEqual(p2, Selected#discovery_job.peer).
 
@@ -509,8 +480,8 @@ take_next_job_limits_byte_peer_store_mode(_Config) ->
                 Inflight#discovery_job{pid = self()}
         }
     },
-    {PeerLoad, StoreLoad} = compute_job_load(Jobs),
-    Counts = inflight_peer_store_mode_counts(Jobs),
+    {PeerLoad, StoreLoad} = arweave_sync_discovery:compute_job_load(Jobs),
+    Counts = arweave_sync_discovery:inflight_peer_store_mode_counts(Jobs),
     SameCombinationJobs = Jobs#discovery_jobs{
         pending = #{
             SamePendingKey#discovery_job.key => SamePendingKey
@@ -518,11 +489,11 @@ take_next_job_limits_byte_peer_store_mode(_Config) ->
     },
     ?assertEqual(
         none,
-        take_next_job(
+        arweave_sync_discovery:take_next_job(
             SameCombinationJobs, PeerLoad, StoreLoad, Counts
         )
     ),
-    {ok, Selected, Jobs2} = take_next_job(
+    {ok, Selected, Jobs2} = arweave_sync_discovery:take_next_job(
         Jobs, PeerLoad, StoreLoad, Counts
     ),
     ?assertEqual(store2, Selected#discovery_job.store_id),
@@ -549,26 +520,26 @@ take_next_job_allows_bounded_footprint_concurrency(_Config) ->
         pending = #{Pending#discovery_job.key => Pending},
         inflight = Inflight
     },
-    {PeerLoad, StoreLoad} = compute_job_load(FullJobs),
+    {PeerLoad, StoreLoad} = arweave_sync_discovery:compute_job_load(FullJobs),
     ?assertEqual(
         none,
-        take_next_job(
+        arweave_sync_discovery:take_next_job(
             FullJobs,
             PeerLoad,
             StoreLoad,
-            inflight_peer_store_mode_counts(FullJobs)
+            arweave_sync_discovery:inflight_peer_store_mode_counts(FullJobs)
         )
     ),
     [Released | _] = InflightJobs,
     JobsWithCapacity = FullJobs#discovery_jobs{
         inflight = maps:remove(Released#discovery_job.key, Inflight)
     },
-    {PeerLoad2, StoreLoad2} = compute_job_load(JobsWithCapacity),
-    {ok, Selected, _Jobs2} = take_next_job(
+    {PeerLoad2, StoreLoad2} = arweave_sync_discovery:compute_job_load(JobsWithCapacity),
+    {ok, Selected, _Jobs2} = arweave_sync_discovery:take_next_job(
         JobsWithCapacity,
         PeerLoad2,
         StoreLoad2,
-        inflight_peer_store_mode_counts(JobsWithCapacity)
+        arweave_sync_discovery:inflight_peer_store_mode_counts(JobsWithCapacity)
     ),
     ?assertEqual(Pending#discovery_job.key, Selected#discovery_job.key).
 
@@ -584,7 +555,7 @@ take_next_job_prefers_recently_requested_location(_Config) ->
             New#discovery_job.key => New
         }
     },
-    {ok, Selected, _Jobs2} = take_next_job(Jobs, #{}, #{}, #{}),
+    {ok, Selected, _Jobs2} = arweave_sync_discovery:take_next_job(Jobs, #{}, #{}, #{}),
     %% Equal-age readahead keeps the earlier queue location first.
     ?assertEqual(Old#discovery_job.key, Selected#discovery_job.key),
     TouchedNew = New#discovery_job{requested_at = 1},
@@ -594,7 +565,7 @@ take_next_job_prefers_recently_requested_location(_Config) ->
             TouchedNew#discovery_job.key => TouchedNew
         }
     },
-    {ok, Selected2, _Jobs3} = take_next_job(
+    {ok, Selected2, _Jobs3} = arweave_sync_discovery:take_next_job(
         TouchedJobs, #{}, #{}, #{}
     ),
     %% Re-requesting the later location makes it the active frontier demand.
@@ -631,23 +602,23 @@ start_jobs_respects_inflight_limit(_Config) ->
         inflight = Inflight,
         pending = #{PendingJob#discovery_job.key => PendingJob}
     },
-    ?assertEqual(Jobs, start_jobs(Jobs)).
+    ?assertEqual(Jobs, arweave_sync_discovery:start_jobs(Jobs)).
 
 %% @doc Peer lookup combines byte and footprint bucket advertisements for the
 %% requested offset.
 get_peers_for_offset_unions_sync_bucket_sources(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Offset = ?DATA_CHUNK_SIZE,
     BytePeer = {10, 0, 0, 4, 1984},
     FootprintPeer = {10, 0, 0, 5, 1984},
-    store_row(
+    arweave_sync_discovery:store_row(
         sync_bucket,
         byte,
         Offset div ?NETWORK_DATA_BUCKET_SIZE,
         BytePeer,
         1.0
     ),
-    store_row(
+    arweave_sync_discovery:store_row(
         sync_bucket,
         footprint,
         arweave_storage:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE),
@@ -656,7 +627,7 @@ get_peers_for_offset_unions_sync_bucket_sources(_Config) ->
     ),
     ?assertEqual(
         lists:sort([BytePeer, FootprintPeer]),
-        lists:sort(get_peers_for_offset(Offset))
+        lists:sort(arweave_sync_discovery:get_peers_for_offset(Offset))
     ).
 
 %% @doc Cached range lookup preserves both byte and footprint sources for the
@@ -669,7 +640,7 @@ cached_peer_ranges_includes_byte_and_footprint_ranges(_Config) ->
             end}
         ],
         fun() ->
-            reset_all_caches(),
+            arweave_sync_discovery:reset_all_caches(),
             Peer = {10, 0, 0, 6, 1984},
             Offset = ?DATA_CHUNK_SIZE,
             RangeStart = 0,
@@ -686,14 +657,14 @@ cached_peer_ranges_includes_byte_and_footprint_ranges(_Config) ->
                 partition = Partition,
                 footprint = Footprint
             },
-            store_row(
+            arweave_sync_discovery:store_row(
                 sync_bucket,
                 byte,
                 Offset div ?NETWORK_DATA_BUCKET_SIZE,
                 Peer,
                 1.0
             ),
-            store_row(
+            arweave_sync_discovery:store_row(
                 sync_bucket,
                 footprint,
                 arweave_storage:get_footprint_bucket(
@@ -702,8 +673,8 @@ cached_peer_ranges_includes_byte_and_footprint_ranges(_Config) ->
                 Peer,
                 1.0
             ),
-            store_row(chunk_interval, byte, 0, Peer, ByteIntervals),
-            store_row(
+            arweave_sync_discovery:store_row(chunk_interval, byte, 0, Peer, ByteIntervals),
+            arweave_sync_discovery:store_row(
                 chunk_interval, footprint, Offset, Peer, FootprintIntervals
             ),
             ExpectedFootprintIntervals =
@@ -730,7 +701,7 @@ cached_peer_ranges_includes_byte_and_footprint_ranges(_Config) ->
                     ],
                     ok
                 },
-                cached_peer_ranges(
+                arweave_sync_discovery:cached_peer_ranges(
                     test_store, [Peer], Offset, RangeStart, RangeEnd
                 )
             )
@@ -739,16 +710,16 @@ cached_peer_ranges_includes_byte_and_footprint_ranges(_Config) ->
 
 %% @doc Cached byte metadata is clipped to the requested range.
 get_chunk_intervals_limits_byte_metadata_to_requested_range(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 1, 1984},
     Chunk = ?DATA_CHUNK_SIZE,
     %% The cached range spans four chunks while the query selects its middle two.
     Intervals = ar_intervals:from_list([{4 * Chunk, 0}]),
     Expected = ar_intervals:from_list([{3 * Chunk, Chunk}]),
-    store_row(chunk_interval, byte, Chunk, Peer, Intervals),
+    arweave_sync_discovery:store_row(chunk_interval, byte, Chunk, Peer, Intervals),
     ?assertEqual(
         {ok, Expected},
-        get_chunk_intervals(
+        arweave_sync_discovery:get_chunk_intervals(
             byte, Peer, Chunk, Chunk, 3 * Chunk
         )
     ).
@@ -756,24 +727,24 @@ get_chunk_intervals_limits_byte_metadata_to_requested_range(_Config) ->
 %% @doc A peer with no relevant coarse advertisement does not create a metadata
 %% cache miss.
 irrelevant_peer_has_no_cache_miss_without_detail_metadata(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 7, 1984},
     ?assertEqual(
         {[], ok},
-        cached_peer_ranges(
+        arweave_sync_discovery:cached_peer_ranges(
             ?DEFAULT_MODULE, [Peer], ?DATA_CHUNK_SIZE, 0, ?DATA_CHUNK_SIZE
         )
     ).
 
 %% @doc A cached empty interval set is a successful lookup, not a cache miss.
 cached_empty_metadata_is_ok(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 7, 1984},
-    store_row(sync_bucket, byte, 0, Peer, 1.0),
-    store_row(chunk_interval, byte, 0, Peer, ar_intervals:new()),
+    arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 1.0),
+    arweave_sync_discovery:store_row(chunk_interval, byte, 0, Peer, ar_intervals:new()),
     ?assertEqual(
         {[], ok},
-        cached_peer_ranges(
+        arweave_sync_discovery:cached_peer_ranges(
             ?DEFAULT_MODULE, [Peer], 0, 0, ?DATA_CHUNK_SIZE
         )
     ).
@@ -781,15 +752,15 @@ cached_empty_metadata_is_ok(_Config) ->
 %% @doc Only explicit warming requests metadata; cached reads do not enqueue
 %% discovery work.
 warming_schedules_miss_but_cached_read_has_no_side_effect(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 8, 1984},
-    store_row(sync_bucket, byte, 0, Peer, 1.0),
+    arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 1.0),
     DiscoveryPid = whereis(arweave_sync_discovery),
     1 = erlang:trace(DiscoveryPid, true, ['receive']),
     try
         ?assertEqual(
             {[], cache_miss},
-            cached_peer_ranges(
+            arweave_sync_discovery:cached_peer_ranges(
                 ?DEFAULT_MODULE, [Peer], 0, 0, ?DATA_CHUNK_SIZE
             )
         ),
@@ -803,7 +774,7 @@ warming_schedules_miss_but_cached_read_has_no_side_effect(_Config) ->
         end,
         ?assertEqual(
             ok,
-            warm_peer_ranges(?DEFAULT_MODULE, [Peer], 0)
+            arweave_sync_discovery:warm_peer_ranges(?DEFAULT_MODULE, [Peer], 0)
         ),
         RefreshRequest =
             receive
@@ -832,7 +803,7 @@ warming_calls_are_backpressured(_Config) ->
         spawn_monitor(fun() ->
             lists:foreach(
                 fun(_) ->
-                    ok = warm_peer_ranges(test_store, [], 0)
+                    ok = arweave_sync_discovery:warm_peer_ranges(test_store, [], 0)
                 end,
                 lists:seq(1, RequestsPerCaller)
             )
@@ -862,15 +833,15 @@ warming_calls_are_backpressured(_Config) ->
 %% @doc An aged row is served as {stale, Intervals}: the data is still used while the
 %% demand path requests a chunk interval job. A fresh row stays a plain hit.
 stale_interval_rows_remain_usable(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 1, 1984},
     RangeEnd = ?DATA_CHUNK_SIZE,
     Intervals = ar_intervals:from_list([{RangeEnd, 0}]),
-    ByteKey = {byte, 0, Peer},
-    store_row(chunk_interval, byte, 0, Peer, Intervals),
+    ByteKey = arweave_sync_discovery:chunk_interval_key(byte, Peer, 0),
+    arweave_sync_discovery:store_row(chunk_interval, byte, 0, Peer, Intervals),
     ?assertEqual(
         {ok, Intervals},
-        get_chunk_intervals(byte, Peer, 0, 0, RangeEnd)
+        arweave_sync_discovery:get_chunk_intervals(byte, Peer, 0, 0, RangeEnd)
     ),
     StaleMs =
         arweave_sync_test_deps:monotonic_ms() -
@@ -878,10 +849,10 @@ stale_interval_rows_remain_usable(_Config) ->
     ets:insert(?CHUNK_INTERVAL_CACHE_TABLE, {ByteKey, Intervals, StaleMs}),
     ?assertEqual(
         {stale, Intervals},
-        get_chunk_intervals(byte, Peer, 0, 0, RangeEnd)
+        arweave_sync_discovery:get_chunk_intervals(byte, Peer, 0, 0, RangeEnd)
     ),
     %% A stale byte row remains usable without making the cached read impure.
-    store_row(sync_bucket, byte, 0, Peer, 1.0),
+    arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 1.0),
     ?assertEqual(
         {
             [
@@ -895,7 +866,7 @@ stale_interval_rows_remain_usable(_Config) ->
             ],
             ok
         },
-        cached_peer_ranges(?DEFAULT_MODULE, [Peer], 0, 0, RangeEnd)
+        arweave_sync_discovery:cached_peer_ranges(?DEFAULT_MODULE, [Peer], 0, 0, RangeEnd)
     ),
     %% Footprint rows age against the same safety floor.
     FootprintOffset = 0,
@@ -904,8 +875,8 @@ stale_interval_rows_remain_usable(_Config) ->
         arweave_storage:footprint_intervals_to_byte_intervals(
             FootprintIntervals
         ),
-    FpKey = row_key(chunk_interval, footprint, FootprintOffset, Peer),
-    store_row(
+    FpKey = arweave_sync_discovery:chunk_interval_key(footprint, Peer, FootprintOffset),
+    arweave_sync_discovery:store_row(
         chunk_interval,
         footprint,
         FootprintOffset,
@@ -914,7 +885,7 @@ stale_interval_rows_remain_usable(_Config) ->
     ),
     ?assertEqual(
         {ok, ExpectedFootprintIntervals},
-        get_chunk_intervals(
+        arweave_sync_discovery:get_chunk_intervals(
             footprint, Peer, FootprintOffset, 0, RangeEnd
         )
     ),
@@ -927,28 +898,28 @@ stale_interval_rows_remain_usable(_Config) ->
     ),
     ?assertEqual(
         {stale, ExpectedFootprintIntervals},
-        get_chunk_intervals(
+        arweave_sync_discovery:get_chunk_intervals(
             footprint, Peer, FootprintOffset, 0, RangeEnd
         )
     ).
 
 %% @doc Warming stale metadata sends a refresh request to discovery.
 warming_stale_metadata_requests_refresh(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 9, 1984},
     Intervals = ar_intervals:from_list([{?DATA_CHUNK_SIZE, 0}]),
     StaleMs =
         arweave_sync_test_deps:monotonic_ms() - ?CHUNK_INTERVAL_CACHE_TTL_MS -
             1,
-    store_row(sync_bucket, byte, 0, Peer, 1.0),
+    arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 1.0),
     ets:insert(
         ?CHUNK_INTERVAL_CACHE_TABLE,
-        {row_key(chunk_interval, byte, 0, Peer), Intervals, StaleMs}
+        {arweave_sync_discovery:chunk_interval_key(byte, Peer, 0), Intervals, StaleMs}
     ),
     DiscoveryPid = whereis(arweave_sync_discovery),
     1 = erlang:trace(DiscoveryPid, true, ['receive']),
     try
-        ?assertEqual(ok, warm_peer_ranges(?DEFAULT_MODULE, [Peer], 0)),
+        ?assertEqual(ok, arweave_sync_discovery:warm_peer_ranges(?DEFAULT_MODULE, [Peer], 0)),
         receive
             {trace, DiscoveryPid, 'receive',
                 {'$gen_call', _,
@@ -962,32 +933,47 @@ warming_stale_metadata_requests_refresh(_Config) ->
     end.
 
 %% @doc A changed byte sync-bucket share marks the covered chunk intervals stale.
-%% Unchanged shares and chunk intervals in other sync buckets remain fresh.
+%% Unchanged shares, chunk intervals in other sync buckets, and other peers'
+%% rows in the same bucket remain fresh.
 byte_share_change_marks_chunk_intervals_stale(_Config) ->
-    reset_all_caches(),
-    Peer = {10, 0, 0, 1, 1984},
-    Intervals = ar_intervals:from_list([{100, 0}]),
-    store_row(chunk_interval, byte, 0, Peer, Intervals),
-    store_row(
-        chunk_interval,
-        byte,
-        ?NETWORK_DATA_BUCKET_SIZE,
-        Peer,
-        Intervals
-    ),
-    store_row(sync_bucket, byte, 0, Peer, 0.5),
-    mark_chunk_intervals_stale_on_share_change(byte, Peer, 0, 0.5),
-    ?assertMatch({hit, _}, chunk_interval_lookup(byte, Peer, 0)),
-    mark_chunk_intervals_stale_on_share_change(byte, Peer, 0, 0.7),
-    ?assertMatch({stale, _}, chunk_interval_lookup(byte, Peer, 0)),
-    ?assertMatch(
-        {hit, _},
-        chunk_interval_lookup(byte, Peer, ?NETWORK_DATA_BUCKET_SIZE)
-    ).
+    arweave_sync_discovery:reset_all_caches(),
+    %% Ten interval locations per sync bucket, so a bucket has a last location
+    %% distinct from its first.
+    Step = ?NETWORK_DATA_BUCKET_SIZE div 10,
+    arweave_sync_cursor:override_query_range_step_size(Step),
+    try
+        Peer = {10, 0, 0, 1, 1984},
+        OtherPeer = {10, 0, 0, 2, 1984},
+        Intervals = ar_intervals:from_list([{100, 0}]),
+        LastInBucket = ?NETWORK_DATA_BUCKET_SIZE - Step,
+        arweave_sync_discovery:store_row(chunk_interval, byte, 0, Peer, Intervals),
+        arweave_sync_discovery:store_row(chunk_interval, byte, LastInBucket, Peer, Intervals),
+        %% The first location of bucket one is outside bucket zero.
+        arweave_sync_discovery:store_row(chunk_interval, byte, ?NETWORK_DATA_BUCKET_SIZE, Peer, Intervals),
+        %% Another peer shares bucket zero's locations.
+        arweave_sync_discovery:store_row(chunk_interval, byte, 0, OtherPeer, Intervals),
+        arweave_sync_discovery:store_row(chunk_interval, byte, LastInBucket, OtherPeer, Intervals),
+        arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 0.5),
+        arweave_sync_discovery:mark_chunk_intervals_stale_on_share_change(byte, Peer, 0, 0.5),
+        ?assertMatch({hit, _}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, 0)),
+        arweave_sync_discovery:mark_chunk_intervals_stale_on_share_change(byte, Peer, 0, 0.7),
+        ?assertMatch({stale, _}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, 0)),
+        ?assertMatch({stale, _}, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, LastInBucket)),
+        ?assertMatch(
+            {hit, _},
+            arweave_sync_discovery:chunk_interval_lookup(byte, Peer, ?NETWORK_DATA_BUCKET_SIZE)
+        ),
+        ?assertMatch({hit, _}, arweave_sync_discovery:chunk_interval_lookup(byte, OtherPeer, 0)),
+        ?assertMatch(
+            {hit, _}, arweave_sync_discovery:chunk_interval_lookup(byte, OtherPeer, LastInBucket)
+        )
+    after
+        arweave_sync_cursor:reset_all_overrides()
+    end.
 
 %% @doc A changed footprint sync-bucket share has the same stale-marking behavior.
 footprint_share_change_marks_chunk_intervals_stale(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 1, 1984},
     Intervals = ar_intervals:from_list([{100, 0}]),
     InSyncBucketOffset = 0,
@@ -998,76 +984,76 @@ footprint_share_change_marks_chunk_intervals_stale(_Config) ->
             2 * ?NETWORK_FOOTPRINT_BUCKET_SIZE + 1
         ),
     FarAwayOffset = FarAwayChunkEnd - ?DATA_CHUNK_SIZE,
-    SyncBucket = sync_bucket(footprint, InSyncBucketOffset),
-    store_row(
+    SyncBucket = arweave_sync_discovery:sync_bucket(footprint, InSyncBucketOffset),
+    arweave_sync_discovery:store_row(
         chunk_interval,
         footprint,
         InSyncBucketOffset,
         Peer,
         Intervals
     ),
-    store_row(chunk_interval, footprint, FarAwayOffset, Peer, Intervals),
-    store_row(sync_bucket, footprint, SyncBucket, Peer, 0.5),
-    mark_chunk_intervals_stale_on_share_change(
+    arweave_sync_discovery:store_row(chunk_interval, footprint, FarAwayOffset, Peer, Intervals),
+    arweave_sync_discovery:store_row(sync_bucket, footprint, SyncBucket, Peer, 0.5),
+    arweave_sync_discovery:mark_chunk_intervals_stale_on_share_change(
         footprint, Peer, SyncBucket, 0.5
     ),
     ?assertMatch(
         {hit, _},
-        chunk_interval_lookup(footprint, Peer, InSyncBucketOffset)
+        arweave_sync_discovery:chunk_interval_lookup(footprint, Peer, InSyncBucketOffset)
     ),
-    mark_chunk_intervals_stale_on_share_change(
+    arweave_sync_discovery:mark_chunk_intervals_stale_on_share_change(
         footprint, Peer, SyncBucket, 0.7
     ),
     ?assertMatch(
         {stale, _},
-        chunk_interval_lookup(footprint, Peer, InSyncBucketOffset)
+        arweave_sync_discovery:chunk_interval_lookup(footprint, Peer, InSyncBucketOffset)
     ),
     ?assertMatch(
         {hit, _},
-        chunk_interval_lookup(footprint, Peer, FarAwayOffset)
+        arweave_sync_discovery:chunk_interval_lookup(footprint, Peer, FarAwayOffset)
     ).
 
 %% @doc Sync buckets not updated within ?SYNC_BUCKET_CACHE_TTL_MS are retired
 %% together with their cached chunk intervals; recently updated buckets remain.
 expired_sync_buckets_delete_chunk_intervals(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 9, 1984},
     Intervals = ar_intervals:from_list([{100, 0}]),
     Now = arweave_sync_test_deps:monotonic_ms(),
     Old = Now - ?SYNC_BUCKET_CACHE_TTL_MS - 1,
     ets:insert(
         ?SYNC_BUCKET_CACHE_TABLE,
-        {row_key(sync_bucket, byte, 0, Peer), 0.5, Old}
+        {arweave_sync_discovery:sync_bucket_key(byte, 0, Peer), 0.5, Old}
     ),
     ets:insert(
         ?SYNC_BUCKET_CACHE_TABLE,
-        {row_key(sync_bucket, byte, 1, Peer), 0.5, Now}
+        {arweave_sync_discovery:sync_bucket_key(byte, 1, Peer), 0.5, Now}
     ),
-    store_row(chunk_interval, byte, 0, Peer, Intervals),
-    store_row(
+    arweave_sync_discovery:store_row(chunk_interval, byte, 0, Peer, Intervals),
+    arweave_sync_discovery:store_row(
         chunk_interval,
         byte,
         ?NETWORK_DATA_BUCKET_SIZE,
         Peer,
         Intervals
     ),
-    delete_expired_sync_buckets(),
+    arweave_sync_discovery:delete_expired_sync_buckets(),
     ?assertNot(
         ets:member(
             ?SYNC_BUCKET_CACHE_TABLE,
-            row_key(sync_bucket, byte, 0, Peer)
+            arweave_sync_discovery:sync_bucket_key(byte, 0, Peer)
         )
     ),
-    ?assertEqual(miss, chunk_interval_lookup(byte, Peer, 0)),
+    ?assertEqual(miss, arweave_sync_discovery:chunk_interval_lookup(byte, Peer, 0)),
     ?assert(
         ets:member(
             ?SYNC_BUCKET_CACHE_TABLE,
-            row_key(sync_bucket, byte, 1, Peer)
+            arweave_sync_discovery:sync_bucket_key(byte, 1, Peer)
         )
     ),
     ?assertMatch(
         {hit, _},
-        chunk_interval_lookup(byte, Peer, ?NETWORK_DATA_BUCKET_SIZE)
+        arweave_sync_discovery:chunk_interval_lookup(byte, Peer, ?NETWORK_DATA_BUCKET_SIZE)
     ).
 
 %% @doc Full metadata pages are combined until the requested range is complete.
@@ -1088,7 +1074,7 @@ complete_chunk_interval_range_is_paginated(_Config) ->
         fun() ->
             ?assertEqual(
                 {ok, Expected},
-                fetch_chunk_intervals(byte, Peer, 0)
+                arweave_sync_discovery:fetch_chunk_intervals(byte, Peer, 0)
             )
         end
     ).
@@ -1110,7 +1096,7 @@ failed_chunk_interval_page_aborts_fetch(_Config) ->
         fun() ->
             ?assertEqual(
                 {error, timeout},
-                fetch_chunk_intervals(byte, Peer, 0)
+                arweave_sync_discovery:fetch_chunk_intervals(byte, Peer, 0)
             )
         end
     ).
@@ -1134,7 +1120,7 @@ legacy_chunk_interval_pages_are_cut_to_query_range(_Config) ->
         fun() ->
             ?assertEqual(
                 {ok, Expected},
-                fetch_chunk_intervals(byte, Peer, 0)
+                arweave_sync_discovery:fetch_chunk_intervals(byte, Peer, 0)
             )
         end
     ).
@@ -1157,7 +1143,7 @@ chunk_interval_pagination_is_bounded(_Config) ->
         fun() ->
             ?assertEqual(
                 {error, interval_page_limit},
-                fetch_chunk_intervals(byte, Peer, 0)
+                arweave_sync_discovery:fetch_chunk_intervals(byte, Peer, 0)
             ),
             ?assertEqual(
                 ?MAX_CHUNK_INTERVAL_PAGES,
@@ -1169,21 +1155,21 @@ chunk_interval_pagination_is_bounded(_Config) ->
 %% @doc Fresh footprint metadata is reused without another HTTP request while
 %% its bucket share is unchanged.
 refresh_chunk_intervals_reuses_cache(_Config) ->
-    reset_all_caches(),
+    arweave_sync_discovery:reset_all_caches(),
     Peer = {10, 0, 0, 1, 1984},
     Offset = 0,
     Intervals = ar_intervals:from_list([{1, 0}]),
     Expected = arweave_storage:footprint_intervals_to_byte_intervals(
         Intervals
     ),
-    store_row(
+    arweave_sync_discovery:store_row(
         sync_bucket,
         footprint,
-        sync_bucket(footprint, Offset),
+        arweave_sync_discovery:sync_bucket(footprint, Offset),
         Peer,
         1.0
     ),
-    store_row(chunk_interval, footprint, Offset, Peer, Intervals),
+    arweave_sync_discovery:store_row(chunk_interval, footprint, Offset, Peer, Intervals),
     meck:new(ar_http_iface_client, [passthrough]),
     meck:expect(
         ar_http_iface_client,
@@ -1200,7 +1186,7 @@ refresh_chunk_intervals_reuses_cache(_Config) ->
         },
         ?assertEqual(
             ok,
-            refresh_chunk_intervals(Job)
+            arweave_sync_discovery:refresh_chunk_intervals(Job)
         ),
         ?assertEqual(
             0,
@@ -1208,7 +1194,7 @@ refresh_chunk_intervals_reuses_cache(_Config) ->
         ),
         ?assertEqual(
             {ok, Expected},
-            get_chunk_intervals(
+            arweave_sync_discovery:get_chunk_intervals(
                 footprint, Peer, Offset, 0, ?DATA_CHUNK_SIZE
             )
         )
@@ -1266,7 +1252,7 @@ chunk_interval_job_for_test(Peer, StoreID, Start) ->
 chunk_interval_job_for_test(Peer, StoreID, Mode, Start) ->
     AlignedStart =
         case Mode of
-            byte -> interval_location(byte, Start);
+            byte -> arweave_sync_discovery:interval_location(byte, Start);
             footprint -> Start
         end,
     #discovery_job{

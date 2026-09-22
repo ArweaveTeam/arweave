@@ -4,7 +4,6 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
 -include_lib("common_test/include/ct.hrl").
--import(arweave_storage_ct_util, [chunk_samples/2, expected_samples/2]).
 
 suite() -> [{timetrap, {seconds, 60}}].
 
@@ -331,8 +330,8 @@ well_aligned(_Config) ->
         2 * ?DATA_CHUNK_SIZE, C1, Packing, ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C1, 2 * ?DATA_CHUNK_SIZE),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C1, 2 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
         not_found,
@@ -344,28 +343,28 @@ well_aligned(_Config) ->
     ),
     arweave_storage_chunk_storage:delete(2 * ?DATA_CHUNK_SIZE),
     ?assertEqual(
-        expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     arweave_storage:put_chunk(?DATA_CHUNK_SIZE, C2, Packing, ?DEFAULT_MODULE),
     ?assertEqual(
-        expected_samples(C2, ?DATA_CHUNK_SIZE),
-        chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C2, ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
-        expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     arweave_storage:put_chunk(
         2 * ?DATA_CHUNK_SIZE, C1, Packing, ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C1, 2 * ?DATA_CHUNK_SIZE),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C1, 2 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
-        expected_samples(C2, ?DATA_CHUNK_SIZE),
-        chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C2, ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
         [{?DATA_CHUNK_SIZE, C2}, {2 * ?DATA_CHUNK_SIZE, C1}],
@@ -391,16 +390,16 @@ well_aligned(_Config) ->
         3 * ?DATA_CHUNK_SIZE, C3, Packing, ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C2, ?DATA_CHUNK_SIZE),
-        chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C2, ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
-        expected_samples(C1, 2 * ?DATA_CHUNK_SIZE),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C1, 2 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
-        expected_samples(C3, 3 * ?DATA_CHUNK_SIZE),
-        chunk_samples(3 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C3, 3 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(3 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
         not_found,
@@ -414,32 +413,32 @@ well_aligned(_Config) ->
         2 * ?DATA_CHUNK_SIZE, C2, Packing, ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C2, ?DATA_CHUNK_SIZE),
-        chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C2, ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
-        expected_samples(C2, 2 * ?DATA_CHUNK_SIZE),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C2, 2 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
-        expected_samples(C3, 3 * ?DATA_CHUNK_SIZE),
-        chunk_samples(3 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C3, 3 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(3 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     arweave_storage_chunk_storage:delete(?DATA_CHUNK_SIZE),
     ?assertEqual(
-        expected_samples(not_found, ?DATA_CHUNK_SIZE),
-        chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(not_found, ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
         [], arweave_storage_chunk_storage:get_range(0, ?DATA_CHUNK_SIZE)
     ),
     ?assertEqual(
-        expected_samples(C2, 2 * ?DATA_CHUNK_SIZE),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C2, 2 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
-        expected_samples(C3, 3 * ?DATA_CHUNK_SIZE),
-        chunk_samples(3 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C3, 3 * ?DATA_CHUNK_SIZE),
+        arweave_storage_ct_util:chunk_samples(3 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
         [{2 * ?DATA_CHUNK_SIZE, C2}, {3 * ?DATA_CHUNK_SIZE, C3}],
@@ -461,20 +460,20 @@ not_aligned(_Config) ->
         2 * ?DATA_CHUNK_SIZE + 7, C1, Packing, ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C1, 2 * ?DATA_CHUNK_SIZE + 7),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C1, 2 * ?DATA_CHUNK_SIZE + 7),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
     ),
     arweave_storage_chunk_storage:delete(2 * ?DATA_CHUNK_SIZE + 7),
     ?assertEqual(
-        expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE + 7),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE + 7),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
     ),
     arweave_storage:put_chunk(
         2 * ?DATA_CHUNK_SIZE + 7, C1, Packing, ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C1, 2 * ?DATA_CHUNK_SIZE + 7),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C1, 2 * ?DATA_CHUNK_SIZE + 7),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
         not_found,
@@ -497,34 +496,34 @@ not_aligned(_Config) ->
         ?DATA_CHUNK_SIZE + 3, C2, Packing, ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C2, ?DATA_CHUNK_SIZE + 3),
-        chunk_samples(?DATA_CHUNK_SIZE + 3, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C2, ?DATA_CHUNK_SIZE + 3),
+        arweave_storage_ct_util:chunk_samples(?DATA_CHUNK_SIZE + 3, ?DEFAULT_MODULE)
     ),
     ?assertEqual(not_found, arweave_storage:get_chunk(0, ?DEFAULT_MODULE)),
     ?assertEqual(not_found, arweave_storage:get_chunk(1, ?DEFAULT_MODULE)),
     ?assertEqual(not_found, arweave_storage:get_chunk(2, ?DEFAULT_MODULE)),
     arweave_storage_chunk_storage:delete(2 * ?DATA_CHUNK_SIZE + 7),
     ?assertEqual(
-        expected_samples(C2, ?DATA_CHUNK_SIZE + 3),
-        chunk_samples(?DATA_CHUNK_SIZE + 3, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C2, ?DATA_CHUNK_SIZE + 3),
+        arweave_storage_ct_util:chunk_samples(?DATA_CHUNK_SIZE + 3, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
-        expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE + 7),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE + 7),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
     ),
     arweave_storage:put_chunk(
         3 * ?DATA_CHUNK_SIZE + 7, C3, Packing, ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C3, 3 * ?DATA_CHUNK_SIZE + 7),
-        chunk_samples(3 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C3, 3 * ?DATA_CHUNK_SIZE + 7),
+        arweave_storage_ct_util:chunk_samples(3 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
     ),
     arweave_storage:put_chunk(
         3 * ?DATA_CHUNK_SIZE + 7, C1, Packing, ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C1, 3 * ?DATA_CHUNK_SIZE + 7),
-        chunk_samples(3 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C1, 3 * ?DATA_CHUNK_SIZE + 7),
+        arweave_storage_ct_util:chunk_samples(3 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
     ),
     arweave_storage:put_chunk(
         4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2,
@@ -533,8 +532,8 @@ not_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C2, 4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2),
-        chunk_samples(
+        arweave_storage_ct_util:expected_samples(C2, 4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2),
+        arweave_storage_ct_util:chunk_samples(
             4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2, ?DEFAULT_MODULE
         )
     ),
@@ -559,35 +558,35 @@ not_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1),
-        chunk_samples(
+        arweave_storage_ct_util:expected_samples(C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1),
+        arweave_storage_ct_util:chunk_samples(
             5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE + 7),
-        chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(not_found, 2 * ?DATA_CHUNK_SIZE + 7),
+        arweave_storage_ct_util:chunk_samples(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
     ),
     arweave_storage_chunk_storage:delete(
         4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             not_found, 4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2, ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1),
-        chunk_samples(
+        arweave_storage_ct_util:expected_samples(C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1),
+        arweave_storage_ct_util:chunk_samples(
             5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(C1, 3 * ?DATA_CHUNK_SIZE + 7),
-        chunk_samples(3 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
+        arweave_storage_ct_util:expected_samples(C1, 3 * ?DATA_CHUNK_SIZE + 7),
+        arweave_storage_ct_util:chunk_samples(3 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)
     ),
     ?assertEqual(
         [{3 * ?DATA_CHUNK_SIZE + 7, C1}],
@@ -652,8 +651,8 @@ cross_file_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C1, arweave_config:get([chunk_storage_file_size])),
-        chunk_samples(
+        arweave_storage_ct_util:expected_samples(C1, arweave_config:get([chunk_storage_file_size])),
+        arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]), ?DEFAULT_MODULE
         )
     ),
@@ -685,17 +684,17 @@ cross_file_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             C2, arweave_config:get([chunk_storage_file_size]) + ?DATA_CHUNK_SIZE
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]) + ?DATA_CHUNK_SIZE,
             ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(C1, arweave_config:get([chunk_storage_file_size])),
-        chunk_samples(
+        arweave_storage_ct_util:expected_samples(C1, arweave_config:get([chunk_storage_file_size])),
+        arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]), ?DEFAULT_MODULE
         )
     ),
@@ -741,18 +740,18 @@ cross_file_aligned(_Config) ->
         arweave_config:get([chunk_storage_file_size]), ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             not_found, arweave_config:get([chunk_storage_file_size])
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]), ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             C2, arweave_config:get([chunk_storage_file_size]) + ?DATA_CHUNK_SIZE
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]) + ?DATA_CHUNK_SIZE,
             ?DEFAULT_MODULE
         )
@@ -764,8 +763,8 @@ cross_file_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C2, arweave_config:get([chunk_storage_file_size])),
-        chunk_samples(
+        arweave_storage_ct_util:expected_samples(C2, arweave_config:get([chunk_storage_file_size])),
+        arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]), ?DEFAULT_MODULE
         )
     ).
@@ -784,8 +783,8 @@ cross_file_not_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(C1, arweave_config:get([chunk_storage_file_size]) + 1),
-        chunk_samples(
+        arweave_storage_ct_util:expected_samples(C1, arweave_config:get([chunk_storage_file_size]) + 1),
+        arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]) + 1, ?DEFAULT_MODULE
         )
     ),
@@ -810,12 +809,12 @@ cross_file_not_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             C2,
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2,
             ?DEFAULT_MODULE
@@ -835,24 +834,24 @@ cross_file_not_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             C2,
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2,
             ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             C3,
             2 * arweave_config:get([chunk_storage_file_size]) -
                 ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             2 * arweave_config:get([chunk_storage_file_size]) -
                 ?DATA_CHUNK_SIZE div 2,
             ?DEFAULT_MODULE
@@ -979,32 +978,32 @@ cross_file_not_aligned(_Config) ->
             ?DATA_CHUNK_SIZE div 2
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             not_found,
             2 * arweave_config:get([chunk_storage_file_size]) -
                 ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             2 * arweave_config:get([chunk_storage_file_size]) -
                 ?DATA_CHUNK_SIZE div 2,
             ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             C2,
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2,
             ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(C1, arweave_config:get([chunk_storage_file_size]) + 1),
-        chunk_samples(
+        arweave_storage_ct_util:expected_samples(C1, arweave_config:get([chunk_storage_file_size]) + 1),
+        arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]) + 1, ?DEFAULT_MODULE
         )
     ),
@@ -1012,32 +1011,32 @@ cross_file_not_aligned(_Config) ->
         arweave_config:get([chunk_storage_file_size]) + 1
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             not_found, arweave_config:get([chunk_storage_file_size]) + 1
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             arweave_config:get([chunk_storage_file_size]) + 1, ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             not_found,
             2 * arweave_config:get([chunk_storage_file_size]) -
                 ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             2 * arweave_config:get([chunk_storage_file_size]) -
                 ?DATA_CHUNK_SIZE div 2,
             ?DEFAULT_MODULE
         )
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             C2,
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2,
             ?DEFAULT_MODULE
@@ -1048,12 +1047,12 @@ cross_file_not_aligned(_Config) ->
             ?DATA_CHUNK_SIZE div 2
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             not_found,
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             2 * arweave_config:get([chunk_storage_file_size]) +
                 ?DATA_CHUNK_SIZE div 2,
             ?DEFAULT_MODULE
@@ -1073,12 +1072,12 @@ cross_file_not_aligned(_Config) ->
         ?DEFAULT_MODULE
     ),
     ?assertEqual(
-        expected_samples(
+        arweave_storage_ct_util:expected_samples(
             C1,
             2 * arweave_config:get([chunk_storage_file_size]) -
                 ?DATA_CHUNK_SIZE div 2
         ),
-        chunk_samples(
+        arweave_storage_ct_util:chunk_samples(
             2 * arweave_config:get([chunk_storage_file_size]) -
                 ?DATA_CHUNK_SIZE div 2,
             ?DEFAULT_MODULE

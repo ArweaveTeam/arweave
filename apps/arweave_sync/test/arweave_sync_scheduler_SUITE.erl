@@ -8,25 +8,6 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave_sync/include/arweave_sync.hrl").
 -include_lib("arweave_sync/include/arweave_sync_scheduler.hrl").
--import(arweave_sync_scheduler, [
-    activate_tasks/2,
-    active_peers/4,
-    admit_candidate/3,
-    bind_tasks/2,
-    dispatch_work/3,
-    inflight_counts/1,
-    on_task_fetch_completed/4,
-    on_task_unpacked/2,
-    on_task_write_completed/2,
-    queued_task_count_by_store/2,
-    record_driven_peers/2,
-    resolve_work/2,
-    start_dispatch/1,
-    take_startable_task/2,
-    terminate_workers/1,
-    tick/2,
-    worker_exited/3
-]).
 
 suite() -> [{timetrap, {seconds, 30}}].
 
@@ -107,7 +88,7 @@ shutdown_terminates_workers(_Config) ->
         end
     end),
     MonitorRef = erlang:monitor(process, WorkerPID),
-    terminate_workers(#{MonitorRef => {make_ref(), WorkerPID}}),
+    arweave_sync_scheduler:terminate_workers(#{MonitorRef => {make_ref(), WorkerPID}}),
     ?assertNot(is_process_alive(WorkerPID)).
 
 %% @doc Pending local writes count toward store load but do not consume peer
@@ -166,7 +147,7 @@ local_writes_do_not_consume_peer_capacity(_Config) ->
                     Peer, StoreID, Dispatch#dispatch.peers
                 )
             ),
-            ?assertEqual(#{Peer => 1}, inflight_counts(Tasks))
+            ?assertEqual(#{Peer => 1}, arweave_sync_scheduler:inflight_counts(Tasks))
         end
     ).
 
@@ -178,7 +159,7 @@ bound_footprint_owner_is_an_active_peer(_Config) ->
         store1, Footprint, [], peer1, 0, bound
     ),
     Footprints = arweave_sync_footprint:test_state([Reservation]),
-    ?assertEqual([peer1], active_peers(#{}, #{}, Footprints, #{})).
+    ?assertEqual([peer1], arweave_sync_scheduler:active_peers(#{}, #{}, Footprints, #{})).
 
 %% @doc Binding a footprint replaces its speculative claim with claims for
 %% enqueued tasks only.
@@ -224,8 +205,8 @@ reservation_binding_claims_only_enqueued_tasks(_Config) ->
                 store1, Dispatch0#dispatch.stores
             ),
             DispatchA = Dispatch0#dispatch{stores = StoreDispatches},
-            Work = resolve_work(Footprint, DispatchA),
-            {_State, Dispatch1} = dispatch_work(Work, #state{}, DispatchA),
+            Work = arweave_sync_scheduler:resolve_work(Footprint, DispatchA),
+            {_State, Dispatch1} = arweave_sync_scheduler:dispatch_work(Work, #state{}, DispatchA),
             StoreStates1 = arweave_sync_store:finish_dispatch(
                 Dispatch1#dispatch.stores
             ),
@@ -288,8 +269,8 @@ fragmented_partial_intervals_claim_each_request(_Config) ->
                 store1, Dispatch0#dispatch.stores
             ),
             DispatchA = Dispatch0#dispatch{stores = StoreDispatches},
-            Work = resolve_work(Footprint, DispatchA),
-            {_State, Dispatch1} = dispatch_work(Work, #state{}, DispatchA),
+            Work = arweave_sync_scheduler:resolve_work(Footprint, DispatchA),
+            {_State, Dispatch1} = arweave_sync_scheduler:dispatch_work(Work, #state{}, DispatchA),
             StoreStates1 = arweave_sync_store:finish_dispatch(
                 Dispatch1#dispatch.stores
             ),
@@ -350,8 +331,8 @@ overlapping_partial_intervals_defer_duplicate_request(_Config) ->
                 store1, Dispatch0#dispatch.stores
             ),
             DispatchA = Dispatch0#dispatch{stores = StoreDispatches},
-            Work = resolve_work(Footprint, DispatchA),
-            {_State, Dispatch1} = dispatch_work(Work, #state{}, DispatchA),
+            Work = arweave_sync_scheduler:resolve_work(Footprint, DispatchA),
+            {_State, Dispatch1} = arweave_sync_scheduler:dispatch_work(Work, #state{}, DispatchA),
             StoreStates1 = arweave_sync_store:finish_dispatch(
                 Dispatch1#dispatch.stores
             ),
@@ -394,7 +375,7 @@ startable_task_prefers_less_active_store(_Config) ->
         ),
         %% Store A has two active fetches and appears first in the peer queue;
         %% store B has none, so activation selects B without reordering A.
-        {TaskB, Remaining} = take_startable_task(
+        {TaskB, Remaining} = arweave_sync_scheduler:take_startable_task(
             queue:from_list([TaskA, TaskB]), StoreDispatches
         ),
         ?assertEqual([TaskA], queue:to_list(Remaining))
@@ -427,7 +408,7 @@ peer_queue_stays_full_behind_active_cap(_Config) ->
             )
         ),
         Dispatch0 = (seed(Tasks))#dispatch{peers = PeerDispatches},
-        {State1, Dispatch1} = bind_tasks(#state{}, Dispatch0),
+        {State1, Dispatch1} = arweave_sync_scheduler:bind_tasks(#state{}, Dispatch0),
         ?assertEqual(
             4,
             queue:len(
@@ -437,7 +418,7 @@ peer_queue_stays_full_behind_active_cap(_Config) ->
             )
         ),
         ?assertEqual([], Dispatch1#dispatch.tasks_to_start),
-        {State2, Dispatch2} = activate_tasks(State1, Dispatch1),
+        {State2, Dispatch2} = arweave_sync_scheduler:activate_tasks(State1, Dispatch1),
         %% The active cap starts two tasks and temporarily leaves two queued.
         ?assertEqual(2, length(Dispatch2#dispatch.tasks_to_start)),
         ?assertEqual(
@@ -448,14 +429,14 @@ peer_queue_stays_full_behind_active_cap(_Config) ->
                 )
             )
         ),
-        State2A = record_driven_peers(State2, Dispatch2),
+        State2A = arweave_sync_scheduler:record_driven_peers(State2, Dispatch2),
         ?assertEqual(#{Peer => true}, State2A#state.driven_peers),
         Dispatch2A = Dispatch2#dispatch{
             stores = arweave_sync_store:refresh_work(
                 Dispatch2#dispatch.footprints, Dispatch2#dispatch.stores
             )
         },
-        {_State3, Dispatch3} = bind_tasks(State2A, Dispatch2A),
+        {_State3, Dispatch3} = arweave_sync_scheduler:bind_tasks(State2A, Dispatch2A),
         %% Refilling the two vacated places restores the four-task peer queue.
         ?assertEqual(
             4,
@@ -597,7 +578,7 @@ bandwidth_cap_with_failures(_Config) ->
             productive_ms = 250,
             timeout_ms = 500
         },
-        State1 = on_task_fetch_completed(FailedRef, 0, FetchTiming, State0),
+        State1 = arweave_sync_scheduler:on_task_fetch_completed(FailedRef, 0, FetchTiming, State0),
         ?assert(
             arweave_sync_download_limit:has_capacity(
                 State1#state.download_limit
@@ -610,7 +591,7 @@ bandwidth_cap_with_failures(_Config) ->
                 )
         },
         %% A half-sized legacy chunk restores the unfilled half of its reservation.
-        State2 = on_task_fetch_completed(
+        State2 = arweave_sync_scheduler:on_task_fetch_completed(
             PartialRef,
             ?DATA_CHUNK_SIZE div 2,
             FetchTiming,
@@ -627,7 +608,7 @@ bandwidth_cap_with_failures(_Config) ->
                     State2#state.download_limit, ?DATA_CHUNK_SIZE div 2
                 )
         },
-        State3 = on_task_fetch_completed(
+        State3 = arweave_sync_scheduler:on_task_fetch_completed(
             FullRef, ?DATA_CHUNK_SIZE, FetchTiming, State2Exhausted
         ),
         ?assertNot(
@@ -651,14 +632,14 @@ task_lifecycle(_Config) ->
             task_ref = WriteFirstRef
         },
         WriteFirstState = #state{tasks = #{WriteFirstRef => WriteFirstTask}},
-        WriteCompleted = on_task_write_completed(
+        WriteCompleted = arweave_sync_scheduler:on_task_write_completed(
             WriteFirstRef, WriteFirstState
         ),
         ?assertEqual(
             write_complete,
             (maps:get(WriteFirstRef, WriteCompleted#state.tasks))#task.state
         ),
-        WriteFirstDone = on_task_fetch_completed(
+        WriteFirstDone = arweave_sync_scheduler:on_task_fetch_completed(
             WriteFirstRef, ?DATA_CHUNK_SIZE, FetchTiming, WriteCompleted
         ),
         ?assertNot(maps:is_key(WriteFirstRef, WriteFirstDone#state.tasks)),
@@ -671,14 +652,14 @@ task_lifecycle(_Config) ->
             task_ref = FetchFirstRef
         },
         FetchFirstState = #state{tasks = #{FetchFirstRef => FetchFirstTask}},
-        Writing = on_task_fetch_completed(
+        Writing = arweave_sync_scheduler:on_task_fetch_completed(
             FetchFirstRef, ?DATA_CHUNK_SIZE, FetchTiming, FetchFirstState
         ),
         ?assertEqual(
             writing,
             (maps:get(FetchFirstRef, Writing#state.tasks))#task.state
         ),
-        FetchFirstDone = on_task_write_completed(FetchFirstRef, Writing),
+        FetchFirstDone = arweave_sync_scheduler:on_task_write_completed(FetchFirstRef, Writing),
         ?assertNot(maps:is_key(FetchFirstRef, FetchFirstDone#state.tasks)),
 
         FootprintRef = make_ref(),
@@ -709,7 +690,7 @@ task_lifecycle(_Config) ->
             tasks = #{FootprintRef => FootprintTask},
             footprints = arweave_sync_footprint:test_state([BoundReservation])
         },
-        FootprintWriting = on_task_fetch_completed(
+        FootprintWriting = arweave_sync_scheduler:on_task_fetch_completed(
             FootprintRef, ?DATA_CHUNK_SIZE, FetchTiming, FootprintState
         ),
         %% The handed-off chunk is still unpacked with the footprint's
@@ -724,7 +705,7 @@ task_lifecycle(_Config) ->
             Footprint,
             (maps:get(FootprintRef, FootprintWriting#state.tasks))#task.footprint
         ),
-        FootprintUnpacked = on_task_unpacked(FootprintRef, FootprintWriting),
+        FootprintUnpacked = arweave_sync_scheduler:on_task_unpacked(FootprintRef, FootprintWriting),
         ?assertEqual(
             0,
             arweave_sync_footprint:bound_count(
@@ -737,9 +718,9 @@ task_lifecycle(_Config) ->
         ),
         %% A repeated signal is harmless.
         ?assertEqual(
-            FootprintUnpacked, on_task_unpacked(FootprintRef, FootprintUnpacked)
+            FootprintUnpacked, arweave_sync_scheduler:on_task_unpacked(FootprintRef, FootprintUnpacked)
         ),
-        FootprintDone = on_task_write_completed(FootprintRef, FootprintUnpacked),
+        FootprintDone = arweave_sync_scheduler:on_task_write_completed(FootprintRef, FootprintUnpacked),
         ?assertNot(maps:is_key(FootprintRef, FootprintDone#state.tasks)),
         ?assertEqual(
             0,
@@ -759,7 +740,7 @@ task_lifecycle(_Config) ->
             task_ref = FailedRef
         },
         FailedState = #state{tasks = #{FailedRef => FailedTask}},
-        FailedDone = on_task_fetch_completed(
+        FailedDone = arweave_sync_scheduler:on_task_fetch_completed(
             FailedRef, 0, FetchTiming, FailedState
         ),
         ?assertNot(maps:is_key(FailedRef, FailedDone#state.tasks)),
@@ -772,10 +753,10 @@ task_lifecycle(_Config) ->
             task_ref = DuplicateRef
         },
         DuplicateState = #state{tasks = #{DuplicateRef => DuplicateTask}},
-        Accounted = on_task_fetch_completed(
+        Accounted = arweave_sync_scheduler:on_task_fetch_completed(
             DuplicateRef, ?DATA_CHUNK_SIZE, FetchTiming, DuplicateState
         ),
-        Duplicate = on_task_fetch_completed(
+        Duplicate = arweave_sync_scheduler:on_task_fetch_completed(
             DuplicateRef, ?DATA_CHUNK_SIZE, FetchTiming, Accounted
         ),
         ?assertEqual(Accounted#state.peer_state, Duplicate#state.peer_state),
@@ -795,7 +776,7 @@ task_lifecycle(_Config) ->
                 CrashedMonitorRef => {CrashedRef, self()}
             }
         },
-        CrashedDone = worker_exited(
+        CrashedDone = arweave_sync_scheduler:worker_exited(
             CrashedMonitorRef, simulated_crash, CrashedState
         ),
         ?assertNot(maps:is_key(CrashedRef, CrashedDone#state.tasks)),
@@ -848,7 +829,7 @@ bandwidth_cap_trickle(_Config) ->
                         download_limit = ExhaustedRate,
                         dispatch_scheduled = false
                     },
-                    {ok, 1, State2} = admit_candidate(store1, Task, State0),
+                    {ok, 1, State2} = arweave_sync_scheduler:admit_candidate(store1, Task, State0),
                     State2
                 end
             ),
@@ -906,7 +887,7 @@ cache_full(_Config) ->
             %% cache full -> nothing spawned
             ?assertEqual(0, map_size(State#state.monitor_index)),
             %% deduped, not 10
-            ?assertEqual(5, queued_task_count_by_store(store1, State))
+            ?assertEqual(5, arweave_sync_scheduler:queued_task_count_by_store(store1, State))
         after
             gen_server:stop(PID)
         end
@@ -1036,7 +1017,7 @@ bound_footprint_refills_through_dispatch(_Config) ->
             stores = arweave_sync_store:new(),
             footprints = arweave_sync_footprint:test_state([Reservation])
         },
-        Dispatch0 = start_dispatch(State),
+        Dispatch0 = arweave_sync_scheduler:start_dispatch(State),
         {_State, Dispatch} = dispatch_tasks(
             #state{},
             Dispatch0#dispatch{
@@ -1104,7 +1085,7 @@ draining_footprint_tasks_finish_dispatching(_Config) ->
         {ok, 1, StoreStates} = arweave_sync_store:admit(
             StoreID, Child, arweave_sync_store:new()
         ),
-        Dispatch0 = start_dispatch(#state{
+        Dispatch0 = arweave_sync_scheduler:start_dispatch(#state{
             stores = StoreStates,
             footprints = arweave_sync_footprint:test_state([Reservation])
         }),
@@ -1546,7 +1527,7 @@ cap(_Config) ->
             peer_state = InitialPeerState
         }
     ),
-    State1 = tick(State0, 1000),
+    State1 = arweave_sync_scheduler:tick(State0, 1000),
     PeerDispatches1 = arweave_sync_peer:start_dispatch(
         #{}, [], State1#state.peer_state
     ),
@@ -1561,7 +1542,7 @@ cap(_Config) ->
         ProductiveTiming,
         State1#state.peer_state
     ),
-    State2 = tick(
+    State2 = arweave_sync_scheduler:tick(
         driven_peer_state(
             #{PeerA => 8, PeerB => 8}, State1#state{
                 peer_state = PeerState2
@@ -1584,7 +1565,7 @@ cap(_Config) ->
         ProductiveTiming,
         State2#state.peer_state
     ),
-    State3 = tick(
+    State3 = arweave_sync_scheduler:tick(
         driven_peer_state(#{PeerA => 16}, State2#state{
             peer_state = PeerState3
         }),
@@ -1704,14 +1685,14 @@ drains_clean(Config) ->
 %%====================================================================
 
 dispatch_tasks(State, Dispatch) ->
-    {State2, Dispatch2} = bind_tasks(State, Dispatch),
-    activate_tasks(State2, Dispatch2).
+    {State2, Dispatch2} = arweave_sync_scheduler:bind_tasks(State, Dispatch),
+    arweave_sync_scheduler:activate_tasks(State2, Dispatch2).
 
 %% Build a sync task the way arweave_sync_chunk_picker does - peer-neutral, with the
 %% offering peer as its one source. seed/1 routes each candidate through the
 %% matching queue function so tests cover the same store queues as production.
 base_dispatch() ->
-    start_dispatch(#state{}).
+    arweave_sync_scheduler:start_dispatch(#state{}).
 
 seed(Tasks) ->
     State = lists:foldl(
@@ -1719,7 +1700,7 @@ seed(Tasks) ->
         #state{},
         Tasks
     ),
-    start_dispatch(State).
+    arweave_sync_scheduler:start_dispatch(State).
 
 seed_candidate(#task{store_id = StoreID} = Task, State) ->
     {ok, _ClaimedChunks, StoreStates} = arweave_sync_store:admit(

@@ -12,6 +12,7 @@
 %% Focused tests live outside the production module.
 -export([
     add_peer/2,
+    chunk_interval_key/3,
     chunk_interval_lookup/3,
     compute_job_load/1,
     delete_expired_sync_buckets/0,
@@ -27,11 +28,11 @@
     mark_chunk_intervals_stale_on_share_change/4,
     refresh_chunk_intervals/1,
     remove_jobs/2,
-    row_key/4,
     start_jobs/1,
     store_row/5,
     sync_bucket/2,
     sync_bucket_job/1,
+    sync_bucket_key/3,
     take_next_job/4
 ]).
 -endif.
@@ -68,7 +69,8 @@
 %% fetchable intervals.
 %%
 %% Rows are `{Key, Intervals, MonotonicMs}', keyed by
-%% `{Mode, Location, Peer}'. The timestamp is used for demand-side freshness
+%% `{Mode, Peer, Location}' so a peer's rows for one coarse sync bucket are
+%% contiguous. The timestamp is used for demand-side freshness
 %% checks and oldest-first cache trimming.
 %% The host supplies a separate byte budget for peer intervals and includes
 %% it in joint cache sizing. When the cap fires we drop the
@@ -103,7 +105,7 @@ peer_has_sync_bucket(Mode, Peer, Offset) ->
         SyncBucket when is_integer(SyncBucket) ->
             ets:member(
                 ?SYNC_BUCKET_CACHE_TABLE,
-                row_key(sync_bucket, Mode, SyncBucket, Peer)
+                sync_bucket_key(Mode, SyncBucket, Peer)
             );
         _ ->
             false
@@ -127,7 +129,7 @@ get_peers_for_sync_bucket(Mode, SyncBucket, Peers) ->
         Mode,
         SyncBucket,
         Peers,
-        row_key(sync_bucket, Mode, SyncBucket, no_peer)
+        sync_bucket_key(Mode, SyncBucket, no_peer)
     ).
 
 get_peers_for_sync_bucket(Mode, SyncBucket, Peers, Cursor) ->
@@ -153,7 +155,7 @@ get_peers_for_sync_bucket_range(
         Mode,
         EndSyncBucket,
         Peers,
-        row_key(sync_bucket, Mode, StartSyncBucket, no_peer)
+        sync_bucket_key(Mode, StartSyncBucket, no_peer)
     ).
 
 %% One prefix walk over the whole bucket range. Rows are keyed
@@ -209,10 +211,14 @@ warm_peer_range(Mode, StoreID, Peer, Offset, State) ->
             State
     end.
 
+%% @doc Refresh needed if the row is missing or past TTL.
+%% Reads only the timestamp so we do not copy the row's intervals out of ETS.
 chunk_interval_refresh_needed(Mode, Peer, Offset) ->
-    case chunk_interval_lookup(Mode, Peer, Offset) of
-        {hit, _Intervals} -> false;
-        _MissingOrStale -> true
+    Key = chunk_interval_key(Mode, Peer, Offset),
+    case ets:lookup_element(?CHUNK_INTERVAL_CACHE_TABLE, Key, 3, undefined) of
+        undefined -> true;
+        MonotonicMs ->
+            MonotonicMs < expiration_cutoff(?CHUNK_INTERVAL_CACHE_TTL_MS)
     end.
 
 %% @doc Return non-empty cached peer ranges without scheduling discovery work.
@@ -1032,31 +1038,46 @@ record_job_result(
     delete_row(chunk_interval, Mode, Offset, Peer),
     State.
 
-row_key(sync_bucket, Mode, SyncBucket, Peer) ->
-    {Mode, SyncBucket, Peer};
-row_key(chunk_interval, Mode, Offset, Peer) ->
-    {Mode, interval_location(Mode, Offset), Peer}.
+%% @doc Peer comes last so one bucket's rows across peers are contiguous: this
+%% table is walked per bucket to find the peers advertising it.
+sync_bucket_key(Mode, SyncBucket, Peer) ->
+    {Mode, SyncBucket, Peer}.
 
-store_row(Kind, Mode, Location, Peer, Value) ->
-    ets:insert(
-        table(Kind),
-        {row_key(Kind, Mode, Location, Peer), Value, (arweave_sync_deps:clock()):monotonic_ms()}
-    ),
+%% @doc The key of the peer's chunk-interval row covering Offset. Peer
+%% precedes the location so one peer's rows for a bucket are contiguous: this
+%% table is walked per peer (chunk_interval_keys_in_bucket/3).
+chunk_interval_key(Mode, Peer, Offset) ->
+    {Mode, Peer, interval_location(Mode, Offset)}.
+
+store_row(sync_bucket, Mode, SyncBucket, Peer, Share) ->
+    Key = sync_bucket_key(Mode, SyncBucket, Peer),
+    insert_row(?SYNC_BUCKET_CACHE_TABLE, Key, Share);
+store_row(chunk_interval, Mode, Offset, Peer, Intervals) ->
+    Key = chunk_interval_key(Mode, Peer, Offset),
+    insert_row(?CHUNK_INTERVAL_CACHE_TABLE, Key, Intervals).
+
+insert_row(Table, Key, Value) ->
+    Now = (arweave_sync_deps:clock()):monotonic_ms(),
+    ets:insert(Table, {Key, Value, Now}),
     ok.
 
-delete_row(Kind, Mode, Location, Peer) ->
-    ets:delete(table(Kind), row_key(Kind, Mode, Location, Peer)).
-
-table(sync_bucket) ->
-    ?SYNC_BUCKET_CACHE_TABLE;
-table(chunk_interval) ->
-    ?CHUNK_INTERVAL_CACHE_TABLE.
+delete_row(sync_bucket, Mode, SyncBucket, Peer) ->
+    Key = sync_bucket_key(Mode, SyncBucket, Peer),
+    ets:delete(?SYNC_BUCKET_CACHE_TABLE, Key);
+delete_row(chunk_interval, Mode, Offset, Peer) ->
+    Key = chunk_interval_key(Mode, Peer, Offset),
+    ets:delete(?CHUNK_INTERVAL_CACHE_TABLE, Key).
 
 %% @doc Delete all cache rows for Peer from a discovery table.
-delete_rows(Table, Peer) ->
+delete_rows(?SYNC_BUCKET_CACHE_TABLE = Table, Peer) ->
     ets:select_delete(
         Table,
         [{{{'_', '_', Peer}, '_', '_'}, [], [true]}]
+    );
+delete_rows(?CHUNK_INTERVAL_CACHE_TABLE = Table, Peer) ->
+    ets:select_delete(
+        Table,
+        [{{{'_', Peer, '_'}, '_', '_'}, [], [true]}]
     ).
 
 expiration_cutoff(CacheTTLMs) ->
@@ -1095,7 +1116,7 @@ sync_bucket_range_end(footprint, WeaveSize) ->
 mark_chunk_intervals_stale_on_share_change(
     Mode, Peer, SyncBucket, NewShare
 ) ->
-    Key = row_key(sync_bucket, Mode, SyncBucket, Peer),
+    Key = sync_bucket_key(Mode, SyncBucket, Peer),
     case ets:lookup(?SYNC_BUCKET_CACHE_TABLE, Key) of
         [{_, NewShare, _}] ->
             ok;
@@ -1106,11 +1127,11 @@ mark_chunk_intervals_stale_on_share_change(
     end.
 
 %% @doc The inclusive chunk-interval location range a coarse bucket covers. Byte
-%% rows are keyed by byte offset; footprint rows by {Partition, Footprint},
+%% rows are located by byte offset; footprint rows by {Partition, Footprint},
 %% whose lexicographic order matches the partition-major, footprint-major
-%% linear layout (arweave_storage:get_footprint_offset/1), so a bucket's rows are
-%% contiguous in both modes. Footprint buckets don't align exactly to
-%% footprint boundaries (the +1 linear-offset convention lets an edge
+%% linear layout (arweave_storage:get_footprint_offset/1), so a peer's rows for
+%% a bucket are contiguous in both modes. Footprint buckets don't align exactly
+%% to footprint boundaries (the +1 linear-offset convention lets an edge
 %% footprint straddle), so the range is a one-footprint superset at each
 %% end. Extra rows are refreshed or removed with the bucket.
 chunk_interval_location_range(byte, SyncBucket) ->
@@ -1220,41 +1241,44 @@ mark_chunk_intervals_stale(Mode, Peer, SyncBucket) ->
     StaleTimestamp =
         expiration_cutoff(?CHUNK_INTERVAL_CACHE_TTL_MS) - 1,
     lists:foreach(
-        fun(Location) ->
+        fun(Key) ->
             ets:update_element(
-                ?CHUNK_INTERVAL_CACHE_TABLE,
-                {Mode, Location, Peer},
-                {3, StaleTimestamp}
+                ?CHUNK_INTERVAL_CACHE_TABLE, Key, {3, StaleTimestamp}
             )
         end,
-        chunk_interval_locations(Mode, Peer, SyncBucket)
+        chunk_interval_keys_in_bucket(Mode, Peer, SyncBucket)
     ).
 
 delete_chunk_intervals(Mode, Peer, SyncBucket) ->
-    Locations = chunk_interval_locations(Mode, Peer, SyncBucket),
+    Keys = chunk_interval_keys_in_bucket(Mode, Peer, SyncBucket),
     lists:foreach(
-        fun(Location) ->
-            ets:delete(
-                ?CHUNK_INTERVAL_CACHE_TABLE,
-                {Mode, Location, Peer}
-            )
-        end,
-        Locations
+        fun(Key) -> ets:delete(?CHUNK_INTERVAL_CACHE_TABLE, Key) end, Keys
     ),
-    record_chunk_interval_evictions(withdrawn, length(Locations)).
+    record_chunk_interval_evictions(withdrawn, length(Keys)).
 
-chunk_interval_locations(Mode, Peer, SyncBucket) ->
+%% @doc Return the keys of the peer's cached chunk-interval rows inside the
+%% bucket. Keyed {Mode, Peer, Location}, they form one contiguous range: walk
+%% just that. A select with the location unbound traverses every row of the
+%% mode instead, tens of thousands per bucket, which stalled this server for
+%% minutes whenever a peer's hourly bucket refresh changed thousands of
+%% shares.
+chunk_interval_keys_in_bucket(Mode, Peer, SyncBucket) ->
     {Lo, Hi} = chunk_interval_location_range(Mode, SyncBucket),
-    ets:select(
-        ?CHUNK_INTERVAL_CACHE_TABLE,
-        [
-            {
-                {{Mode, '$1', Peer}, '_', '_'},
-                [{'>=', '$1', {const, Lo}}, {'=<', '$1', {const, Hi}}],
-                ['$1']
-            }
-        ]
-    ).
+    First = {Mode, Peer, Lo},
+    Start =
+        case ets:member(?CHUNK_INTERVAL_CACHE_TABLE, First) of
+            true -> First;
+            false -> ets:next(?CHUNK_INTERVAL_CACHE_TABLE, First)
+        end,
+    collect_chunk_interval_keys(Mode, Peer, Hi, Start, []).
+
+collect_chunk_interval_keys(
+    Mode, Peer, Hi, {Mode, Peer, Location} = Key, Acc
+) when Location =< Hi ->
+    Next = ets:next(?CHUNK_INTERVAL_CACHE_TABLE, Key),
+    collect_chunk_interval_keys(Mode, Peer, Hi, Next, [Key | Acc]);
+collect_chunk_interval_keys(_Mode, _Peer, _Hi, _PastBucket, Acc) ->
+    lists:reverse(Acc).
 
 %% @doc Look up a cached interval row, age-gated by the shared safety-floor
 %% TTL. A row past it comes back as {stale, ...}: callers still use the
@@ -1263,7 +1287,7 @@ chunk_interval_locations(Mode, Peer, SyncBucket) ->
 %% same freshness result for both modes, so a stale row is replaced rather than
 %% reused. Primary freshness is share-diffing; this TTL is the safety floor.
 chunk_interval_lookup(Mode, Peer, Offset) ->
-    Key = row_key(chunk_interval, Mode, Offset, Peer),
+    Key = chunk_interval_key(Mode, Peer, Offset),
     case ets:lookup(?CHUNK_INTERVAL_CACHE_TABLE, Key) of
         [{_, Intervals, MonotonicMs}] ->
             Cutoff = expiration_cutoff(?CHUNK_INTERVAL_CACHE_TTL_MS),

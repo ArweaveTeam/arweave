@@ -6,11 +6,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_sync/include/arweave_sync.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
--import(arweave_sync_chunk_picker, [
-    add_task_source/2,
-    build_task_source/2,
-    build_tasks/3
-]).
 
 suite() -> [{timetrap, {seconds, 60}}].
 
@@ -55,7 +50,7 @@ build_byte_task_source(_Config) ->
         footprint = none
     },
     #task_source{peer = Peer, footprint = none, intervals = Intervals} =
-        build_task_source(UnsyncedRange, PeerRange),
+        arweave_sync_chunk_picker:build_task_source(UnsyncedRange, PeerRange),
     ?assertEqual([{6, 4}], ar_intervals:to_list(Intervals)).
 
 %% @doc Overlapping ranges from the same source merge into one contiguous range.
@@ -72,8 +67,8 @@ add_task_source_merges_overlapping_intervals(_Config) ->
         intervals = ar_intervals:from_list([{3 * Chunk, Chunk}]),
         footprint = none
     },
-    TaskSourcesByKey = add_task_source(
-        Second, add_task_source(First, #{})
+    TaskSourcesByKey = arweave_sync_chunk_picker:add_task_source(
+        Second, arweave_sync_chunk_picker:add_task_source(First, #{})
     ),
     [Consolidated] = maps:values(TaskSourcesByKey),
     %% Two overlapping two-chunk ranges form one contiguous three-chunk range.
@@ -85,7 +80,7 @@ add_task_source_merges_overlapping_intervals(_Config) ->
 %% @doc Empty source ranges do not create task-source entries.
 add_task_source_ignores_empty_intervals(_Config) ->
     TaskSource = #task_source{intervals = ar_intervals:new()},
-    ?assertEqual(#{}, add_task_source(TaskSource, #{})).
+    ?assertEqual(#{}, arweave_sync_chunk_picker:add_task_source(TaskSource, #{})).
 
 %% @doc Footprint sources preserve their identity while intersecting missing and
 %% advertised data.
@@ -115,7 +110,7 @@ build_footprint_task_source(_Config) ->
         footprint = Footprint,
         intervals = Intervals
     } =
-        build_task_source(UnsyncedRange, PeerRange),
+        arweave_sync_chunk_picker:build_task_source(UnsyncedRange, PeerRange),
     ?assertEqual([{6, 3}], ar_intervals:to_list(Intervals)).
 
 %% @doc Byte tasks and footprint reservations remain independent even when their
@@ -144,7 +139,7 @@ build_tasks_keeps_source_representations_independent(_Config) ->
     ],
     %% A two-task budget still retains the footprint reservation because it is
     %% speculative work, not an executable chunk task.
-    {Tasks, _NextClaimOffset} = build_tasks(test_store, TaskSources, 2),
+    {Tasks, _NextClaimOffset} = arweave_sync_chunk_picker:build_tasks(test_store, TaskSources, 2),
     [Reservation, FirstTask, SecondTask] = Tasks,
     ?assertMatch(#footprint_reservation{}, Reservation),
     ?assertEqual(Footprint, arweave_sync_footprint:key(Reservation)),
@@ -194,7 +189,7 @@ build_tasks_keeps_each_footprint_group(_Config) ->
     ],
     %% The positive task budget permits discovery work; reservations do not
     %% consume its two executable-task slots.
-    {Tasks, _NextClaimOffset} = build_tasks(test_store, TaskSources, 2),
+    {Tasks, _NextClaimOffset} = arweave_sync_chunk_picker:build_tasks(test_store, TaskSources, 2),
     [FirstReservation, SecondReservation] = Tasks,
     ?assertEqual(
         FirstFootprint,
@@ -220,6 +215,6 @@ build_tasks_returns_next_claim_offset(_Config) ->
             intervals = Intervals
         }
     ],
-    {Tasks, NextClaimOffset} = build_tasks(test_store, TaskSources, 2),
+    {Tasks, NextClaimOffset} = arweave_sync_chunk_picker:build_tasks(test_store, TaskSources, 2),
     ?assertEqual(2, length(Tasks)),
     ?assertEqual(2 * Chunk, NextClaimOffset).

@@ -5,9 +5,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_sync/include/arweave_sync.hrl").
 -include_lib("arweave_storage/include/arweave_storage.hrl").
--import(arweave_sync_fetch_worker, [
-    run/1
-]).
 
 suite() -> [{timetrap, {seconds, 30}}].
 
@@ -49,7 +46,7 @@ test_blacklist_past_end_skips_fetch(_Config) ->
             end}
         ],
         fun() ->
-            ?assertEqual(ok, run(task(0))),
+            ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
             ?assertEqual(
                 0,
                 meck:num_calls(ar_http_iface_client, get_chunk_binary, '_')
@@ -69,7 +66,7 @@ test_already_recorded_skips_fetch(_Config) ->
             end}
         ],
         fun() ->
-            ?assertEqual(ok, run(task(0))),
+            ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
             ?assertEqual(
                 0,
                 meck:num_calls(ar_http_iface_client, get_chunk_binary, '_')
@@ -92,7 +89,7 @@ test_recorded_prefix_continues_with_missing_chunk(_Config) ->
         fun(_, _, _) -> chunk_reply(100) end,
         [{arweave_storage, get_next_interval, NextSyncedInterval}],
         fun() ->
-            ?assertEqual(ok, run(task(0))),
+            ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
             ?assertEqual(
                 1,
                 meck:num_calls(ar_http_iface_client, get_chunk_binary, '_')
@@ -122,7 +119,7 @@ test_recorded_prefix_continues_with_missing_chunk(_Config) ->
 %% bytes.
 test_success_stores_and_rates_ok(_Config) ->
     run_with_mocks(fun(_, _, _) -> chunk_reply(100) end, fun() ->
-        ?assertEqual(ok, run(task(0))),
+        ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
         ?assertEqual(
             1, meck:num_calls(arweave_sync_ingest, store_fetched_chunk, '_')
         ),
@@ -142,7 +139,7 @@ test_legacy_small_chunk_fetches_once(_Config) ->
     %% A chunk-sized claim could contain several small legacy chunks. One task
     %% fetches only the first; later store sweeps rediscover the remaining holes.
     run_with_mocks(fun(_, _, _) -> chunk_reply(100) end, fun() ->
-        ?assertEqual(ok, run(task(0))),
+        ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
         ?assertEqual(
             1,
             meck:num_calls(ar_http_iface_client, get_chunk_binary, '_')
@@ -166,7 +163,7 @@ test_full_cache_skips_request(_Config) ->
         fun(_, _, _) -> error(should_not_fetch) end,
         [{ar_chunk_cache, is_full, fun() -> true end}],
         fun() ->
-            ?assertEqual(ok, run(task(0))),
+            ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
             ?assertEqual(
                 1,
                 meck:num_calls(ar_chunk_cache, is_full, '_')
@@ -189,7 +186,7 @@ test_404_rates_error_and_does_not_store(_Config) ->
             {error, {ok, {{<<"404">>, <<>>}, [], <<>>, undefined, undefined}}}
         end,
         fun() ->
-            ?assertEqual(ok, run(task(0))),
+            ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
             ?assertEqual(
                 0,
                 meck:num_calls(arweave_sync_ingest, store_fetched_chunk, '_')
@@ -211,7 +208,7 @@ test_404_rates_error_and_does_not_store(_Config) ->
 %% @doc A transport error is logged and rated without handing data to ingestion.
 test_generic_error_logs_and_rates_error(_Config) ->
     run_with_mocks(fun(_, _, _) -> {error, econnrefused} end, fun() ->
-        ?assertEqual(ok, run(task(0))),
+        ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
         ?assertEqual(
             0, meck:num_calls(arweave_sync_ingest, store_fetched_chunk, '_')
         ),
@@ -234,7 +231,7 @@ test_timeout_is_not_retried(_Config) ->
     run_with_mocks(fun(_, _, _) -> {error, timeout} end, fun() ->
         TaskRef = {self(), make_ref()},
         Task = (task(0))#task{task_ref = TaskRef},
-        ?assertEqual(ok, run(Task)),
+        ?assertEqual(ok, arweave_sync_fetch_worker:run(Task)),
         ?assertEqual(
             1, meck:num_calls(ar_http_iface_client, get_chunk_binary, '_')
         ),
@@ -276,7 +273,7 @@ test_429_not_booked_as_failure(_Config) ->
         fun() ->
             TaskRef = {self(), make_ref()},
             Task = (task(0))#task{task_ref = TaskRef},
-            ?assertEqual(ok, run(Task)),
+            ?assertEqual(ok, arweave_sync_fetch_worker:run(Task)),
             ?assertEqual(0, meck:num_calls(ar_peers, rate_fetched_data, '_')),
             receive
                 {'$gen_cast',
@@ -297,7 +294,7 @@ test_fetch_crash_reports_zero_bytes(_Config) ->
     run_with_mocks(fun(_, _, _) -> error(simulated_crash) end, fun() ->
         TaskRef = {self(), make_ref()},
         Task = (task(0))#task{task_ref = TaskRef},
-        ?assertException(error, simulated_crash, run(Task)),
+        ?assertException(error, simulated_crash, arweave_sync_fetch_worker:run(Task)),
         receive
             {'$gen_cast', {task_fetch_completed, TaskRef, 0, #fetch_timing{}}} ->
                 ok
@@ -325,7 +322,7 @@ test_packed_request_selects_store_packing(_Config) ->
             end}
         ],
         fun() ->
-            ?assertEqual(ok, run(task(0))),
+            ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
             ?assert(
                 meck:called(
                     ar_http_iface_client,
