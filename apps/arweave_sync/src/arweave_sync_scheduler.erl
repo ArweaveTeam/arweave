@@ -25,6 +25,7 @@
     dispatch_work/3,
     inflight_counts/1,
     on_task_fetch_completed/4,
+    on_task_unpacked/2,
     on_task_write_completed/2,
     queued_task_count_by_store/2,
     record_driven_peers/2,
@@ -45,10 +46,11 @@
     admission_headroom/1,
     claim_and_enqueue/2,
     tick_interval_ms/0,
-    task_fetch_completed/3,
+    report_fetch_completed/3,
     reset_store/1,
-    task_write_completed/1, task_write_completed/2,
-    task_write_failed/1
+    report_unpacked/1,
+    report_write_completed/1, report_write_completed/2,
+    report_write_failed/1
 ]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -148,6 +150,8 @@ handle_cast({task_fetch_completed, TaskRef, BytesFetched, FetchTiming}, State) -
         schedule_dispatch(
             on_task_fetch_completed(TaskRef, BytesFetched, FetchTiming, State)
         )};
+handle_cast({task_unpacked, TaskRef}, State) ->
+    {noreply, schedule_dispatch(on_task_unpacked(TaskRef, State))};
 handle_cast({task_write_completed, TaskRef}, State) ->
     {noreply, schedule_dispatch(on_task_write_completed(TaskRef, State))};
 handle_cast({task_write_failed, TaskRef}, State) ->
@@ -814,9 +818,9 @@ record_driven_peers(State, Dispatch) ->
             State#state{driven_peers = DrivenPeers}
     end.
 
-%% @doc Register the bytes fetched by the worker and the network-attempt time
+%% @doc Report the bytes fetched by the worker and the network-attempt time
 %% consumed by the task.
-task_fetch_completed({Pid, _Ref} = TaskRef, BytesFetched, FetchTiming) when
+report_fetch_completed({Pid, _Ref} = TaskRef, BytesFetched, FetchTiming) when
     is_pid(Pid)
 ->
     catch gen_server:cast(
@@ -825,19 +829,30 @@ task_fetch_completed({Pid, _Ref} = TaskRef, BytesFetched, FetchTiming) when
     ),
     ok.
 
-%% @doc Register that ar_data_sync finished processing one handed-off chunk.
-task_write_completed(StoreID, undefined) ->
+%% @doc Report that ar_data_sync finished processing one handed-off chunk.
+report_write_completed(StoreID, undefined) ->
     gen_server:cast(?MODULE, {store_write_completed, StoreID});
-task_write_completed(_StoreID, TaskRef) ->
-    task_write_completed(TaskRef).
+report_write_completed(_StoreID, TaskRef) ->
+    report_write_completed(TaskRef).
 
-%% @doc Register that a scheduler-owned chunk reached a terminal write result.
-task_write_completed(undefined) ->
+%% @doc Report that a handed-off chunk is unpacked, so its footprint's
+%% entropy is no longer needed.
+report_unpacked(undefined) ->
     ok;
-task_write_completed({Pid, _Ref} = TaskRef) when is_pid(Pid) ->
+report_unpacked({Pid, _Ref} = TaskRef) when is_pid(Pid) ->
+    catch gen_server:cast(Pid, {task_unpacked, TaskRef}),
+    ok;
+report_unpacked(TaskRef) ->
+    catch gen_server:cast(?MODULE, {task_unpacked, TaskRef}),
+    ok.
+
+%% @doc Report that a scheduler-owned chunk reached a terminal write result.
+report_write_completed(undefined) ->
+    ok;
+report_write_completed({Pid, _Ref} = TaskRef) when is_pid(Pid) ->
     catch gen_server:cast(Pid, {task_write_completed, TaskRef}),
     ok;
-task_write_completed(TaskRef) ->
+report_write_completed(TaskRef) ->
     catch gen_server:cast(?MODULE, {task_write_completed, TaskRef}),
     ok.
 
@@ -877,8 +892,9 @@ do_reset_store(StoreID, State) ->
         StoreTasks
     ).
 
-%% @doc Release a failed handoff without crediting the store's drain rate.
-task_write_failed({PID, _Ref} = TaskRef) when is_pid(PID) ->
+%% @doc Report a failed handoff; it is released without crediting the store's
+%% drain rate.
+report_write_failed({PID, _Ref} = TaskRef) when is_pid(PID) ->
     gen_server:cast(PID, {task_write_failed, TaskRef}).
 
 %% @doc Evolve peer control from the scheduler's active, inflight, and driven
@@ -987,21 +1003,34 @@ on_task_fetch_completed(TaskRef, BytesFetched, FetchTiming, State) ->
                 {0, _} ->
                     finish_task(Task, State3);
                 {_, fetching} ->
-                    %% Entropy is no longer needed after the fetch worker hands
-                    %% off the chunk. Keep the exact store claim through the
-                    %% asynchronous write, but release its footprint slot now.
-                    Footprints2 = arweave_sync_footprint:task_completed(
-                        Task, State3#state.footprints
-                    ),
-                    put_task(
-                        Task#task{state = writing, footprint = none},
-                        State3#state{footprints = Footprints2}
-                    );
+                    %% Keep the store claim through the asynchronous write.
+                    %% The footprint's entropy slot stays held too: a
+                    %% peer-packed chunk is unpacked with those entropies
+                    %% after the handoff, and on_task_unpacked releases it.
+                    put_task(Task#task{state = writing}, State3);
                 {_, write_complete} ->
                     finish_task(Task, State3);
                 {_, writing} ->
                     State3
             end;
+        not_found ->
+            State
+    end.
+
+%% @doc Release the footprint's entropy slot once the chunk is in unpacked
+%% form; the store claim stays until the write completes.
+on_task_unpacked(TaskRef, State) ->
+    case maps:get(TaskRef, State#state.tasks, not_found) of
+        #task{footprint = none} ->
+            State;
+        #task{} = Task ->
+            Footprints2 = arweave_sync_footprint:task_completed(
+                Task, State#state.footprints
+            ),
+            put_task(
+                Task#task{footprint = none},
+                State#state{footprints = Footprints2}
+            );
         not_found ->
             State
     end.

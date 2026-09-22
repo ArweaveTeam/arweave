@@ -16,6 +16,7 @@
     dispatch_work/3,
     inflight_counts/1,
     on_task_fetch_completed/4,
+    on_task_unpacked/2,
     on_task_write_completed/2,
     queued_task_count_by_store/2,
     record_driven_peers/2,
@@ -711,17 +712,34 @@ task_lifecycle(_Config) ->
         FootprintWriting = on_task_fetch_completed(
             FootprintRef, ?DATA_CHUNK_SIZE, FetchTiming, FootprintState
         ),
+        %% The handed-off chunk is still unpacked with the footprint's
+        %% entropies, so the entropy slot outlives the fetch.
         ?assertEqual(
-            0,
+            1,
             arweave_sync_footprint:bound_count(
                 FootprintWriting#state.footprints
             )
         ),
         ?assertEqual(
-            none,
+            Footprint,
             (maps:get(FootprintRef, FootprintWriting#state.tasks))#task.footprint
         ),
-        FootprintDone = on_task_write_completed(FootprintRef, FootprintWriting),
+        FootprintUnpacked = on_task_unpacked(FootprintRef, FootprintWriting),
+        ?assertEqual(
+            0,
+            arweave_sync_footprint:bound_count(
+                FootprintUnpacked#state.footprints
+            )
+        ),
+        ?assertEqual(
+            none,
+            (maps:get(FootprintRef, FootprintUnpacked#state.tasks))#task.footprint
+        ),
+        %% A repeated signal is harmless.
+        ?assertEqual(
+            FootprintUnpacked, on_task_unpacked(FootprintRef, FootprintUnpacked)
+        ),
+        FootprintDone = on_task_write_completed(FootprintRef, FootprintUnpacked),
         ?assertNot(maps:is_key(FootprintRef, FootprintDone#state.tasks)),
         ?assertEqual(
             0,
@@ -800,7 +818,7 @@ bandwidth_cap_trickle(_Config) ->
         {ar_chunk_cache, is_full, fun() -> false end},
         {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end},
         {arweave_sync_fetch_worker, run, fun(Task) ->
-            arweave_sync_scheduler:task_fetch_completed(
+            arweave_sync_scheduler:report_fetch_completed(
                 Task#task.task_ref, 0, #fetch_timing{}
             )
         end}
@@ -1604,7 +1622,7 @@ drains_clean(Config) ->
                     {ar_chunk_cache, is_full, fun() -> false end},
                     {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end},
                     {arweave_sync_fetch_worker, run, fun(Task) ->
-                        arweave_sync_scheduler:task_fetch_completed(
+                        arweave_sync_scheduler:report_fetch_completed(
                             Task#task.task_ref, 0, #fetch_timing{}
                         )
                     end}

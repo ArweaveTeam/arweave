@@ -68,6 +68,8 @@ independent_fetched_reservations(_) ->
         {Ingest, FetchedRef} = take_request(Writer),
         ?assertEqual(2, ar_chunk_cache:cached_size(store1)),
         ?assertNotEqual(Writer, Ingest),
+        %% A chunk that needed no unpacking is reported unpacked on handoff.
+        ?assertEqual({task_unpacked, TaskRef}, take_task_result()),
         Ingest ! {chunk_store_result, LocalRef, stored},
         Ingest ! {chunk_store_result, FetchedRef, stored},
         ?assertEqual(pong, gen_server:call(Ingest, ping)),
@@ -92,6 +94,7 @@ terminal_outcomes(_) ->
                     TaskRef
                 ),
                 {Ingest, Ref} = take_request(Writer),
+                ?assertEqual({task_unpacked, TaskRef}, take_task_result()),
                 Ingest ! {chunk_store_result, Ref, Result},
                 ?assertEqual(pong, gen_server:call(Ingest, ping)),
                 ?assertEqual(0, ar_chunk_cache:cached_size(store1)),
@@ -155,6 +158,9 @@ unpack_then_store(_) ->
         ?assertEqual(1, ar_chunk_cache:cached_size(store1)),
         Ingest ! {chunk, {unpacked, Ref, {unpacked, Chunk, Offset, TXRoot, Size}}},
         ?assertEqual({Ingest, Ref}, take_request(Writer)),
+        %% The footprint's entropy is released as soon as the chunk is unpacked,
+        %% before the write completes.
+        ?assertEqual({task_unpacked, TaskRef}, take_task_result()),
         %% An old unpack timeout must not expire the later storage phase.
         gen_server:cast(Ingest, {expire, unpack, Ref}),
         ?assertEqual(pong, gen_server:call(Ingest, ping)),
@@ -319,6 +325,7 @@ unpack_backpressure(_) ->
         ?assertEqual(1, ar_chunk_cache:cached_size(store1)),
         Ingest ! {chunk, {unpacked, Ref, ChunkArgs}},
         ?assertEqual({Ingest, Ref}, take_request(Writer)),
+        ?assertEqual({task_unpacked, TaskRef}, take_task_result()),
         Ingest ! {chunk_store_result, Ref, stored},
         ?assertEqual({task_write_completed, TaskRef}, take_task_result()),
         ?assertEqual(0, ar_chunk_cache:cached_size(store1))
@@ -336,6 +343,7 @@ validated_chunk_skips(_) ->
                 responses(Responses),
                 TaskRef = {self(), make_ref()},
                 fetched(store1, ?PEER, 0, valid, TaskRef),
+                ?assertEqual({task_unpacked, TaskRef}, take_task_result()),
                 ?assertEqual({task_write_failed, TaskRef}, take_task_result()),
                 ?assertEqual(0, ar_chunk_cache:cached_size(store1))
             end,
@@ -366,6 +374,7 @@ recent_chunk_uses_disk_pool(_) ->
                         {disk_pool_chunk, Args} -> Args
                     end
                 ),
+                ?assertEqual({task_unpacked, TaskRef}, take_task_result()),
                 ?assertEqual({Expected, TaskRef}, take_task_result()),
                 ?assertEqual(0, ar_chunk_cache:cached_size(store1))
             end,

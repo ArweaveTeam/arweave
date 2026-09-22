@@ -174,7 +174,11 @@ request_unpack(Ref, ChunkArgs) ->
     end.
 
 process_valid_fetched_chunk(Ref, ChunkArgs, Args, State) ->
-    #state{store_id = StoreID} = State,
+    #state{store_id = StoreID, requests = Requests} = State,
+    %% The chunk is unpacked (or never needed unpacking): its footprint's
+    %% entropy slot can go to the next footprint while the write proceeds.
+    {TaskRef, _} = maps:get(Ref, Requests),
+    arweave_sync_scheduler:report_unpacked(TaskRef),
     {Packing, UnpackedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
     {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot, Chunk, _ChunkID, ChunkEndOffset,
         Peer, Byte} = Args,
@@ -232,9 +236,9 @@ finish(Ref, Result, #state{store_id = StoreID, requests = Requests} = State) ->
             (arweave_sync_deps:chunk_cache()):release(Ref),
             case Result of
                 stored ->
-                    arweave_sync_scheduler:task_write_completed(StoreID, TaskRef);
+                    arweave_sync_scheduler:report_write_completed(StoreID, TaskRef);
                 buffered ->
-                    arweave_sync_scheduler:task_write_completed(StoreID, TaskRef);
+                    arweave_sync_scheduler:report_write_completed(StoreID, TaskRef);
                 {_, Reason} ->
                     %% Backend errors can contain arbitrary data, not metric labels.
                     Label =
@@ -269,4 +273,4 @@ reject(Ref, Reason, Peer, Byte, #state{store_id = StoreID} = State) ->
     finish(Ref, {error, Reason}, State).
 
 failed(undefined) -> ok;
-failed(TaskRef) -> arweave_sync_scheduler:task_write_failed(TaskRef).
+failed(TaskRef) -> arweave_sync_scheduler:report_write_failed(TaskRef).

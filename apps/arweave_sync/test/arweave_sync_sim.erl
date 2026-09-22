@@ -123,6 +123,9 @@ drain_sweeper(StoreID) ->
 store_fetched_chunk(StoreID, Peer, Byte, _Proof, TaskRef, _CacheRef) ->
     arweave_sim:increment_chunk_cache_size(StoreID),
     ok = arweave_sim:wait_for_entropy(Peer, Byte),
+    %% As in arweave_sync_ingest, the chunk is unpacked once its entropy is
+    %% available; only the write remains.
+    arweave_sync_scheduler:report_unpacked(TaskRef),
     {ok, _} = arweave_sim:apply_after(
         ?WRITE_LATENCY_MS,
         ?MODULE,
@@ -148,7 +151,7 @@ complete_write(StoreID, Byte, TaskRef) ->
             ok;
         available ->
             arweave_sim:write_completed(StoreID, Byte),
-            arweave_sync_scheduler:task_write_completed(TaskRef),
+            arweave_sync_scheduler:report_write_completed(TaskRef),
             ok
     end.
 
