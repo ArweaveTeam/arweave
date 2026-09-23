@@ -44,6 +44,7 @@
     store_id :: term(),
     offset :: non_neg_integer(),
     peer :: term(),
+    %% Byte intervals, or footprint-record intervals when footprint is set.
     intervals :: ar_intervals:intervals(),
     footprint :: none | #footprint{}
 }).

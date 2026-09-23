@@ -112,6 +112,7 @@
     get_footprint_bucket/1,
     footprint_intervals_to_byte_intervals/1,
     footprint_intervals_to_byte_intervals/3,
+    byte_intervals_to_footprint_intervals/3,
     max_footprint_offset/1,
     get_next_sector_start/1,
     get_sector_bucket_start/2
@@ -423,6 +424,11 @@ footprint_intervals_to_byte_intervals(FootprintIntervals) ->
 footprint_intervals_to_byte_intervals(FootprintIntervals, Start, End) ->
     arweave_storage_footprint_record:footprint_intervals_to_byte_intervals(
         FootprintIntervals, Start, End
+    ).
+
+byte_intervals_to_footprint_intervals(ByteIntervals, Partition, Footprint) ->
+    arweave_storage_footprint_record:byte_intervals_to_footprint_intervals(
+        ByteIntervals, Partition, Footprint
     ).
 
 max_footprint_offset(WeaveSize) ->

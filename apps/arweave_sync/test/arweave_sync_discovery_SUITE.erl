@@ -631,7 +631,7 @@ get_peers_for_offset_unions_sync_bucket_sources(_Config) ->
     ).
 
 %% @doc Cached range lookup preserves both byte and footprint sources for the
-%% same peer.
+%% same peer, the footprint source in footprint-record space.
 cached_peer_ranges_includes_byte_and_footprint_ranges(_Config) ->
     with_mocks(
         [
@@ -677,10 +677,6 @@ cached_peer_ranges_includes_byte_and_footprint_ranges(_Config) ->
             arweave_sync_discovery:store_row(
                 chunk_interval, footprint, Offset, Peer, FootprintIntervals
             ),
-            ExpectedFootprintIntervals =
-                arweave_storage:footprint_intervals_to_byte_intervals(
-                    FootprintIntervals
-                ),
             ?assertEqual(
                 {
                     [
@@ -695,7 +691,7 @@ cached_peer_ranges_includes_byte_and_footprint_ranges(_Config) ->
                             store_id = test_store,
                             offset = Offset,
                             peer = Peer,
-                            intervals = ExpectedFootprintIntervals,
+                            intervals = FootprintIntervals,
                             footprint = FootprintKey
                         }
                     ],
@@ -869,10 +865,6 @@ stale_interval_rows_remain_usable(_Config) ->
     %% Footprint rows age against the same safety floor.
     FootprintOffset = 0,
     FootprintIntervals = ar_intervals:from_list([{1, 0}]),
-    ExpectedFootprintIntervals =
-        arweave_storage:footprint_intervals_to_byte_intervals(
-            FootprintIntervals
-        ),
     FpKey = arweave_sync_discovery:chunk_interval_key(footprint, Peer, FootprintOffset),
     arweave_sync_discovery:store_row(
         chunk_interval,
@@ -882,7 +874,7 @@ stale_interval_rows_remain_usable(_Config) ->
         FootprintIntervals
     ),
     ?assertEqual(
-        {ok, ExpectedFootprintIntervals},
+        {ok, FootprintIntervals},
         arweave_sync_discovery:get_chunk_intervals(
             footprint, Peer, FootprintOffset, 0, RangeEnd
         )
@@ -895,7 +887,7 @@ stale_interval_rows_remain_usable(_Config) ->
         {FpKey, FootprintIntervals, FpStaleMs}
     ),
     ?assertEqual(
-        {stale, ExpectedFootprintIntervals},
+        {stale, FootprintIntervals},
         arweave_sync_discovery:get_chunk_intervals(
             footprint, Peer, FootprintOffset, 0, RangeEnd
         )
@@ -1160,9 +1152,6 @@ refresh_chunk_intervals_reuses_cache(_Config) ->
     Peer = {10, 0, 0, 1, 1984},
     Offset = 0,
     Intervals = ar_intervals:from_list([{1, 0}]),
-    Expected = arweave_storage:footprint_intervals_to_byte_intervals(
-        Intervals
-    ),
     arweave_sync_discovery:store_row(
         sync_bucket,
         footprint,
@@ -1194,7 +1183,7 @@ refresh_chunk_intervals_reuses_cache(_Config) ->
             meck:num_calls(ar_http_iface_client, get_footprints, 3)
         ),
         ?assertEqual(
-            {ok, Expected},
+            {ok, Intervals},
             arweave_sync_discovery:get_chunk_intervals(
                 footprint, Peer, Offset, 0, ?DATA_CHUNK_SIZE
             )

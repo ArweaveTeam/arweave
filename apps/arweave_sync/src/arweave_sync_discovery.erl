@@ -308,9 +308,8 @@ footprint_key(footprint, StoreID, {Partition, Footprint}) ->
         footprint = Footprint
     }.
 
-%% @doc Return a peer's cached availability as byte intervals. Byte metadata
-%% is clipped to the requested range; footprint metadata is converted from
-%% footprint-record space.
+%% @doc Return a peer's cached availability: byte metadata clipped to the
+%% requested range, footprint metadata in footprint-record space.
 get_chunk_intervals(_Mode, _Peer, _Offset, RangeStart, RangeEnd) when
     RangeStart >= RangeEnd
 ->
@@ -320,20 +319,22 @@ get_chunk_intervals(Mode, Peer, Offset, RangeStart, RangeEnd) ->
         miss ->
             cache_miss;
         {Freshness, Intervals} ->
-            ByteIntervals = chunk_intervals_to_byte_intervals(
+            Intervals2 = clip_chunk_intervals(
                 Mode, Intervals, RangeStart, RangeEnd
             ),
             case Freshness of
-                hit -> {ok, ByteIntervals};
-                stale -> {stale, ByteIntervals}
+                hit -> {ok, Intervals2};
+                stale -> {stale, Intervals2}
             end
     end.
 
-chunk_intervals_to_byte_intervals(byte, Intervals, RangeStart, RangeEnd) ->
+%% Footprint metadata stays in footprint-record space, where a run of chunks
+%% is one interval; the chunk picker converts only the chunks a store needs.
+clip_chunk_intervals(byte, Intervals, RangeStart, RangeEnd) ->
     ByteRange = ar_intervals:from_list([{RangeEnd, RangeStart}]),
     ar_intervals:intersection(Intervals, ByteRange);
-chunk_intervals_to_byte_intervals(footprint, Intervals, _RangeStart, _RangeEnd) ->
-    arweave_storage:footprint_intervals_to_byte_intervals(Intervals).
+clip_chunk_intervals(footprint, Intervals, _RangeStart, _RangeEnd) ->
+    Intervals.
 
 interval_location(byte, Offset) ->
     Step = arweave_sync_cursor:query_range_step_size(),

@@ -13,7 +13,7 @@
 %% Focused tests live outside the production module.
 -export([
     add_task_source/2,
-    build_task_source/2,
+    build_task_sources/3,
     build_tasks/3
 ]).
 -endif.
@@ -73,20 +73,59 @@ find_task_sources(UnsyncedRanges, PeerRanges) ->
 %% the local store still needs. Sources from the same peer and footprint are
 %% consolidated by unioning their intervals in TaskSourcesByKey.
 build_task_sources(UnsyncedRange, PeerRanges, TaskSourcesByKey) ->
+    UnsyncedFootprintIntervals = unsynced_footprint_intervals(
+        UnsyncedRange, PeerRanges),
     lists:foldl(
         fun(PeerRange, Acc) ->
-            TaskSource = build_task_source(UnsyncedRange, PeerRange),
+            TaskSource = build_task_source(
+                UnsyncedRange, PeerRange, UnsyncedFootprintIntervals),
             add_task_source(TaskSource, Acc)
         end,
         TaskSourcesByKey,
         PeerRanges).
 
-build_task_source(UnsyncedRange, PeerRange) ->
-    #peer_range{ peer = Peer,
-        intervals = AdvertisedIntervals, footprint = Footprint } = PeerRange,
+%% @doc Map each advertised footprint to its unsynced intervals in
+%% footprint-record space, where a run of chunks is one interval.
+unsynced_footprint_intervals(UnsyncedRange, PeerRanges) ->
+    #unsynced_range{ intervals = UnsyncedIntervals } = UnsyncedRange,
+    Footprints = lists:usort([PeerRange#peer_range.footprint
+        || PeerRange <- PeerRanges,
+            PeerRange#peer_range.footprint =/= none]),
+    lists:foldl(
+        fun(Footprint, Acc) ->
+            #footprint{ partition = Partition, footprint = Number } = Footprint,
+            Intervals = arweave_storage:byte_intervals_to_footprint_intervals(
+                UnsyncedIntervals, Partition, Number),
+            maps:put(Footprint, Intervals, Acc)
+        end,
+        #{},
+        Footprints).
+
+build_task_source(UnsyncedRange,
+        #peer_range{ footprint = none } = PeerRange,
+        _UnsyncedFootprintIntervals) ->
+    #peer_range{ peer = Peer, intervals = AdvertisedIntervals } = PeerRange,
     #unsynced_range{ intervals = UnsyncedIntervals } = UnsyncedRange,
     Intervals = ar_intervals:intersection(
         AdvertisedIntervals, UnsyncedIntervals),
+    #task_source{
+        peer = Peer,
+        footprint = none,
+        intervals = Intervals
+    };
+build_task_source(UnsyncedRange, PeerRange, UnsyncedFootprintIntervals) ->
+    #peer_range{ peer = Peer,
+        intervals = AdvertisedIntervals, footprint = Footprint } = PeerRange,
+    #unsynced_range{ intervals = UnsyncedIntervals } = UnsyncedRange,
+    %% Intersect in footprint-record space and convert only the fetchable
+    %% chunks; converting the whole advertisement would make one interval per
+    %% chunk.
+    FetchableFootprintIntervals = ar_intervals:intersection(
+        AdvertisedIntervals, maps:get(Footprint, UnsyncedFootprintIntervals)),
+    Intervals = ar_intervals:intersection(
+        arweave_storage:footprint_intervals_to_byte_intervals(
+            FetchableFootprintIntervals),
+        UnsyncedIntervals),
     #task_source{
         peer = Peer,
         footprint = Footprint,

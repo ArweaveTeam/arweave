@@ -21,6 +21,7 @@
     get_unsynced_intervals/3,
     footprint_intervals_to_byte_intervals/1,
     footprint_intervals_to_byte_intervals/3,
+    byte_intervals_to_footprint_intervals/3,
     max_offset/1,
     is_recorded/2,
     get_next_sector_start/1,
@@ -351,6 +352,70 @@ footprint_intervals_to_byte_intervals(FootprintIntervals, Start, End) ->
         ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2
     ).
 
+%% @doc Return the offsets of the footprint whose chunks overlap ByteIntervals,
+%% the inverse of footprint_intervals_to_byte_intervals/1.
+byte_intervals_to_footprint_intervals(ByteIntervals, Partition, Footprint) ->
+    {Start, End} = footprint_range(Partition, Footprint),
+    ar_intervals:fold(
+        fun({ByteEnd, ByteStart}, Acc) ->
+            %% Each offset maps to one chunk in byte space
+            %% (chunk_byte_interval/1), and a footprint's chunks follow the
+            %% order of its offsets, so the ones overlapping
+            %% (ByteStart, ByteEnd] are the offsets from First up to, not
+            %% including, Next.
+            First = first_chunk_ending_after(ByteStart, Start, End),
+            Next = first_chunk_starting_from(ByteEnd, Start, End),
+            case Next > First of
+                true -> ar_intervals:add(Acc, Next - 1, First - 1);
+                false -> Acc
+            end
+        end,
+        ar_intervals:new(),
+        ByteIntervals
+    ).
+
+%% @doc Return the first offset in (Start, End] whose chunk ends after Byte,
+%% or End + 1 when none does.
+first_chunk_ending_after(Byte, Start, End) ->
+    first_footprint_offset(
+        fun(Offset) ->
+            {ChunkEnd, _ChunkStart} = chunk_byte_interval(Offset),
+            ChunkEnd > Byte
+        end,
+        Start + 1,
+        End + 1
+    ).
+
+%% @doc Return the first offset in (Start, End] whose chunk starts at or after
+%% Byte, or End + 1 when none does.
+first_chunk_starting_from(Byte, Start, End) ->
+    first_footprint_offset(
+        fun(Offset) ->
+            {_ChunkEnd, ChunkStart} = chunk_byte_interval(Offset),
+            ChunkStart >= Byte
+        end,
+        Start + 1,
+        End + 1
+    ).
+
+%% @doc Return the first offset in [Low, High) satisfying Pred, or High; Pred
+%% must stay true once true, as it does for a footprint's chunks.
+first_footprint_offset(_Pred, Low, High) when Low >= High ->
+    High;
+first_footprint_offset(Pred, Low, High) ->
+    Mid = (Low + High) div 2,
+    case Pred(Mid) of
+        true -> first_footprint_offset(Pred, Low, Mid);
+        false -> first_footprint_offset(Pred, Mid + 1, High)
+    end.
+
+%% @doc Return the byte interval {End, Start} of the chunk a footprint offset
+%% maps to: the 256 KiB bucket ending at
+%% get_padded_offset_from_footprint_offset/1.
+chunk_byte_interval(FootprintOffset) ->
+    End = get_padded_offset_from_footprint_offset(FootprintOffset),
+    {End, End - ?DATA_CHUNK_SIZE}.
+
 %% @doc Return an upper bound on the footprint offsets reachable by a weave of
 %% the given byte size: the per-partition footprint capacity times the number
 %% of partitions touched by the weave.
@@ -589,8 +654,8 @@ do_footprint_intervals_to_byte_intervals([{End, Start} | Rest], Intervals) ->
 do_footprint_intervals_to_byte_intervals(Start, End, Intervals) when Start >= End ->
     Intervals;
 do_footprint_intervals_to_byte_intervals(Start, End, Intervals) ->
-    Offset = get_padded_offset_from_footprint_offset(Start + 1),
-    Intervals2 = ar_intervals:add(Intervals, Offset, Offset - ?DATA_CHUNK_SIZE),
+    {ChunkEnd, ChunkStart} = chunk_byte_interval(Start + 1),
+    Intervals2 = ar_intervals:add(Intervals, ChunkEnd, ChunkStart),
     do_footprint_intervals_to_byte_intervals(Start + 1, End, Intervals2).
 
 %% @doc Return the start offset of the first bucket of the sector that is

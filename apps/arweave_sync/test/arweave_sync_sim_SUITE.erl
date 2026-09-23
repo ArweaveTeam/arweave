@@ -2370,10 +2370,8 @@ test_unpromoted_footprint_work_does_not_block_store(_Config) ->
             footprint = #footprint{},
             intervals = CachedIntervals
         } = CachedPeerRange,
-        ?assertEqual(
-            FootprintSize * ?DATA_CHUNK_SIZE,
-            ar_intervals:sum(CachedIntervals)
-        ),
+        %% The whole footprint, in footprint-record space.
+        ?assertEqual(FootprintSize, ar_intervals:sum(CachedIntervals)),
         arweave_sync_sim:update_world(FullWorld),
         %% Forty ticks let the newly available path's cap recover from its initial
         %% client errors before steady throughput is measured.

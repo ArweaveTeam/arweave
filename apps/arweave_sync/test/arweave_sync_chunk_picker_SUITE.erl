@@ -49,8 +49,8 @@ build_byte_task_source(_Config) ->
         intervals = ar_intervals:from_list([{8, 4}]),
         footprint = none
     },
-    #task_source{peer = Peer, footprint = none, intervals = Intervals} =
-        arweave_sync_chunk_picker:build_task_source(UnsyncedRange, PeerRange),
+    [#task_source{peer = Peer, footprint = none, intervals = Intervals}] =
+        build_task_sources(UnsyncedRange, [PeerRange]),
     ?assertEqual([{6, 4}], ar_intervals:to_list(Intervals)).
 
 %% @doc Overlapping ranges from the same source merge into one contiguous range.
@@ -82,10 +82,13 @@ add_task_source_ignores_empty_intervals(_Config) ->
     TaskSource = #task_source{intervals = ar_intervals:new()},
     ?assertEqual(#{}, arweave_sync_chunk_picker:add_task_source(TaskSource, #{})).
 
-%% @doc Footprint sources preserve their identity while intersecting missing and
-%% advertised data.
+%% @doc Footprint sources keep their identity and hold the missing bytes of
+%% the chunks the peer advertises in footprint-record space.
 build_footprint_task_source(_Config) ->
+    Chunk = ?DATA_CHUNK_SIZE,
     Peer = {1, 2, 3, 4, 1984},
+    %% Footprint 1 of partition 0 holds the chunks ending at 2, 4, 6 and 8
+    %% chunk sizes, at footprint offsets 5 to 8.
     Footprint = #footprint{
         store_id = test_store,
         partition = 0,
@@ -93,25 +96,32 @@ build_footprint_task_source(_Config) ->
     },
     UnsyncedRange = #unsynced_range{
         kind = byte,
-        query_offset = 2,
-        intervals = ar_intervals:from_list([{6, 3}]),
-        range_start = 2,
-        range_end = 8,
+        query_offset = 0,
+        %% Missing: a chunk of footprint 0, the chunk ending at 4 chunk sizes,
+        %% the first 100 bytes of the one ending at 6, and the one ending at 8.
+        intervals = ar_intervals:from_list([
+            {Chunk, 0},
+            {4 * Chunk, 3 * Chunk},
+            {5 * Chunk + 100, 5 * Chunk},
+            {8 * Chunk, 7 * Chunk}
+        ]),
+        range_start = 0,
+        range_end = 8 * Chunk,
         advance = done
     },
+    %% The peer has footprint offsets 5 to 7.
     PeerRange = #peer_range{
         peer = Peer,
-        offset = 2,
-        intervals = ar_intervals:from_list([{7, 2}]),
+        offset = 0,
+        intervals = ar_intervals:from_list([{7, 4}]),
         footprint = Footprint
     },
-    #task_source{
-        peer = Peer,
-        footprint = Footprint,
-        intervals = Intervals
-    } =
-        arweave_sync_chunk_picker:build_task_source(UnsyncedRange, PeerRange),
-    ?assertEqual([{6, 3}], ar_intervals:to_list(Intervals)).
+    [#task_source{peer = Peer, footprint = Footprint, intervals = Intervals}] =
+        build_task_sources(UnsyncedRange, [PeerRange]),
+    ?assertEqual(
+        [{4 * Chunk, 3 * Chunk}, {5 * Chunk + 100, 5 * Chunk}],
+        ar_intervals:to_list(Intervals)
+    ).
 
 %% @doc Byte tasks and footprint reservations remain independent even when their
 %% ranges overlap.
@@ -218,3 +228,14 @@ build_tasks_returns_next_claim_offset(_Config) ->
     {Tasks, NextClaimOffset} = arweave_sync_chunk_picker:build_tasks(test_store, TaskSources, 2),
     ?assertEqual(2, length(Tasks)),
     ?assertEqual(2 * Chunk, NextClaimOffset).
+
+%%====================================================================
+%% Helpers
+%%====================================================================
+
+build_task_sources(UnsyncedRange, PeerRanges) ->
+    maps:values(
+        arweave_sync_chunk_picker:build_task_sources(
+            UnsyncedRange, PeerRanges, #{}
+        )
+    ).

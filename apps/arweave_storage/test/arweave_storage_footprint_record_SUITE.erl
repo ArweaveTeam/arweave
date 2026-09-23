@@ -16,6 +16,7 @@ all() ->
         get_offset_get_padded_offset_from_footprint_offset_reversal,
         footprint_intervals_to_byte_intervals,
         bounded_footprint_intervals_to_byte_intervals,
+        byte_intervals_to_footprint_intervals,
         footprint_geometry,
         next_sector_start_clamps_to_partition,
         initialize_records_synced_chunks,
@@ -483,6 +484,70 @@ footprint_intervals_to_byte_intervals(_Config) ->
             )
         end,
         TestCases
+    ).
+
+%% @doc Projecting byte intervals onto a footprint selects the footprint's
+%% chunks they overlap, the inverse of footprint_intervals_to_byte_intervals/1.
+byte_intervals_to_footprint_intervals(_Config) ->
+    C = ?DATA_CHUNK_SIZE,
+    ToBytes = fun(FootprintIntervals) ->
+        arweave_storage_footprint_record:footprint_intervals_to_byte_intervals(
+            ar_intervals:from_list(FootprintIntervals)
+        )
+    end,
+    ToFootprint = fun(ByteIntervals, Partition, Footprint) ->
+        arweave_storage_footprint_record:byte_intervals_to_footprint_intervals(
+            ar_intervals:from_list(ByteIntervals), Partition, Footprint
+        )
+    end,
+    %% Footprint 0 holds the chunks ending at 1, 3, 5 and 7 chunk sizes,
+    %% footprint 1 those ending at 2, 4, 6 and 8, and partition 1 repeats the
+    %% pattern from 9 on.
+    RoundTrips = [
+        {0, 0, [{1, 0}], [{C, 0}], "First chunk of footprint 0"},
+        {0, 1, [{8, 4}],
+            [{2 * C, C}, {4 * C, 3 * C}, {6 * C, 5 * C}, {8 * C, 7 * C}],
+            "All of footprint 1"},
+        {0, 1, [{6, 5}, {8, 7}], [{4 * C, 3 * C}, {8 * C, 7 * C}],
+            "Two chunks of footprint 1"},
+        {1, 0, [{10, 8}], [{9 * C, 8 * C}, {11 * C, 10 * C}],
+            "First two chunks of footprint 0 of partition 1"}
+    ],
+    lists:foreach(
+        fun({Partition, Footprint, FootprintIntervals, ByteIntervals, Title}) ->
+            ?assertEqual(
+                ByteIntervals,
+                ar_intervals:to_list(ToBytes(FootprintIntervals)),
+                Title
+            ),
+            ?assertEqual(
+                FootprintIntervals,
+                ar_intervals:to_list(
+                    ToFootprint(ByteIntervals, Partition, Footprint)
+                ),
+                Title
+            )
+        end,
+        RoundTrips
+    ),
+    %% Byte intervals that do not line up with chunks.
+    OneWay = [
+        {0, 1, [{C + 200, C + 100}], [{5, 4}], "A few bytes of a chunk"},
+        {0, 0, [{C + 200, C + 100}], [], "A chunk of another footprint"},
+        {0, 1, [{C, 0}], [], "An interval ending where a chunk starts"},
+        {0, 0, [{8 * C, 0}], [{4, 0}], "The whole partition"}
+    ],
+    lists:foreach(
+        fun({Partition, Footprint, ByteIntervals, FootprintIntervals, Title}) ->
+            ?assertEqual(
+                FootprintIntervals,
+                ar_intervals:to_list(
+                    ToFootprint(ByteIntervals, Partition, Footprint)
+                ),
+                Title
+            )
+        end,
+        OneWay
     ).
 
 bounded_footprint_intervals_to_byte_intervals(_Config) ->

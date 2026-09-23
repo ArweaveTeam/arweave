@@ -7,19 +7,6 @@
 -include_lib("arweave_sync/include/arweave_sync.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
 -include_lib("arweave_sync/include/arweave_sync_store_sweeper.hrl").
--import(arweave_sync_store_sweeper, [
-    byte_range_end/2,
-    can_sweep/1,
-    completed_range_delay/2,
-    do_enqueue_sweep_range/3,
-    frontier_offset/2,
-    handle_cast/2,
-    initialize_sweep/1,
-    process_next_sweep_range/2,
-    process_sweep_queues/1,
-    process_sweep_range/2,
-    sweep_queue/2
-]).
 
 suite() -> [{timetrap, {seconds, 30}}].
 
@@ -60,11 +47,11 @@ end_per_testcase(_, _) ->
 %% @doc The sweep frontier skips synced prefixes without moving behind its
 %% current offset.
 frontier_offset(_Config) ->
-    ?assertEqual(100, frontier_offset(100, ar_intervals:new())),
+    ?assertEqual(100, arweave_sync_store_sweeper:frontier_offset(100, ar_intervals:new())),
     Intervals = ar_intervals:from_list([{300, 250}, {500, 400}]),
-    ?assertEqual(250, frontier_offset(100, Intervals)),
-    ?assertEqual(260, frontier_offset(260, Intervals)),
-    ?assertEqual(450, frontier_offset(450, Intervals)).
+    ?assertEqual(250, arweave_sync_store_sweeper:frontier_offset(100, Intervals)),
+    ?assertEqual(260, arweave_sync_store_sweeper:frontier_offset(260, Intervals)),
+    ?assertEqual(450, arweave_sync_store_sweeper:frontier_offset(450, Intervals)).
 
 %% @doc Byte queries align to the global range grid even when the store starts
 %% off-grid.
@@ -73,14 +60,16 @@ byte_range_end_aligns_padded_store_start(_Config) ->
     %% A start 122,880 bytes before the grid must stop at the next boundary,
     %% not one full step after the unaligned start.
     Offset = 10 * Step - 122_880,
-    ?assertEqual(10 * Step, byte_range_end(Offset, 12 * Step)),
-    ?assertEqual(11 * Step, byte_range_end(10 * Step, 12 * Step)).
+    ?assertEqual(10 * Step, arweave_sync_store_sweeper:byte_range_end(Offset, 12 * Step)),
+    ?assertEqual(11 * Step, arweave_sync_store_sweeper:byte_range_end(10 * Step, 12 * Step)).
 
 %% @doc A newly requested range waits for its metadata warmup window.
 fresh_sweep_range_waits(_Config) ->
     SweepRange = #sweep_range{requested_at = ar_timer:monotonic_ms()},
     State = #state{},
-    {{blocked, WarmDelay}, State} = process_sweep_range(SweepRange, State),
+    {{blocked, WarmDelay}, State} = arweave_sync_store_sweeper:process_sweep_range(
+        SweepRange, State
+    ),
     ?assert(WarmDelay > 0),
     ?assert(WarmDelay =< ?SWEEP_RANGE_WARM_WAIT_MS).
 
@@ -141,8 +130,8 @@ warmed_sweep_range_proceeds(_Config) ->
                     footprint => queue:new()
                 }
             },
-            {ok, State2} = process_sweep_range(SweepRange, State),
-            ?assert(queue:is_empty(sweep_queue(byte, State2))),
+            {ok, State2} = arweave_sync_store_sweeper:process_sweep_range(SweepRange, State),
+            ?assert(queue:is_empty(arweave_sync_store_sweeper:sweep_queue(byte, State2))),
             ?assertEqual(
                 100, arweave_sync_cursor:current(byte, State2#state.cursor)
             )
@@ -159,9 +148,9 @@ empty_sweep_range_has_no_metadata_wait(_Config) ->
         requested_at = Now
     },
     State = #state{cursor = Cursor, readahead_cursor = Cursor},
-    State2 = do_enqueue_sweep_range(Empty, Cursor, State),
-    {ok, State3} = process_next_sweep_range(byte, State2),
-    ?assert(queue:is_empty(sweep_queue(byte, State3))).
+    State2 = arweave_sync_store_sweeper:do_enqueue_sweep_range(Empty, Cursor, State),
+    {ok, State3} = arweave_sync_store_sweeper:process_next_sweep_range(byte, State2),
+    ?assert(queue:is_empty(arweave_sync_store_sweeper:sweep_queue(byte, State3))).
 
 %% @doc Completing a nonempty range applies metadata cadence while empty ranges
 %% skip the delay.
@@ -213,7 +202,7 @@ completed_nonempty_range_uses_cadence(_Config) ->
             %% One second lets the pending serial metadata request progress.
             ?assertEqual(
                 ?SWEEP_RANGE_CADENCE_MS,
-                completed_range_delay(Before, After)
+                arweave_sync_store_sweeper:completed_range_delay(Before, After)
             ),
             EmptyBefore = Before#state{
                 sweep_queues = #{
@@ -224,7 +213,7 @@ completed_nonempty_range_uses_cadence(_Config) ->
                     ])
                 }
             },
-            ?assertEqual(0, completed_range_delay(EmptyBefore, After))
+            ?assertEqual(0, arweave_sync_store_sweeper:completed_range_delay(EmptyBefore, After))
         end
     ).
 
@@ -285,7 +274,7 @@ waiting_metadata_allows_other_mode_progress(_Config) ->
                     footprint => queue:in(FootprintSweepRange, queue:new())
                 }
             },
-            {ok, State2} = process_sweep_queues(State),
+            {ok, State2} = arweave_sync_store_sweeper:process_sweep_queues(State),
             ?assertEqual(
                 0, arweave_sync_cursor:current(byte, State2#state.cursor)
             ),
@@ -293,8 +282,8 @@ waiting_metadata_allows_other_mode_progress(_Config) ->
                 100,
                 arweave_sync_cursor:current(footprint, State2#state.cursor)
             ),
-            ?assertEqual(1, queue:len(sweep_queue(byte, State2))),
-            ?assert(queue:is_empty(sweep_queue(footprint, State2)))
+            ?assertEqual(1, queue:len(arweave_sync_store_sweeper:sweep_queue(byte, State2))),
+            ?assert(queue:is_empty(arweave_sync_store_sweeper:sweep_queue(footprint, State2)))
         end
     ).
 
@@ -324,7 +313,7 @@ sync_bounds_decrease_keeps_sweep(_Config) ->
                 disk_pool_threshold = 2 * ?DATA_CHUNK_SIZE,
                 cursor = Cursor
             },
-            {noreply, State2} = handle_cast(
+            {noreply, State2} = arweave_sync_store_sweeper:handle_cast(
                 {set_weave_size, ?DATA_CHUNK_SIZE}, State
             ),
             ?assertEqual(?DATA_CHUNK_SIZE, State2#state.weave_size),
@@ -369,17 +358,17 @@ sweep_readiness(_Config) ->
                 disk_pool_threshold = 1000
             },
             %% Cursor initialization starts both traversals at the module start.
-            StartedState = initialize_sweep(InitialState),
+            StartedState = arweave_sync_store_sweeper:initialize_sweep(InitialState),
             Cursor = StartedState#state.cursor,
             ?assertEqual(0, arweave_sync_cursor:current(byte, Cursor)),
             ?assertEqual(0, arweave_sync_cursor:current(footprint, Cursor)),
             ?assertEqual(Cursor, StartedState#state.readahead_cursor),
-            ?assertEqual(ready, can_sweep(StartedState)),
+            ?assertEqual(ready, arweave_sync_store_sweeper:can_sweep(StartedState)),
             %% A module starting at the live end has no work in this sweep.
             ?assertEqual(
                 complete,
-                can_sweep(
-                    initialize_sweep(
+                arweave_sync_store_sweeper:can_sweep(
+                    arweave_sync_store_sweeper:initialize_sweep(
                         InitialState#state{range_start = 1000}
                     )
                 )
@@ -387,16 +376,19 @@ sweep_readiness(_Config) ->
             %% Both live bounds must be known before a sweep is ready.
             ?assertEqual(
                 {blocked, ?NODE_JOIN_RETRY_DELAY_MS},
-                can_sweep(StartedState#state{weave_size = undefined})
+                arweave_sync_store_sweeper:can_sweep(StartedState#state{weave_size = undefined})
             ),
             ?assertEqual(
                 {blocked, ?NODE_JOIN_RETRY_DELAY_MS},
-                can_sweep(StartedState#state{disk_pool_threshold = undefined})
+                arweave_sync_store_sweeper:can_sweep(StartedState#state{
+                    disk_pool_threshold = undefined
+                })
             ),
             %% Joining and footprint migration completion gate the initialized sweep.
             meck:expect(ar_node, is_joined, fun() -> false end),
             ?assertEqual(
-                {blocked, ?NODE_JOIN_RETRY_DELAY_MS}, can_sweep(StartedState)
+                {blocked, ?NODE_JOIN_RETRY_DELAY_MS},
+                arweave_sync_store_sweeper:can_sweep(StartedState)
             ),
             meck:expect(ar_node, is_joined, fun() -> true end),
             meck:expect(
@@ -405,7 +397,8 @@ sweep_readiness(_Config) ->
                 fun(_) -> false end
             ),
             ?assertEqual(
-                {blocked, ?NODE_JOIN_RETRY_DELAY_MS}, can_sweep(StartedState)
+                {blocked, ?NODE_JOIN_RETRY_DELAY_MS},
+                arweave_sync_store_sweeper:can_sweep(StartedState)
             ),
             meck:expect(
                 arweave_storage,
@@ -415,36 +408,36 @@ sweep_readiness(_Config) ->
 
             State = StartedState,
             %% Disk ok and at least one cursor below the tip -> ready.
-            ?assertEqual(ready, can_sweep(State)),
+            ?assertEqual(ready, arweave_sync_store_sweeper:can_sweep(State)),
             %% Both cursors reached their live bounds -> sweep done.
             CompleteState = State#state{
                 cursor = set_test_cursors(Cursor, 1000, 1000)
             },
-            ?assertEqual(complete, can_sweep(CompleteState)),
+            ?assertEqual(complete, arweave_sync_store_sweeper:can_sweep(CompleteState)),
             %% One cursor can finish early while the other keeps the sweep active.
             ActiveState = State#state{
                 cursor = set_test_cursors(Cursor, 1000, 0)
             },
-            ?assertEqual(ready, can_sweep(ActiveState)),
+            ?assertEqual(ready, arweave_sync_store_sweeper:can_sweep(ActiveState)),
             %% The footprint cursor is complete at the disk-pool threshold even when the
             %% storage module range extends further.
             ThresholdState = State#state{
                 disk_pool_threshold = 500,
                 cursor = set_test_cursors(Cursor, 1000, 500)
             },
-            ?assertEqual(complete, can_sweep(ThresholdState)),
+            ?assertEqual(complete, arweave_sync_store_sweeper:can_sweep(ThresholdState)),
             %% Both live bounds below their cursors -> sweep done.
             EmptyState = State#state{weave_size = 0, disk_pool_threshold = 0},
-            ?assertEqual(complete, can_sweep(EmptyState)),
+            ?assertEqual(complete, arweave_sync_store_sweeper:can_sweep(EmptyState)),
             %% Disk state gates need identification.
             meck:expect(ar_data_sync, is_disk_space_sufficient, fun(_) ->
                 false
             end),
-            ?assertEqual({blocked, 30_000}, can_sweep(State)),
+            ?assertEqual({blocked, 30_000}, arweave_sync_store_sweeper:can_sweep(State)),
             meck:expect(ar_data_sync, is_disk_space_sufficient, fun(_) ->
                 not_initialized
             end),
-            ?assertEqual({blocked, 1_000}, can_sweep(State))
+            ?assertEqual({blocked, 1_000}, arweave_sync_store_sweeper:can_sweep(State))
         end
     ).
 
