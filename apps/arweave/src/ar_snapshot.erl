@@ -76,22 +76,7 @@ do_export(DataDir, OutputDir, Height) ->
         %% The tree of the tip's window must be present; do not fall back to
         %% an older tree and let the node join below the requested height.
         ok ?= write_new(OutputDir, State#{ search_depth => 1 }, DataDir),
-        ok ?= write_manifest(OutputDir, tip_info(State)),
         {ok, tip_info(State)}
-    end.
-
-%% @doc Write manifest.json, the tip height, hash and weave size, next to
-%% the databases, so the directory describes itself without a node.
-write_manifest(Dir, Info) ->
-    #{ height := Height, hash := H, weave_size := WeaveSize } = Info,
-    JSON = ar_serialize:jsonify(#{ height => Height,
-            indep_hash => arweave_util:encode(H), weave_size => WeaveSize }),
-    case file:write_file(filename:join(Dir, "manifest.json"), JSON) of
-        ok ->
-            ok;
-        {error, Reason} ->
-            _ = file:del_dir_r(Dir),
-            {error, {manifest_not_written, Reason}}
     end.
 
 read_block_index(DataDir) ->
@@ -160,15 +145,37 @@ ensure_dir(Dir) ->
             {error, {snapshot_dir_unavailable, Reason}}
     end.
 
-%% @doc Write the snapshot into the directory created for it, removing the
-%% directory again when the write fails.
+%% @doc Write the snapshot and its manifest into the directory created for
+%% them, removing the directory again when either write fails or crashes.
 write_new(Dir, State, CustomDir) ->
-    case write(Dir, State, CustomDir) of
+    try
+        maybe
+            ok ?= write(Dir, State, CustomDir),
+            write_manifest(Dir, tip_info(State))
+        end
+    of
         ok ->
             ok;
         {error, _} = Error ->
             _ = file:del_dir_r(Dir),
             Error
+    catch
+        Class:Reason:Stacktrace ->
+            _ = file:del_dir_r(Dir),
+            erlang:raise(Class, Reason, Stacktrace)
+    end.
+
+%% @doc Write manifest.json, the tip height, hash and weave size, next to
+%% the databases, so the directory describes itself without a node.
+write_manifest(Dir, Info) ->
+    #{ height := Height, hash := H, weave_size := WeaveSize } = Info,
+    JSON = ar_serialize:jsonify(#{ height => Height,
+            indep_hash => arweave_util:encode(H), weave_size => WeaveSize }),
+    case file:write_file(filename:join(Dir, "manifest.json"), JSON) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            {error, {manifest_not_written, Reason}}
     end.
 
 %% @doc Write the snapshot databases for State under Dir, reading the source
@@ -176,9 +183,11 @@ write_new(Dir, State, CustomDir) ->
 write(Dir, State, CustomDir) ->
     case open_snapshot_dbs(Dir) of
         {ok, DBs} ->
-            Result = do_write(State, CustomDir, DBs),
-            close_dbs(maps:get(opened, DBs)),
-            Result;
+            try
+                do_write(State, CustomDir, DBs)
+            after
+                close_dbs(maps:get(opened, DBs))
+            end;
         {error, _} = Error ->
             Error
     end.
