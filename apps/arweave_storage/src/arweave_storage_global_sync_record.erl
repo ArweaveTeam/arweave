@@ -80,6 +80,10 @@ get_serialized_buckets(footprint) ->
 %%%===================================================================
 
 init([]) ->
+    %% Every store's sync_record events funnel into this one process. Keep a
+    %% backlog off the heap so garbage collections do not copy it over and over,
+    %% slowing the process further and stalling the node.
+    process_flag(message_queue_data, off_heap),
     ok = arweave_storage_deps:subscribe(sync_record),
     SyncRecord = init_sync_record(),
     SyncBuckets = cache_and_get_sync_buckets(
@@ -240,6 +244,9 @@ cache_and_get_sync_buckets(SyncRecord, Key, SyncBuckets) ->
     ),
     SyncBuckets3.
 
+%% @doc Add a run of footprint offsets as one range. A store's footprint
+%% record initialization reports runs spanning whole footprints and more, so
+%% adding them offset by offset cannot keep up.
 update_footprint_data(Start, End, State) when Start >= End ->
     State;
 update_footprint_data(Start, End, State) ->
@@ -247,13 +254,12 @@ update_footprint_data(Start, End, State) ->
         footprint_record = FootprintRecord,
         footprint_buckets = FootprintBuckets
     } = State,
-    FootprintRecord2 = ar_intervals:add(FootprintRecord, Start + 1, Start),
-    FootprintBuckets2 = arweave_storage_deps:add_bucket_range(Start + 1, Start, FootprintBuckets),
-    State2 = State#state{
-        footprint_record = FootprintRecord2,
-        footprint_buckets = FootprintBuckets2
-    },
-    update_footprint_data(Start + 1, End, State2).
+    State#state{
+        footprint_record = ar_intervals:add(FootprintRecord, End, Start),
+        footprint_buckets = arweave_storage_deps:add_bucket_range(
+            End, Start, FootprintBuckets
+        )
+    }.
 
 remove_footprint_data(Start, End, State) when Start >= End ->
     State;

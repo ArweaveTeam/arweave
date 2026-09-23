@@ -4,6 +4,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
 
 suite() -> [{timetrap, {seconds, 60}}].
 
@@ -16,7 +17,8 @@ all() ->
         missing_entropy_repair,
         entropy_cursor_persistence,
         raw_chunk_helpers_preserve_records,
-        global_record_aggregation
+        global_record_aggregation,
+        global_footprint_run
     ].
 
 init_per_suite(Config) ->
@@ -311,6 +313,36 @@ global_record_aggregation(_) ->
             PartitionStart + 1, any_packing, {ar_data_sync, byte}, PartitionID
         )
     ).
+
+%% @doc A footprint run joins the global footprint buckets at a cost set by
+%% the buckets it spans, not by its length in offsets.
+global_footprint_run(_) ->
+    {ok, _} = arweave_storage:activate(),
+    Pid = whereis(arweave_storage_global_sync_record),
+    %% A thousand buckets' worth of footprint offsets.
+    RunEnd = 1000 * ?NETWORK_FOOTPRINT_BUCKET_SIZE,
+    {reductions, Before} = erlang:process_info(Pid, reductions),
+    ok = ar_events:send(
+        sync_record, {add_range, 0, RunEnd, ar_data_sync_footprints, #{}}
+    ),
+    ?assertEqual(
+        pong, gen_server:call(ar_events:event_to_process(sync_record), ping)
+    ),
+    %% The call queues behind the event, so it returns once the run is in.
+    ?assertMatch(
+        {ok, _},
+        arweave_storage:get_serialized_sync_record(#{format => etf, start => 0})
+    ),
+    {reductions, After} = erlang:process_info(Pid, reductions),
+    %% Adding the run offset by offset spends about 44 reductions per offset
+    %% (1.6 million here). As one range it spends a few per bucket (about 6,400
+    %% here), so one reduction per offset is a wide cap between the two.
+    ?assert(After - Before < RunEnd),
+    ok = ar_test_await:until(footprint_run_in_buckets, fun() ->
+        {ok, Serialized} = arweave_storage:get_serialized_buckets(footprint),
+        {BucketSize, Shares} = binary_to_term(Serialized),
+        maps:get((RunEnd div 2) div BucketSize, Shares, 0) == 1
+    end).
 
 %% @doc Explicit entropy repairs a missing-entropy write without overwriting a
 %% competing writer.
