@@ -99,7 +99,6 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 start_performance_reports() ->
-    reset_all_stats(),
     gen_server:call(?MODULE, start_performance_reports).
 
 %% @doc Stop logging performance reports for the given number of milliseconds.
@@ -274,10 +273,15 @@ mining_paused() ->
 
 init([]) ->
     ok = ar_events:subscribe(chunk_storage),
-    lists:foreach(fun update_storage_data_size/1, arweave_storage:get_data_sizes()),
+    load_storage_data_sizes(),
     {ok, #state{}}.
 
 handle_call(start_performance_reports, _From, State) ->
+    reset_all_stats(),
+    %% The reset drops the storage data sizes too, and a store republishes its
+    %% size only after its sync record changes, so reload the last published
+    %% sizes rather than report fully synced stores as empty.
+    load_storage_data_sizes(),
     %% Installs a new report ref. Ticks from any previously armed timer no longer match the state
     %% and are dropped, so only one timer ever reports.
     {reply, ok, schedule_report(State)};
@@ -322,6 +326,13 @@ handle_info({event, chunk_storage, _Event}, State) ->
 handle_info(Message, State) ->
     ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
     {noreply, State}.
+
+%% @doc Seed the per-store data sizes with the sizes storage last published.
+load_storage_data_sizes() ->
+    lists:foreach(
+        fun update_storage_data_size/1,
+        arweave_storage:get_data_sizes()
+    ).
 
 update_storage_data_size({StorageModule, Packing, PartitionNumber, Size}) ->
     set_storage_module_data_size(StorageModule, Packing, PartitionNumber, Size).
@@ -911,6 +922,13 @@ mining_stats_test_() ->
        fun test_data_size_stats/0),
      ar_test_node:test_with_all_nodes_mocked(
        [
+        {arweave_constants, partition_size, fun() -> 2097152 end},
+        {arweave_storage, get_data_sizes,
+         fun() -> [test_published_data_size()] end}
+       ],
+       fun test_data_sizes_survive_report_start/0),
+     ar_test_node:test_with_all_nodes_mocked(
+       [
         {arweave_constants, partition_size, fun() -> 2097152 end}
        ],
        fun test_h1_sent_to_peer_stats/0),
@@ -1180,6 +1198,21 @@ do_test_data_size_stats(Mining, Packing) ->
     ?assertEqual(0, get_total_minable_data_size(Mining)),
     ?assertEqual(0, get_partition_data_size(1, Mining)),
     ?assertEqual(0, get_partition_data_size(2, Mining)).
+
+%% @doc A fully synced store's size as storage last published it: all of
+%% partition 1 (the mocked partition size is 2097152 bytes).
+test_published_data_size() ->
+    Mining = {replica_2_9, ?TEST_MINING_ADDR},
+    {{2097152, 2 * 2097152, Mining}, Mining, 1, 2097152}.
+
+test_data_sizes_survive_report_start() ->
+    ar_mining_stats:pause_performance_reports(120000),
+    {_, Mining, _, Size} = test_published_data_size(),
+    reset_all_stats(),
+    %% Mining starts after the stores publish their sizes on load, and a
+    %% store whose record never changes does not publish again.
+    ar_mining_stats:start_performance_reports(),
+    ?assertEqual(Size, get_partition_data_size(1, Mining)).
 
 test_h1_sent_to_peer_stats() ->
     test_peer_stats(fun h1_sent_to_peer/2, h1_to_peer).
