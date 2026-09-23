@@ -75,8 +75,8 @@
     store_id,
     %% The storage module.
     storage_module,
-    %% The partition covered by the storage module.
-    partition_number,
+    %% {First, Last}: the partitions the storage module's range spans.
+    partitions,
     %% The number of entries in the write-ahead log.
     wal,
     %% Whether the sync record is in memory only.
@@ -397,22 +397,23 @@ init(StoreID) ->
     process_flag(trap_exit, true),
     StorageModule = arweave_storage_module:get_by_id(StoreID),
     DataDir = arweave_config:get([data_dir]),
-    {Dir, PartitionNumber} =
+    {Dir, Partitions} =
         case StorageModule of
             ?DEFAULT_MODULE ->
                 {filename:join([DataDir, ?ROCKS_DB_DIR, "ar_sync_record_db"]), undefined};
             Atom when is_atom(Atom) ->
                 %% A module without a storage, to use in tests.
                 {undefined, undefined};
-            {Start, _End, _Packing} ->
+            {Start, End, _Packing} ->
                 #store_info{path = Path} = arweave_storage:store_info(StoreID),
+                PartitionSize = arweave_constants:partition_size(),
                 {
                     filename:join([
                         Path,
                         ?ROCKS_DB_DIR,
                         "ar_sync_record_db"
                     ]),
-                    Start div arweave_constants:partition_size()
+                    {Start div PartitionSize, (End - 1) div PartitionSize}
                 }
         end,
     StateDB = state_db(StoreID),
@@ -420,7 +421,7 @@ init(StoreID) ->
         state_db = StateDB,
         store_id = StoreID,
         storage_module = StorageModule,
-        partition_number = PartitionNumber,
+        partitions = Partitions,
         wal = undefined,
         in_memory = Dir == undefined
     },
@@ -432,8 +433,8 @@ init(StoreID) ->
             {ok, State};
         _ ->
             ok = arweave_storage_deps:db_open(#{path => Dir, name => StateDB}),
-            {WAL, Sizes} = load_sync_records(StateDB, StoreID),
-            publish_data_sizes(Sizes, State),
+            {WAL, SyncRecordByIDType} = load_sync_records(StateDB, StoreID),
+            publish_data_sizes(SyncRecordByIDType, State),
             %% Spread the stores' first snapshots over a period instead of
             %% lining them all up at boot.
             schedule_store_state(
@@ -740,7 +741,7 @@ is_recorded2(Offset, Key, ID, StoreID) ->
 
 %% @doc Populate the ETS interval tables from the on-disk snapshot and replay
 %% the write-ahead log on top of them. Return the number of WAL entries and
-%% the snapshot's data sizes by packing.
+%% the snapshot's records by type.
 load_sync_records(StateDB, StoreID) ->
     {SyncRecordByID, SyncRecordByIDType} =
         case arweave_storage_deps:db_get(StateDB, ?SYNC_RECORDS_KEY) of
@@ -751,15 +752,52 @@ load_sync_records(StateDB, StoreID) ->
         end,
     initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
     initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
-    {replay_write_ahead_log(StateDB, StoreID), data_sizes(SyncRecordByIDType)}.
+    {replay_write_ahead_log(StateDB, StoreID), SyncRecordByIDType}.
 
-%% @doc Return [{Packing, Size}] for the ar_data_sync records of a snapshot.
-data_sizes(SyncRecordByIDType) ->
+%% @doc Return [{Packing, PartitionNumber, Size}] for the ar_data_sync records
+%% of a snapshot, one entry per partition the storage module spans.
+data_sizes(SyncRecordByIDType, Partitions) ->
     [
-        {Packing, ar_intervals:sum(TypeRecord)}
+        {Packing, PartitionNumber, Size}
      || {{ar_data_sync, Packing}, TypeRecord} <-
-            maps:to_list(SyncRecordByIDType)
+            maps:to_list(SyncRecordByIDType),
+        {PartitionNumber, Size} <- partition_sizes(TypeRecord, Partitions)
     ].
+
+%% @doc Split the record's size into [{PartitionNumber, Size}] at the partition
+%% boundaries. The first and the last partition also take the bytes recorded
+%% past the module's range: a chunk straddling its start and the overlap after
+%% its end.
+partition_sizes(Record, undefined) ->
+    [{undefined, ar_intervals:sum(Record)}];
+partition_sizes(Record, {First, Last} = Partitions) ->
+    PartitionSize = arweave_constants:partition_size(),
+    Sizes = ar_intervals:fold(
+        fun({End, Start}, Acc) ->
+            add_partition_bytes(Start, End, Partitions, PartitionSize, Acc)
+        end,
+        #{},
+        Record
+    ),
+    [{N, maps:get(N, Sizes, 0)} || N <- lists:seq(First, Last)].
+
+add_partition_bytes(Start, End, _Partitions, _PartitionSize, Sizes) when
+    Start >= End
+->
+    Sizes;
+add_partition_bytes(Start, End, Partitions, PartitionSize, Sizes) ->
+    {First, Last} = Partitions,
+    PartitionNumber = min(Last, max(First, Start div PartitionSize)),
+    PieceEnd =
+        case PartitionNumber of
+            Last -> End;
+            _ -> min(End, (PartitionNumber + 1) * PartitionSize)
+        end,
+    Piece = PieceEnd - Start,
+    Sizes2 = maps:update_with(
+        PartitionNumber, fun(Size) -> Size + Piece end, Piece, Sizes
+    ),
+    add_partition_bytes(PieceEnd, End, Partitions, PartitionSize, Sizes2).
 
 replay_write_ahead_log(StateDB, StoreID) ->
     WAL =
@@ -896,7 +934,7 @@ store_state(State) ->
             ]),
             {Error2, State};
         ok ->
-            publish_data_sizes(data_sizes(SyncRecordByIDType), State),
+            publish_data_sizes(SyncRecordByIDType, State),
             {ok, State#state{wal = 0}}
     end.
 
@@ -966,16 +1004,13 @@ release_snapshot_token() ->
     ets:delete_object(sync_records, {?SNAPSHOT_TOKEN_KEY, self()}),
     ok.
 
-publish_data_sizes(Sizes, State) ->
-    #state{
-        storage_module = StorageModule,
-        partition_number = PartitionNumber
-    } = State,
+publish_data_sizes(SyncRecordByIDType, State) ->
+    #state{storage_module = StorageModule, partitions = Partitions} = State,
     lists:foreach(
-        fun({Packing, Size}) ->
+        fun({Packing, PartitionNumber, Size}) ->
             publish_data_size(StorageModule, Packing, PartitionNumber, Size)
         end,
-        Sizes
+        data_sizes(SyncRecordByIDType, Partitions)
     ).
 
 %% @doc Return the last persisted data sizes for late subscribers.
@@ -989,7 +1024,10 @@ sync_record_exists(Packing, Record, StoreID) ->
 publish_data_size(StorageModule, Packing, PartitionNumber, Size) ->
     StoreID = arweave_storage_module:id(StorageModule),
     DataSize = {StorageModule, Packing, PartitionNumber, Size},
-    ets:insert(arweave_storage_data_sizes, {{StoreID, Packing}, DataSize}),
+    ets:insert(
+        arweave_storage_data_sizes,
+        {{StoreID, Packing, PartitionNumber}, DataSize}
+    ),
     arweave_storage_deps:send_event(chunk_storage, {data_size, DataSize}).
 
 get_or_create_tid(Key) ->

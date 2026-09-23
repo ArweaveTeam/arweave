@@ -6,6 +6,7 @@
     init_case/2,
     end_case/2,
     with_mocks/2,
+    with_disk_stores/3,
     with_disk_stores/4,
     start_sync_record/1,
     add_chunks_to_sync_record/2,
@@ -109,19 +110,28 @@ chunk_samples(Offset, StoreID) ->
 %% Run Fun with the given stores resolving to storage modules under the case's
 %% data dir, so their sync record servers keep a database, covering Range,
 %% plus any extra mocks.
-with_disk_stores(StoreIDs, {RangeStart, RangeEnd} = Range, ExtraMocks, Fun) ->
+with_disk_stores(StoreIDs, Range, ExtraMocks, Fun) ->
+    with_disk_stores(
+        [{StoreID, Range} || StoreID <- StoreIDs], ExtraMocks, Fun
+    ).
+
+%% Run Fun with each {StoreID, Range} store resolving to a storage module
+%% covering its own Range under the case's data dir, plus any extra mocks.
+with_disk_stores(Stores, ExtraMocks, Fun) ->
     with_mocks(
         [
             {arweave_storage_module, [
                 {get_by_id, fun(StoreID) ->
-                    case lists:member(StoreID, StoreIDs) of
-                        true -> {RangeStart, RangeEnd, unpacked};
-                        false -> meck:passthrough([StoreID])
+                    case lists:keyfind(StoreID, 1, Stores) of
+                        {_, {RangeStart, RangeEnd}} ->
+                            {RangeStart, RangeEnd, unpacked};
+                        false ->
+                            meck:passthrough([StoreID])
                     end
                 end},
                 {info, fun(StoreID) ->
-                    case lists:member(StoreID, StoreIDs) of
-                        true ->
+                    case lists:keyfind(StoreID, 1, Stores) of
+                        {_, Range} ->
                             #store_info{
                                 id = StoreID,
                                 padded_range = Range,

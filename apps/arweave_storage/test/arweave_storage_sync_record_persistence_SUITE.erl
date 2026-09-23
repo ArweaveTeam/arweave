@@ -12,6 +12,8 @@ all() -> [
     persistence_roundtrip,
     snapshots_take_turns,
     data_sizes_published_on_load,
+    data_sizes_split_by_partition,
+    data_sizes_shared_partition,
     footprint_record_built_by_its_server
 ].
 
@@ -29,6 +31,9 @@ end_per_testcase(Name, Config) ->
     arweave_storage_ct_util:stop_record(test_sync_record_persist),
     arweave_storage_ct_util:stop_record(test_sync_record_turn),
     arweave_storage_ct_util:stop_record(test_sync_record_sizes),
+    arweave_storage_ct_util:stop_record(test_sync_record_split),
+    arweave_storage_ct_util:stop_record(test_sync_record_left),
+    arweave_storage_ct_util:stop_record(test_sync_record_right),
     arweave_storage_ct_util:stop_record(test_sync_record_footprint),
     arweave_storage_ct_util:end_case(Name, Config).
 
@@ -344,6 +349,100 @@ data_sizes_published_on_load(_Config) ->
             arweave_storage_sync_record:get_data_sizes()
         ),
         kill(PID2)
+    end).
+
+%% @doc A store spanning several partitions publishes the data it holds in
+%% each of them, rather than its whole record under its first partition.
+data_sizes_split_by_partition(_Config) ->
+    StoreID = test_sync_record_split,
+    PartitionSize = arweave_constants:partition_size(),
+    %% Two and a half partitions, the span of a 9 TB module on mainnet.
+    RangeEnd = 5 * PartitionSize div 2,
+    Module = {0, RangeEnd, unpacked},
+    arweave_storage_ct_util:with_disk_stores(
+        [StoreID], {0, RangeEnd}, [], fun() ->
+            {ok, PID} = arweave_storage_ct_util:start_sync_record(StoreID),
+            %% The whole range, plus one chunk in the overlap past its end.
+            ok = arweave_storage_sync_record:add(
+                RangeEnd + ?DATA_CHUNK_SIZE,
+                0,
+                unpacked,
+                {ar_data_sync, byte},
+                StoreID
+            ),
+            gen_server:cast(PID, store_state),
+            _ = sys:get_state(PID),
+            %% Half a partition, and the overlap chunk past the end.
+            LastSize = PartitionSize div 2 + ?DATA_CHUNK_SIZE,
+            ?assertEqual(
+                [
+                    {Module, unpacked, 0, PartitionSize},
+                    {Module, unpacked, 1, PartitionSize},
+                    {Module, unpacked, 2, LastSize}
+                ],
+                lists:sort([
+                    DataSize
+                 || {M, _, _, _} = DataSize <-
+                        arweave_storage_sync_record:get_data_sizes(),
+                    M == Module
+                ])
+            ),
+            kill(PID)
+        end
+    ).
+
+%% @doc Two neighbouring stores that meet inside a partition each publish their
+%% own share of it, and the shares add up to the whole partition.
+data_sizes_shared_partition(_Config) ->
+    PartitionSize = arweave_constants:partition_size(),
+    %% The stores meet halfway through partition 1: the left one spans
+    %% partitions 0 and 1, the right one starts mid-partition 1 and spans 2.
+    Boundary = 3 * PartitionSize div 2,
+    Half = PartitionSize div 2,
+    Left = {test_sync_record_left, {0, Boundary}},
+    Right = {test_sync_record_right, {Boundary, 3 * PartitionSize}},
+    LeftModule = {0, Boundary, unpacked},
+    RightModule = {Boundary, 3 * PartitionSize, unpacked},
+    arweave_storage_ct_util:with_disk_stores([Left, Right], [], fun() ->
+        lists:foreach(
+            fun({StoreID, {RangeStart, RangeEnd}}) ->
+                {ok, PID} = arweave_storage_ct_util:start_sync_record(StoreID),
+                ok = arweave_storage_sync_record:add(
+                    RangeEnd,
+                    RangeStart,
+                    unpacked,
+                    {ar_data_sync, byte},
+                    StoreID
+                ),
+                gen_server:cast(PID, store_state),
+                _ = sys:get_state(PID)
+            end,
+            [Left, Right]
+        ),
+        DataSizes = arweave_storage_sync_record:get_data_sizes(),
+        ?assertEqual(
+            [
+                {LeftModule, unpacked, 0, PartitionSize},
+                {LeftModule, unpacked, 1, Half}
+            ],
+            lists:sort([D || {M, _, _, _} = D <- DataSizes, M == LeftModule])
+        ),
+        ?assertEqual(
+            [
+                {RightModule, unpacked, 1, Half},
+                {RightModule, unpacked, 2, PartitionSize}
+            ],
+            lists:sort([D || {M, _, _, _} = D <- DataSizes, M == RightModule])
+        ),
+        %% Summed per partition, as the mining report and the dashboards do.
+        ?assertEqual(
+            PartitionSize,
+            lists:sum([
+                Size
+             || {M, _, 1, Size} <- DataSizes,
+                M == LeftModule orelse M == RightModule
+            ])
+        )
     end).
 
 %% @doc The store's own sync record server builds its footprint record, and a
