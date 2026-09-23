@@ -9,8 +9,8 @@
 snapshot_export_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_snapshot_export/0}.
 
-%% @doc Mine a chain, export the offline snapshot of an earlier height and
-%% start a node from it.
+%% @doc Mine a chain, export the offline snapshot of an earlier height, check
+%% its manifest and start a node from it.
 test_snapshot_export() ->
     [B0] = ar_weave:init(),
     ar_test_node:start(B0),
@@ -31,7 +31,14 @@ test_snapshot_export() ->
     ?assertEqual(true, ar_doctor_snapshot:main([DataDir, SnapshotDir,
             "height", integer_to_list(?SNAPSHOT_HEIGHT)])),
     ok = stop_ar_kv(),
-    ?assertEqual({ok, ["rocksdb"]}, file:list_dir(SnapshotDir)),
+    {ok, Files} = file:list_dir(SnapshotDir),
+    ?assertEqual(["manifest.json", "rocksdb"], lists:sort(Files)),
+    {ok, ManifestJSON} = file:read_file(
+            filename:join(SnapshotDir, "manifest.json")),
+    ?assertEqual({ok, #{ <<"height">> => ?SNAPSHOT_HEIGHT,
+            <<"indep_hash">> => arweave_util:encode(TipH),
+            <<"weave_size">> => TipWeaveSize }},
+            ar_serialize:json_decode(ManifestJSON, [return_maps])),
     ar_test_node:start(#{ b0 => B0,
             config => #{ [join, start_from_state] => SnapshotDir } }),
     ?assertEqual(?SNAPSHOT_HEIGHT, ar_node:get_height()),
