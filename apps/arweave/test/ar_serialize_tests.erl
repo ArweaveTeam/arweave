@@ -242,6 +242,26 @@ oversized_json_integer_rejected_test() ->
         [<<"quantity">>, <<"reward">>]
     ).
 
+etf_decode_test() ->
+    Term = lists:duplicate(100, <<"a">>),
+    Compressed = term_to_binary(Term, [compressed]),
+    ?assertMatch(<< 131, 80, _/binary >>, Compressed),
+    ?assertEqual({ok, Term}, ar_serialize:etf_decode(term_to_binary(Term))),
+    ?assertEqual({error, compressed_etf}, ar_serialize:etf_decode(Compressed)),
+    ?assertEqual({error, invalid_etf}, ar_serialize:etf_decode(<<"not etf">>)),
+    ?assertEqual({error, invalid_etf}, ar_serialize:etf_decode(<<>>)).
+
+compressed_wallet_chunk_rejected_test() ->
+    Wallet = {<< 0:256 >>, {1, <<>>, 1, true}},
+    Response = #{ next_cursor => last,
+            wallets => lists:duplicate(100, Wallet) },
+    Compressed = term_to_binary(Response, [compressed]),
+    ?assertMatch(<< 131, 80, _/binary >>, Compressed),
+    ?assertEqual({ok, Response}, ar_serialize:etf_to_wallet_chunk_response(
+            term_to_binary(Response))),
+    ?assertMatch({'EXIT', _},
+            ar_serialize:etf_to_wallet_chunk_response(Compressed)).
+
 diff_pair_infinity_and_oversized_integer_test() ->
     Jobs = fun(DiffBin) ->
         ar_serialize:json_struct_to_jobs({[{<<"partial_diff">>, [DiffBin, DiffBin]}]})

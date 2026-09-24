@@ -18,7 +18,7 @@
         etf_to_wallet_chunk_response/1, wallet_list_to_json_struct/3,
         wallet_to_json_struct/2, json_struct_to_wallet_list/1,
         block_index_to_json_struct/1, json_struct_to_block_index/1,
-        jsonify/1, dejsonify/1, json_decode/1, json_decode/2,
+        jsonify/1, dejsonify/1, json_decode/1, json_decode/2, etf_decode/1,
         query_to_json_struct/1, json_struct_to_query/1,
         encode_int/2, encode_bin/2,
         encode_bin_list/3, signature_type_to_binary/1, binary_to_signature_type/1,
@@ -49,6 +49,11 @@
 %% sufficient for the largest 512-bit number. For example, the difficulty is
 %% bound by 256 bits.
 -define(MAX_INTEGER_DIGITS, 155).
+
+%% The Erlang Term Format version byte and the tag that follows it when the
+%% term is zlib-compressed.
+-define(ETF_VERSION, 131).
+-define(ETF_COMPRESSED, 80).
 
 %%%===================================================================
 %%% Public interface.
@@ -1353,6 +1358,18 @@ json_decode(JSON, JiffyOpts) ->
             {ok, DecodedJSON}
     end.
 
+%% @doc Decode an Erlang Term Format binary received from a peer. Reject
+%% compressed ETF, whose decoded size is not bounded by the input size.
+etf_decode(<< ?ETF_VERSION, ?ETF_COMPRESSED, _/binary >>) ->
+    {error, compressed_etf};
+etf_decode(ETF) ->
+    try binary_to_term(ETF, [safe]) of
+        Term ->
+            {ok, Term}
+    catch error:badarg ->
+        {error, invalid_etf}
+    end.
+
 delete_keys([], Proplist) ->
     Proplist;
 delete_keys([Key | Keys], Proplist) ->
@@ -1752,7 +1769,7 @@ etf_to_wallet_chunk_response(ETF) ->
     catch etf_to_wallet_chunk_response_unsafe(ETF).
 
 etf_to_wallet_chunk_response_unsafe(ETF) ->
-    #{ next_cursor := NextCursor, wallets := Wallets } = binary_to_term(ETF, [safe]),
+    {ok, #{ next_cursor := NextCursor, wallets := Wallets }} = etf_decode(ETF),
     true = is_binary(NextCursor) orelse NextCursor == last,
     lists:foreach(
         fun ({Addr, {Balance, LastTX}})

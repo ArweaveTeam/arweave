@@ -107,8 +107,8 @@ serialize(Buckets, MaxSize, PrevSerializedSize) ->
 %% @doc Deserialize the buckets from Erlang Term Format.
 %% The bucket size must be bigger than or equal to ExpectedBucketSize.
 deserialize(SerializedBuckets, ExpectedBucketSize) ->
-    case catch binary_to_term(SerializedBuckets, [safe]) of
-        {BucketSize, Map} when is_map(Map), is_integer(BucketSize),
+    case ar_serialize:etf_decode(SerializedBuckets) of
+        {ok, {BucketSize, Map}} when is_map(Map), is_integer(BucketSize),
                 BucketSize >= ExpectedBucketSize,
                 BucketSize =< ExpectedBucketSize * ?MAX_SYNC_BUCKET_SIZE_RATIO ->
             {ok, {BucketSize, maps:filter(
@@ -121,7 +121,7 @@ deserialize(SerializedBuckets, ExpectedBucketSize) ->
                 end,
                 Map
             )}};
-        {'EXIT', Reason} ->
+        {error, Reason} ->
             {error, Reason};
         _ ->
             {error, invalid_format}
@@ -190,6 +190,16 @@ delete(Start, End, Size, Map) ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+compressed_etf_rejected_test() ->
+    Map = maps:from_list([{Bucket, 0.5} || Bucket <- lists:seq(0, 99)]),
+    Buckets = {?DEFAULT_SYNC_BUCKET_SIZE, Map},
+    Compressed = term_to_binary(Buckets, [compressed]),
+    ?assertMatch(<< 131, 80, _/binary >>, Compressed),
+    ?assertEqual({ok, Buckets},
+            deserialize(term_to_binary(Buckets), ?DEFAULT_SYNC_BUCKET_SIZE)),
+    ?assertEqual({error, compressed_etf},
+            deserialize(Compressed, ?DEFAULT_SYNC_BUCKET_SIZE)).
 
 buckets_test() ->
     Size = 10000000000,

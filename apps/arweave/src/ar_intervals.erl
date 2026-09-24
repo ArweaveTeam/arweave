@@ -274,7 +274,7 @@ serialize_subset(Iterator, L, Count, RightBound, Limit, Format) ->
     end.
 
 from_etf(Binary) ->
-    L = binary_to_term(Binary, [safe]),
+    {ok, L} = ar_serialize:etf_decode(Binary),
     from_etf(L, infinity, new()).
 
 from_etf([], _, Intervals) ->
@@ -320,6 +320,14 @@ intersection(I1, I2, G) ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+compressed_etf_rejected_test() ->
+    Pairs = [{2 * N, 2 * N - 1} || N <- lists:seq(100, 1, -1)],
+    L = [{<< End:256 >>, << Start:256 >>} || {End, Start} <- Pairs],
+    Compressed = term_to_binary(L, [compressed]),
+    ?assertMatch(<< 131, 80, _/binary >>, Compressed),
+    ?assertEqual({ok, from_list(Pairs)}, safe_from_etf(term_to_binary(L))),
+    ?assertEqual({error, invalid}, safe_from_etf(Compressed)).
 
 intervals_test() ->
     I = new(),
