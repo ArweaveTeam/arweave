@@ -46,6 +46,10 @@ on:
         description: "operating system release"
         default: "22.04"
         type: "string"
+      exclude_apps:
+        description: "space-separated applications whose suites are skipped"
+        default: ""
+        type: "string"
 
 env:
   cache_key: ${{ inputs.os_arch }}-${{ inputs.os_name }}-${{ inputs.os_release }}
@@ -84,6 +88,7 @@ jobs:
         id: discover
         env:
           BATCHES: ${{ inputs.cover && 'all' || '2' }}
+          CT_EXCLUDE_APPS: ${{ inputs.exclude_apps }}
         run: |
           shards=$(bash scripts/list_ct_suites.sh matrix "${BATCHES}")
           echo "Discovered shards: ${shards}"

@@ -269,7 +269,9 @@ untagged suite is `slow` and runs in a shard of its own; a suite tagged
 `-test_category([fast])` is sliced round-robin into a couple of batched shards
 with the other fast suites. A new suite is picked up on the next run in its
 own shard; tag it `fast` once you know it does not share global state with
-its siblings, which is what almost every suite here does.
+its siblings, which is what almost every suite here does. A calling workflow
+can skip whole applications with the `exclude_apps` input: the macOS workflow
+skips `arweave_sync`, because macOS nodes do not sync data.
 
 Each shard is a plain `rebar3 ct --suite <suites> --logdir logs/ct` against
 the build artifact, the same command `./bin/ct` runs locally. The

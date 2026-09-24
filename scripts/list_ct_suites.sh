@@ -36,18 +36,42 @@ set -euo pipefail
 #
 # Suite paths are repo-relative and comma-separated: the form
 # `rebar3 ct --suite' takes.
+#
+# CT_EXCLUDE_APPS, when set, is a space-separated list of applications
+# whose suites are left out of every mode, e.g.
+#   CT_EXCLUDE_APPS=arweave_sync list_ct_suites.sh matrix 2
+# A platform that does not run a feature in production uses it to
+# skip that feature's suites (see test-arm64-macos-26.yml).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 APPS_DIR="${REPO_ROOT}/apps"
 
-# Repo-relative paths of every test-profile suite, sorted.
+# Repo-relative paths of every test-profile suite not excluded by
+# CT_EXCLUDE_APPS, sorted.
 suite_files() {
     find "${APPS_DIR}" -maxdepth 2 -type d -name test \
         -exec find {} -maxdepth 1 -name '*_SUITE.erl' \; \
         2>/dev/null \
         | sed "s|^${REPO_ROOT}/||" \
-        | sort -u
+        | sort -u \
+        | without_excluded_apps
+}
+
+# Drop the paths under `apps/<app>/' for each app in CT_EXCLUDE_APPS.
+without_excluded_apps() {
+    awk -v apps="${CT_EXCLUDE_APPS:-}" '
+        BEGIN {
+            n = split(apps, list, /[[:space:]]+/)
+            for (i = 1; i <= n; i++) {
+                if (list[i] != "") skip[list[i]] = 1
+            }
+        }
+        {
+            split($0, parts, "/")
+            if (!(parts[2] in skip)) print
+        }
+    '
 }
 
 # The categories a suite declares, one per line. Same awk as
