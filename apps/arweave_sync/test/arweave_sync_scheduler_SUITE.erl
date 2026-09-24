@@ -403,7 +403,7 @@ peer_queue_stays_full_behind_active_cap(_Config) ->
         PeerDispatches = arweave_sync_peer:set_store_task_targets(
             Peer,
             [StoreID],
-            arweave_sync_peer:test_dispatch(
+            arweave_sync_peer:new_dispatch(
                 #{Peer => 2}, #{Peer => 4}
             )
         ),
@@ -491,12 +491,12 @@ mixed_peer_classes_rate_limited(_Config) ->
         Dispatch0 = (seed(Tasks))#dispatch{
             %% Caps model deep fast, exact slow/flaky, and one-slot-headroom
             %% limited pipelines; every class can serve all three budget rounds.
-            peers = arweave_sync_peer:test_dispatch(#{
+            peers = arweave_sync_peer:new_dispatch(#{
                 Fast => 2 * Rounds,
                 Slow => Rounds,
                 Limited => Rounds + 1,
                 Flaky => Rounds
-            })
+            }, #{})
         },
         {SelectedState, Dispatch} = dispatch_tasks(
             #state{download_limit = DownloadLimit}, Dispatch0
@@ -926,11 +926,12 @@ footprint_budget(_Config) ->
         {_State, Dispatch} = dispatch_tasks(
             #state{},
             Dispatch0#dispatch{
-                peers = arweave_sync_peer:test_dispatch(
+                peers = arweave_sync_peer:new_dispatch(
                     maps:from_list([
                         {{1, 1, 1, I, 9}, 1000}
                      || I <- lists:seq(1, 5)
-                    ])
+                    ]),
+                    #{}
                 )
             }
         ),
@@ -1027,7 +1028,7 @@ bound_footprint_refills_through_dispatch(_Config) ->
                 peers = arweave_sync_peer:set_store_task_targets(
                     Peer,
                     [StoreID],
-                    arweave_sync_peer:test_dispatch(
+                    arweave_sync_peer:new_dispatch(
                         #{Peer => 1}, #{Peer => 2}
                     )
                 )
@@ -1095,7 +1096,7 @@ draining_footprint_tasks_finish_dispatching(_Config) ->
         {_State, Dispatch} = dispatch_tasks(
             #state{},
             Dispatch0#dispatch{
-                peers = arweave_sync_peer:test_dispatch(#{Peer => 1})
+                peers = arweave_sync_peer:new_dispatch(#{Peer => 1}, #{})
             }
         ),
         [Started] = Dispatch#dispatch.tasks_to_start,
@@ -1266,9 +1267,9 @@ byte_source_bypasses_full_footprint_pool(_Config) ->
                 footprints = arweave_sync_footprint:test_dispatch(
                     Footprints, 1
                 ),
-                peers = arweave_sync_peer:test_dispatch(#{
+                peers = arweave_sync_peer:new_dispatch(#{
                     BytePeer => 1, FootprintPeer => 1
-                })
+                }, #{})
             }
         ),
         [Started] = Dispatch#dispatch.tasks_to_start,
@@ -1379,7 +1380,7 @@ per_peer_concurrency_cap(_Config) ->
             (seed(Tasks))#dispatch{
                 %% Explicit queue limits keep enough runnable work behind each active
                 %% cap; the default eight-task bootstrap is for unmeasured peers.
-                peers = arweave_sync_peer:test_dispatch(
+                peers = arweave_sync_peer:new_dispatch(
                     #{Good => GoodCap, Bad => 8},
                     #{Good => GoodCap, Bad => 8}
                 )
@@ -1424,7 +1425,7 @@ store_balance(_Config) ->
             (seed(TasksA ++ TasksB))#dispatch{
                 %% Ten runnable tasks make the queue deep enough to fill the
                 %% explicit ten-request active cap in this synthetic first pass.
-                peers = arweave_sync_peer:test_dispatch(#{P => 10}, #{P => 10})
+                peers = arweave_sync_peer:new_dispatch(#{P => 10}, #{P => 10})
             }
         ),
         TasksToStart = Dispatch#dispatch.tasks_to_start,
@@ -1507,7 +1508,7 @@ cap(_Config) ->
 
     %% A genuinely unseen peer retains one exploration request until the
     %% next control tick measures it.
-    PeerDispatches = arweave_sync_peer:test_dispatch(#{known => 1}),
+    PeerDispatches = arweave_sync_peer:new_dispatch(#{known => 1}, #{}),
     ?assertEqual(
         1,
         arweave_sync_peer:concurrency_cap(unknown, PeerDispatches)
@@ -1581,7 +1582,7 @@ cap(_Config) ->
     ?assertEqual(1, arweave_sync_peer:concurrency_cap(PeerB, PeerDispatches3)),
     %% Dispatch uses the recomputed cap; an unknown peer retains one probe.
     Dispatch = (base_dispatch())#dispatch{
-        peers = arweave_sync_peer:test_dispatch(#{p => 40})
+        peers = arweave_sync_peer:new_dispatch(#{p => 40}, #{})
     },
     ?assertEqual(
         40,
@@ -1745,7 +1746,7 @@ peer_dispatches(InflightCounts, PeerCaps) ->
                 lists:seq(1, InflightCount)
             )
         end,
-        arweave_sync_peer:test_dispatch(PeerCaps),
+        arweave_sync_peer:new_dispatch(PeerCaps, #{}),
         InflightCounts
     ).
 
@@ -1754,7 +1755,7 @@ peer_dispatches_for_stores(PeerCaps, StoresByPeer) ->
         fun(Peer, StoreIDs, Acc) ->
             arweave_sync_peer:set_store_task_targets(Peer, StoreIDs, Acc)
         end,
-        arweave_sync_peer:test_dispatch(PeerCaps),
+        arweave_sync_peer:new_dispatch(PeerCaps, #{}),
         StoresByPeer
     ).
 

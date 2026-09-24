@@ -270,6 +270,11 @@ metric(chunks_stored_total, Measurement) ->
 metric(stored_cps, Measurement) ->
     metric(chunks_stored_total, Measurement)
         / metric(duration_seconds, Measurement);
+metric(entropy_generations_by_peer, Measurement) ->
+    map_counter_difference(
+        #sim_snapshot.entropy_generations_by_peer, Measurement);
+metric(entropy_generations_total, Measurement) ->
+    lists:sum(maps:values(metric(entropy_generations_by_peer, Measurement)));
 metric(final_http_inflight_by_peer, #sim_measurement{
         after_snapshot = #sim_snapshot{ http_inflight_by_peer = HTTPInflight }
     }) ->

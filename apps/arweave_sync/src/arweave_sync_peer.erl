@@ -60,7 +60,6 @@
     goodput_improved/2,
     goodput_rate/1,
     peer_dispatch/2,
-    queue_has_capacity/2,
     queue_max_length/1,
     recompute/5,
     update_delivery/5
@@ -73,7 +72,7 @@
         concurrency_cap/2,
         load/2, fetching_count/2, store_load/3, store_capacity/3,
         has_capacity/2, has_capacity/3,
-        priority/3,
+        priority/3, compare_priorities/2,
         best_source/3]).
 -export_type([state/0, dispatch/0]).
 
@@ -81,7 +80,7 @@
 -include_lib("arweave_sync/include/arweave_sync.hrl").
 
 -ifdef(AR_TEST).
--export([test_dispatch/1, test_dispatch/2]).
+-export([new_dispatch/2, peer_priority/3]).
 -endif.
 
 -include("arweave_sync_peer.hrl").
@@ -153,6 +152,8 @@ record_queued_tasks(Tasks, Dispatches) ->
         Dispatches,
         Tasks).
 
+%% @doc Build a dispatch from peer concurrency caps and queue limits; a peer
+%% without a queue limit starts at the initial cap.
 new_dispatch(ConcurrencyCaps, QueueMaxLengths) ->
     Peers = maps:map(
         fun(Peer, ConcurrencyCap) ->
@@ -165,19 +166,6 @@ new_dispatch(ConcurrencyCaps, QueueMaxLengths) ->
         end,
         ConcurrencyCaps),
     #dispatch{ peers = Peers }.
-
--ifdef(AR_TEST).
-%% @doc Build a dispatch with explicit caps for focused scheduler tests.
-test_dispatch(ConcurrencyCaps) ->
-    QueueMaxLengths = maps:map(
-        fun(_Peer, _ConcurrencyCap) -> ?CONCURRENCY_CAP_INITIAL end,
-        ConcurrencyCaps),
-    test_dispatch(ConcurrencyCaps, QueueMaxLengths).
-
-%% @doc Build a dispatch with explicit active and queued limits.
-test_dispatch(ConcurrencyCaps, QueueMaxLengths) ->
-    new_dispatch(ConcurrencyCaps, QueueMaxLengths).
--endif.
 
 %% @doc Account newly materialized footprint tasks against the peer queue.
 enqueue_tasks(Peer, Tasks, Dispatches) ->
@@ -322,12 +310,12 @@ has_capacity(#peer_dispatch{ fetching_count = FetchingCount,
 %% @doc Return whether Item may consume another peer-queue assignment.
 has_capacity(#task{ store_id = StoreID },
         #task_source{ peer = Peer }, Dispatches) ->
-    queue_has_capacity(StoreID, peer_dispatch(Peer, Dispatches));
+    has_store_capacity(StoreID, peer_dispatch(Peer, Dispatches));
 has_capacity(#footprint_reservation{ store_id = StoreID },
         #task_source{ peer = Peer }, Dispatches) ->
-    queue_has_capacity(StoreID, peer_dispatch(Peer, Dispatches)).
+    has_store_capacity(StoreID, peer_dispatch(Peer, Dispatches)).
 
-queue_has_capacity(StoreID, PeerDispatch) ->
+has_store_capacity(StoreID, PeerDispatch) ->
     peer_queue_capacity(PeerDispatch) > 0
         andalso assignment_has_capacity(StoreID, PeerDispatch).
 
@@ -394,15 +382,59 @@ peer_queue_capacity(#peer_dispatch{
     QueuedTaskCount = AssignedTaskCount - FetchingCount,
     max(0, QueueMaxLength - QueuedTaskCount).
 
-%% @doc Rank a peer. Runnable peers precede blocked peers, then lower load and
-%% higher capacity win.
-priority(Peer, Runnable, Dispatches) ->
-    AvailabilityRank = case Runnable of
-        true -> 0;
-        false -> 1
-    end,
-    {AvailabilityRank, load(Peer, Dispatches),
-        -concurrency_cap(Peer, Dispatches)}.
+%% @doc Rank the peer of Source for Reservation's store: available peers
+%% first, then lower load and higher concurrency cap. The peer is available
+%% when it has room for the store, or when the reservation's own fetches fill
+%% that room. The result compares through compare_priorities/2 and sorts
+%% weakest last.
+priority(#footprint_reservation{ store_id = StoreID,
+        active_tasks = ActiveTasks },
+        #task_source{ peer = Peer }, Dispatches) ->
+    PeerDispatch = peer_dispatch(Peer, Dispatches),
+    Available = ActiveTasks > 0
+        orelse has_store_capacity(StoreID, PeerDispatch),
+    peer_priority(
+        Available, peer_load(PeerDispatch), peer_concurrency_cap(PeerDispatch)
+    ).
+
+%% @doc Build the priority of a peer with the given availability, load and
+%% concurrency cap.
+peer_priority(Available, Load, ConcurrencyCap) ->
+    AvailabilityRank =
+        case Available of
+            true -> 0;
+            false -> 1
+        end,
+    {AvailabilityRank, Load, -ConcurrencyCap}.
+
+%% @doc Compare a candidate's peer priority with an incumbent's: better,
+%% worse, or close enough that the incumbent keeps its footprint.
+compare_priorities({0, _, _}, {1, _, _}) ->
+    better;
+compare_priorities({1, _, _}, {0, _, _}) ->
+    worse;
+compare_priorities({_, CandidateLoad, NegativeCandidateCap},
+        {_, IncumbentLoad, NegativeIncumbentCap}) ->
+    case compare_load_with_margin(CandidateLoad, IncumbentLoad) of
+        close ->
+            case -NegativeCandidateCap > -NegativeIncumbentCap * 1.1 of
+                true -> better;
+                false -> close
+            end;
+        Result ->
+            Result
+    end.
+
+%% The incumbent keeps its footprint while its peer is within ten percent of
+%% the challenger's, avoiding churn between otherwise equivalent footprints.
+compare_load_with_margin(Candidate, Incumbent)
+        when Incumbent > Candidate * 1.1 ->
+    better;
+compare_load_with_margin(Candidate, Incumbent)
+        when Candidate > Incumbent * 1.1 ->
+    worse;
+compare_load_with_margin(_Candidate, _Incumbent) ->
+    close.
 
 %% @doc Select the source offered by the least-loaded eligible peer.
 best_source(_StoreID, [], _Dispatches) ->

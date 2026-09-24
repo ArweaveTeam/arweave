@@ -115,7 +115,10 @@
     chunk_interval_inflight_by_peer = #{} :: map(),
     %% Completed chunk writes provide the per-store progress signal used by
     %% store-distribution scenarios.
-    chunks_stored_by_store = #{} :: map()
+    chunks_stored_by_store = #{} :: map(),
+    %% Source-footprint entropy generations, which footprint scenarios compare
+    %% with the chunks those footprints yielded.
+    entropy_generations_by_peer = #{} :: map()
 }).
 
 %% Snapshots bounding one measured simulation interval.

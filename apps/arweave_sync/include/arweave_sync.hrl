@@ -79,7 +79,7 @@
     store_id,
     footprint,
     active_tasks = 0,
-    state = queued
+    state = queued :: queued | bound | draining
 }).
 
 %% Worker time consumed by network fetch attempts. The scheduler aggregates

@@ -16,11 +16,11 @@
 
 -export([new/0, start_dispatch/1, finish_dispatch/1, emit_metrics/1,
         new_reservation/3, key/1, store_id/1,
-        sources/1, sort_key/1, queue_rank/1,
+        sources/1, sort_key/1, queue_rank/1, is_busy/1,
         claim_size/1,
         admit/2, reservation/2, build_batch/5,
         has_entropy_capacity/3,
-        compete_for_entropy_capacity/4, bound_candidates/1,
+        compete_for_entropy_capacity/4, bound_candidates/1, slot_priority/3,
         is_source_compatible/3,
         pending_reservations/1,
         has_bound_work/1, is_empty/1, task_completed/2,
@@ -114,6 +114,10 @@ queue_rank(#footprint_reservation{ state = bound }) ->
     1;
 queue_rank(#footprint_reservation{}) ->
     2.
+
+%% @doc Return whether the reservation has fetches in flight.
+is_busy(#footprint_reservation{ active_tasks = ActiveTasks }) ->
+    ActiveTasks > 0.
 
 %% @doc Return the whole-footprint claim held before a reservation is bound.
 claim_size(#footprint_reservation{}) ->
@@ -273,14 +277,16 @@ task_completed(Reservation) ->
 %%%===================================================================
 
 %% @doc Return whether Source can bind without displacing a footprint that
-%% already occupies an entropy slot.
+%% already occupies an entropy slot. Only queued and bound reservations are
+%% dispatched; a draining or missing one never gets here.
 has_entropy_capacity(Footprint,
         #task_source{ footprint = #footprint{} }, Dispatch) ->
     #dispatch{ max_active = MaxActive } = Dispatch,
     case lookup(Footprint, Dispatch) of
         #footprint_reservation{ state = queued } ->
             bound_count(Dispatch) < MaxActive;
-        _ ->
+        #footprint_reservation{ state = bound } ->
+            %% It already holds a slot.
             true
     end;
 has_entropy_capacity(_Footprint, _Source, _Dispatch) ->
@@ -319,14 +325,15 @@ defer(Footprint, #dispatch{ deferred = Deferred } = Dispatch) ->
     {deferred, Dispatch#dispatch{ deferred =
         sets:add_element(Footprint, Deferred) }}.
 
-%% @doc Return every bound reservation occupying an entropy slot. A footprint
-%% remains eligible for displacement after all its work has entered peer queues;
-%% otherwise queued work can hide the slot from a newly available store.
+%% @doc Return every bound reservation occupying an entropy slot, paired
+%% with the source it is bound to. A footprint remains eligible for
+%% displacement after all its work has entered peer queues; otherwise queued
+%% work can hide the slot from a newly available store.
 bound_candidates(Dispatch) ->
     maps:fold(
-        fun(Footprint, #footprint_reservation{ state = bound,
-                peer = Peer, store_id = StoreID }, Acc) ->
-                [{Footprint, Peer, StoreID} | Acc];
+        fun(_Footprint, #footprint_reservation{ state = bound,
+                sources = [Source] } = Reservation, Acc) ->
+                [{Reservation, Source} | Acc];
             (_Footprint, _Reservation, Acc) ->
                 Acc
         end,
@@ -358,47 +365,48 @@ compete_with_weakest(CandidatePriority, BoundPriorities, Reservations) ->
             end
     end.
 
-candidate_wins({CandidateStoreCount, _CandidateAvailability,
-        _CandidatePeerLoad, _CandidateCap},
-        {IncumbentStoreCount, _IncumbentAvailability,
-            _IncumbentPeerLoad, _IncumbentCap})
-        when CandidateStoreCount < IncumbentStoreCount ->
+%% @doc Build a footprint's claim on an entropy slot from the footprints its
+%% store holds, whether its store can take its work, and its peer's priority
+%% from arweave_sync_peer:priority/3. Claims sort weakest last.
+slot_priority(StoreCount, StoreAvailable, PeerPriority) ->
+    StoreAvailability =
+        case StoreAvailable of
+            true -> 0;
+            false -> 1
+        end,
+    {StoreCount, StoreAvailability, PeerPriority}.
+
+%% @doc Decide whether a queued footprint takes an incumbent's entropy slot.
+%% Store counts decide alone only when the move evens out the stores' shares:
+%% taking the single extra footprint of a store merely swaps which store waits
+%% and throws away the entropy generated for the unfinished footprint. Then a
+%% store that can take the work beats one that cannot, and the peers decide
+%% the rest.
+candidate_wins({CandidateStoreCount, _CandidateStoreAvailability,
+        _CandidatePeerPriority},
+        {IncumbentStoreCount, _IncumbentStoreAvailability,
+            _IncumbentPeerPriority})
+        when CandidateStoreCount + 1 < IncumbentStoreCount ->
     true;
-candidate_wins({CandidateStoreCount, _CandidateAvailability,
-        _CandidatePeerLoad, _CandidateCap},
-        {IncumbentStoreCount, _IncumbentAvailability,
-            _IncumbentPeerLoad, _IncumbentCap})
+candidate_wins({CandidateStoreCount, _CandidateStoreAvailability,
+        _CandidatePeerPriority},
+        {IncumbentStoreCount, _IncumbentStoreAvailability,
+            _IncumbentPeerPriority})
         when CandidateStoreCount > IncumbentStoreCount ->
     false;
-candidate_wins({StoreCount, 0, _CandidatePeerLoad, _CandidateCap},
-        {StoreCount, 1, _IncumbentPeerLoad, _IncumbentCap}) ->
+candidate_wins({_CandidateStoreCount, 0, _CandidatePeerPriority},
+        {_IncumbentStoreCount, 1, _IncumbentPeerPriority}) ->
     true;
-candidate_wins({StoreCount, 1, _CandidatePeerLoad, _CandidateCap},
-        {StoreCount, 0, _IncumbentPeerLoad, _IncumbentCap}) ->
+candidate_wins({_CandidateStoreCount, 1, _CandidatePeerPriority},
+        {_IncumbentStoreCount, 0, _IncumbentPeerPriority}) ->
     false;
-candidate_wins({StoreCount, Availability, CandidatePeerLoad,
-        NegativeCandidateCap},
-        {StoreCount, Availability, IncumbentPeerLoad,
-            NegativeIncumbentCap}) ->
-    case compare_load_with_margin(CandidatePeerLoad, IncumbentPeerLoad) of
-        better -> true;
-        worse -> false;
-        close ->
-            CandidateCap = -NegativeCandidateCap,
-            IncumbentCap = -NegativeIncumbentCap,
-            CandidateCap > IncumbentCap * 1.1
-    end.
-
-%% The incumbent retains its entropy while it is within ten percent of the
-%% challenger, avoiding churn between otherwise equivalent footprints.
-compare_load_with_margin(Candidate, Incumbent)
-        when Incumbent > Candidate * 1.1 ->
-    better;
-compare_load_with_margin(Candidate, Incumbent)
-        when Candidate > Incumbent * 1.1 ->
-    worse;
-compare_load_with_margin(_Candidate, _Incumbent) ->
-    close.
+candidate_wins({_CandidateStoreCount, _CandidateStoreAvailability,
+        CandidatePeerPriority},
+        {_IncumbentStoreCount, _IncumbentStoreAvailability,
+            IncumbentPeerPriority}) ->
+    arweave_sync_peer:compare_priorities(
+        CandidatePeerPriority, IncumbentPeerPriority
+    ) =:= better.
 
 %%%===================================================================
 %%% Release.

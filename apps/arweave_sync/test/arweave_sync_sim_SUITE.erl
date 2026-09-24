@@ -46,6 +46,7 @@ all() ->
         test_mixed_peer_classes_rate_limited,
         test_single_peer_store_spread,
         test_single_footprint_peer_store_spread,
+        test_more_stores_than_entropy_slots_keep_footprints,
         test_single_footprint_peer_store_bursts_preserve_throughput,
         test_delayed_fetch_waves_do_not_amplify_store_backlog,
         test_low_local_completion_observation_does_not_limit_recovery,
@@ -1560,6 +1561,67 @@ test_single_footprint_peer_store_spread(_Config) ->
         Measurement = arweave_sync_sim:run_for(30),
         assert_chunks_spread_across_stores(Measurement),
         assert_metric_utilization(stored_cps, AggregateStoreCPS, Measurement)
+    end).
+
+%% Scenario: A footprint peer serves more destination stores than the entropy
+%% cache has slots.
+%%
+%% Context:
+%% - Six stores need data from one footprint peer, but the entropy cache holds
+%%   only two footprints, as on nodes with dozens of storage modules.
+%% - Generating a footprint's entropy takes a second.
+%%
+%% Timeline:
+%% - Warm through discovery and the first bindings, then measure while every
+%%   store keeps queueing footprints for the two slots.
+%%
+%% Contract:
+%% - C1: A bound footprint keeps its slot while its own fetches fill its
+%%   peer's share of the store; being busy is not being blocked.
+%% - C2: A store without a slot does not take one from a store holding a
+%%   single footprint; that only swaps which store waits.
+%% - C3: Each generated footprint entropy serves its whole footprint.
+%%
+%% Verification:
+%% - V1: Stored throughput reaches 95% of the peer's serving capacity.
+%% - V2: The measurement generates no more entropies than the footprints its
+%%   stored chunks fill, plus one per slot started and not finished.
+test_more_stores_than_entropy_slots_keep_footprints(_Config) ->
+    arweave_config:internal_with_test_config(fun() ->
+        arweave_sim:use_mainnet_replica_2_9_sizes(),
+        PeerCPS = 40,
+        Peer = #sim_peer{
+            max_serve_cps = PeerCPS,
+            chunk_interval_latency_ms = ?SIM_SUBSTEP_MS,
+            sync_kinds = [footprint]
+        },
+        Slots = 2,
+        arweave_sync_sim:start_sim(#sim_world{
+            peers = #{?PEER_UNLIMITED => Peer},
+            entropy_generation_ms = 1000,
+            node_config = #{
+                %% Two 256 MiB footprints for six stores.
+                [packing, entropy, cache_size] => Slots * 256
+            }
+        }),
+        %% Thirty seconds cover discovery, peer-cap growth and the first
+        %% footprint bindings.
+        arweave_sync_sim:run_for(30),
+        %% Sixty seconds at 40 chunks/s store about 2400 chunks, more than
+        %% two 1024-chunk footprints.
+        Measurement = arweave_sync_sim:run_for(60),
+        assert_metric_utilization(stored_cps, PeerCPS, Measurement),
+        FootprintChunks =
+            arweave_constants:get_sub_chunks_per_replica_2_9_entropy(),
+        FilledFootprints =
+            arweave_sync_sim:metric(chunks_stored_total, Measurement)
+                div FootprintChunks,
+        %% Rotating slots after every batch of about fifty chunks generated
+        %% an entropy for every such batch, over forty in this window.
+        ?assert(
+            arweave_sync_sim:metric(entropy_generations_total, Measurement)
+                =< FilledFootprints + Slots
+        )
     end).
 
 %% Scenario: Footprint writes rotate among three pairs of stores while every
@@ -3463,6 +3525,7 @@ testcase_timeout(test_shared_slow_device_isolation) -> 600;
 testcase_timeout(test_mixed_peer_classes_rate_limited) -> 400;
 testcase_timeout(test_single_peer_store_spread) -> 400;
 testcase_timeout(test_single_footprint_peer_store_spread) -> 500;
+testcase_timeout(test_more_stores_than_entropy_slots_keep_footprints) -> 500;
 testcase_timeout(test_single_footprint_peer_store_bursts_preserve_throughput) -> 500;
 testcase_timeout(test_delayed_fetch_waves_do_not_amplify_store_backlog) -> 500;
 testcase_timeout(test_low_local_completion_observation_does_not_limit_recovery) -> 500;

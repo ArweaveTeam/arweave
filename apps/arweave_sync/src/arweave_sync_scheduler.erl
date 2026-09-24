@@ -473,23 +473,15 @@ best_source(Work, Dispatch) ->
         peers = PeerDispatches
     } = Dispatch,
     ReadySources = lists:filter(
-        fun(#task_source{peer = Peer} = Source) ->
+        fun(Source) ->
             arweave_sync_footprint:is_source_compatible(
                 Item, Source, FootprintDispatch
             ) andalso
-                arweave_sync_peer:has_capacity(Item, Source, PeerDispatches) andalso
-                peer_has_store_capacity(Item, Peer, StoreID, Dispatch)
+                arweave_sync_peer:has_capacity(Item, Source, PeerDispatches)
         end,
         Sources
     ),
     arweave_sync_peer:best_source(StoreID, ReadySources, PeerDispatches).
-
-%% @doc Concrete tasks have already passed admission; only footprint
-%% reservations need peer/store capacity before materializing child tasks.
-peer_has_store_capacity(#task{}, _Peer, _StoreID, _Dispatch) ->
-    true;
-peer_has_store_capacity(#footprint_reservation{}, Peer, StoreID, Dispatch) ->
-    arweave_sync_peer:store_capacity(Peer, StoreID, Dispatch#dispatch.peers) > 0.
 
 dispatch_selected_work(
     #work{item = #task{} = Task},
@@ -509,8 +501,7 @@ dispatch_selected_work(
     dispatch_footprint_tasks(Reservation, Source, State, Dispatch).
 
 dispatch_footprint_tasks(Reservation, Source, State, Dispatch) ->
-    Footprint = arweave_sync_footprint:key(Reservation),
-    case ensure_entropy_capacity(Footprint, Source, Dispatch) of
+    case ensure_entropy_capacity(Reservation, Source, Dispatch) of
         {deferred, Dispatch2} ->
             {State, Dispatch2};
         {ready, Dispatch2} ->
@@ -520,7 +511,8 @@ dispatch_footprint_tasks(Reservation, Source, State, Dispatch) ->
 %% @doc Ensure entropy capacity before fetching from a footprint source.
 %% Each peer/footprint pair needs cached entropy, so exceeding the cache would
 %% repeatedly evict and regenerate entropy instead of sustaining chunk fetches.
-ensure_entropy_capacity(Footprint, Source, Dispatch) ->
+ensure_entropy_capacity(Reservation, Source, Dispatch) ->
+    Footprint = arweave_sync_footprint:key(Reservation),
     FootprintDispatch = Dispatch#dispatch.footprints,
     case
         arweave_sync_footprint:has_entropy_capacity(
@@ -530,9 +522,8 @@ ensure_entropy_capacity(Footprint, Source, Dispatch) ->
         true ->
             {ready, Dispatch};
         false ->
-            Peer = Source#task_source.peer,
-            StoreID = Footprint#footprint.store_id,
-            CandidatePriority = peer_priority(Peer, StoreID, Dispatch),
+            CandidatePriority =
+                footprint_priority(Reservation, Source, Dispatch),
             BoundPriorities = bound_footprint_priorities(Dispatch),
             {Result, FootprintDispatch2} =
                 arweave_sync_footprint:compete_for_entropy_capacity(
@@ -546,26 +537,29 @@ ensure_entropy_capacity(Footprint, Source, Dispatch) ->
 
 bound_footprint_priorities(Dispatch) ->
     lists:map(
-        fun({Footprint, Peer, StoreID}) ->
-            Priority = peer_priority(Peer, StoreID, Dispatch),
-            {Priority, Footprint}
+        fun({Reservation, Source}) ->
+            Priority = footprint_priority(Reservation, Source, Dispatch),
+            {Priority, arweave_sync_footprint:key(Reservation)}
         end,
         arweave_sync_footprint:bound_candidates(Dispatch#dispatch.footprints)
     ).
 
-peer_priority(Peer, StoreID, Dispatch) ->
-    Runnable =
-        arweave_sync_store:has_capacity(StoreID, Dispatch#dispatch.stores) andalso
-            arweave_sync_peer:store_capacity(
-                Peer, StoreID, Dispatch#dispatch.peers
-            ) > 0,
-    {AvailabilityRank, PeerLoad, NegativeCap} = arweave_sync_peer:priority(
-        Peer, Runnable, Dispatch#dispatch.peers
-    ),
-    StoreFootprintCount = arweave_sync_footprint:bound_count(
-        StoreID, Dispatch#dispatch.footprints
-    ),
-    {StoreFootprintCount, AvailabilityRank, PeerLoad, NegativeCap}.
+%% @doc Rank a footprint's claim on an entropy slot as {slots its store
+%% holds, whether its store can take its work, its peer's priority}; lower is
+%% stronger. A footprint with fetches in flight is busy, not blocked, even when
+%% those fetches fill its store's pipeline.
+footprint_priority(Reservation, Source, Dispatch) ->
+    StoreID = arweave_sync_footprint:store_id(Reservation),
+    StoreAvailable =
+        arweave_sync_footprint:is_busy(Reservation) orelse
+            arweave_sync_store:has_capacity(StoreID, Dispatch#dispatch.stores),
+    arweave_sync_footprint:slot_priority(
+        arweave_sync_footprint:bound_count(
+            StoreID, Dispatch#dispatch.footprints
+        ),
+        StoreAvailable,
+        arweave_sync_peer:priority(Reservation, Source, Dispatch#dispatch.peers)
+    ).
 
 build_footprint_batch(Reservation, Source, Dispatch) ->
     StoreID = arweave_sync_footprint:store_id(Reservation),

@@ -412,7 +412,8 @@ ensure_entropy(Key, GenerationMs) ->
             generate_entropy(Key, GenerationMs)
     end.
 
-generate_entropy(Key, GenerationMs) ->
+generate_entropy({arweave_sim_entropy, Peer, _Partition, _Footprint} = Key,
+        GenerationMs) ->
     LockKey = {entropy_generation, Key},
     case ets:insert_new(?MODULE, {LockKey, true}) of
         true ->
@@ -424,6 +425,7 @@ generate_entropy(Key, GenerationMs) ->
                         ok;
                     not_found ->
                         arweave_sim_clock:sleep(GenerationMs),
+                        _ = add_counter({entropy_generations, Peer}, 1),
                         Size = arweave_constants:get_replica_2_9_footprint_size(),
                         MaxSize =
                             arweave_config:get([packing, entropy, cache_size]) * ?MiB,
@@ -593,7 +595,9 @@ snapshot() ->
             counter_map(chunk_interval_requests, PeerIDs),
         chunk_interval_inflight_by_peer =
             counter_map(chunk_interval_inflight, PeerIDs),
-        chunks_stored_by_store = counter_map(chunks_stored_by_store, StoreIDs)
+        chunks_stored_by_store = counter_map(chunks_stored_by_store, StoreIDs),
+        entropy_generations_by_peer =
+            counter_map(entropy_generations, PeerIDs)
     }.
 
 counter_map(Tag, IDs) ->

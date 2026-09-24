@@ -15,6 +15,8 @@ all() ->
         queued_footprint_tasks_share_peer_queue_with_fetches,
         start_dispatch_restores_queued_assignment_limit,
         queue_max_length_preserves_bounded_store_exploration,
+        priority_counts_own_fetches_as_available,
+        compare_priorities_margins,
         dispatch_splits_peer_capacity_across_stores,
         assigned_stores_remain_in_target_split,
         source_capacity_filter_precedes_load,
@@ -47,7 +49,7 @@ dispatch_tracks_fetch_capacity(_Config) ->
     StoreID = store,
     %% Two concurrent fetches fill this peer's two-request cap while assignment
     %% load remains the two tasks already admitted to its runnable queue.
-    Dispatches0 = arweave_sync_peer:test_dispatch(#{peer => 2}, #{peer => 2}),
+    Dispatches0 = arweave_sync_peer:new_dispatch(#{peer => 2}, #{peer => 2}),
     ?assertEqual(0.0, arweave_sync_peer:load(peer, Dispatches0)),
     Task = #task{state = queued, store_id = StoreID},
     Dispatches1 = arweave_sync_peer:enqueue_tasks(peer, [Task], Dispatches0),
@@ -75,7 +77,7 @@ queued_footprint_tasks_share_peer_queue_with_fetches(_Config) ->
     },
     %% The two-task queue limit permits two queued replacements independently of the
     %% two active fetch slots.
-    Dispatches0 = arweave_sync_peer:test_dispatch(#{Peer => 2}, #{Peer => 2}),
+    Dispatches0 = arweave_sync_peer:new_dispatch(#{Peer => 2}, #{Peer => 2}),
     Dispatches1 = arweave_sync_peer:enqueue_tasks(Peer, [Task, Task], Dispatches0),
     ?assertEqual(1 / 2, arweave_sync_peer:load(Peer, Dispatches1)),
     %% A new reservation cannot claim more peer queue capacity, but an already-queued
@@ -109,32 +111,74 @@ start_dispatch_restores_queued_assignment_limit(_Config) ->
     ?assertEqual(1 / 4, arweave_sync_peer:load(Peer, Dispatches)),
     ?assertEqual(1, arweave_sync_peer:store_capacity(Peer, StoreID, Dispatches)).
 
-%% @doc A full peer queue prevents speculative assignment to either an existing
-%% or a new store.
-queue_max_length_preserves_bounded_store_exploration(_Config) ->
+%% @doc A reservation whose own fetches fill its peer's room for the store is
+%% busy, not blocked; one with nothing in flight is blocked.
+priority_counts_own_fetches_as_available(_Config) ->
     Peer = peer,
     Source = #task_source{peer = Peer},
-    %% The one-task queue limit permits one speculative store, not a second.
-    Dispatches0 = arweave_sync_peer:test_dispatch(#{Peer => 1}, #{Peer => 1}),
-    ?assert(
-        arweave_sync_peer:queue_has_capacity(
-            store_a, arweave_sync_peer:peer_dispatch(Peer, Dispatches0)
-        )
-    ),
+    %% A one-request cap and a one-task queue: one task queued for store_a
+    %% leaves the peer no room for the store.
+    Dispatches0 = arweave_sync_peer:new_dispatch(#{Peer => 1}, #{Peer => 1}),
     Task = #task{
         store_id = store_a,
         footprint = #footprint{store_id = store_a},
         sources = [Source]
     },
     Dispatches = arweave_sync_peer:enqueue_tasks(Peer, [Task], Dispatches0),
-    ?assertNot(
-        arweave_sync_peer:queue_has_capacity(
-            store_a, arweave_sync_peer:peer_dispatch(Peer, Dispatches)
-        )
+    Busy = arweave_sync_peer:priority(
+        #footprint_reservation{store_id = store_a, active_tasks = 1},
+        Source,
+        Dispatches
     ),
+    Idle = arweave_sync_peer:priority(
+        #footprint_reservation{store_id = store_a}, Source, Dispatches
+    ),
+    ?assertEqual(better, arweave_sync_peer:compare_priorities(Busy, Idle)),
+    ?assertEqual(worse, arweave_sync_peer:compare_priorities(Idle, Busy)),
+    %% Before the task was queued the peer had room, so the same idle
+    %% reservation was available.
+    IdleWithRoom = arweave_sync_peer:priority(
+        #footprint_reservation{store_id = store_a}, Source, Dispatches0
+    ),
+    ?assertEqual(
+        better, arweave_sync_peer:compare_priorities(IdleWithRoom, Idle)
+    ).
+
+%% @doc Peer availability decides first, then a load more than ten percent
+%% lower, then a concurrency cap more than ten percent higher.
+compare_priorities_margins(_Config) ->
+    P = fun arweave_sync_peer:peer_priority/3,
+    Compare = fun arweave_sync_peer:compare_priorities/2,
+    %% An available peer beats an unavailable one whatever their loads.
+    ?assertEqual(better, Compare(P(true, 0.9, 1), P(false, 0.0, 100))),
+    %% 0.44 is more than ten percent below 0.50, 0.46 is not, and 0.56 is
+    %% more than ten percent above it.
+    ?assertEqual(better, Compare(P(true, 0.44, 100), P(true, 0.50, 100))),
+    ?assertEqual(close, Compare(P(true, 0.46, 100), P(true, 0.50, 100))),
+    ?assertEqual(worse, Compare(P(true, 0.56, 100), P(true, 0.50, 100))),
+    %% At equal loads a cap of 111 is more than ten percent above 100, and a
+    %% cap of 110 is not.
+    ?assertEqual(better, Compare(P(true, 0.5, 111), P(true, 0.5, 100))),
+    ?assertEqual(close, Compare(P(true, 0.5, 110), P(true, 0.5, 100))).
+
+%% @doc A full peer queue prevents speculative assignment to either an existing
+%% or a new store.
+queue_max_length_preserves_bounded_store_exploration(_Config) ->
+    Peer = peer,
+    Source = #task_source{peer = Peer},
+    %% The one-task queue limit permits one speculative store, not a second.
+    Dispatches0 = arweave_sync_peer:new_dispatch(#{Peer => 1}, #{Peer => 1}),
+    Task = #task{
+        store_id = store_a,
+        footprint = #footprint{store_id = store_a},
+        sources = [Source]
+    },
+    ?assert(arweave_sync_peer:has_capacity(Task, Source, Dispatches0)),
+    Dispatches = arweave_sync_peer:enqueue_tasks(Peer, [Task], Dispatches0),
+    ?assertNot(arweave_sync_peer:has_capacity(Task, Source, Dispatches)),
     ?assertNot(
-        arweave_sync_peer:queue_has_capacity(
-            store_b, arweave_sync_peer:peer_dispatch(Peer, Dispatches)
+        arweave_sync_peer:has_capacity(
+            Task#task{store_id = store_b}, Source, Dispatches
         )
     ).
 
@@ -145,7 +189,7 @@ dispatch_splits_peer_capacity_across_stores(_Config) ->
     Dispatches0 = arweave_sync_peer:set_store_task_targets(
         peer,
         [store_a, store_b],
-        arweave_sync_peer:test_dispatch(#{peer => 4}, #{peer => 4})
+        arweave_sync_peer:new_dispatch(#{peer => 4}, #{peer => 4})
     ),
     Task = #task{state = queued, store_id = store_a},
     DispatchesA = arweave_sync_peer:enqueue_tasks(peer, [Task], Dispatches0),
@@ -177,7 +221,7 @@ assigned_stores_remain_in_target_split(_Config) ->
     Dispatches0 = arweave_sync_peer:set_store_task_targets(
         Peer,
         [StoreA],
-        arweave_sync_peer:test_dispatch(#{Peer => 4}, #{Peer => 4})
+        arweave_sync_peer:new_dispatch(#{Peer => 4}, #{Peer => 4})
     ),
     Task = #task{state = queued, store_id = StoreA},
     DispatchesA = arweave_sync_peer:enqueue_tasks(
@@ -217,7 +261,7 @@ source_capacity_filter_precedes_load(_Config) ->
         #task_source{peer = ReadyPeer}
     ],
     %% The first peer has the lower tie-break value but its only slot is full.
-    Dispatches0 = arweave_sync_peer:test_dispatch(
+    Dispatches0 = arweave_sync_peer:new_dispatch(
         #{BlockedPeer => 1, ReadyPeer => 2},
         #{BlockedPeer => 1, ReadyPeer => 2}
     ),

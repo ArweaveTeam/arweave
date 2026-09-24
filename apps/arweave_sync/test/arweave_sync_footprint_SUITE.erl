@@ -14,6 +14,7 @@ all() ->
         admit_replaces_unbound_source_snapshot,
         queued_reservation_can_use_available_global_slot,
         queued_reservation_reaches_full_cache_competition,
+        bound_reservation_keeps_entropy_capacity,
         build_batches,
         byte_source_respects_batch_limit_without_binding,
         build_batch_uses_available_intervals,
@@ -23,6 +24,7 @@ all() ->
         competition_releases_idle_incumbent,
         competition_renewal_margin,
         competition_prefers_store_with_fewer_footprints,
+        competition_prefers_store_that_can_take_work,
         competition_releases_excess_slot_before_blocked_store,
         competition_prefers_stronger_waiter,
         competition_drains_multiple_incumbents
@@ -97,6 +99,20 @@ queued_reservation_reaches_full_cache_competition(_Config) ->
     [Source] = arweave_sync_footprint:sources(Queued),
     ?assert(arweave_sync_footprint:is_source_compatible(Queued, Source, Dispatch)),
     ?assertNot(arweave_sync_footprint:has_entropy_capacity(QueuedFootprint, Source, Dispatch)).
+
+%% @doc A bound footprint keeps using the slot it holds when the cache is full.
+bound_reservation_keeps_entropy_capacity(_Config) ->
+    Peer = peer,
+    Footprint = footprint(store, 1),
+    Bound = bound_reservation(Peer, Footprint, 1),
+    %% The one-slot cache is full with this footprint's own slot.
+    Dispatch = arweave_sync_footprint:test_dispatch(
+        arweave_sync_footprint:test_state([Bound]), 1
+    ),
+    [Source] = arweave_sync_footprint:sources(Bound),
+    ?assert(
+        arweave_sync_footprint:has_entropy_capacity(Footprint, Source, Dispatch)
+    ).
 
 %% @doc Bounded batches preserve remaining intervals and accumulate active
 %% footprint tasks.
@@ -227,22 +243,24 @@ bound_candidates_include_fully_queued_footprint(_Config) ->
     Footprint = footprint(store, 1),
     %% One active child with no remaining source intervals represents a
     %% footprint whose complete batch has already entered the peer queue.
+    Source = #task_source{
+        peer = Peer,
+        footprint = Footprint,
+        intervals = ar_intervals:new()
+    },
     Reservation = #footprint_reservation{
         store_id = store,
         footprint = Footprint,
         peer = Peer,
-        sources = [
-            #task_source{
-                peer = Peer,
-                footprint = Footprint,
-                intervals = ar_intervals:new()
-            }
-        ],
+        sources = [Source],
         active_tasks = 1,
         state = bound
     },
     Dispatch = arweave_sync_footprint:test_dispatch(#{Footprint => Reservation}, 1),
-    ?assertEqual([{Footprint, Peer, store}], arweave_sync_footprint:bound_candidates(Dispatch)).
+    ?assertEqual(
+        [{Reservation, Source}],
+        arweave_sync_footprint:bound_candidates(Dispatch)
+    ).
 
 %% @doc Bound and draining footprints count toward global and per-store entropy
 %% usage.
@@ -277,8 +295,13 @@ competition_releases_idle_incumbent(_Config) ->
     },
     %% One entropy slot is occupied by an idle one-request peer while a
     %% 100-request peer waits, so the waiting footprint wins that slot.
-    CandidatePriority = {0, 0, 0.0, -100},
-    BoundPriorities = [{{0, 0, 0.0, -1}, IdleFootprint}],
+    CandidatePriority = arweave_sync_footprint:slot_priority(
+        0, true, arweave_sync_peer:peer_priority(true, 0.0, 100)
+    ),
+    IdlePriority = arweave_sync_footprint:slot_priority(
+        0, true, arweave_sync_peer:peer_priority(true, 0.0, 1)
+    ),
+    BoundPriorities = [{IdlePriority, IdleFootprint}],
     {released, Reservations2} = arweave_sync_footprint:compete_with_weakest(
         CandidatePriority, BoundPriorities, Reservations
     ),
@@ -300,10 +323,15 @@ competition_renewal_margin(_Config) ->
     },
     %% Loads of 50% and 46% differ by less than the ten-percent renewal margin,
     %% so the incumbent retains entropy.
-    IncumbentPriority = {0, 0, 0.50, -100},
+    IncumbentPriority = arweave_sync_footprint:slot_priority(
+        0, true, arweave_sync_peer:peer_priority(true, 0.50, 100)
+    ),
     BoundPriorities = [{IncumbentPriority, IncumbentFootprint}],
+    CloseCandidatePriority = arweave_sync_footprint:slot_priority(
+        0, true, arweave_sync_peer:peer_priority(true, 0.46, 100)
+    ),
     lost = arweave_sync_footprint:compete_with_weakest(
-        {0, 0, 0.46, -100}, BoundPriorities, Reservations
+        CloseCandidatePriority, BoundPriorities, Reservations
     ),
     ?assertMatch(
         #footprint_reservation{state = bound},
@@ -311,8 +339,11 @@ competition_renewal_margin(_Config) ->
     ),
     %% A 44% waiting load is more than ten percent below the incumbent's 50%,
     %% so the waiting footprint wins the occupied slot.
+    BetterCandidatePriority = arweave_sync_footprint:slot_priority(
+        0, true, arweave_sync_peer:peer_priority(true, 0.44, 100)
+    ),
     {draining, DrainingReservations} = arweave_sync_footprint:compete_with_weakest(
-        {0, 0, 0.44, -100}, BoundPriorities, Reservations
+        BetterCandidatePriority, BoundPriorities, Reservations
     ),
     ?assertMatch(
         #footprint_reservation{state = draining},
@@ -326,7 +357,8 @@ competition_renewal_margin(_Config) ->
     ),
     ?assertNot(maps:is_key(IncumbentFootprint, CompletedReservations)).
 
-%% @doc Equal-load competition favors a store with fewer bound footprints.
+%% @doc Equal-load competition moves a slot to a store with fewer bound
+%% footprints only when that evens out the stores' shares.
 competition_prefers_store_with_fewer_footprints(_Config) ->
     Peer = peer,
     IncumbentFootprint = footprint(store_a, 1),
@@ -338,15 +370,62 @@ competition_prefers_store_with_fewer_footprints(_Config) ->
         WaitingFootprint => queued_reservation(Peer, WaitingFootprint)
     },
     %% Equal 50% peer loads leave destination-store entropy ownership as the
-    %% tie-breaker. A store with no slot beats an incumbent store with one.
-    CandidatePriority = {0, 0, 0.5, -100},
-    BoundPriorities = [{{1, 0, 0.5, -100}, IncumbentFootprint}],
+    %% tie-breaker. A store with no slot does not take the only slot of a
+    %% store with one: that swaps which store waits and discards the
+    %% incumbent's entropy.
+    PeerPriority = arweave_sync_peer:peer_priority(true, 0.5, 100),
+    CandidatePriority =
+        arweave_sync_footprint:slot_priority(0, true, PeerPriority),
+    OneSlotPriority =
+        arweave_sync_footprint:slot_priority(1, true, PeerPriority),
+    lost = arweave_sync_footprint:compete_with_weakest(
+        CandidatePriority,
+        [{OneSlotPriority, IncumbentFootprint}],
+        Reservations
+    ),
+    %% It does take one of two slots held by one store, leaving one each.
+    TwoSlotsPriority =
+        arweave_sync_footprint:slot_priority(2, true, PeerPriority),
     {draining, DrainingReservations} = arweave_sync_footprint:compete_with_weakest(
-        CandidatePriority, BoundPriorities, Reservations
+        CandidatePriority,
+        [{TwoSlotsPriority, IncumbentFootprint}],
+        Reservations
     ),
     ?assertMatch(
         #footprint_reservation{state = draining},
         maps:get(IncumbentFootprint, DrainingReservations)
+    ).
+
+%% @doc Between stores whose shares are as even as they can get, a store that
+%% can take the work beats a blocked one, whatever their peers.
+competition_prefers_store_that_can_take_work(_Config) ->
+    Peer = peer,
+    IncumbentFootprint = footprint(store_a, 1),
+    WaitingFootprint = footprint(store_b, 2),
+    Reservations = #{
+        IncumbentFootprint => bound_reservation(
+            Peer, IncumbentFootprint, 0
+        ),
+        WaitingFootprint => queued_reservation(Peer, WaitingFootprint)
+    },
+    LoadedPeerPriority = arweave_sync_peer:peer_priority(true, 0.9, 100),
+    LightPeerPriority = arweave_sync_peer:peer_priority(true, 0.1, 100),
+    %% The incumbent's store is blocked and the candidate's can take work, so
+    %% the candidate wins although its peer carries 90% load against 10%.
+    {released, Reservations2} = arweave_sync_footprint:compete_with_weakest(
+        arweave_sync_footprint:slot_priority(0, true, LoadedPeerPriority),
+        [{arweave_sync_footprint:slot_priority(1, false, LightPeerPriority),
+            IncumbentFootprint}],
+        Reservations
+    ),
+    ?assertNot(maps:is_key(IncumbentFootprint, Reservations2)),
+    %% A blocked candidate store loses to a store that can take work, however
+    %% much less loaded its peer is.
+    lost = arweave_sync_footprint:compete_with_weakest(
+        arweave_sync_footprint:slot_priority(0, false, LightPeerPriority),
+        [{arweave_sync_footprint:slot_priority(1, true, LoadedPeerPriority),
+            IncumbentFootprint}],
+        Reservations
     ).
 
 %% @doc Competition reclaims excess ownership before taking a blocked store's
@@ -365,12 +444,18 @@ competition_releases_excess_slot_before_blocked_store(_Config) ->
     %% Store A owns one temporarily blocked slot while store B owns two slots.
     %% A zero-slot candidate must reclaim store B's excess instead of starving
     %% store A because its current work is momentarily unrunnable.
+    PeerPriority = arweave_sync_peer:peer_priority(true, 0.0, 100),
+    BlockedPeerPriority = arweave_sync_peer:peer_priority(false, 0.0, 100),
     BoundPriorities = [
-        {{1, 1, 0.0, -100}, BlockedFootprint},
-        {{2, 0, 0.0, -100}, ExcessFootprint}
+        {arweave_sync_footprint:slot_priority(1, true, BlockedPeerPriority),
+            BlockedFootprint},
+        {arweave_sync_footprint:slot_priority(2, true, PeerPriority),
+            ExcessFootprint}
     ],
     {released, Reservations2} = arweave_sync_footprint:compete_with_weakest(
-        {0, 0, 0.0, -100}, BoundPriorities, Reservations
+        arweave_sync_footprint:slot_priority(0, true, PeerPriority),
+        BoundPriorities,
+        Reservations
     ),
     ?assert(maps:is_key(BlockedFootprint, Reservations2)),
     ?assertNot(maps:is_key(ExcessFootprint, Reservations2)).
@@ -389,8 +474,13 @@ competition_prefers_stronger_waiter(_Config) ->
         WaitingFootprint => queued_reservation(WaitingPeer, WaitingFootprint)
     },
     %% Equal zero load leaves the caps as the strength tie-breaker.
-    CandidatePriority = {0, 0, 0.0, -100},
-    BoundPriorities = [{{0, 0, 0.0, -1}, IncumbentFootprint}],
+    CandidatePriority = arweave_sync_footprint:slot_priority(
+        0, true, arweave_sync_peer:peer_priority(true, 0.0, 100)
+    ),
+    IncumbentPriority = arweave_sync_footprint:slot_priority(
+        0, true, arweave_sync_peer:peer_priority(true, 0.0, 1)
+    ),
+    BoundPriorities = [{IncumbentPriority, IncumbentFootprint}],
     {draining, DrainingReservations} = arweave_sync_footprint:compete_with_weakest(
         CandidatePriority, BoundPriorities, Reservations
     ),
@@ -432,14 +522,20 @@ competition_drains_multiple_incumbents(_Config) ->
     },
     %% Both slots contain one-request peers and both queued footprints have
     %% 100-request peers, so each queued footprint drains one incumbent.
+    FastPriority = arweave_sync_footprint:slot_priority(
+        0, true, arweave_sync_peer:peer_priority(true, 0.0, 100)
+    ),
+    SlowPriority = arweave_sync_footprint:slot_priority(
+        0, true, arweave_sync_peer:peer_priority(true, 0.0, 1)
+    ),
     {draining, DrainingReservations1} = arweave_sync_footprint:compete_with_weakest(
-        {0, 0, 0.0, -100},
-        [{{0, 0, 0.0, -1}, BoundFootprintA}],
+        FastPriority,
+        [{SlowPriority, BoundFootprintA}],
         Reservations
     ),
     {draining, DrainingReservations} = arweave_sync_footprint:compete_with_weakest(
-        {0, 0, 0.0, -100},
-        [{{0, 0, 0.0, -1}, BoundFootprintB}],
+        FastPriority,
+        [{SlowPriority, BoundFootprintB}],
         DrainingReservations1
     ),
     ?assertMatch(
