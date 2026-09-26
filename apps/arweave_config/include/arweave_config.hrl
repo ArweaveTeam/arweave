@@ -153,6 +153,13 @@
 %% Default Gun HTTP/TCP options
 -define(DEFAULT_GUN_HTTP_CLOSING_TIMEOUT, 15_000).
 -define(DEFAULT_GUN_HTTP_KEEPALIVE, 60_000).
+%% Fixed ceiling on parallel HTTP client connections per peer. The pool (see ar_http)
+%% grows toward this as requests arrive and shrinks idle peers back to one, so
+%% low-volume peers cost nothing. It is a fixed cap, not a controller: a live sweep
+%% showed throughput flat from ~4 connections up (the workload is store/peer-bound,
+%% not connection-bound) and higher counts only add load on the peer, so keep it small.
+-define(DEFAULT_HTTP_CONNECTIONS_PER_PEER, 8).
+-define(DEFAULT_HTTP_CLIENT_PROTOCOL, http2).
 -define(DEFAULT_GUN_TCP_DELAY_SEND, false).
 -define(DEFAULT_GUN_TCP_KEEPALIVE, true).
 -define(DEFAULT_GUN_TCP_LINGER, false).

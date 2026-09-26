@@ -40,11 +40,11 @@ disabled(_Config) ->
 
 register(_Config) ->
     ?assertEqual(
-       #{<<"RateLimit-Limit">> =>
+       #{<<"ratelimit-limit">> =>
              <<"460, 460;policy=\"test_limiter usage\", 500;policy=\"test_limiter concurrency\" ">>,
-         <<"RateLimit-Remaining">> => <<"9">>,
-         <<"RateLimit-Reset-Amount">> => <<"123">>,
-         <<"RateLimit-Reset">> => <<"1">>},
+         <<"ratelimit-remaining">> => <<"9">>,
+         <<"ratelimit-reset-amount">> => <<"123">>,
+         <<"ratelimit-reset">> => <<"1">>},
        ?M:to_http_headers({register, sliding,
                            #{expiring_limit => 460,
                              remaining      => 9,
@@ -53,11 +53,11 @@ register(_Config) ->
                              policies => ?POLICIES}
                           })),
     ?assertEqual(
-       #{<<"RateLimit-Limit">> =>
+       #{<<"ratelimit-limit">> =>
              <<"460, 460;policy=\"test_limiter usage\", 500;policy=\"test_limiter concurrency\" ">>,
-         <<"RateLimit-Remaining">> => <<"449">>,
-         <<"RateLimit-Reset-Amount">> => <<"123">>,
-         <<"RateLimit-Reset">> => <<"29">>},
+         <<"ratelimit-remaining">> => <<"449">>,
+         <<"ratelimit-reset-amount">> => <<"123">>,
+         <<"ratelimit-reset">> => <<"29">>},
        ?M:to_http_headers({register, leaky,
                            #{expiring_limit => 460,
                              remaining      => 449,
@@ -69,12 +69,12 @@ register(_Config) ->
 
 reject(_Config) ->
     ?assertEqual(
-       #{<<"RateLimit-Limit">> =>
+       #{<<"ratelimit-limit">> =>
              <<"500, 460;policy=\"test_limiter usage\", 500;policy=\"test_limiter concurrency\" ">>,
-         <<"RateLimit-Remaining">> => <<"0">>,
-         <<"RateLimit-Reset">> => <<"1">>,
-         <<"RateLimit-Reset-Amount">> => <<"123">>,
-         <<"Retry-After">> => <<"1">>},
+         <<"ratelimit-remaining">> => <<"0">>,
+         <<"ratelimit-reset">> => <<"1">>,
+         <<"ratelimit-reset-amount">> => <<"123">>,
+         <<"retry-after">> => <<"1">>},
        ?M:to_http_headers({reject, concurrency,
                            #{expiring_limit => 500,
                              remaining      => 0,
@@ -84,12 +84,12 @@ reject(_Config) ->
                           })),
     %% A real life policy
     ?assertEqual(
-       #{<<"RateLimit-Limit">> =>
+       #{<<"ratelimit-limit">> =>
              <<"200, 7000;policy=\"test_limiter usage\", 200;policy=\"test_limiter concurrency\" ">>,
-         <<"RateLimit-Remaining">> => <<"0">>,
-         <<"RateLimit-Reset">> => <<"1">>,
-         <<"RateLimit-Reset-Amount">> => <<"200">>,
-         <<"Retry-After">> => <<"1">>},
+         <<"ratelimit-remaining">> => <<"0">>,
+         <<"ratelimit-reset">> => <<"1">>,
+         <<"ratelimit-reset-amount">> => <<"200">>,
+         <<"retry-after">> => <<"1">>},
          ?M:to_http_headers(
               {reject,  concurrency,
                #{expiring_limit => 200,
@@ -103,12 +103,12 @@ reject(_Config) ->
                        concurrency => #{limit => 200}}}
               })),
     ?assertEqual(
-       #{<<"RateLimit-Limit">> =>
+       #{<<"ratelimit-limit">> =>
              <<"460, 460;policy=\"test_limiter usage\", 500;policy=\"test_limiter concurrency\" ">>,
-         <<"RateLimit-Remaining">> => <<"0">>,
-         <<"RateLimit-Reset">> => <<"15">>,
-         <<"RateLimit-Reset-Amount">> => <<"123">>,
-         <<"Retry-After">> => <<"15">>},
+         <<"ratelimit-remaining">> => <<"0">>,
+         <<"ratelimit-reset">> => <<"15">>,
+         <<"ratelimit-reset-amount">> => <<"123">>,
+         <<"retry-after">> => <<"15">>},
        ?M:to_http_headers({reject, rate_limit,
                            #{expiring_limit => 460,
                              remaining      => 0,

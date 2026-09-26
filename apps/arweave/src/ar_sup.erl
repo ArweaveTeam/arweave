@@ -35,6 +35,8 @@ init([]) ->
     ets:new(ar_inbound_peers,
         [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_http, [set, public, named_table]),
+    ets:new(ar_http_inflight,
+            [set, public, named_table, {write_concurrency, true}, {read_concurrency, true}]),
     ets:new(ar_blacklist_middleware, [set, public, named_table]),
     ets:new(blacklist, [set, public, named_table]),
     ets:new(ignored_ids, [bag, public, named_table]),

@@ -404,12 +404,21 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
     ar_blacklist_middleware:reset(),
     arweave_limiter_sup:reset_all(),
     arweave_throttling_sup:all_off(),
-    Responses = arweave_util:batch_pmap(
-        RequestFun,
-        lists:seq(1, NRequests),
-        50,
-        60_000
-    ),
+    %% Over HTTP/2 the spam sends more frames per second than the server
+    %% accepts on a connection; the closed connections make the client retry
+    %% requests the server has already counted.
+    ok = arweave_config:set([network, client, http, protocol], http),
+    Responses =
+        try
+            arweave_util:batch_pmap(
+                RequestFun,
+                lists:seq(1, NRequests),
+                50,
+                60_000
+            )
+        after
+            ok = arweave_config:set([network, client, http, protocol], http2)
+        end,
     ?assertEqual(length(Responses), NRequests),
     ar_blacklist_middleware:reset(),
     arweave_limiter_sup:reset_all(),
