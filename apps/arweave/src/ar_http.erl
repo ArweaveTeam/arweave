@@ -43,7 +43,8 @@
 
 %% A peer's connection pool.
 -record(pool, {
-    %% The pool's connections, rotated for round-robin.
+    %% The pool's connections, rotated for round-robin, least recently used
+    %% first.
     pids = [],
     %% Request count since the last evaluate_pools tick; used only
     %% to tell active peers from idle ones (idle peers get a
@@ -141,38 +142,18 @@ req(Args, ReestablishedConnection) ->
     %% Count this request as in-flight for the whole call so evaluate_pools never
     %% shrinks a connection out from under an active (possibly long) stream.
     ets:update_counter(?HTTP_INFLIGHT_TABLE, Peer, 1, {Peer, 0}),
-    Response = try
-        case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
+    Response =
+        try gen_server:call(?MODULE, {get_connection, Args}, 15000) of
             {ok, PID, Protocol} ->
-                case request(PID, Args) of
-                    {error, Error} ->
-                        case is_http2_refusal(Protocol, Error)
-                                andalso maps:get(is_peer_request, Args, true) of
-                            true ->
-                                catch gen_server:call(?MODULE,
-                                    {http2_refused, Peer, PID, Error}, 15000);
-                            false ->
-                                ok
-                        end,
-                        case {ReestablishedConnection,
-                            should_retry_closed_connection(Error)} of
-                            {false, true} ->
-                                req(Args, true);
-                            {_, true} ->
-                                {error, client_error};
-                            {_, false} ->
-                                {error, Error}
-                        end;
-                    {ok, {{_Status, _}, Headers, _, _Start, _End}} = Reply ->
-                        arweave_throttling:update_quota(Peer, Path, Headers),
-                        Reply
-                end;
-            {'EXIT', _} -> {error, client_error};
-            Error -> Error
-        end
-    after
-        ets:update_counter(?HTTP_INFLIGHT_TABLE, Peer, -1, {Peer, 0})
-    end,
+                request_with_retry(PID, Protocol, Args, ReestablishedConnection);
+            Error ->
+                Error
+        catch
+            exit:_ ->
+                {error, client_error}
+        after
+            ets:update_counter(?HTTP_INFLIGHT_TABLE, Peer, -1, {Peer, 0})
+        end,
     EndTime = erlang:monotonic_time(),
     %% Only log the metric for the top-level call to req/2 - not the recursive call
     %% that happens when the connection is reestablished.
@@ -192,6 +173,35 @@ req(Args, ReestablishedConnection) ->
                                                                            ], EndTime - StartTime)
     end,
     Response.
+
+%% @doc Send the request on PID, retrying once on a new connection if this one
+%% was closed.
+request_with_retry(PID, Protocol, #{ peer := Peer, path := Path } = Args,
+        ReestablishedConnection) ->
+    case request(PID, Args) of
+        {error, Error} ->
+            case is_http2_refusal(Protocol, Error)
+                    andalso maps:get(is_peer_request, Args, true) of
+                true ->
+                    %% Messages between two processes arrive in order, so the
+                    %% server records the fallback before the retry's
+                    %% get_connection.
+                    gen_server:cast(?MODULE, {http2_refused, Peer, PID, Error});
+                false ->
+                    ok
+            end,
+            case {ReestablishedConnection, should_retry_closed_connection(Error)} of
+                {false, true} ->
+                    req(Args, true);
+                {_, true} ->
+                    {error, client_error};
+                {_, false} ->
+                    {error, Error}
+            end;
+        {ok, {{_Status, _}, Headers, _, _Start, _End}} = Reply ->
+            arweave_throttling:update_quota(Peer, Path, Headers),
+            Reply
+    end.
 
 %%% ==================================================================
 %%% gen_server callbacks.
@@ -232,13 +242,13 @@ handle_call({get_connection, Args}, From,
         true ->
             %% Grow this peer's pool: open a new connection and route this request
             %% to it (queued until it connects). This fills the pool over the first
-            %% N requests to the peer. With connections_per_peer = 1 (the default)
-            %% this is exactly the original single-connection behaviour.
+            %% N requests to the peer. The new connection goes last, keeping the
+            %% pool ordered from least to most recently used.
             {ok, PID} = open_connection(Args, Protocol),
             monitor(process, PID),
             Connection = #connection{ peer = Peer, protocol = Protocol,
                     status = {connecting, [{From, Args}]} },
-            State2 = put_pool(Peer, Pool2#pool{ pids = [PID | PIDs] }, State),
+            State2 = put_pool(Peer, Pool2#pool{ pids = PIDs ++ [PID] }, State),
             {noreply, State2#state{
                     connections = maps:put(PID, Connection, Connections) }};
         false ->
@@ -256,17 +266,17 @@ handle_call({get_connection, Args}, From,
             end
     end;
 
-handle_call({http2_refused, Peer, PID, Reason}, _From, State) ->
+handle_call(Request, _From, State) ->
+    ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+    {reply, ok, State}.
+
+handle_cast({http2_refused, Peer, PID, Reason}, State) ->
     %% The caller knows the negotiated protocol even if gun_down already
     %% removed PID. Exclude it before retrying, without waiting for gun_down.
     #pool{pids = PIDs} = Pool = pool(Peer, State),
     State2 = put_pool(Peer, Pool#pool{pids = lists:delete(PID, PIDs)}, State),
     gun:shutdown(PID),
-    {reply, ok, fall_back_to_http1(Peer, Reason, State2)};
-
-handle_call(Request, _From, State) ->
-    ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
-    {reply, ok, State}.
+    {noreply, fall_back_to_http1(Peer, Reason, State2)};
 
 handle_cast(Cast, State) ->
     ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -351,27 +361,13 @@ handle_info({'DOWN', _Ref, process, PID, Reason}, State) ->
     end;
 
 handle_info(evaluate_pools, #state{ pools = Pools } = State) ->
-    Max = connections_per_peer(),
-    %% Shrink one connection per tick from any peer that is idle (no requests this
-    %% tick) or above the ceiling (e.g. connections_per_peer lowered at runtime).
-    %% Active peers keep the pool get_connection grew up to the ceiling. gun:shutdown
-    %% routes through the existing 'DOWN' handler so cleanup stays in one place.
-    maps:foreach(fun(Peer, #pool{ pids = PIDs, requests = Requests }) ->
-            Idle = Requests == 0,
-            %% Never shrink a peer with a request in flight - the connection we'd
-            %% shut down (lists:last) may be carrying a live stream.
-            NoInFlight = ets:lookup_element(?HTTP_INFLIGHT_TABLE, Peer, 2, 0) == 0,
-            ShouldShrink = length(PIDs) > 1 andalso NoInFlight
-                    andalso (Idle orelse length(PIDs) > Max),
-            case ShouldShrink of
-                true -> catch gun:shutdown(lists:last(PIDs));
-                false -> ok
-            end
-        end, Pools),
     erlang:send_after(?POOL_EVAL_INTERVAL_MS, self(), evaluate_pools),
+    Max = connections_per_peer(),
     Now = erlang:monotonic_time(millisecond),
     Pools2 = maps:filtermap(
-        fun(_Peer, Pool) -> reset_or_delete_pool(Pool, Now) end, Pools),
+        fun(Peer, Pool) ->
+            reset_or_delete_pool(shrink_pool(Peer, Pool, Max), Now)
+        end, Pools),
     {noreply, State#state{ pools = Pools2 }};
 
 handle_info(Message, State) ->
@@ -445,15 +441,10 @@ get_ip_port({_, _} = Peer) ->
 get_ip_port(Peer) ->
     {erlang:delete_element(size(Peer), Peer), erlang:element(size(Peer), Peer)}.
 
-%% @doc Parallel HTTP connections to maintain per peer (>= 1). Read fresh each
-%% call so a runtime change takes effect as connections are (re)opened. A single
-%% peer isn't limited to one TCP flow / one gun process — see the connection-pool
-%% plan. The option's type also accepts 0 and infinity, which mean one.
+%% @doc Parallel HTTP connections to maintain per peer, read fresh each call so a
+%% runtime change takes effect as connections are (re)opened.
 connections_per_peer() ->
-    case arweave_config:get([network, client, http, connections_per_peer]) of
-        N when is_integer(N), N >= 1 -> N;
-        _ -> 1
-    end.
+    arweave_config:get([network, client, http, connections_per_peer]).
 
 %% @doc Return the protocol for a new connection in a peer's pool: the
 %% configured one, or HTTP/1.1 if the peer refused HTTP/2 within
@@ -507,6 +498,23 @@ pool(Peer, #state{ pools = Pools }) ->
 put_pool(Peer, Pool, #state{ pools = Pools } = State) ->
     State#state{ pools = maps:put(Peer, Pool, Pools) }.
 
+%% @doc Close the least recently used connection of a pool that saw no requests
+%% this tick or is above the ceiling, unless a request to the peer is in flight.
+shrink_pool(Peer, #pool{ pids = [PID | Rest] = PIDs,
+        requests = Requests } = Pool, Max) when Rest /= [] ->
+    InFlight = ets:lookup_element(?HTTP_INFLIGHT_TABLE, Peer, 2, 0),
+    case InFlight == 0 andalso (Requests == 0 orelse length(PIDs) > Max) of
+        true ->
+            %% Leave the pool now so get_connection can't pick the closing
+            %% connection; its 'DOWN' still cleans up the rest.
+            gun:shutdown(PID),
+            Pool#pool{ pids = Rest };
+        false ->
+            Pool
+    end;
+shrink_pool(_Peer, Pool, _Max) ->
+    Pool.
+
 %% @doc Reset a pool's request count for the next evaluate_pools tick, or
 %% delete the pool when it has no connections and no HTTP/1.1 fallback in
 %% force.
@@ -516,8 +524,8 @@ reset_or_delete_pool(#pool{ pids = [], http1_until = Until }, Now)
 reset_or_delete_pool(Pool, _Now) ->
     {true, Pool#pool{ requests = 0 }}.
 
-%% @doc Round-robin: return the head connection and the list rotated by one, so
-%% successive get_connection calls for a peer spread across its pool.
+%% @doc Round-robin: return the least recently used connection and move it last,
+%% so successive get_connection calls for a peer spread across its pool.
 rotate([PID | Rest]) ->
     {PID, Rest ++ [PID]}.
 
@@ -874,12 +882,23 @@ evaluate_pools_inflight_test() ->
     State = #state{ pools = #{ peer1 => #pool{ pids = [pidA, pidB] } } },
     %% Idle this tick but a request in flight -> must NOT shrink.
     ets:insert(?HTTP_INFLIGHT_TABLE, {peer1, 1}),
-    handle_info(evaluate_pools, State),
+    {noreply, State2} = handle_info(evaluate_pools, State),
     ?assertEqual(0, meck:num_calls(gun, shutdown, ['_'])),
-    %% Nothing in flight -> the idle peer shrinks by one connection.
+    ?assertEqual([pidA, pidB], (pool(peer1, State2))#pool.pids),
+    %% Nothing in flight -> the idle peer closes its least recently used
+    %% connection and drops it from the pool.
     ets:insert(?HTTP_INFLIGHT_TABLE, {peer1, 0}),
-    handle_info(evaluate_pools, State),
+    {noreply, State3} = handle_info(evaluate_pools, State),
     ?assertEqual(1, meck:num_calls(gun, shutdown, ['_'])),
+    ?assertEqual(1, meck:num_calls(gun, shutdown, [pidA])),
+    ?assertEqual([pidB], (pool(peer1, State3))#pool.pids),
+    %% An active peer keeps a full pool but sheds connections above the
+    %% ceiling; a single connection is never closed.
+    Active = #pool{ pids = [pidA, pidB, pidC], requests = 5 },
+    ?assertEqual(Active, shrink_pool(peer1, Active, 3)),
+    ?assertEqual([pidB, pidC], (shrink_pool(peer1, Active, 2))#pool.pids),
+    Single = #pool{ pids = [pidA] },
+    ?assertEqual(Single, shrink_pool(peer1, Single, 1)),
     meck:unload(gun).
 
 %% A pool's request count starts over each tick; a pool with no connections is
@@ -932,8 +951,8 @@ http2_refused_test() ->
         pools = #{Peer => #pool{pids = [self()]}}},
     Error = {connection_error, {protocol_error, description}},
     Before = erlang:monotonic_time(millisecond),
-    {reply, ok, State2} = handle_call(
-        {http2_refused, Peer, self(), Error}, from, State),
+    {noreply, State2} = handle_cast(
+        {http2_refused, Peer, self(), Error}, State),
     Now = erlang:monotonic_time(millisecond),
     Pool = pool(Peer, State2),
     Until = Pool#pool.http1_until,
@@ -947,9 +966,9 @@ http2_refused_test() ->
 %% @doc Refusal still records fallback if gun_down already removed the connection.
 http2_refused_after_down_test() ->
     Peer = {127, 0, 0, 1, 1984},
-    {reply, ok, State} = handle_call(
+    {noreply, State} = handle_cast(
         {http2_refused, Peer, self(), {protocol_error, description}},
-        from, #state{}),
+        #state{}),
     ?assertEqual(http, protocol(pool(Peer, State),
         erlang:monotonic_time(millisecond))),
     receive {'$gen_cast', shutdown} -> ok after 0 -> error(no_shutdown) end.

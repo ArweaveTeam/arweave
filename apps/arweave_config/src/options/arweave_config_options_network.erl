@@ -249,10 +249,15 @@ specs() ->
                 <<"Maximum parallel HTTP client connections per peer.">>,
             long_description =>
                 <<"The pool grows under sustained load and shrinks idle "
-                  "peers back to one connection. Values below 1 or infinity "
-                  "use one connection. This limits connections, not sync "
-                  "tasks; fetch concurrency is managed automatically. "
-                  "Applies to all outgoing peer HTTP requests.">>
+                  "peers back to one connection. This limits connections, "
+                  "not sync tasks; fetch concurrency is managed automatically. "
+                  "Applies to all outgoing peer HTTP requests.">>,
+            handle_set => fun
+                (_K, V, _S, _A) when is_integer(V), V >= 1 ->
+                    {store, V};
+                (_K, V, _S, _A) ->
+                    {error, {invalid_connections_per_peer, V}}
+            end
         },
         #{
             enabled => true,

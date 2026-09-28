@@ -25,7 +25,8 @@ all() ->
     [
         mining_address_base64,
         start_from_block_base64,
-        verify_mode_atoms_and_binaries
+        verify_mode_atoms_and_binaries,
+        connections_per_peer_at_least_one
     ].
 
 %%====================================================================
@@ -80,5 +81,19 @@ verify_mode_atoms_and_binaries(_Config) ->
 
         ?assertMatch({error, _},
             arweave_config:set([verify, mode], <<"bogus">>))
+    end),
+    ok.
+
+connections_per_peer_at_least_one(_Config) ->
+    arweave_config:with_test_config(fun() ->
+        Key = [network, client, http, connections_per_peer],
+        ok = arweave_config:set(Key, 1),
+        ?assertEqual(1, arweave_config:get(Key)),
+
+        %% The option's type accepts 0 and infinity; the pool needs a
+        %% finite count of at least one.
+        ?assertMatch({error, _}, arweave_config:set(Key, 0)),
+        ?assertMatch({error, _}, arweave_config:set(Key, infinity)),
+        ?assertEqual(1, arweave_config:get(Key))
     end),
     ok.
