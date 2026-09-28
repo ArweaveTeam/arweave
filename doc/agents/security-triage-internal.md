@@ -62,9 +62,9 @@ often where the finding was already fixed, or already considered and rejected.
 ## 4. File the issue
 
 File one issue per finding, even when several findings sit in the same
-subsystem. Create it in the private `ArweaveTeam/arweave-dev` repository and add
-it to the Arweave project. Set no other field — labels, type, area, milestone,
-and status are triaged by hand.
+subsystem. Create it in the private `ArweaveTeam/arweave-dev` repository with
+the `ai` label, and add it to the Arweave project. Set no other field — other
+labels, type, area, milestone, and status are triaged by hand.
 
 Prefix the title with `AI: `. Keep the body short — what happens, why it
 matters, then the fix — with no severity or area headings. Name the confirmed
