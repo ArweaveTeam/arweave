@@ -25,6 +25,10 @@
 -define(LIMITER_TIMESTAMP_CLEANUP_EXPIRY, 120000).
 -define(LIMITER_IS_EXTERNAL_REDUCTION_ENABLED, false).
 
+%% Upper bound, in milliseconds, for every timer interval and for the
+%% sliding-window idle expiry: one day.
+-define(LIMITER_MAX_INTERVAL_MS, 86_400_000).
+
 %% general
 
 -ifdef(AR_TEST).
@@ -164,25 +168,44 @@ non_runtime_fields() ->
     [number_of_workers, no_limit, leaky_tick_ms, timestamp_cleanup_tick_ms].
 
 spec_for(GroupID, Field, Default) ->
-    Base = #{
+    Runtime = not lists:member(Field, non_runtime_fields()),
+    #{
         enabled => true,
         option_key => [limiter, GroupID, Field],
         type => type_for(Field),
         default => Default,
+        runtime => Runtime,
+        handle_set => fun(_K, V, _S, _A) ->
+            set_field(GroupID, Field, V, Runtime)
+        end,
         short_description => short_description_for(Field),
         long_description => group_coverage_for(GroupID)
-    },
-    case lists:member(Field, non_runtime_fields()) of
+    }.
+
+%% @doc Validate an operator-supplied value for `Field' and, for a
+%% runtime-writable field, push it to the group's workers before it
+%% is stored. The cross-field invariants are checked here only once
+%% the registry is in runtime mode; during load `validate/0' checks
+%% them after every source has been applied.
+set_field(GroupID, Field, V, Runtime) ->
+    maybe
+        ok ?= validate_field(GroupID, Field, V),
+        ok ?= validate_group_at_runtime(GroupID, Field, V),
+        ok = push_to_workers(GroupID, Field, V, Runtime),
+        {store, V}
+    end.
+
+push_to_workers(GroupID, Field, V, true) ->
+    arweave_limiter_group:set_config(GroupID, Field, V);
+push_to_workers(_GroupID, _Field, _V, false) ->
+    ok.
+
+validate_group_at_runtime(GroupID, Field, V) ->
+    case arweave_config:is_runtime() of
         true ->
-            Base#{ runtime => false };
+            validate_group(GroupID, (group_fields(GroupID))#{Field => V});
         false ->
-            Base#{
-                runtime => true,
-                handle_set => fun(_K, V, _S, _A) ->
-                    ok = arweave_limiter_group:set_config(GroupID, Field, V),
-                    {store, V}
-                end
-            }
+            ok
     end.
 
 type_for(no_limit) -> boolean;
@@ -261,8 +284,99 @@ group_description() ->
     <<"HTTP API rate-limiter groups — sliding window + leaky bucket "
       "+ concurrency caps.">>.
 
+%% @doc Cross-cutting: every group's timer and limit fields must hold
+%% integers within range once the group actually limits, and the
+%% idle expiry must outlast both the sliding window and the leaky
+%% tick. Bypass groups (`no_limit => true') keep their `infinity'
+%% sentinels: they never arm a timer, so nothing reads those values.
 validate() ->
-    ok.
+    validate_groups(lists:sort(group_ids())).
+
+validate_groups([]) ->
+    ok;
+validate_groups([GroupID | Rest]) ->
+    case validate_group(GroupID, group_fields(GroupID)) of
+        ok -> validate_groups(Rest);
+        {error, _} = Err -> Err
+    end.
+
+%% Fields whose values are checked by `validate_group/2'. `no_limit'
+%% is read alongside them to detect bypass groups.
+validated_fields() ->
+    [
+        sliding_window_limit,
+        sliding_window_duration,
+        leaky_rate_limit,
+        leaky_tick_ms,
+        tick_reduction,
+        concurrency_limit,
+        timestamp_cleanup_tick_ms,
+        timestamp_cleanup_expiry
+    ].
+
+group_fields(GroupID) ->
+    Fields = [no_limit | validated_fields()],
+    maps:from_list([
+        {Field, arweave_config:get([limiter, GroupID, Field])}
+        || Field <- Fields
+    ]).
+
+validate_group(_GroupID, #{no_limit := true}) ->
+    ok;
+validate_group(GroupID, #{sliding_window_duration := SlidingDuration,
+        leaky_tick_ms := LeakyTickMs,
+        timestamp_cleanup_expiry := Expiry} = Fields) ->
+    maybe
+        ok ?= validate_fields(GroupID, validated_fields(), Fields),
+        ok ?= validate_expiry_above(
+            GroupID, Expiry, sliding_window_duration, SlidingDuration),
+        validate_expiry_above(GroupID, Expiry, leaky_tick_ms, LeakyTickMs)
+    end.
+
+validate_fields(_GroupID, [], _Fields) ->
+    ok;
+validate_fields(GroupID, [Field | Rest], Fields) ->
+    case validate_field(GroupID, Field, maps:get(Field, Fields)) of
+        ok -> validate_fields(GroupID, Rest, Fields);
+        {error, _} = Err -> Err
+    end.
+
+validate_expiry_above(_GroupID, Expiry, _Field, Other) when Expiry > Other ->
+    ok;
+validate_expiry_above(GroupID, _Expiry, Field, _Other) ->
+    field_error(GroupID, timestamp_cleanup_expiry,
+        io_lib:format("must be greater than ~s", [Field])).
+
+%% @doc Range check for one field. `infinity' is never accepted from
+%% an operator: it is only meaningful as the code default of a bypass
+%% group, and those never reach here (their defaults are not `set').
+validate_field(GroupID, Field, infinity) ->
+    field_error(GroupID, Field, "must be an integer, not infinity");
+validate_field(GroupID, Field, V) ->
+    case field_bounds(Field) of
+        none ->
+            ok;
+        {Min, Max} when V >= Min, V =< Max ->
+            ok;
+        {Min, Max} ->
+            field_error(GroupID, Field,
+                io_lib:format("must be between ~B and ~B", [Min, Max]))
+    end.
+
+%% Inclusive bounds for the timer-driven fields. Every one of them is
+%% handed to `timer:send_interval/3' or compared against the
+%% monotonic clock, so 0 would spin and anything past a day is a
+%% misconfiguration. The plain limits keep the `pos_integer' type's
+%% non-negative check.
+field_bounds(sliding_window_duration) -> {1, ?LIMITER_MAX_INTERVAL_MS};
+field_bounds(leaky_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};
+field_bounds(timestamp_cleanup_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};
+field_bounds(timestamp_cleanup_expiry) -> {1, ?LIMITER_MAX_INTERVAL_MS};
+field_bounds(_Field) -> none.
+
+field_error(GroupID, Field, Message) ->
+    {error, iolist_to_binary(
+        io_lib:format("limiter.~s.~s ~s", [GroupID, Field, Message]))}.
 
 %% @doc Return the list of registered limiter group IDs. Per-field
 %% values for a given group are read via

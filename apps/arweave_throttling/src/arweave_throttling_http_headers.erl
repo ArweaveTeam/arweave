@@ -19,15 +19,35 @@
 %%%                  150;w=1;policy="general concurrency"
 %%% RateLimit-Remaining: 42
 %%% RateLimit-Reset: 7
+%%% RateLimit-Reset-Amount: 58
 %%% '''
 %%%
 %%% The leading integer of RateLimit-Limit is the "expiring-limit"
-%%% (mapped to `total'); RateLimit-Remaining maps to `remaining' and
-%%% RateLimit-Reset to `reset_seconds'.
+%%% (mapped to `total'); RateLimit-Remaining maps to `remaining',
+%%% RateLimit-Reset to `reset_seconds' and RateLimit-Reset-Amount to
+%%% `reset_amount'.
+%%%
+%%% == Validation ==
+%%%
+%%% Every value is parsed strictly; a header that is present but
+%%% carries a value outside its range yields
+%%% `{error, {invalid_header_value, HeaderName}}':
+%%%
+%%% <ul>
+%%%   <li>`total' must be greater than 0.</li>
+%%%   <li>`remaining' must be at least 0 and less than `total'.</li>
+%%%   <li>`reset_seconds' must be at least 0 and at most one day.
+%%%       0 is what the remote sends while the quota is not
+%%%       exhausted.</li>
+%%%   <li>`reset_amount' must be greater than 0.</li>
+%%% </ul>
 %%% @end
 -module(arweave_throttling_http_headers).
 
 -export([parse/1, quota_from_headers/2]).
+
+%% Largest RateLimit-Reset (seconds) we accept: one day.
+-define(MAX_RESET_SECONDS, 86400).
 
 -type headers() :: #{binary() | string() => binary() | string()}
                 | [{binary() | string(), binary() | string()}].
@@ -38,8 +58,9 @@
 %% against an expected group without minting atoms from remote input.
 -spec parse(headers()) ->
         {ok, #{group_id := binary(),
-                total := non_neg_integer(),
+                total := pos_integer(),
                 remaining := non_neg_integer(),
+                reset_amount := pos_integer(),
                 reset_seconds := non_neg_integer()}}
             | {error, term()}.
 parse(Headers) when is_list(Headers) ->
@@ -54,14 +75,16 @@ parse(Headers0) ->
         Remaining = fetch(<<"ratelimit-remaining">>, Headers),
         Reset = fetch(<<"ratelimit-reset">>, Headers),
         ResetAmount = fetch(<<"ratelimit-reset-amount">>, Headers),
-        {Total, GroupId} = parse_limit(Limit),
-        {ok, #{group_id => GroupId,
+        {Total, GroupID} = parse_limit(Limit),
+        {ok, #{group_id => GroupID,
                total => Total,
-               remaining => to_integer(Remaining),
-               reset_amount => to_integer(ResetAmount),
-               reset_seconds => to_integer(Reset)}}
+               remaining => parse_remaining(Remaining, Total),
+               reset_amount => parse_reset_amount(ResetAmount),
+               reset_seconds => parse_reset(Reset)}}
     catch
         throw:{missing_header, _} = Reason ->
+            {error, Reason};
+        throw:{invalid_header_value, _} = Reason ->
             {error, Reason};
         throw:missing_group_id = Reason ->
             {error, Reason};
@@ -105,19 +128,41 @@ quota_from_headers(GroupId, Headers) when is_atom(GroupId) ->
 %% token of the first `policy="..."' quota-comment.
 parse_limit(Limit) ->
     [Expiring | _] = binary:split(Limit, <<",">>),
-    Total = to_integer(Expiring),
+    Total = integer_in_range(<<"ratelimit-limit">>, Expiring, 1, infinity),
     GroupId = parse_group_id(Limit),
     {Total, GroupId}.
+
+parse_remaining(Remaining, Total) ->
+    integer_in_range(<<"ratelimit-remaining">>, Remaining, 0, Total - 1).
+
+parse_reset(Reset) ->
+    integer_in_range(<<"ratelimit-reset">>, Reset, 0, ?MAX_RESET_SECONDS).
+
+parse_reset_amount(ResetAmount) ->
+    integer_in_range(<<"ratelimit-reset-amount">>, ResetAmount, 1, infinity).
+
+%% @doc Parse `Bin' as an integer within `Min'..`Max' (inclusive), or
+%% throw `{invalid_header_value, Key}'. `Max' may be `infinity': the
+%% atom sorts after every integer in Erlang term order, so the
+%% comparison needs no special case.
+integer_in_range(Key, Bin, Min, Max) ->
+    Int = to_integer(Bin),
+    case Int >= Min andalso Int =< Max of
+        true ->
+            Int;
+        false ->
+            throw({invalid_header_value, Key})
+    end.
 
 parse_group_id(Limit) ->
     [_, AfterPolicy] = binary:split(Limit, <<"policy=\"">>),
     [Comment | _] = binary:split(AfterPolicy, <<"\"">>),
-    case strip_policy_type(string:trim(Comment)) of 
+    case strip_policy_type(string:trim(Comment)) of
         <<"">> ->
             throw(missing_group_id);
         GroupID ->
             GroupID
-    end.                
+    end.
 
 strip_policy_type(Comment) ->
     case lists:search(fun(Type) -> is_suffix(Type, Comment) end, policy_types()) of
@@ -139,8 +184,11 @@ is_suffix(Suffix, Bin) ->
     BinSize >= SuffixSize
         andalso binary:part(Bin, BinSize - SuffixSize, SuffixSize) =:= Suffix.
 
+%% The value comes from a remote peer, so it goes through
+%% `ar_serialize:parse_integer/1', which refuses to build a bignum out
+%% of an oversized digit string.
 to_integer(Bin) ->
-    binary_to_integer(string:trim(to_bin(Bin))).
+    ar_serialize:parse_integer(string:trim(to_bin(Bin))).
 
 lowercase_keys(Headers) ->
     maps:fold(fun(K, V, AccIn) ->

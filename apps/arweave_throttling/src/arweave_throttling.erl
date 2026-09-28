@@ -295,6 +295,8 @@ get_quota_error_reason({group_mismatch, _GroupID, _HeaderGroupID}) ->
     "group_mismatch";
 get_quota_error_reason({missing_header, _HeaderKey}) ->
     "missing_header";
+get_quota_error_reason({invalid_header_value, _HeaderKey}) ->
+    "invalid_header_value";
 get_quota_error_reason(_) ->
     "unexpected".
 

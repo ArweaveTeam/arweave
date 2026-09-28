@@ -29,6 +29,11 @@
         parse_accepts_map/1,
         parse_missing_header/1,
         parse_malformed_limit/1,
+        parse_rejects_zero_limit/1,
+        parse_rejects_remaining_out_of_range/1,
+        parse_rejects_reset_out_of_range/1,
+        parse_rejects_zero_reset_amount/1,
+        parse_rejects_oversized_integer/1,
         update_applies_quota_on_match/1,
         update_rejects_group_mismatch/1,
         old_headers/1
@@ -65,6 +70,11 @@ all() ->
     parse_accepts_map,
     parse_missing_header,
     parse_malformed_limit,
+    parse_rejects_zero_limit,
+    parse_rejects_remaining_out_of_range,
+    parse_rejects_reset_out_of_range,
+    parse_rejects_zero_reset_amount,
+    parse_rejects_oversized_integer,
     update_applies_quota_on_match,
     update_rejects_group_mismatch,
     old_headers
@@ -175,6 +185,69 @@ parse_malformed_limit(_Config) ->
                 <<"RateLimit-Reset-Amount">> => <<"7">>,
                 <<"ratelimit-reset">> => <<"1">>},
     ?assertEqual({error, malformed_headers}, ?M:parse(Headers)),
+    ok.
+
+%% @doc The expiring-limit must be greater than 0.
+parse_rejects_zero_limit(_Config) ->
+    Headers = #{<<"RateLimit-Limit">> => limit_value(<<"general">>, 0),
+                <<"RateLimit-Remaining">> => <<"0">>,
+                <<"RateLimit-Reset-Amount">> => <<"1">>,
+                <<"RateLimit-Reset">> => <<"1">>},
+    ?assertEqual({error, {invalid_header_value, <<"ratelimit-limit">>}},
+                 ?M:parse(Headers)),
+    Negative = Headers#{
+        <<"RateLimit-Limit">> => limit_value(<<"general">>, -5)},
+    ?assertEqual({error, {invalid_header_value, <<"ratelimit-limit">>}},
+                 ?M:parse(Negative)),
+    ok.
+
+%% @doc Remaining must be at least 0 and strictly below the limit.
+parse_rejects_remaining_out_of_range(_Config) ->
+    Base = headers(<<"general">>, 200, 42, 7),
+    ?assertEqual({error, {invalid_header_value, <<"ratelimit-remaining">>}},
+                 ?M:parse(Base#{<<"RateLimit-Remaining">> => <<"-1">>})),
+    ?assertEqual({error, {invalid_header_value, <<"ratelimit-remaining">>}},
+                 ?M:parse(Base#{<<"RateLimit-Remaining">> => <<"200">>})),
+    ?assertEqual({error, {invalid_header_value, <<"ratelimit-remaining">>}},
+                 ?M:parse(Base#{<<"RateLimit-Remaining">> => <<"201">>})),
+    ?assertMatch({ok, #{remaining := 199}},
+                 ?M:parse(Base#{<<"RateLimit-Remaining">> => <<"199">>})),
+    ?assertMatch({ok, #{remaining := 0}},
+                 ?M:parse(Base#{<<"RateLimit-Remaining">> => <<"0">>})),
+    ok.
+
+%% @doc Reset must be at least 0 (the remote sends 0 while the quota
+%% is not exhausted) and at most one day.
+parse_rejects_reset_out_of_range(_Config) ->
+    Base = headers(<<"general">>, 200, 42, 7),
+    ?assertEqual({error, {invalid_header_value, <<"ratelimit-reset">>}},
+                 ?M:parse(Base#{<<"RateLimit-Reset">> => <<"-1">>})),
+    ?assertEqual({error, {invalid_header_value, <<"ratelimit-reset">>}},
+                 ?M:parse(Base#{<<"RateLimit-Reset">> => <<"86401">>})),
+    ?assertMatch({ok, #{reset_seconds := 0}},
+                 ?M:parse(Base#{<<"RateLimit-Reset">> => <<"0">>})),
+    ?assertMatch({ok, #{reset_seconds := 86400}},
+                 ?M:parse(Base#{<<"RateLimit-Reset">> => <<"86400">>})),
+    ok.
+
+%% @doc Reset-Amount must be greater than 0.
+parse_rejects_zero_reset_amount(_Config) ->
+    Base = headers(<<"general">>, 200, 42, 7),
+    ?assertEqual({error, {invalid_header_value, <<"ratelimit-reset-amount">>}},
+                 ?M:parse(Base#{<<"RateLimit-Reset-Amount">> => <<"0">>})),
+    ?assertEqual({error, {invalid_header_value, <<"ratelimit-reset-amount">>}},
+                 ?M:parse(Base#{<<"RateLimit-Reset-Amount">> => <<"-3">>})),
+    ?assertMatch({ok, #{reset_amount := 1}},
+                 ?M:parse(Base#{<<"RateLimit-Reset-Amount">> => <<"1">>})),
+    ok.
+
+%% @doc A digit string too long to be a sane integer is malformed
+%% rather than turned into a bignum.
+parse_rejects_oversized_integer(_Config) ->
+    Base = headers(<<"general">>, 200, 42, 7),
+    Huge = binary:copy(<<"9">>, 200),
+    ?assertEqual({error, malformed_headers},
+                 ?M:parse(Base#{<<"RateLimit-Remaining">> => Huge})),
     ok.
 
 %% @doc How the headers are parsed into an internal quota map.
