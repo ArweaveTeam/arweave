@@ -282,6 +282,9 @@ get_or_start_throttling_group_process(GroupID) ->
                     {ok, Child};
                 {ok, Child, _Info} ->
                     {ok, Child};
+                %% Another response from a new peer started it first.
+                {error, {already_started, Child}} ->
+                    {ok, Child};
                 {error, _Reason} = E ->
                     E
             end

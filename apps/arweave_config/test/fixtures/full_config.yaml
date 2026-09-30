@@ -129,7 +129,9 @@ network:
   client:
     http:
       closing_timeout: 15001
+      connections_per_peer: 5
       keepalive: 60001
+      protocol: http
     tcp:
       delay_send: true
       keepalive: false

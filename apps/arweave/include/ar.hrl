@@ -35,11 +35,12 @@
 %% The current build number -- incremented for every release.
 -define(RELEASE_NUMBER, 110).
 
+%% Header names are lowercase, as HTTP/2 requires.
 -define(DEFAULT_REQUEST_HEADERS,
         [
-         {<<"X-Network">>, ?NETWORK_NAME},
-         {<<"X-Version">>, <<"8">>},
-         {<<"X-Block-Format">>, <<"3">>}
+         {<<"x-network">>, ?NETWORK_NAME},
+         {<<"x-version">>, <<"8">>},
+         {<<"x-block-format">>, <<"3">>}
         ]).
 
 -define(CORS_HEADERS,

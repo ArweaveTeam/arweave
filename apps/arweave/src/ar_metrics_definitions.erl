@@ -84,7 +84,9 @@ all_metrics() ->
                     "the node failed to sync and will retry later."}
         ]},
         {prometheus_gauge, [{name, outbound_connections},
-                {help, "The current number of the open outbound network connections"}]},
+                {labels, [protocol]},
+                {help, "The current number of the open outbound network connections, "
+                    "by HTTP protocol (http or http2)"}]},
 
         %% Transaction and block propagation.
         {prometheus_gauge, [

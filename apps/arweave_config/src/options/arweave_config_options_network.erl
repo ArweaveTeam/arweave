@@ -241,6 +241,45 @@ specs() ->
         },
         #{
             enabled => true,
+            option_key => [network, client, http, connections_per_peer],
+            runtime => true,
+            default => ?DEFAULT_HTTP_CONNECTIONS_PER_PEER,
+            type => pos_integer,
+            short_description =>
+                <<"Maximum parallel HTTP client connections per peer.">>,
+            long_description =>
+                <<"The pool grows under sustained load and shrinks idle "
+                  "peers back to one connection. This limits connections, "
+                  "not sync tasks; fetch concurrency is managed automatically. "
+                  "Applies to all outgoing peer HTTP requests.">>,
+            handle_set => fun
+                (_K, V, _S, _A) when is_integer(V), V >= 1 ->
+                    {store, V};
+                (_K, V, _S, _A) ->
+                    {error, {invalid_connections_per_peer, V}}
+            end
+        },
+        #{
+            enabled => true,
+            option_key => [network, client, http, protocol],
+            runtime => true,
+            default => ?DEFAULT_HTTP_CLIENT_PROTOCOL,
+            type => atom,
+            short_description =>
+                <<"HTTP protocol for requests to peers: http2 or http.">>,
+            long_description =>
+                <<"With http2, try HTTP/2 first. If a peer does not accept "
+                  "HTTP/2, fall back to HTTP/1.1 and try HTTP/2 again an "
+                  "hour later. With http, always use HTTP/1.1.">>,
+            handle_set => fun
+                (_K, V, _S, _A) when V == http2; V == http ->
+                    {store, V};
+                (_K, V, _S, _A) ->
+                    {error, {invalid_http_protocol, V}}
+            end
+        },
+        #{
+            enabled => true,
             option_key => [network, client, tcp, delay_send],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_DELAY_SEND,

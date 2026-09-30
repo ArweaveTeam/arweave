@@ -40,7 +40,8 @@ start(Routes) ->
     start(Routes, #{}).
 
 %% @doc start/1 with options: reservation, from reserve_port/0, makes the
-%% server take over the reserved port.
+%% server take over the reserved port; protocols lists the HTTP versions it
+%% accepts, and middlewares optionally supplies Cowboy's middleware chain.
 start(Routes, Opts) ->
     Table = ets:new(?MODULE, [set, public]),
     ok = set_routes(Table, Routes),
@@ -50,8 +51,9 @@ start(Routes, Opts) ->
     %% reserved port is released right before the bind, so the window in
     %% which something else could grab it is a few microseconds.
     Port = release_reservation(maps:get(reservation, Opts, none)),
+    ProtocolOpts = maps:with([protocols, middlewares], Opts),
     {ok, _} = cowboy:start_clear(Ref, [{port, Port}],
-        #{ env => #{ dispatch => Dispatch } }),
+        ProtocolOpts#{ env => #{ dispatch => Dispatch } }),
     {ok, {127, 0, 0, 1, ranch:get_port(Ref)}, Ref, Table}.
 
 release_reservation(none) ->

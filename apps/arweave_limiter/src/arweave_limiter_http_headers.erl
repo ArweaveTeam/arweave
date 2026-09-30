@@ -11,8 +11,9 @@
 
 -export([to_http_headers/1, ratelimit_limit_value/1]).
 
-%% Returns a list of {HeaderName, Value} tuples ready to attach to the
-%% response. Returns [] in disabled mode (no headers advertised).
+%% Returns a map of header names to values ready to attach to the
+%% response, or #{} in disabled mode (no headers advertised). The names
+%% are lowercase, which HTTP/2 requires.
 to_http_headers({register, no_limiting_applied, _Info}) ->
     #{};
 to_http_headers({reject, error, _Info}) ->
@@ -27,10 +28,10 @@ to_http_headers({RegOrRej, _Mode, #{expiring_limit := _ExpiringLimit,
                                     reset_seconds := Reset,
                                     reset_amount := ResetAmount,
                                     policies := _Policies} = HeadersInfo}) ->
-    Headers = #{<<"RateLimit-Limit">> => ratelimit_limit_value(HeadersInfo),
-                <<"RateLimit-Remaining">> => integer_to_binary(Remaining),
-                <<"RateLimit-Reset">> => integer_to_binary(Reset),
-                <<"RateLimit-Reset-Amount">> => integer_to_binary(ResetAmount)},
+    Headers = #{<<"ratelimit-limit">> => ratelimit_limit_value(HeadersInfo),
+                <<"ratelimit-remaining">> => integer_to_binary(Remaining),
+                <<"ratelimit-reset">> => integer_to_binary(Reset),
+                <<"ratelimit-reset-amount">> => integer_to_binary(ResetAmount)},
     maybe_add_retry_after(RegOrRej, Remaining, Reset, Headers).
 
 %% RateLimit-Limit = expiring-limit *( "," quota-policy )
@@ -56,6 +57,6 @@ ratelimit_limit_value(#{expiring_limit := Expiring,
 %% should reference the same instant. We add Retry-After only on rejects
 %% so well-behaved clients back off.
 maybe_add_retry_after(reject, 0, Reset, HeaderMap) ->
-    HeaderMap#{<<"Retry-After">> => integer_to_binary(Reset)};
+    HeaderMap#{<<"retry-after">> => integer_to_binary(Reset)};
 maybe_add_retry_after(_, _, _, HeaderMap) ->
     HeaderMap.
