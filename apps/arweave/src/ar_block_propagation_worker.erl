@@ -1,4 +1,5 @@
 -module(ar_block_propagation_worker).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
@@ -7,22 +8,25 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
--record(state, {}).
+-record(state, {
+    name % The registered name ar_bridge knows the worker by.
+}).
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
 start_link(Name) ->
-    gen_server:start_link({local, Name}, ?MODULE, [], []).
+    gen_server:start_link({local, Name}, ?MODULE, [Name], []).
 
 %%%===================================================================
 %%% gen_server callbacks.
 %%%===================================================================
 
-init([]) ->
-    {ok, #state{}}.
+init([Name]) ->
+    {ok, #state{ name = Name }}.
 
 handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -35,7 +39,7 @@ handle_cast({send_block, SendFun, RetryCount, From}, State) ->
                                {send_block, SendFun, RetryCount - 1, From}),
             {noreply, State};
         _ ->
-            From ! {worker_sent_block, self()},
+            From ! {worker_sent_block, State#state.name},
             {noreply, State}
     end;
 
@@ -51,12 +55,12 @@ handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From},
                     ?LOG_INFO([{event, send_announcement_response}, {peer, arweave_util:format_peer(Peer)},
                                {exit, Reason}]),
                     ar_peers:issue_warning(Peer, block_announcement, Reason),
-                    From ! {worker_sent_block, self()};
+                    From ! {worker_sent_block, State#state.name};
                 {error, Reason} ->
                     ?LOG_INFO([{event, send_announcement_response}, {peer, arweave_util:format_peer(Peer)},
                                {error, Reason}]),
                     ar_peers:issue_warning(Peer, block_announcement, Reason),
-                    From ! {worker_sent_block, self()};
+                    From ! {worker_sent_block, State#state.name};
                 {ok, #block_announcement_response{ missing_tx_indices = L,
                                                    missing_chunk = MissingChunk, missing_chunk2 = MissingChunk2 }} ->
                     case SendFun(MissingChunk, MissingChunk2, L) of
@@ -72,11 +76,11 @@ handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From},
                         _ ->
                             ok
                     end,
-                    From ! {worker_sent_block, self()}
+                    From ! {worker_sent_block, State#state.name}
             end;
         _ ->    %% 208 (the peer has already received this block) or
             %% an unexpected response.
-            From ! {worker_sent_block, self()}
+            From ! {worker_sent_block, State#state.name}
     end,
     {noreply, State};
 
@@ -110,4 +114,42 @@ parse_txids(<< TXID:32/binary, Rest/binary >>) ->
             {ok, [TXID | TXIDs]}
     end;
 parse_txids(<<>>) ->
-    {ok, []}.
+    {ok, []};
+parse_txids(_Bin) ->
+    error.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+parse_txids_test() ->
+    ?assertEqual({ok, []}, parse_txids(<<>>)),
+    ?assertEqual({ok, [<< 1:256 >>, << 2:256 >>]},
+            parse_txids(<< 1:256, 2:256 >>)),
+    ?assertEqual(error, parse_txids(<< 1:8 >>)),
+    ?assertEqual(error, parse_txids(<< 1:256, 2:8 >>)).
+
+%% A 418 reply whose body is not a list of 32-byte transaction identifiers
+%% must not keep the worker from reporting back.
+malformed_418_reply_test() ->
+    Name = ar_block_propagation_worker_test,
+    {ok, PID} = start_link(Name),
+    Reply = fun(Status, Body) -> {ok, {{Status, <<>>}, [], Body, 0, 0}} end,
+    SendAnnouncementFun =
+        fun() ->
+            Reply(<<"200">>, ar_serialize:block_announcement_response_to_binary(
+                    #block_announcement_response{}))
+        end,
+    SendFun = fun(_, _, _) -> Reply(<<"418">>, << 1:8 >>) end,
+    Peer = {127, 0, 0, 1, 1984},
+    gen_server:cast(Name,
+            {send_block2, Peer, SendAnnouncementFun, SendFun, 1, self()}),
+    Result =
+        receive
+            {worker_sent_block, Worker} ->
+                Worker
+        after 5000 ->
+            timeout
+        end,
+    gen_server:stop(PID),
+    ?assertEqual(Name, Result).

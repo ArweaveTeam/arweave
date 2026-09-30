@@ -5,6 +5,7 @@
 
 %%% @doc The module gossips blocks to peers.
 -module(ar_bridge).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
@@ -15,12 +16,17 @@
 -export([block_propagation_parallelization/0]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
                 block_propagation_queue = gb_sets:new(),
-                workers,
+                workers, % Worker name => free | {busy, MonitorRef}.
                 gossip = true
                }).
+
+%% How long to wait for the supervisor to restart a crashed worker before
+%% giving it the next block.
+-define(WORKER_RESTART_DELAY_MS, 1000).
 
 %%%===================================================================
 %%% API
@@ -98,19 +104,11 @@ handle_call(Request, _From, State) ->
 %%--------------------------------------------------------------------
 
 handle_cast({may_be_send_block, W}, State) ->
-    #state{ workers = Workers, block_propagation_queue = Q } = State,
-    case dequeue(Q) of
-        empty ->
-            {noreply, State};
-        {{_Priority, Peer, BlockData}, Q2} ->
-            case maps:get(W, Workers) of
-                free ->
-                    send_to_worker(Peer, BlockData, W),
-                    {noreply, State#state{ block_propagation_queue = Q2,
-                                           workers = maps:put(W, busy, Workers) }};
-                busy ->
-                    {noreply, State}
-            end
+    case maps:get(W, State#state.workers) of
+        free ->
+            {noreply, send_next_block(W, State)};
+        {busy, _Ref} ->
+            {noreply, State}
     end;
 
 handle_cast(Msg, State) ->
@@ -156,15 +154,27 @@ handle_info({event, block, {new, B, _}}, State) ->
 handle_info({event, block, _}, State) ->
     {noreply, State};
 
-handle_info({worker_sent_block, W},
-            #state{ workers = Workers, block_propagation_queue = Q } = State) ->
-    case dequeue(Q) of
-        empty ->
+handle_info({worker_sent_block, W}, #state{ workers = Workers } = State) ->
+    case maps:get(W, Workers) of
+        {busy, Ref} ->
+            erlang:demonitor(Ref, [flush]);
+        free ->
+            ok
+    end,
+    State2 = State#state{ workers = maps:put(W, free, Workers) },
+    {noreply, send_next_block(W, State2)};
+
+handle_info({'DOWN', Ref, process, _Worker, Reason},
+            #state{ workers = Workers } = State) ->
+    case [W || {W, {busy, Ref2}} <- maps:to_list(Workers), Ref2 == Ref] of
+        [W] ->
+            ?LOG_WARNING([{event, block_propagation_worker_down}, {worker, W},
+                    {reason, io_lib:format("~P", [Reason, 20])}]),
+            arweave_util:cast_after(?WORKER_RESTART_DELAY_MS, self(),
+                    {may_be_send_block, W}),
             {noreply, State#state{ workers = maps:put(W, free, Workers) }};
-        {{_Priority, Peer, BlockData}, Q2} ->
-            send_to_worker(Peer, BlockData, W),
-            {noreply, State#state{ block_propagation_queue = Q2,
-                                   workers = maps:put(W, busy, Workers) }}
+        [] ->
+            {noreply, State}
     end;
 
 handle_info(Info, State) ->
@@ -199,6 +209,20 @@ enqueue_block([Peer | Peers], Height, BlockData, Q, N) ->
     Priority = {N, Height},
     enqueue_block(Peers, Height, BlockData,
                   gb_sets:add_element({Priority, Peer, BlockData}, Q), N + 1).
+
+%% @doc Give the free worker W the next queued block, if any, and monitor the
+%% worker until it reports back.
+send_next_block(W, State) ->
+    #state{ workers = Workers, block_propagation_queue = Q } = State,
+    case dequeue(Q) of
+        empty ->
+            State;
+        {{_Priority, Peer, BlockData}, Q2} ->
+            Ref = erlang:monitor(process, W),
+            send_to_worker(Peer, BlockData, W),
+            State#state{ block_propagation_queue = Q2,
+                         workers = maps:put(W, {busy, Ref}, Workers) }
+    end.
 
 dequeue(Q) ->
     case gb_sets:is_empty(Q) of
@@ -340,3 +364,29 @@ strip_v2_data(#tx{ format = 2 } = TX) ->
     TX#tx{ data = <<>> };
 strip_v2_data(TX) ->
     TX.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+worker_sent_block_frees_worker_test() ->
+    W = ar_bridge_test_worker,
+    State = #state{ workers = #{ W => {busy, make_ref()} } },
+    {noreply, State2} = handle_info({worker_sent_block, W}, State),
+    ?assertEqual(#{ W => free }, State2#state.workers).
+
+%% A worker that dies before reporting back is freed, so its restarted
+%% instance, registered under the same name, gets the next block.
+worker_down_frees_worker_test() ->
+    W = ar_bridge_test_worker,
+    Other = ar_bridge_test_worker2,
+    Ref = make_ref(),
+    OtherRef = make_ref(),
+    Workers = #{ W => {busy, Ref}, Other => {busy, OtherRef} },
+    State = #state{ workers = Workers },
+    Down = {'DOWN', Ref, process, {W, node()}, killed},
+    {noreply, State2} = handle_info(Down, State),
+    ?assertEqual(#{ W => free, Other => {busy, OtherRef} },
+            State2#state.workers),
+    %% A stale notification changes nothing.
+    ?assertEqual({noreply, State2}, handle_info(Down, State2)).
