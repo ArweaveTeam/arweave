@@ -1,6 +1,7 @@
 -module(ar_peers_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -106,6 +107,33 @@ release_count_order_test_() ->
         ?assertEqual([{101, 2}, {90, 1}, {100, 1},
             {unknown, 1}, {other, 0}], ar_peers:get_inbound_peer_counts())
     end).
+
+%% A saved peer whose probe crashes or never answers is skipped instead of
+%% aborting ar_peers startup (#1478).
+load_peers_skips_failing_peers_test_() ->
+    Crashing = {1, 1, 1, 1, 1984},
+    Stalling = {2, 2, 2, 2, 1984},
+    Healthy = {3, 3, 3, 3, 1984},
+    ar_test_util:with_mocked([
+        {ar_http_iface_client, get_info, fun
+            (Peer, network) when Peer == Crashing -> error({badmap, []});
+            (Peer, network) when Peer == Stalling -> timer:sleep(10_000);
+            (Peer, network) when Peer == Healthy -> <<?NETWORK_NAME>>;
+            (Peer, Type) -> meck:passthrough([Peer, Type])
+        end}
+    ], fun() ->
+        ets:delete(ar_peers, {peer, Healthy}),
+        Records = [{Peer, #performance{}}
+                || Peer <- [Crashing, Stalling, Healthy]],
+        {Time, Result} = timer:tc(fun() -> ar_peers:load_peers(Records) end),
+        ?assertEqual(ok, Result),
+        ?assert(Time < 9_000_000),
+        ?assertMatch([_], ets:lookup(ar_peers, {peer, Healthy})),
+        ?assertEqual([], ets:lookup(ar_peers, {peer, Crashing})),
+        ?assertEqual([], ets:lookup(ar_peers, {peer, Stalling})),
+        ets:delete(ar_peers, {peer, Healthy}),
+        ets:delete(ar_peers, {peer_ip, {3, 3, 3, 3}})
+    end, 30).
 
 table_survives_peer_restart_test_() ->
     ar_test_util:with_mocked([

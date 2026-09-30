@@ -34,8 +34,8 @@
 
 -ifdef(AR_TEST).
 -export([expire_inbound_peers/0, get_or_init_performance/1, get_total_rating/1,
-    maybe_rotate_peer_ports/1, observe_inbound_peer/3, remove_peer/2,
-    set_ranked_peers/2, update_rating/2, update_rating/5]).
+    load_peers/1, maybe_rotate_peer_ports/1, observe_inbound_peer/3,
+    remove_peer/2, set_ranked_peers/2, update_rating/2, update_rating/5]).
 -endif.
 
 %% The frequency in seconds of re-resolving DNS of peers configured by domain names.
@@ -660,6 +660,10 @@ handle_info({event, block, _}, State) ->
 handle_info({'EXIT', _, normal}, State) ->
     {noreply, State};
 
+handle_info({pmap_work, _Ref, _Result}, State) ->
+    %% A saved peer answered after load_peers/1 stopped waiting for it.
+    {noreply, State};
+
 handle_info(Message, State) ->
     ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
     {noreply, State}.
@@ -796,14 +800,23 @@ load_peers() ->
             ar:console("Polled saved peers.~n")
     end.
 
-load_peers(Peers) when length(Peers) < 20 ->
-    arweave_util:pmap(fun load_peer/1, Peers);
+%% @doc Probe the saved peers in batches of 50. A peer that fails or does not
+%% answer in time is skipped, so no saved peer can stop ar_peers from starting.
 load_peers(Peers) ->
-    {Peers2, Peers3} = lists:split(20, Peers),
-    arweave_util:pmap(fun load_peer/1, Peers2),
-    load_peers(Peers3).
+    arweave_util:batch_pmap(fun load_peer/1, Peers, 50, ?PEER_PROBE_TIMEOUT),
+    ok.
 
-load_peer({Peer, Performance}) ->
+load_peer({Peer, _Performance} = Record) ->
+    try
+        do_load_peer(Record)
+    catch Class:Reason ->
+        ?LOG_WARNING([{event, failed_to_load_saved_peer},
+                {peer, arweave_util:format_peer(Peer)},
+                {class, Class}, {reason, io_lib:format("~P", [Reason, 20])}]),
+        ok
+    end.
+
+do_load_peer({Peer, Performance}) ->
     case ar_http_iface_client:get_info(Peer, network) of
         info_unavailable ->
             ?LOG_DEBUG([{event, peer_unavailable}, {peer, arweave_util:format_peer(Peer)}]),
