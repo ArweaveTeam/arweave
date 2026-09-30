@@ -30,7 +30,6 @@
 -define(LIMITER_MAX_INTERVAL_MS, 86_400_000).
 
 %% general
-
 -ifdef(AR_TEST).
 -define(LIMITER_GENERAL_SLIDING_WINDOW_LIMIT, 0).
 -define(LIMITER_GENERAL_LEAKY_LIMIT, 45000).
@@ -323,15 +322,32 @@ group_fields(GroupID) ->
 
 validate_group(_GroupID, #{no_limit := true}) ->
     ok;
-validate_group(GroupID, #{sliding_window_duration := SlidingDuration,
-        leaky_tick_ms := LeakyTickMs,
+validate_group(GroupID, #{
+        sliding_window_limit := SlidingLimit,
+        sliding_window_duration := SlidingDuration,
+        leaky_rate_limit := LeakyLimit,
         timestamp_cleanup_expiry := Expiry} = Fields) ->
     maybe
+        ok ?= validate_combined_limits(GroupID, SlidingLimit, LeakyLimit),
         ok ?= validate_fields(GroupID, validated_fields(), Fields),
         ok ?= validate_expiry_above(
-            GroupID, Expiry, sliding_window_duration, SlidingDuration),
-        validate_expiry_above(GroupID, Expiry, leaky_tick_ms, LeakyTickMs)
+            GroupID, Expiry, sliding_window_duration, SlidingDuration)
     end.
+
+%% We can't have 0 limit in total, so let's validate that.
+%% However, at startup we can have 'infinity'.
+validate_combined_limits(_GroupID, infinity, infinity) ->
+    ok;
+validate_combined_limits(_GroupID, SlidingLimit, LeakyLimit)
+    when (SlidingLimit + LeakyLimit) > 0 ->
+    ok;
+validate_combined_limits(GroupID, _, _) ->
+    %% Both SlidingLimit, and LeakyLimit is positive integers,
+    %% so if one were negative, it would have failed before.
+    {error, iolist_to_binary(
+        io_lib:format("Both (sliding window and leaky bucket)"
+                      "rate limits can't be zero. (~B)", [GroupID]))}.
+
 
 validate_fields(_GroupID, [], _Fields) ->
     ok;
@@ -356,6 +372,11 @@ validate_field(GroupID, Field, V) ->
     case field_bounds(Field) of
         none ->
             ok;
+        {min, Min} when V >= Min ->
+            ok;
+        {min, Min} ->
+            field_error(GroupID, Field,
+                io_lib:format("must be minimum ~B", [Min]));
         {Min, Max} when V >= Min, V =< Max ->
             ok;
         {Min, Max} ->
@@ -368,6 +389,7 @@ validate_field(GroupID, Field, V) ->
 %% monotonic clock, so 0 would spin and anything past a day is a
 %% misconfiguration. The plain limits keep the `pos_integer' type's
 %% non-negative check.
+field_bounds(concurrency_limit) -> {min, 1};
 field_bounds(sliding_window_duration) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(leaky_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(timestamp_cleanup_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};

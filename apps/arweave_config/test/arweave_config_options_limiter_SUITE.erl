@@ -128,9 +128,6 @@ validate_requires_expiry_above_intervals(_Config) ->
     arweave_config:with_test_config(fun() ->
         ?assertEqual(ok, arweave_config_validate:run()),
         Expiry = [limiter, chunk, timestamp_cleanup_expiry],
-        %% Pin the leaky tick low so only the sliding window check
-        %% decides the first assertions.
-        ok = arweave_config:set([limiter, chunk, leaky_tick_ms], 4000),
         ok = arweave_config:set(
             [limiter, chunk, sliding_window_duration], 5000),
         ok = arweave_config:set(Expiry, 5000),
@@ -141,9 +138,7 @@ validate_requires_expiry_above_intervals(_Config) ->
         ok = arweave_config:set(Expiry, 5001),
         ?assertEqual(ok, arweave_config_validate:run()),
         ok = arweave_config:set([limiter, chunk, leaky_tick_ms], 5001),
-        ?assertEqual(
-            {error, <<"limiter.chunk.timestamp_cleanup_expiry must be "
-                      "greater than leaky_tick_ms">>},
+        ?assertEqual(ok,
             arweave_config_validate:run()),
         ok = arweave_config:set(Expiry, 5002),
         ?assertEqual(ok, arweave_config_validate:run())
@@ -171,7 +166,6 @@ runtime_set_rejects_expiry_below_intervals(_Config) ->
         Expiry = [limiter, chunk, timestamp_cleanup_expiry],
         Default = arweave_config:get(Expiry),
         LeakyTickMs = arweave_config:get([limiter, chunk, leaky_tick_ms]),
-        ?assertMatch({error, _}, arweave_config:set(Expiry, LeakyTickMs)),
         ?assertMatch({error, _}, arweave_config:set(Expiry, 0)),
         ?assertEqual(Default, arweave_config:get(Expiry)),
         ok = arweave_config:set(Expiry, LeakyTickMs + 1),
