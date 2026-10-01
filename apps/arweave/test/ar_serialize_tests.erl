@@ -217,6 +217,16 @@ tx_roundtrip_test() ->
         ar_serialize:json_struct_to_tx(JsonTX)
     ).
 
+%% A standalone transaction must be a full record.
+binary_to_tx_rejects_bare_tx_id_test() ->
+    TXID = crypto:strong_rand_bytes(32),
+    ?assertEqual({error, transaction_identifier_only},
+                 ar_serialize:binary_to_tx(<< 32:24, TXID/binary >>)),
+    TX = ar_tx:sign((ar_tx:new(<<"test">>))#tx{ format = 2 },
+                    ar_wallet:new(?RSA_KEY_TYPE)),
+    ?assertMatch({ok, #tx{ id = ID }} when ID == TX#tx.id,
+                 ar_serialize:binary_to_tx(ar_serialize:tx_to_binary(TX))).
+
 oversized_json_integer_rejected_test() ->
     TXBase = ar_tx:new(<<"test">>),
     TX = TXBase#tx{

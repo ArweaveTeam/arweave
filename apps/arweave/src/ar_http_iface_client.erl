@@ -1629,6 +1629,13 @@ recent_hash_list_diff_parse_error_test() ->
     ?assertMatch({error, _},
         handle_get_recent_hash_list_diff_response(Response, HL, undefined_peer)).
 
+%% @doc An incomplete binary transaction response is reported as an error.
+bare_tx_id_tx_response_test() ->
+    Body = << 32:24, (crypto:strong_rand_bytes(32))/binary >>,
+    Response = {ok, {{<<"200">>, <<"OK">>}, [], Body, 0, 1}},
+    ?assertEqual({error, transaction_identifier_only},
+                 handle_tx_response({127, 0, 0, 1, 1984}, binary, Response)).
+
 %% @doc Only a JSON object is accepted as a /info response body.
 decode_info_test() ->
     ?assertEqual(#{ <<"height">> => 1 }, decode_info(<<"{\"height\":1}">>)),

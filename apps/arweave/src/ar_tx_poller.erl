@@ -19,7 +19,8 @@
 -record(state, {
     last_seen_tx_timestamp = 0,
     pending_txids = [],
-    latest_txid_source_peer = none
+    latest_txid_source_peer = none,
+    started = false % Whether the check_for_received_txs loop is running.
 }).
 
 %% Number of peers to query for a transaction.
@@ -53,7 +54,9 @@ start_link() ->
 
 init([]) ->
     [ok, ok] = ar_events:subscribe([tx, node_state]),
-    {ok, #state{}}.
+    %% After a restart the node has already joined and the initialized event
+    %% will not come again.
+    {ok, maybe_start_loop(ar_node:is_joined(), #state{})}.
 
 handle_call(Request, From, State) ->
     ?LOG_WARNING("Unexpected call: ~p from ~p", [Request, From]),
@@ -90,11 +93,7 @@ handle_cast(Request, State) ->
     {noreply, State}.
 
 handle_info({event, node_state, {initialized, _}}, State) ->
-    %% Start the check_for_received_txs loop unconditionally; the loop reads
-    %% [gossip, tx, polling_enabled] live each tick, so it can be enabled or
-    %% disabled at runtime without a restart.
-    gen_server:cast(self(), check_for_received_txs),
-    {noreply, State};
+    {noreply, maybe_start_loop(true, State)};
 
 handle_info({event, node_state, _}, State) ->
     {noreply, State};
@@ -117,6 +116,15 @@ terminate(Reason, _State) ->
     ok.
 
 %%% Internal functions.
+
+%% @doc Start the check_for_received_txs loop once the node has joined, unless
+%% it is already running. The loop reads [gossip, tx, polling_enabled] live
+%% each tick, so polling can be enabled or disabled at runtime.
+maybe_start_loop(true, #state{ started = false } = State) ->
+    gen_server:cast(self(), check_for_received_txs),
+    State#state{ started = true };
+maybe_start_loop(_IsJoined, State) ->
+    State.
 
 check_for_received_txs(#state{ pending_txids = [TXID | PendingTXIDs] } = State) ->
     case ar_mempool:is_known_tx(TXID) of

@@ -5,6 +5,29 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% The initialized event that starts the polling loop at boot is not sent
+%% again, so a restarted poller has to start the loop itself.
+tx_poller_resumes_after_restart_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT, fun test_tx_poller_resumes_after_restart/0}.
+
+test_tx_poller_resumes_after_restart() ->
+    [B0] = ar_weave:init(),
+    ar_test_node:start(B0),
+    ok = ar_test_await:until(tx_poller_started, fun is_tx_poller_started/0),
+    PID = whereis(ar_tx_poller),
+    exit(PID, kill),
+    ok = ar_test_await:until(tx_poller_restarted,
+        fun() ->
+            PID2 = whereis(ar_tx_poller),
+            PID2 /= undefined andalso PID2 /= PID
+        end),
+    ?assert(is_tx_poller_started()).
+
+%% @doc Return whether the polling loop of ar_tx_poller is running, read from
+%% the started field of its state record.
+is_tx_poller_started() ->
+    element(5, sys:get_state(ar_tx_poller)).
+
 accepts_gossips_and_mines_test_() ->
     PrepareTestFor = fun(BuildTXSetFun, KeyType) ->
         fun() ->

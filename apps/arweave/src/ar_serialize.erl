@@ -1133,7 +1133,15 @@ tx_to_binary(TX) ->
     << TXSize:24, Bin/binary >>.
 
 binary_to_tx(<< Size:24, Bin:Size/binary >>) ->
-    parse_tx(Bin);
+    %% A standalone transaction must be a full record.
+    case parse_tx(Bin) of
+        {ok, #tx{}} = Reply ->
+            Reply;
+        {ok, _TXID} ->
+            {error, transaction_identifier_only};
+        Error ->
+            Error
+    end;
 binary_to_tx(_Rest) ->
     {error, invalid_input7}.
 
