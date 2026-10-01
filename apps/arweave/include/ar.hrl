@@ -365,6 +365,16 @@
 -define(NOTE_SIZE, 32).
 
 %% Disk cache size in MB
+%% The free disk space kept in reserve on top of the disk pool and disk cache:
+%% syncing stops below half of it and resumes above all of it. Test nodes store
+%% a few megabytes, so tests use a small reserve and do not depend on the free
+%% space of the machine running them.
+-ifdef(AR_TEST).
+-define(DISK_SPACE_RESERVE, 200_000_000).
+-else.
+-define(DISK_SPACE_RESERVE, 10_000_000_000).
+-endif.
+
 -ifdef(AR_TEST).
 -define(DISK_CACHE_SIZE, 1).
 -define(DISK_CACHE_CLEAN_PERCENT_MAX, 20).

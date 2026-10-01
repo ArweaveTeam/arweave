@@ -299,7 +299,7 @@ handle_info({event, disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, _Perc
     DiskCacheSizeMb = arweave_config:get([gossip, header_cache_size]),
     DiskPoolSize = MaxDiskPoolBufferMb * ?MiB,
     DiskCacheSize = DiskCacheSizeMb * 1048576,
-    BufferSize = 10_000_000_000,
+    BufferSize = ?DISK_SPACE_RESERVE,
     case Bytes < DiskPoolSize + DiskCacheSize + BufferSize div 2 of
         true ->
             case State#state.is_disk_space_sufficient of

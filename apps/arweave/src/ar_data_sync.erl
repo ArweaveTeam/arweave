@@ -1137,7 +1137,7 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
     %% BufferSize = ~10GB
     DiskPoolSize = MaxDiskPoolBufferMb * ?MiB,
     DiskCacheSize = DiskCacheSizeMb * ?MiB,
-    BufferSize = 10_000_000_000,
+    BufferSize = ?DISK_SPACE_RESERVE,
     RequiredDiskSpace = DiskPoolSize + DiskCacheSize,
     StopThreshold = RequiredDiskSpace + (BufferSize div 2),
     ResumeThreshold = RequiredDiskSpace + BufferSize,
