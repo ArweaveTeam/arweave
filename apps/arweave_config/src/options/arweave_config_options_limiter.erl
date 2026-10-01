@@ -22,11 +22,9 @@
 %% the leaky-bucket caps for groups whose production limit is too
 %% tight for some test scenarios.
 -define(LIMITER_TIMESTAMP_CLEANUP_INTERVAL, 120000).
--define(LIMITER_TIMESTAMP_CLEANUP_EXPIRY, 120000).
 -define(LIMITER_IS_EXTERNAL_REDUCTION_ENABLED, false).
 
-%% Upper bound, in milliseconds, for every timer interval and for the
-%% sliding-window idle expiry: one day.
+%% Upper bound, in milliseconds, for every timer interval: one day.
 -define(LIMITER_MAX_INTERVAL_MS, 86_400_000).
 
 %% general
@@ -267,9 +265,6 @@ short_description_for(concurrency_limit) ->
 short_description_for(timestamp_cleanup_tick_ms) ->
     <<"Interval in milliseconds between sweeps that drop idle "
       "peers from the sliding-window map.">>;
-short_description_for(timestamp_cleanup_expiry) ->
-    <<"Idle time in milliseconds after which a peer's "
-      "sliding-window state is discarded.">>;
 short_description_for(is_external_reduction_enabled) ->
     <<"Skip the extra leaky-bucket reduction performed after "
       "each accepted request.">>;
@@ -284,10 +279,9 @@ group_description() ->
       "+ concurrency caps.">>.
 
 %% @doc Cross-cutting: every group's timer and limit fields must hold
-%% integers within range once the group actually limits, and the
-%% idle expiry must outlast both the sliding window and the leaky
-%% tick. Bypass groups (`no_limit => true') keep their `infinity'
-%% sentinels: they never arm a timer, so nothing reads those values.
+%% integers within range once the group actually limits. Bypass
+%% groups (`no_limit => true') keep their `infinity' sentinels: they
+%% never arm a timer, so nothing reads those values.
 validate() ->
     validate_groups(lists:sort(group_ids())).
 
@@ -309,8 +303,7 @@ validated_fields() ->
         leaky_tick_ms,
         tick_reduction,
         concurrency_limit,
-        timestamp_cleanup_tick_ms,
-        timestamp_cleanup_expiry
+        timestamp_cleanup_tick_ms
     ].
 
 group_fields(GroupID) ->
@@ -324,14 +317,10 @@ validate_group(_GroupID, #{no_limit := true}) ->
     ok;
 validate_group(GroupID, #{
         sliding_window_limit := SlidingLimit,
-        sliding_window_duration := SlidingDuration,
-        leaky_rate_limit := LeakyLimit,
-        timestamp_cleanup_expiry := Expiry} = Fields) ->
+        leaky_rate_limit := LeakyLimit} = Fields) ->
     maybe
         ok ?= validate_combined_limits(GroupID, SlidingLimit, LeakyLimit),
-        ok ?= validate_fields(GroupID, validated_fields(), Fields),
-        ok ?= validate_expiry_above(
-            GroupID, Expiry, sliding_window_duration, SlidingDuration)
+        ok ?= validate_fields(GroupID, validated_fields(), Fields)
     end.
 
 %% We can't have 0 limit in total, so let's validate that.
@@ -356,12 +345,6 @@ validate_fields(GroupID, [Field | Rest], Fields) ->
         ok -> validate_fields(GroupID, Rest, Fields);
         {error, _} = Err -> Err
     end.
-
-validate_expiry_above(_GroupID, Expiry, _Field, Other) when Expiry > Other ->
-    ok;
-validate_expiry_above(GroupID, _Expiry, Field, _Other) ->
-    field_error(GroupID, timestamp_cleanup_expiry,
-        io_lib:format("must be greater than ~s", [Field])).
 
 %% @doc Range check for one field. `infinity' is never accepted from
 %% an operator: it is only meaningful as the code default of a bypass
@@ -394,7 +377,6 @@ field_bounds(sliding_window_duration) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(leaky_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(tick_reduction) -> {min, 1};
 field_bounds(timestamp_cleanup_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};
-field_bounds(timestamp_cleanup_expiry) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(_Field) -> none.
 
 field_error(GroupID, Field, Message) ->
@@ -554,16 +536,13 @@ no_limit(NumberOfWorkers) ->
         leaky_tick_ms => infinity,
         tick_reduction => infinity,
         concurrency_limit => infinity,
-        timestamp_cleanup_tick_ms => infinity,
-        timestamp_cleanup_expiry => infinity
+        timestamp_cleanup_tick_ms => infinity
     }.
 
 common() ->
     #{
         timestamp_cleanup_tick_ms =>
             ?LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
-        timestamp_cleanup_expiry =>
-            ?LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
         is_external_reduction_enabled =>
             ?LIMITER_IS_EXTERNAL_REDUCTION_ENABLED,
         no_limit => false,

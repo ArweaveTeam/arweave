@@ -303,7 +303,6 @@ limiter:
     tick_reduction: 25
     concurrency_limit: 250
     timestamp_cleanup_tick_ms: 60000
-    timestamp_cleanup_expiry: 90000
     is_external_reduction_enabled: false
     no_limit: false
     number_of_workers: 8

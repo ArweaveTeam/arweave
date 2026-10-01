@@ -30,9 +30,7 @@ all() ->
         override_only_touches_target_field,
         interval_fields_reject_out_of_range,
         infinity_is_rejected_from_set,
-        validate_requires_expiry_above_intervals,
-        validate_bypass_group_sentinels,
-        runtime_set_rejects_expiry_below_intervals
+        validate_bypass_group_sentinels
     ].
 
 %%====================================================================
@@ -94,7 +92,7 @@ interval_fields_reject_out_of_range(_Config) ->
                 ?assertEqual(86_400_000, arweave_config:get(Key), Field)
             end,
             [sliding_window_duration, leaky_tick_ms,
-             timestamp_cleanup_tick_ms, timestamp_cleanup_expiry])
+             timestamp_cleanup_tick_ms])
     end),
     ok.
 
@@ -112,36 +110,12 @@ infinity_is_rejected_from_set(_Config) ->
             end,
             [sliding_window_limit, sliding_window_duration,
              leaky_rate_limit, leaky_tick_ms, tick_reduction,
-             concurrency_limit, timestamp_cleanup_tick_ms,
-             timestamp_cleanup_expiry]),
+             concurrency_limit, timestamp_cleanup_tick_ms]),
         ?assertMatch({error, _},
             arweave_config:set([limiter, local_peers, concurrency_limit],
                 infinity)),
         ?assertEqual(infinity,
             arweave_config:get([limiter, local_peers, concurrency_limit]))
-    end),
-    ok.
-
-%% @doc Post-load validation requires the idle expiry to outlast both
-%% the sliding window and the leaky tick.
-validate_requires_expiry_above_intervals(_Config) ->
-    arweave_config:with_test_config(fun() ->
-        ?assertEqual(ok, arweave_config_validate:run()),
-        Expiry = [limiter, chunk, timestamp_cleanup_expiry],
-        ok = arweave_config:set(
-            [limiter, chunk, sliding_window_duration], 5000),
-        ok = arweave_config:set(Expiry, 5000),
-        ?assertEqual(
-            {error, <<"limiter.chunk.timestamp_cleanup_expiry must be "
-                      "greater than sliding_window_duration">>},
-            arweave_config_validate:run()),
-        ok = arweave_config:set(Expiry, 5001),
-        ?assertEqual(ok, arweave_config_validate:run()),
-        ok = arweave_config:set([limiter, chunk, leaky_tick_ms], 5001),
-        ?assertEqual(ok,
-            arweave_config_validate:run()),
-        ok = arweave_config:set(Expiry, 5002),
-        ?assertEqual(ok, arweave_config_validate:run())
     end),
     ok.
 
@@ -158,17 +132,3 @@ validate_bypass_group_sentinels(_Config) ->
     end),
     ok.
 
-%% @doc In runtime mode a set that would break the cross-field
-%% invariant is refused before it reaches the store.
-runtime_set_rejects_expiry_below_intervals(_Config) ->
-    arweave_config:with_test_config(fun() ->
-        ok = arweave_config:runtime(),
-        Expiry = [limiter, chunk, timestamp_cleanup_expiry],
-        Default = arweave_config:get(Expiry),
-        LeakyTickMs = arweave_config:get([limiter, chunk, leaky_tick_ms]),
-        ?assertMatch({error, _}, arweave_config:set(Expiry, 0)),
-        ?assertEqual(Default, arweave_config:get(Expiry)),
-        ok = arweave_config:set(Expiry, LeakyTickMs + 1),
-        ?assertEqual(LeakyTickMs + 1, arweave_config:get(Expiry))
-    end),
-    ok.
