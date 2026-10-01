@@ -95,7 +95,6 @@ limiter_config(simple_sliding_happy) ->
       concurrency_limit => 5,
       sliding_window_limit => 2,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 1000,
       leaky_tick_ms => 100000};
 limiter_config(simple_leaky_happy_path) ->
     #{id => ?TEST_LIMITER,
@@ -105,7 +104,6 @@ limiter_config(simple_leaky_happy_path) ->
       concurrency_limit => 2,
       sliding_window_limit => 0,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 1000,
       leaky_tick_ms => 100000};
 limiter_config(rate_limiter_rejected_due_concurrency) ->
     #{id => ?TEST_LIMITER,
@@ -115,7 +113,6 @@ limiter_config(rate_limiter_rejected_due_concurrency) ->
       concurrency_limit => 2,
       sliding_window_limit => 0,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 1000,
       leaky_tick_ms => 100000};
 limiter_config(rejected_due_leaky_rate) ->
     #{id => ?TEST_LIMITER,
@@ -125,7 +122,6 @@ limiter_config(rejected_due_leaky_rate) ->
       concurrency_limit => 5,
       sliding_window_limit => 0,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 1000,
       leaky_tick_ms => 100000};
 limiter_config(both_exhausted) ->
     #{id => ?TEST_LIMITER,
@@ -136,7 +132,6 @@ limiter_config(both_exhausted) ->
       sliding_window_limit => 1,
       sliding_window_duration => 100000,
       leaky_tick_ms => 10000000,
-      timestamp_cleanup_expiry => 1000,
       timestamp_cleanup_tick_ms => 1000000};
 limiter_config(peer_cleanup) ->
     #{id => ?TEST_LIMITER,
@@ -146,7 +141,6 @@ limiter_config(peer_cleanup) ->
       concurrency_limit => 2,
       sliding_window_limit => 1,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 1000,
       leaky_tick_ms => 100000};
 limiter_config(leaky_manual_reduction) ->
     #{id => ?TEST_LIMITER,
@@ -156,7 +150,6 @@ limiter_config(leaky_manual_reduction) ->
       concurrency_limit => 10,
       sliding_window_limit => 0,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 1000,
       leaky_tick_ms => 100000};
 limiter_config(sliding_manual_reduction) ->
     #{id => ?TEST_LIMITER,
@@ -166,7 +159,6 @@ limiter_config(sliding_manual_reduction) ->
       concurrency_limit => 10,
       sliding_window_limit => 5,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 10000,
       leaky_tick_ms => 100000};
 limiter_config(leaky_manual_reduction_disabled) ->
     #{id => ?TEST_LIMITER,
@@ -177,7 +169,6 @@ limiter_config(leaky_manual_reduction_disabled) ->
       concurrency_limit => 10,
       sliding_window_limit => 0,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 1000000,
       leaky_tick_ms => 100000};
 limiter_config(sliding_manual_reduction_disabled) ->
     #{id => ?TEST_LIMITER,
@@ -188,7 +179,6 @@ limiter_config(sliding_manual_reduction_disabled) ->
       concurrency_limit => 10,
       sliding_window_limit => 5,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 1000000,
       leaky_tick_ms => 100000}.
 
 timeout_config() ->
@@ -199,7 +189,6 @@ timeout_config() ->
       concurrency_limit => 5,
       sliding_window_limit => 2,
       sliding_window_duration => 1000,
-      timestamp_cleanup_expiry => 1000,
       leaky_tick_ms => 100000}.
 
 init_per_testcase(timeout, Config) ->
@@ -313,7 +302,6 @@ timeout_setup(Config) ->
     set_if_defined(no_limit, Config),
     set_if_defined(is_external_reduction_enabled, Config),
     set_if_defined(leaky_tick_ms, Config),
-    set_if_defined(timestamp_cleanup_expiry, Config),
     set_if_defined(leaky_rate_limit, Config),
     set_if_defined(concurrency_limit, Config),
     set_if_defined(tick_reduction, Config),
@@ -356,7 +344,6 @@ setup(Config) ->
     set_if_defined(no_limit, Config),
     set_if_defined(is_external_reduction_enabled, Config),
     set_if_defined(leaky_tick_ms, Config),
-    set_if_defined(timestamp_cleanup_expiry, Config),
     set_if_defined(leaky_rate_limit, Config),
     set_if_defined(concurrency_limit, Config),
     set_if_defined(tick_reduction, Config),

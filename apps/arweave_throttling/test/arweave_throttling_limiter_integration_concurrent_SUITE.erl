@@ -56,7 +56,6 @@ base_config() ->
       %% fixed-capacity burst (no background drain) over the test window.
       leaky_tick_ms => 3600000,
       timestamp_cleanup_tick_ms => 3600000,
-      timestamp_cleanup_expiry => 3600000,
       tick_reduction => 1}.
 
 

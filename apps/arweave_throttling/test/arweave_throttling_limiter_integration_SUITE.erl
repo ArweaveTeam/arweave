@@ -178,7 +178,8 @@ end_per_suite(_Config) -> ok.
 all() ->
     [
      no_throttling_under_sliding_overflow_with_large_burst,
-     concurrency_limit_has_been_hit
+     concurrency_limit_has_been_hit,
+     leaky_only_exhausts_quota
     ].
 
 %%% Per-testcase limiter configuration.
@@ -195,7 +196,15 @@ limiter_config(concurrency_limit_has_been_hit) ->
         sliding_window_limit => 4000,
         sliding_window_duration => 1000,
         leaky_rate_limit => 45000,
-        concurrency_limit => 3}.
+        concurrency_limit => 3};
+limiter_config(leaky_only_exhausts_quota) ->
+    BaseConfig = base_config(),
+    BaseConfig#{
+        sliding_window_limit => 0,
+        sliding_window_duration => 1000,
+        leaky_rate_limit => 5,
+        tick_reduction => 1,
+        concurrency_limit => 500000}.
 
 base_config() ->
     #{number_of_workers => 1,
@@ -206,7 +215,6 @@ base_config() ->
       %% fixed-capacity burst (no background drain) over the test window.
       leaky_tick_ms => 3600000,
       timestamp_cleanup_tick_ms => 3600000,
-      timestamp_cleanup_expiry => 3600000,
       tick_reduction => 1}.
 
 init_per_testcase(TestCase, Config) ->
@@ -373,6 +381,56 @@ concurrency_limit_has_been_hit(_Config) ->
     Pid5 ! done,
 
     timer:sleep(400),
+    ok.
+
+%% Sliding window is inactive, the leaky bucket has a burst of 5 and
+%% never drains (0 tick_reduction). 5 requests exhaust the quota.
+leaky_only_exhausts_quota(_Config) ->
+    Policies =
+        #{id => "test_limiter",
+          concurrency => #{limit => 500000},
+          leaky_bucket =>
+              #{tick_reduction => 1, burst => 5,
+                tick_ms => 3600000},
+          sliding_window => #{limit => 0, window_seconds => 1}},
+
+    Pid0 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register, leaky,
+              #{remaining := 4, reset_seconds := 3600, reset_amount := 1,
+                expiring_limit := 5, policies := Policies}},
+             ?PEER, 0, accepted, false),
+    Pid0 ! done,
+    Pid1 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register, leaky,
+              #{remaining := 3, reset_seconds := 3599, reset_amount := 1,
+                expiring_limit := 5, policies := Policies}},
+             ?PEER, 1, accepted, true),
+    Pid1 ! done,
+    Pid2 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register, leaky,
+              #{remaining := 2, reset_seconds := 3599, reset_amount := 1,
+                expiring_limit := 5, policies := Policies}},
+             ?PEER, 2, accepted, true),
+    Pid2 ! done,
+    Pid3 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register, leaky,
+              #{remaining := 1, reset_seconds := 3599, reset_amount := 1,
+                expiring_limit := 5, policies := Policies}},
+             ?PEER, 3, accepted, true),
+    Pid3 ! done,
+    %% Last token of the burst: quota is exhausted.
+    Pid4 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register, leaky,
+              #{remaining := 0, reset_seconds := 3599, reset_amount := 1,
+                expiring_limit := 5, policies := Policies}},
+             ?PEER, 4, accepted, true),
+    Pid4 ! done,
+
     ok.
 
 only_leaky_until_throttles(_Config) ->
