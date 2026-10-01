@@ -392,6 +392,7 @@ validate_field(GroupID, Field, V) ->
 field_bounds(concurrency_limit) -> {min, 1};
 field_bounds(sliding_window_duration) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(leaky_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};
+field_bounds(tick_reduction) -> {min, 1};
 field_bounds(timestamp_cleanup_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(timestamp_cleanup_expiry) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(_Field) -> none.
