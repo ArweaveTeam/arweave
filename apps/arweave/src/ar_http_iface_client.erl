@@ -943,6 +943,9 @@ handle_chunk_response({ok, {{<<"200">>, _}, _, Body, Start, End}}, RequestedPack
         {ok, #{ packing := Packing } = Proof} ->
             CheckPacking =
                 case RequestedPacking of
+                    _ when Packing == unpacked_padded ->
+                        %% An intermediate storage format no node serves.
+                        false;
                     any ->
                         true;
                     Packing ->
@@ -1605,6 +1608,19 @@ log_failed_request(Reason, Log) ->
 
 %% @doc A known base hash followed by a partial tail should yield a clean
 %% {error, _} from the 200-response handler.
+%% A peer must not serve the intermediate unpacked_padded storage format.
+chunk_response_rejects_unpacked_padded_test() ->
+    Peer = {127, 0, 0, 1, 1984},
+    Reply = fun(Packing) ->
+        Proof = #{ chunk => << 1 >>, tx_path => <<>>, data_path => <<>>,
+                packing => Packing },
+        Body = ar_serialize:poa_map_to_binary(Proof),
+        handle_chunk_response({ok, {{<<"200">>, <<>>}, [], Body, 0, 1}}, any,
+                Peer)
+    end,
+    ?assertMatch({ok, #{ packing := unpacked }, _, _}, Reply(unpacked)),
+    ?assertEqual({error, wrong_packing}, Reply(unpacked_padded)).
+
 recent_hash_list_diff_parse_error_test() ->
     BaseHash = crypto:strong_rand_bytes(48),
     HL = [BaseHash],

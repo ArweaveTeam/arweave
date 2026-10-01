@@ -690,8 +690,14 @@ unpack({replica_2_9, RewardAddr} = Packing, AbsoluteEndOffset,
 unpack(unpacked, _ChunkOffset, _TXRoot, Chunk, _ChunkSize, _PackingState, _External) ->
     %% Allows to reuse the same interface for unpacking and repacking.
     {ok, Chunk, already_unpacked};
-unpack(unpacked_padded, _ChunkOffset, _TXRoot, Chunk, ChunkSize, _PackingState, _External) ->
-    {ok, binary:part(Chunk, 0, ChunkSize), was_not_already_unpacked};
+unpack(unpacked_padded, _ChunkOffset, _TXRoot, Chunk, ChunkSize, _PackingState,
+        _External) ->
+    case validate_chunk_size(unpacked_padded, Chunk, ChunkSize) of
+        {error, Reason} ->
+            {error, Reason};
+        {ok, _PackedSize} ->
+            {ok, binary:part(Chunk, 0, ChunkSize), was_not_already_unpacked}
+    end;
 unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize, PackingState, External) ->
     case validate_chunk_size(Packing, Chunk, ChunkSize) of
         {error, Reason} ->
@@ -730,9 +736,14 @@ repack(RequestedPacking, StoredPacking,
 
 repack(RequestedPacking, unpacked_padded,
        ChunkOffset, TXRoot, Chunk, ChunkSize, PackingState, External) ->
-    Unpacked = binary:part(Chunk, 0, ChunkSize),
-    repack(RequestedPacking, unpacked,
-           ChunkOffset, TXRoot, Unpacked, ChunkSize, PackingState, External);
+    case unpack(unpacked_padded, ChunkOffset, TXRoot, Chunk, ChunkSize,
+                PackingState, External) of
+        {ok, Unpacked, _WasAlreadyUnpacked} ->
+            repack(RequestedPacking, unpacked, ChunkOffset, TXRoot, Unpacked,
+                   ChunkSize, PackingState, External);
+        Error ->
+            Error
+    end;
 repack(RequestedPacking, unpacked,
        ChunkOffset, TXRoot, Chunk, _ChunkSize, PackingState, External) ->
     case pack(RequestedPacking, ChunkOffset, TXRoot, Chunk, PackingState, External) of
@@ -822,6 +833,8 @@ validate_chunk_size(spora_2_5, Chunk, ChunkSize) ->
 validate_chunk_size({spora_2_6, _Addr}, Chunk, ChunkSize) ->
     validate_chunk_size(Chunk, ChunkSize);
 validate_chunk_size({replica_2_9, _Addr}, Chunk, ChunkSize) ->
+    validate_chunk_size(Chunk, ChunkSize);
+validate_chunk_size(unpacked_padded, Chunk, ChunkSize) ->
     validate_chunk_size(Chunk, ChunkSize).
 
 validate_chunk_size(Chunk, ChunkSize) ->

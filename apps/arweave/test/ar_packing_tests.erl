@@ -36,7 +36,8 @@ packing_test_() ->
       fun test_partial_chunk_repack/0,
       fun test_invalid_pad/0,
       fun test_request_repack/0,
-      fun test_request_unpack/0]}.
+      fun test_request_unpack/0,
+      fun test_unpacked_padded_chunk_size/0]}.
 
 setup() ->
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
@@ -372,6 +373,37 @@ test_request_unpack() ->
     after ?REQUEST_UNPACK_TIMEOUT ->
         erlang:error(timeout)
     end.
+
+%% An unpacked_padded chunk that is not a full 256 KiB is rejected instead of
+%% crashing the packing worker and, with it, the packing server.
+test_unpacked_padded_chunk_size() ->
+    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
+    ChunkSize = 1000,
+    Unpacked = crypto:strong_rand_bytes(ChunkSize),
+    Padded = ar_packing_server:pad_chunk(Unpacked),
+    Short = binary:part(Padded, 0, ChunkSize - 1),
+    ?assertEqual({ok, Unpacked}, ar_packing_server:unpack(
+            unpacked_padded, ?CHUNK_OFFSET, TXRoot, Padded, ChunkSize)),
+    ?assertEqual({error, invalid_packed_size}, ar_packing_server:unpack(
+            unpacked_padded, ?CHUNK_OFFSET, TXRoot, Short, ChunkSize)),
+    ?assertEqual({ok, Unpacked, Unpacked}, ar_packing_server:repack(
+            unpacked, unpacked_padded, ?CHUNK_OFFSET, TXRoot, Padded,
+            ChunkSize)),
+    ?assertEqual({error, invalid_packed_size}, ar_packing_server:repack(
+            unpacked, unpacked_padded, ?CHUNK_OFFSET, TXRoot, Short,
+            ChunkSize)),
+    Server = whereis(ar_packing_server),
+    Args = {unpacked_padded, Short, ?CHUNK_OFFSET, TXRoot, ChunkSize},
+    ar_packing_server:request_unpack(?CHUNK_OFFSET, Args),
+    Reply =
+        receive
+            {chunk, {unpack_error, _, Args, Reason}} ->
+                Reason
+        after ?REQUEST_UNPACK_TIMEOUT ->
+            timeout
+        end,
+    ?assertEqual(invalid_packed_size, Reply),
+    ?assertEqual(Server, whereis(ar_packing_server)).
 
 packs_chunks_depending_on_packing_threshold_test_() ->
     ar_test_node:test_with_all_nodes_mocked([
