@@ -335,12 +335,19 @@ init(#{id := GroupID}) ->
         last_activity_ts => monotonic_ms()
         }}.
 
+%% Resets the idle timer: a throttle request is real traffic for the group.
+%% It touches even when the group is turned off or the peer has unlimited
+%% quota, since the caller still depends on this group answering.
 handle_call({throttle, Peer}, From, State) ->
     do_handle_throttle(Peer, From, touch(State));
+%% Resets the idle timer: peer selection consults the quota state held here,
+%% so the group is still in use and its state is worth keeping.
 handle_call({is_throttled, Peer}, _From, #{peers := Peers} = State) ->
     PS0 = get_or_init_peer(Peer, Peers),
     IsThrottled = quota_is_throttled(PS0),
     {reply, {ok, IsThrottled}, touch(State)};
+%% Does not reset the idle timer: read-only introspection (metrics, debug)
+%% must not keep an otherwise unused group alive.
 handle_call(get_info, _From, #{peers := Peers} = State) ->
     NumOfRequestsQueued =
         maps:fold(fun(_Peer, #peer_state{waiters = Waiters}, Acc) ->
@@ -349,10 +356,13 @@ handle_call(get_info, _From, #{peers := Peers} = State) ->
     Reply = #{peers => map_size(Peers),
             queued => NumOfRequestsQueued},
     {reply, Reply, State};
+%% Does not reset the idle timer: read-only introspection, same as get_info.
 handle_call({status, Peer}, _From, #{peers := Peers} = State) ->
     PS = get_or_init_peer(Peer, Peers),
     Reply = {ok, peer_state_to_map(PS)},
     {reply, Reply, State};
+%% Does not reset the idle timer: it drops all quota state, so there is
+%% nothing left that would justify keeping the group alive longer.
 handle_call(reset, _From, #{peers := Peers, monitors := Monitors} = State) ->
     maps:fold(fun(_Peer, PS, _) ->
                     cancel_reset_timer(PS#peer_state.reset_timer),
@@ -362,6 +372,8 @@ handle_call(reset, _From, #{peers := Peers, monitors := Monitors} = State) ->
                     erlang:demonitor(MRef, [flush])
             end, ok, Monitors),
     {reply, ok, State#{peers := #{}, monitors := #{}}};
+%% Does not reset the idle timer: it forgets a peer whose quota is no longer
+%% known, which is cleanup rather than use of the group.
 handle_call({reset_peer, Peer}, _From, #{peers := Peers, monitors := Monitors} = State) ->
     case maps:take(Peer, Peers) of
         error ->
@@ -392,10 +404,13 @@ handle_call({reset_peer, Peer}, _From, #{peers := Peers, monitors := Monitors} =
             {reply, ok, State#{peers => NewPeers, monitors => NewMonitors}}
         end;
 
+%% Does not reset the idle timer: test-only switch, not group traffic.
 handle_call(turn_off, _From, State) ->
     {reply, ok, State#{is_enabled => false}};
+%% Does not reset the idle timer: test-only switch, not group traffic.
 handle_call(turn_on, _From, State) ->
     {reply, ok, State#{is_enabled => true}};
+%% Does not reset the idle timer: an unknown request is not group traffic.
 handle_call(Msg, From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE},
                 {msg, Msg}, {from, From}]),
