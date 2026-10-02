@@ -51,7 +51,7 @@ end_per_testcase(_TestCase, Config) ->
 
 all() ->
     [
-        idle_timeout_is_read_from_config,
+        idle_timeout_is_reread_on_idle_check,
         idle_group_stops_and_is_counted,
         activity_postpones_idle_shutdown,
         pending_refill_postpones_idle_shutdown,
@@ -64,10 +64,15 @@ all() ->
 %% Test cases
 %%====================================================================
 
-idle_timeout_is_read_from_config(_Config) ->
-    ok = arweave_config:set([throttling, idle_timeout], 12345),
-    {ok, Pid} = arweave_throttling_sup:start_throttling_group(?GROUPID_GENERAL),
-    ?assertMatch(#{idle_timeout := 12345}, sys:get_state(Pid)),
+%% The group arms its first idle check with the configured timeout, but
+%% raising the option before that check fires keeps the group running.
+idle_timeout_is_reread_on_idle_check(_Config) ->
+    {ok, Pid} = start_general_group(),
+    MRef = monitor(process, Pid),
+    ok = arweave_config:set([throttling, idle_timeout], 60000),
+
+    ?assertEqual(timeout, wait_down(MRef, 5 * ?IDLE_TIMEOUT_MS)),
+    ?assert(is_process_alive(Pid)),
     ok.
 
 idle_group_stops_and_is_counted(_Config) ->

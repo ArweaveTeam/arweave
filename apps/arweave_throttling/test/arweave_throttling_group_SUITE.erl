@@ -24,7 +24,9 @@ end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_TestCase, Config) ->
-    Spec = #{id => "general", idle_timeout => 60000},
+    Spec = #{id => "general"},
+    AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
+    ok = arweave_config:start(),
 
     ok = meck:new([prometheus_counter, prometheus_histogram], [passthrough]),
     ok = meck:expect(prometheus_counter, inc, 2, ok),
@@ -36,15 +38,18 @@ init_per_testcase(_TestCase, Config) ->
     {ok, Pid} = ?M:start_link(Spec),
     true = ets:insert(arweave_throttling_process, {list_to_binary(?GROUPID_GENERAL), Pid}),
 
-    [{group_pid, Pid}, {spec, Spec} | Config].
+    [{group_pid, Pid}, {spec, Spec}, {apps_before, AppsBefore} | Config].
 
-end_per_testcase(_TestCase, _Config) ->
+end_per_testcase(_TestCase, Config) ->
     case whereis(arweave_throttling_group_general) of
         undefined -> ok;
         _ -> ok = ?M:stop(?GROUPID_GENERAL)
     end,
     ok = meck:unload([prometheus_counter, prometheus_histogram]),
     ok = arweave_throttling_process:cleanup(),
+    AppsBefore = ?config(apps_before, Config),
+    AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
+    lists:foreach(fun application:stop/1, AppsNow -- AppsBefore),
     ok.
 
 all() ->

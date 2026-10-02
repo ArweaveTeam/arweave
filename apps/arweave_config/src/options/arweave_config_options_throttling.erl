@@ -23,8 +23,8 @@ specs() ->
                   "throttle, is_throttled or quota update request, has "
                   "no queued callers and no pending quota refill. The "
                   "group is started again on the next quota update. "
-                  "Changes apply to group processes started after the "
-                  "change.">>
+                  "Running groups pick up a change at their next idle "
+                  "check.">>
         },
         #{
             enabled => true,

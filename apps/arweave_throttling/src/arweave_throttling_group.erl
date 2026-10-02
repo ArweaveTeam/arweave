@@ -55,8 +55,9 @@
 %%%
 %%% A group stops itself (exit reason `normal') once it has received no
 %%% `throttle', `is_throttled' or `update_quota' request for
-%%% `idle_timeout' milliseconds, taken from
-%%% `[throttling, idle_timeout]' when the supervisor starts the group.
+%%% `[throttling, idle_timeout]' milliseconds. The option is read when
+%%% the group starts and again on every idle check, so a runtime change
+%%% applies to running groups from their next check.
 %%% A group with queued callers or a pending quota refill is never
 %%% considered idle. Before stopping, the group removes itself from
 %%% `arweave_throttling_process', so `throttle/2' lets requests through
@@ -136,7 +137,7 @@
 -define(CONCURRENCY_WINDOW_MS, 80).
 
 %% @doc Start a group process.
-start_link(#{id := _ID, idle_timeout := _IdleTimeout} = Spec) ->
+start_link(#{id := _ID} = Spec) ->
     gen_server:start_link(?MODULE, Spec, []).
 
 %% @doc Blocking throttle call.
@@ -322,16 +323,15 @@ stop(GroupID) ->
     end.
 
 %% gen_server callbacks
-init(#{id := GroupID, idle_timeout := IdleTimeout}) ->
+init(#{id := GroupID}) ->
     process_flag(trap_exit, true),
     arweave_throttling_process:store(GroupID, self()),
-    arm_idle_timer(IdleTimeout),
+    arm_idle_timer(idle_timeout()),
     {ok, #{
         id => GroupID,
         is_enabled => true,
         peers => #{},
         monitors => #{},
-        idle_timeout => IdleTimeout,
         last_activity_ts => monotonic_ms()
         }}.
 
@@ -471,12 +471,12 @@ handle_info({'DOWN', MRef, process, _Pid, _Reason}, #{peers := Peers, monitors :
         error ->
             {noreply, State}
     end;
-handle_info(idle_check, #{idle_timeout := IdleTimeout,
-                          last_activity_ts := LastActivityTS} = State) ->
+handle_info(idle_check, #{last_activity_ts := LastActivityTS} = State) ->
+    IdleTimeout = idle_timeout(),
     IdleMs = monotonic_ms() - LastActivityTS,
     case {IdleMs >= IdleTimeout, has_pending_work(State)} of
         {true, false} ->
-            ok = stop_idle(State),
+            ok = stop_idle(State, IdleTimeout),
             {stop, normal, State};
         {true, true} ->
             arm_idle_timer(IdleTimeout),
@@ -521,6 +521,9 @@ do_handle_throttle(Peer, From, #{peers := Peers} = State) ->
 touch(State) ->
     State#{last_activity_ts := monotonic_ms()}.
 
+idle_timeout() ->
+    arweave_config:get([throttling, idle_timeout]).
+
 arm_idle_timer(DelayMs) ->
     _ = erlang:send_after(DelayMs, self(), idle_check),
     ok.
@@ -533,7 +536,7 @@ has_pending_work(#{peers := Peers}) ->
                           orelse not queue:is_empty(Waiters)
               end, maps:values(Peers)).
 
-stop_idle(#{id := GroupID, idle_timeout := IdleTimeout}) ->
+stop_idle(#{id := GroupID}, IdleTimeout) ->
     ok = arweave_throttling_process:delete(GroupID, self()),
     arweave_metrics:counter_inc(arweave_throttling_idle_shutdown_total),
     ?LOG_DEBUG([{event, throttling_group_idle_shutdown},

@@ -74,10 +74,7 @@ restart_throttling_group(ChildID) ->
 child_spec_for_group(GroupID) when is_binary(GroupID) ->
     child_spec_for_group(binary_to_list(GroupID));
 child_spec_for_group(GroupID) when is_list(GroupID) ->
-    Spec = #{
-        id => GroupID,
-        idle_timeout => arweave_config:get([throttling, idle_timeout])
-    },
+    Spec = #{id => GroupID},
     #{
          id => GroupID,
          start => {arweave_throttling_group, start_link, [Spec]},
