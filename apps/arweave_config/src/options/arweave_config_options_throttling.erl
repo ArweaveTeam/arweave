@@ -66,7 +66,7 @@ validate_minimum(Field, Minimum) ->
     case arweave_config:get([throttling, Field]) of 
         V when V >= Minimum ->
             ok;
-        V ->
+        _V ->
             field_minimum_error(Field, Minimum)
     end.
 
