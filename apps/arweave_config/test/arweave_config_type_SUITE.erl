@@ -49,7 +49,7 @@ all() ->
      atom,
      integer,
      boolean,
-     pos_integer,
+     non_neg_integer,
      ipv4,
      path,
      tcp_port,
@@ -97,9 +97,9 @@ integer(_Config) ->
     {ok, 1} = arweave_config_type:integer(<<"1">>),
     {error, a} = arweave_config_type:integer(a).
 
-pos_integer(_Config) ->
-    {ok, 1} = arweave_config_type:pos_integer(1),
-    {error, -1} = arweave_config_type:pos_integer(-1).
+non_neg_integer(_Config) ->
+    {ok, 1} = arweave_config_type:non_neg_integer(1),
+    {error, -1} = arweave_config_type:non_neg_integer(-1).
 
 ipv4(_Config) ->
     {ok, <<"127.0.0.1">>} = arweave_config_type:ipv4("127.0.0.1"),

@@ -14,7 +14,7 @@ specs() ->
             enabled => true,
             option_key => [testnet, fork_height],
             default => not_set,
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Height of the first testnet block (testnet builds "
                   "only).">>,
@@ -30,7 +30,7 @@ specs() ->
             enabled => true,
             option_key => [testnet, target_block_time],
             default => ?TARGET_BLOCK_TIME,
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Target block time in seconds from the fork height on.">>
         },
@@ -47,7 +47,7 @@ specs() ->
             enabled => true,
             option_key => [testnet, test_wallet_top_up],
             default => 1_000_000,
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"AR credited to test_wallet_address at the fork "
                   "height.">>
@@ -56,7 +56,7 @@ specs() ->
             enabled => true,
             option_key => [testnet, reward_history_blocks],
             default => ?REWARD_HISTORY_BLOCKS,
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Reward history window in blocks from the fork height "
                   "on.">>
@@ -65,7 +65,7 @@ specs() ->
             enabled => true,
             option_key => [testnet, legacy_reward_history_blocks],
             default => ?LEGACY_REWARD_HISTORY_BLOCKS,
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Legacy reward history window in blocks from the fork "
                   "height on.">>
@@ -74,7 +74,7 @@ specs() ->
             enabled => true,
             option_key => [testnet, locked_rewards_blocks],
             default => ?LOCKED_REWARDS_BLOCKS,
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Blocks a mining reward stays locked from the fork "
                   "height on.">>

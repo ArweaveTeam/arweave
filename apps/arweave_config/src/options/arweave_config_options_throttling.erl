@@ -14,7 +14,7 @@ specs() ->
             option_key => [throttling, idle_timeout],
             runtime => true,
             default => ?DEFAULT_THROTTLING_IDLE_TIMEOUT_MS,
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Milliseconds a throttling group process may stay "
                   "idle before it shuts itself down.">>,
@@ -31,7 +31,7 @@ specs() ->
             option_key => [throttling, max_processes],
             runtime => true,
             default => ?DEFAULT_THROTTLING_MAX_PROCESSES,
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Maximum number of running throttling group "
                   "processes.">>,

@@ -113,7 +113,7 @@ specs() ->
             %% see: https://www.erlang.org/doc/apps/kernel/logger_formatter.html
             option_key => [logging,formatter,max_size],
             default => ?LOG_FORMATTER_MAX_SIZE,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FORMATTER_MAX_SIZE,
             handle_set => {
@@ -126,7 +126,7 @@ specs() ->
             %% see: https://www.erlang.org/doc/apps/kernel/logger_formatter.html
             option_key => [logging,formatter,depth],
             default => ?LOG_FORMATTER_DEPTH,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FORMATTER_DEPTH,
             handle_set => {
@@ -139,7 +139,7 @@ specs() ->
             %% see: https://www.erlang.org/doc/apps/kernel/logger_formatter.html
             option_key => [logging,formatter,chars_limit],
             default => ?LOG_FORMATTER_CHARS_LIMIT,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FORMATTER_CHARS_LIMIT,
             handle_set => {
@@ -152,7 +152,7 @@ specs() ->
             %% see: https://www.erlang.org/doc/apps/kernel/logger_std_h.html
             option_key => [logging,max_no_files],
             default => ?LOG_MAX_NO_FILES,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_MAX_NO_FILES,
             handle_set => {
@@ -165,7 +165,7 @@ specs() ->
             %% see: https://www.erlang.org/doc/apps/kernel/logger_std_h.html
             option_key => [logging,max_no_bytes],
             default => ?LOG_MAX_NO_BYTES,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_MAX_NO_BYTES,
             handle_set => {
@@ -190,7 +190,7 @@ specs() ->
             enabled => true,
             option_key => [logging,sync_mode_qlen],
             default => ?LOG_SYNC_MODE_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => false,
             short_description => ?LOG_DESC_SYNC_MODE_QLEN,
             handle_set => {
@@ -202,7 +202,7 @@ specs() ->
             enabled => true,
             option_key => [logging,drop_mode_qlen],
             default => ?LOG_DROP_MODE_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_DROP_MODE_QLEN,
             handle_set => {
@@ -214,7 +214,7 @@ specs() ->
             enabled => true,
             option_key => [logging,flush_qlen],
             default => ?LOG_FLUSH_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FLUSH_QLEN,
             handle_set => {
@@ -238,7 +238,7 @@ specs() ->
             enabled => true,
             option_key => [logging,burst_limit_max_count],
             default => ?LOG_BURST_LIMIT_MAX_COUNT,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_BURST_LIMIT_MAX_COUNT,
             handle_set => {
@@ -250,7 +250,7 @@ specs() ->
             enabled => true,
             option_key => [logging,burst_limit_window_time],
             default => ?LOG_BURST_LIMIT_WINDOW_TIME,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_BURST_LIMIT_WINDOW_TIME,
             handle_set => {
@@ -274,7 +274,7 @@ specs() ->
             enabled => true,
             option_key => [logging,overload_kill_qlen],
             default => ?LOG_OVERLOAD_KILL_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_OVERLOAD_KILL_QLEN,
             handle_set => {
@@ -286,7 +286,7 @@ specs() ->
             enabled => true,
             option_key => [logging,overload_kill_mem_size],
             default => ?LOG_OVERLOAD_KILL_MEM_SIZE,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_OVERLOAD_KILL_MEM_SIZE,
             handle_set => {
@@ -298,7 +298,7 @@ specs() ->
             enabled => true,
             option_key => [logging,overload_kill_restart_after],
             default => ?LOG_OVERLOAD_KILL_RESTART_AFTER,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_OVERLOAD_KILL_RESTART_AFTER,
             handle_set => {
@@ -341,7 +341,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,max_no_files],
             default => ?LOG_MAX_NO_FILES,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_MAX_NO_FILES,
             handle_set => {
@@ -353,7 +353,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,max_no_bytes],
             default => ?LOG_MAX_NO_BYTES,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_MAX_NO_BYTES,
             handle_set => {
@@ -365,7 +365,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,sync_mode_qlen],
             default => ?LOG_SYNC_MODE_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_SYNC_MODE_QLEN,
             handle_set => {
@@ -377,7 +377,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,drop_mode_qlen],
             default => ?LOG_DROP_MODE_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_DROP_MODE_QLEN,
             handle_set => {
@@ -389,7 +389,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,flush_qlen],
             default => ?LOG_FLUSH_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FLUSH_QLEN,
             handle_set => {
@@ -413,7 +413,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,burst_limit_max_count],
             default => ?LOG_BURST_LIMIT_MAX_COUNT,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_BURST_LIMIT_MAX_COUNT,
             handle_set => {
@@ -425,7 +425,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,burst_limit_window_time],
             default => ?LOG_BURST_LIMIT_WINDOW_TIME,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_BURST_LIMIT_WINDOW_TIME,
             handle_set => {
@@ -449,7 +449,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,overload_kill_qlen],
             default => ?LOG_OVERLOAD_KILL_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_OVERLOAD_KILL_QLEN,
             handle_set => {
@@ -461,7 +461,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,overload_kill_mem_size],
             default => ?LOG_OVERLOAD_KILL_MEM_SIZE,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_OVERLOAD_KILL_MEM_SIZE,
             handle_set => {
@@ -473,7 +473,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,overload_kill_restart_after],
             default => ?LOG_OVERLOAD_KILL_RESTART_AFTER,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_OVERLOAD_KILL_RESTART_AFTER,
             handle_set => {
@@ -485,7 +485,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,formatter,chars_limit],
             default => ?LOG_FORMATTER_CHARS_LIMIT,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FORMATTER_CHARS_LIMIT,
             handle_set => {
@@ -497,7 +497,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,formatter,depth],
             default => ?LOG_FORMATTER_DEPTH,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FORMATTER_DEPTH,
             handle_set => {
@@ -509,7 +509,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,debug,formatter,max_size],
             default => ?LOG_FORMATTER_MAX_SIZE,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FORMATTER_MAX_SIZE,
             handle_set => {
@@ -564,7 +564,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,max_no_files],
             default => ?LOG_MAX_NO_FILES,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_MAX_NO_FILES,
             handle_set => {
@@ -576,7 +576,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,max_no_bytes],
             default => ?LOG_MAX_NO_BYTES,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_MAX_NO_BYTES,
             handle_set => {
@@ -588,7 +588,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,sync_mode_qlen],
             default => ?LOG_SYNC_MODE_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_SYNC_MODE_QLEN,
             handle_set => {
@@ -600,7 +600,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,drop_mode_qlen],
             default => ?LOG_DROP_MODE_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_DROP_MODE_QLEN,
             handle_set => {
@@ -612,7 +612,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,flush_qlen],
             default => ?LOG_FLUSH_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FLUSH_QLEN,
             handle_set => {
@@ -636,7 +636,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,burst_limit_max_count],
             default => ?LOG_BURST_LIMIT_MAX_COUNT,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_BURST_LIMIT_MAX_COUNT,
             handle_set => {
@@ -648,7 +648,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,burst_limit_window_time],
             default => ?LOG_BURST_LIMIT_WINDOW_TIME,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_BURST_LIMIT_WINDOW_TIME,
             handle_set => {
@@ -672,7 +672,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,overload_kill_qlen],
             default => ?LOG_OVERLOAD_KILL_QLEN,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_OVERLOAD_KILL_QLEN,
             handle_set => {
@@ -684,7 +684,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,overload_kill_mem_size],
             default => ?LOG_OVERLOAD_KILL_MEM_SIZE,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_OVERLOAD_KILL_MEM_SIZE,
             handle_set => {
@@ -696,7 +696,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,overload_kill_restart_after],
             default => ?LOG_OVERLOAD_KILL_RESTART_AFTER,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_OVERLOAD_KILL_RESTART_AFTER,
             handle_set => {
@@ -720,7 +720,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,formatter,chars_limit],
             default => ?LOG_FORMATTER_CHARS_LIMIT,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FORMATTER_CHARS_LIMIT,
             handle_set => {
@@ -732,7 +732,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,formatter,max_size],
             default => ?LOG_FORMATTER_MAX_SIZE,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FORMATTER_MAX_SIZE,
             handle_set => {
@@ -744,7 +744,7 @@ specs() ->
             enabled => true,
             option_key => [logging,handlers,http,api,formatter,depth],
             default => ?LOG_FORMATTER_DEPTH,
-            type => pos_integer,
+            type => non_neg_integer,
             runtime => true,
             short_description => ?LOG_DESC_FORMATTER_DEPTH,
             handle_set => {

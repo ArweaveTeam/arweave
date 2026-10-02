@@ -207,7 +207,7 @@ validate_group_at_runtime(GroupID, Field, V) ->
 
 type_for(no_limit) -> boolean;
 type_for(is_external_reduction_enabled) -> boolean;
-type_for(_) -> pos_integer.
+type_for(_) -> non_neg_integer.
 
 group_coverage_for(chunk) ->
     <<"Group covers: /chunk, /chunk2.">>;
@@ -370,7 +370,7 @@ validate_field(GroupID, Field, V) ->
 %% Inclusive bounds for the timer-driven fields. Every one of them is
 %% handed to `timer:send_interval/3' or compared against the
 %% monotonic clock, so 0 would spin and anything past a day is a
-%% misconfiguration. The plain limits keep the `pos_integer' type's
+%% misconfiguration. The plain limits keep the `non_neg_integer' type's
 %% non-negative check.
 field_bounds(concurrency_limit) -> {min, 1};
 field_bounds(sliding_window_duration) -> {1, ?LIMITER_MAX_INTERVAL_MS};

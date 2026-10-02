@@ -37,7 +37,7 @@ specs() ->
             enabled => true,
             option_key => [mining, cache_size],
             runtime => true,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => mining_cache_size_mb,
             short_description =>
                 <<"Total cache size in MiB allocated to store "
@@ -57,7 +57,7 @@ specs() ->
             enabled => true,
             option_key => [mining, hashing_threads],
             default => ?NUM_HASHING_PROCESSES,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => hashing_threads,
             short_description =>
                 <<"Number of hashing processes to spawn.">>

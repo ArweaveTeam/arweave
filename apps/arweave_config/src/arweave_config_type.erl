@@ -6,7 +6,7 @@
     integer/1,
     list/1,
     list_map/1,
-    pos_integer/1,
+    non_neg_integer/1,
     ipv4/1,
     file/1,
     tcp_port/1,
@@ -211,19 +211,19 @@ integer(Integer) when is_integer(Integer) ->
 integer(V) ->
     {error, V}.
 
-%% @doc Validate as a positive integer, or the atom `infinity'.
+%% @doc Validate as a non-negative integer, or the atom `infinity'.
 %% `infinity' is accepted so options can carry a sentinel meaning
-%% "no bound" without giving up the type's positivity guarantee.
--spec pos_integer(Integer) -> Return when
-    Integer :: list() | binary() | pos_integer() | infinity,
-    Return :: {ok, pos_integer() | infinity} | {error, term()}.
-pos_integer(infinity) ->
+%% "no bound" without giving up the type's non-negativity guarantee.
+-spec non_neg_integer(Integer) -> Return when
+    Integer :: list() | binary() | non_neg_integer() | infinity,
+    Return :: {ok, non_neg_integer() | infinity} | {error, term()}.
+non_neg_integer(infinity) ->
     {ok, infinity};
-pos_integer(<<"infinity">>) ->
+non_neg_integer(<<"infinity">>) ->
     {ok, infinity};
-pos_integer("infinity") ->
+non_neg_integer("infinity") ->
     {ok, infinity};
-pos_integer(Data) ->
+non_neg_integer(Data) ->
     case integer(Data) of
         {ok, Integer} when Integer >= 0 ->
             {ok, Integer};

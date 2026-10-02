@@ -10,11 +10,11 @@
 %%%
 %%%   [storage_modules, {list_item}, partition] :: non_neg_integer
 %%%   [storage_modules, {list_item}, range_start] :: non_neg_integer
-%%%   [storage_modules, {list_item}, range_end] :: pos_integer
+%%%   [storage_modules, {list_item}, range_end] :: non_neg_integer
 %%%   [storage_modules, {list_item}, packing_format] :: unpacked | spora_2_6 | replica_2_9
 %%%   [storage_modules, {list_item}, packing_address] :: 32-byte binary
 %%%   [storage_modules, {list_item}, defrag] :: boolean
-%%%   [storage_modules, {list_item}, footprint_limit] :: pos_integer, footprints
+%%%   [storage_modules, {list_item}, footprint_limit] :: non_neg_integer, footprints
 %%%
 %%% A module has either `partition` or explicit `range_start` and
 %%% `range_end` (mutually exclusive). Ranges are arbitrary byte
@@ -75,7 +75,7 @@ specs() ->
         #{
             enabled => true,
             option_key => [storage_modules, {list_item}, partition],
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Partition number this storage module covers.">>,
             long_description =>
@@ -88,7 +88,7 @@ specs() ->
         #{
             enabled => true,
             option_key => [storage_modules, {list_item}, range_start],
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Inclusive start byte offset of the storage module's "
                   "range.">>,
@@ -104,7 +104,7 @@ specs() ->
         #{
             enabled => true,
             option_key => [storage_modules, {list_item}, range_end],
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Exclusive end byte offset of the storage module's "
                   "range.">>,
@@ -149,7 +149,7 @@ specs() ->
         #{
             enabled => true,
             option_key => [storage_modules, {list_item}, footprint_limit],
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Advanced: keep only the first N replica.2.9 entropy "
                   "footprints of each sector; only for a module declared "

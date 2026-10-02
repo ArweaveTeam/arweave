@@ -121,7 +121,7 @@ specs() ->
             enabled => true,
             option_key => [chunk_storage_file_size],
             default => ?CHUNK_GROUP_SIZE,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => chunk_storage_file_size,
             short_description =>
                 <<"Size in bytes of an individual chunk storage "
@@ -134,7 +134,7 @@ specs() ->
             enabled => true,
             option_key => [port],
             default => ?DEFAULT_HTTP_IFACE_PORT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => port,
             short_description =>
                 <<"Local port to use for mining.">>,
@@ -156,7 +156,7 @@ specs() ->
             option_key => [disk_space_check_frequency],
             runtime => true,
             default => ?DISK_SPACE_CHECK_FREQUENCY_MS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => disk_space_check_frequency,
             short_description =>
                 <<"Frequency in milliseconds of querying the OS for "

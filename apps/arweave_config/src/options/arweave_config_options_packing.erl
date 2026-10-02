@@ -11,7 +11,7 @@ specs() ->
             enabled => true,
             option_key => [packing, workers],
             default => ?DEFAULT_PACKING_WORKERS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => packing_workers,
             short_description =>
                 <<"Number of packing workers to spawn.">>,
@@ -22,7 +22,7 @@ specs() ->
             enabled => true,
             option_key => [packing, cache_size],
             runtime => true,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => packing_cache_size_limit,
             short_description =>
                 <<"Maximum number of data chunks kept in memory by "
@@ -37,7 +37,7 @@ specs() ->
             option_key => [packing, repack, batch_size],
             runtime => true,
             default => undefined,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => repack_batch_size,
             short_description =>
                 <<"Read batch size for in-place repacking "
@@ -60,7 +60,7 @@ specs() ->
             option_key => [packing, entropy, cache_size],
             runtime => true,
             default => ?DEFAULT_REPLICA_2_9_ENTROPY_CACHE_SIZE_MB,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => replica_2_9_entropy_cache_size_mb,
             short_description =>
                 <<"Maximum cache size in MiB allocated for entropy.">>,
@@ -79,7 +79,7 @@ specs() ->
             option_key => [packing, entropy, workers],
             runtime => true,
             default => ?DEFAULT_REPLICA_2_9_WORKERS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => replica_2_9_workers,
             short_description =>
                 <<"Number of entropy workers to spawn.">>,

@@ -216,7 +216,7 @@ duplicate_option_keys_silently_overwrite(_Config) ->
     [{_, Spec}] =
         ets:lookup(arweave_config_options_registry, [duplicate, key]),
     ?assertEqual(second, maps:get(default, Spec)),
-    ?assertEqual(pos_integer, maps:get(type, Spec)),
+    ?assertEqual(non_neg_integer, maps:get(type, Spec)),
     ?assertEqual({ok, second},
         arweave_config_options_registry:get([duplicate, key])),
     ok.
@@ -527,7 +527,7 @@ specs(duplicate_option_keys_silently_overwrite) ->
         #{
             option_key => [duplicate, key],
             default => second,
-            type => pos_integer
+            type => non_neg_integer
         }
     ];
 specs(default_legacy_ok) ->
