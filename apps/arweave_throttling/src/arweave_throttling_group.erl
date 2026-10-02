@@ -225,7 +225,7 @@ update_quota(Pid, GroupID, Peer,
                reset_seconds := ResetSeconds})
   when is_integer(Total), Total >= 0,
        is_integer(Remaining), Remaining >= 0,
-       is_integer(ResetAmount), Remaining >= 0,
+       is_integer(ResetAmount), ResetAmount >= 0,
        is_integer(ResetSeconds), ResetSeconds >= 0 ->
     arweave_metrics:counter_inc(arweave_throttling_quota_update_requests,
                                 [GroupID]),
