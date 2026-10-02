@@ -7,6 +7,7 @@
     list/1,
     list_map/1,
     non_neg_integer/1,
+    pos_integer/1,
     ipv4/1,
     file/1,
     tcp_port/1,
@@ -226,6 +227,17 @@ non_neg_integer("infinity") ->
 non_neg_integer(Data) ->
     case integer(Data) of
         {ok, Integer} when Integer >= 0 ->
+            {ok, Integer};
+        _Else ->
+            {error, Data}
+    end.
+
+%% @doc Validate as an integer greater than or equal to 1, or `infinity'.
+pos_integer(Data) ->
+    case non_neg_integer(Data) of
+        {ok, infinity} ->
+            {ok, infinity};
+        {ok, Integer} when Integer >= 1 ->
             {ok, Integer};
         _Else ->
             {error, Data}
