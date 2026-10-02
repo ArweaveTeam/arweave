@@ -34,7 +34,6 @@ init_per_testcase(_TestCase, Config) ->
 
     ok = arweave_throttling_process:init(),
 
-    %{ok, Pid} = arweave_throttling_process:start_and_store(?GROUPID_GENERAL),
     {ok, Pid} = ?M:start_link(Spec),
     true = ets:insert(arweave_throttling_process, {list_to_binary(?GROUPID_GENERAL), Pid}),
 
