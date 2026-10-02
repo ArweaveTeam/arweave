@@ -7,6 +7,15 @@
 -define(DEFAULT_THROTTLING_IDLE_TIMEOUT_MS, 60000).
 -define(DEFAULT_THROTTLING_MAX_PROCESSES, 1000).
 
+%% 1 second is a reasonable minimum, it won't allow weird
+%% virtually immediate shutdown, so it can't cause a weird loop of spawning
+%% processes for every request.
+-define(MIN_THROTTLING_IDLE_TIMEOUT_MS, 1000). 
+
+%% Let's enforce a minimum of 50 processes. Currently, there are rought 10
+%% limiter groups defined. Even if that doubles, there is a bit of headroom.
+-define(MIN_THROTTLING_MAX_PROCESSES, 50).
+
 specs() ->
     [
         #{
@@ -14,7 +23,7 @@ specs() ->
             option_key => [throttling, idle_timeout],
             runtime => true,
             default => ?DEFAULT_THROTTLING_IDLE_TIMEOUT_MS,
-            type => non_neg_integer,
+            type => pos_integer,
             short_description =>
                 <<"Milliseconds a throttling group process may stay "
                   "idle before it shuts itself down.">>,
@@ -31,7 +40,7 @@ specs() ->
             option_key => [throttling, max_processes],
             runtime => true,
             default => ?DEFAULT_THROTTLING_MAX_PROCESSES,
-            type => non_neg_integer,
+            type => pos_integer,
             short_description =>
                 <<"Maximum number of running throttling group "
                   "processes.">>,
@@ -46,7 +55,21 @@ specs() ->
     ].
 
 validate() ->
+    validate_minimum(idle_timeout, ?MIN_THROTTLING_IDLE_TIMEOUT_MS),
+    validate_minimum(max_processes, ?MIN_THROTTLING_MAX_PROCESSES),
     ok.
 
 group_description() ->
     <<"Tune the client-side outbound request throttler.">>.
+
+validate_minimum(Field, Minimum) ->
+    case arweave_config:get([throttling, Field]) of 
+        V when V >= Minimum ->
+            ok;
+        V ->
+            field_minimum_error(Field, Minimum)
+    end.
+
+field_minimum_error(Field, Minimum) ->
+    {error, iolist_to_binary(
+        io_lib:format("throttling.~s must be at least ~B", [Field, Minimum]))}.
