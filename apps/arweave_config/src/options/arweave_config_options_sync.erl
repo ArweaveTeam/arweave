@@ -11,7 +11,7 @@ specs() ->
             enabled => true,
             option_key => [sync, cache_size_limit],
             runtime => true,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => data_cache_size_limit,
             short_description =>
                 <<"Maximum number of data chunks kept in "
@@ -27,7 +27,7 @@ specs() ->
             option_key => [sync, max_concurrent_peer_scans],
             runtime => true,
             default => ?DEFAULT_DATA_DISCOVERY_MAX_CONCURRENT_PEER_SCANS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => data_discovery_max_concurrent_peer_scans,
             short_description =>
                 <<"Maximum concurrent peer-discovery scanners across "
@@ -58,7 +58,7 @@ specs() ->
             enabled => true,
             option_key => [sync, jobs],
             default => ?DEFAULT_SYNC_JOBS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => sync_jobs,
             short_description =>
                 <<"Number of data-syncing jobs to run.">>,

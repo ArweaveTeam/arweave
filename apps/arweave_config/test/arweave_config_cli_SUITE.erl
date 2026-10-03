@@ -194,7 +194,7 @@ set_unknown_returns_error(_Config) ->
         arweave_config_cli:set("xyz_unknown.zzz_segment", "1").
 
 set_bad_value_returns_error(_Config) ->
-    %% `port` is a pos_integer; a non-numeric string must be rejected.
+    %% `port` is a non_neg_integer; a non-numeric string must be rejected.
     {error, _} = arweave_config_cli:set("port", "not_a_number"),
     %% The previous value (the spec default) is untouched.
     1984 = arweave_config:get([port]).

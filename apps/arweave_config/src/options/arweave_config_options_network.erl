@@ -16,7 +16,7 @@ specs() ->
             option_key => [network, server, http, active_n],
             runtime => true,
             default => ?DEFAULT_COWBOY_HTTP_ACTIVE_N,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.http.active_n',
             short_description =>
                 <<"HTTP server: number of packets requested per "
@@ -28,7 +28,7 @@ specs() ->
             option_key => [network, server, http, inactivity_timeout],
             runtime => true,
             default => ?DEFAULT_COWBOY_HTTP_INACTIVITY_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.http.inactivity_timeout',
             short_description =>
                 <<"HTTP server inactivity timeout in milliseconds.">>,
@@ -39,7 +39,7 @@ specs() ->
             option_key => [network, server, http, linger_timeout],
             runtime => true,
             default => ?DEFAULT_COWBOY_HTTP_LINGER_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.http.linger_timeout',
             short_description =>
                 <<"HTTP server linger timeout in milliseconds.">>,
@@ -50,7 +50,7 @@ specs() ->
             option_key => [network, server, http, request_timeout],
             runtime => true,
             default => ?DEFAULT_COWBOY_HTTP_REQUEST_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.http.request_timeout',
             short_description =>
                 <<"HTTP server request timeout in milliseconds.">>,
@@ -60,7 +60,7 @@ specs() ->
             enabled => true,
             option_key => [network, server, tcp, backlog],
             default => ?DEFAULT_COWBOY_TCP_BACKLOG,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.tcp.backlog',
             short_description =>
                 <<"HTTP server TCP backlog (queued unaccepted "
@@ -97,7 +97,7 @@ specs() ->
             enabled => true,
             option_key => [network, server, tcp, linger_timeout],
             default => ?DEFAULT_COWBOY_TCP_LINGER_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.tcp.linger_timeout',
             short_description =>
                 <<"HTTP server TCP linger timeout in seconds.">>
@@ -106,7 +106,7 @@ specs() ->
             enabled => true,
             option_key => [network, server, tcp, listener_shutdown],
             default => ?DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.tcp.listener_shutdown',
             short_description =>
                 <<"HTTP server listener shutdown timeout in "
@@ -117,7 +117,7 @@ specs() ->
             option_key => [network, server, tcp, max_connections],
             runtime => true,
             default => ?DEFAULT_COWBOY_TCP_MAX_CONNECTIONS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.tcp.max_connections',
             short_description =>
                 <<"Number of connections handled concurrently by "
@@ -142,7 +142,7 @@ specs() ->
             enabled => true,
             option_key => [network, server, tcp, num_acceptors],
             default => ?DEFAULT_COWBOY_TCP_NUM_ACCEPTORS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.tcp.num_acceptors',
             short_description =>
                 <<"HTTP server number of TCP acceptor processes.">>
@@ -151,7 +151,7 @@ specs() ->
             enabled => true,
             option_key => [network, server, tcp, send_timeout],
             default => ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_api.tcp.send_timeout',
             short_description =>
                 <<"HTTP server TCP send timeout in milliseconds.">>
@@ -171,7 +171,7 @@ specs() ->
             option_key => [network, server, transport, idle_timeout],
             runtime => true,
             default => ?DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND * 1000,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => http_api_transport_idle_timeout,
             short_description =>
                 <<"Time allowed for incoming API client connections "
@@ -189,7 +189,7 @@ specs() ->
             option_key => [network, server, shutdown_connection_timeout],
             runtime => true,
             default => ?SHUTDOWN_TCP_CONNECTION_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => shutdown_tcp_connection_timeout,
             short_description =>
                 <<"Shutdown TCP connection timeout in seconds.">>
@@ -222,7 +222,7 @@ specs() ->
             option_key => [network, client, http, closing_timeout],
             runtime => true,
             default => ?DEFAULT_GUN_HTTP_CLOSING_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_client.http.closing_timeout',
             short_description =>
                 <<"HTTP client connection closing timeout in "
@@ -233,7 +233,7 @@ specs() ->
             option_key => [network, client, http, keepalive],
             runtime => true,
             default => ?DEFAULT_GUN_HTTP_KEEPALIVE,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_client.http.keepalive',
             short_description =>
                 <<"HTTP client keepalive interval in seconds (or "
@@ -244,7 +244,7 @@ specs() ->
             option_key => [network, client, http, connections_per_peer],
             runtime => true,
             default => ?DEFAULT_HTTP_CONNECTIONS_PER_PEER,
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Maximum parallel HTTP client connections per peer.">>,
             long_description =>
@@ -313,7 +313,7 @@ specs() ->
             option_key => [network, client, tcp, linger_timeout],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_LINGER_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_client.tcp.linger_timeout',
             short_description =>
                 <<"HTTP client TCP linger timeout in seconds.">>
@@ -334,7 +334,7 @@ specs() ->
             option_key => [network, client, tcp, send_timeout],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_SEND_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => 'http_client.tcp.send_timeout',
             short_description =>
                 <<"HTTP client TCP send timeout in milliseconds.">>

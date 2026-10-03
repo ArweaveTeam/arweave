@@ -27,7 +27,7 @@ spec_for(Name, Limit) ->
     #{
         enabled => true,
         option_key => [semaphores, Name, limit],
-        type => pos_integer,
+        type => non_neg_integer,
         default => Limit,
         short_description =>
             <<"Maximum in-flight HTTP requests for ",

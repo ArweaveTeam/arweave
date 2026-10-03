@@ -27,7 +27,6 @@
 
 %% @doc Create the routing and counter ETS tables. Called once before
 %% any other function in this module.
--spec init() -> ok.
 init() ->
     ?MODULE =
         ets:new(?MODULE, [named_table, set, public, {read_concurrency, true}]),
@@ -40,11 +39,6 @@ init() ->
 %% Returns `{ok, new}' when no group was stored for the key,
 %% `{ok, unchanged}' when the stored group already equals `GroupID',
 %% and `{ok, changed}' when an existing group was replaced.
--spec update_path(Peer, PathKey, GroupID) -> Result when
-    Peer :: term(),
-    PathKey :: term(),
-    GroupID :: term(),
-    Result :: {ok, new | unchanged | changed} | {error, term()}.
 update_path(Peer, PathKey, GroupID) ->
     Key = {Peer, PathKey},
     try ets:lookup(?MODULE, Key) of
@@ -67,10 +61,6 @@ update_path(Peer, PathKey, GroupID) ->
 %% @doc Look up the group id routed for `{Peer, PathKey}'.
 %%
 %% Returns `{error, unknown_key}' when the key is absent.
--spec lookup_path(Peer, PathKey) -> Result when
-    Peer :: term(),
-    PathKey :: term(),
-    Result :: {ok, term()} | {error, unknown_key | term()}.
 lookup_path(Peer, PathKey) ->
     Key = {Peer, PathKey},
     try ets:lookup(?MODULE, Key) of
@@ -84,9 +74,6 @@ lookup_path(Peer, PathKey) ->
     end.
 
 %% @doc Delete the routing entry for `{Peer, PathKey}', if any.
--spec delete_path(Peer, PathKey) -> ok | {error, term()} when
-    Peer :: term(),
-    PathKey :: term().
 delete_path(Peer, PathKey) ->
     Key = {Peer, PathKey},
     try ets:lookup(?MODULE, Key) of
@@ -111,11 +98,6 @@ delete_path(Peer, PathKey) ->
 %%
 %% `keys_per_group' is read from the counter table, so this does not
 %% scan the routing table.
--spec info() -> #{
-        keys_total => non_neg_integer(),
-        group_ids_total => non_neg_integer(),
-        keys_per_group => #{term() => pos_integer()}
-    }.
 info() ->
     KeysPerGroup = ets:foldl(
         fun({GroupID, Count}, Acc) -> Acc#{GroupID => Count} end,
@@ -129,7 +111,6 @@ info() ->
     }.
 
 %% @doc Delete both ETS tables, leaving no trace.
--spec cleanup() -> ok.
 cleanup() ->
     catch ets:delete(?MODULE),
     catch ets:delete(?COUNTER_TABLE),

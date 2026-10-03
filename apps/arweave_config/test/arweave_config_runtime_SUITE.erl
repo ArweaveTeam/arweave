@@ -35,7 +35,7 @@ all() ->
         load_mode_accepts_every_spec,
         runtime_flip_is_idempotent,
         runtime_writable_boolean,
-        runtime_writable_pos_integer,
+        runtime_writable_non_neg_integer,
         runtime_writable_options_accept_set,
         non_runtime_scalar_rejected,
         non_runtime_address_rejected,
@@ -157,8 +157,8 @@ runtime_writable_boolean(_Config) ->
     ok.
 
 %% Integers declared `runtime => true' accept writes after the flip
-%% (and the `pos_integer' type validator coerces binary input).
-runtime_writable_pos_integer(_Config) ->
+%% (and the `non_neg_integer' type validator coerces binary input).
+runtime_writable_non_neg_integer(_Config) ->
     arweave_config:with_test_config(fun() ->
         Key = [logging, formatter, max_size],
         ok = arweave_config:set(Key, 4096),

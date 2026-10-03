@@ -135,14 +135,14 @@ sim_single_call(LimiterRef, Peer, Now) ->
                   ThrottleReturn =
                       case arweave_throttling_path:path_to_group_id(Peer, Path) of
                           {ok, GroupID} ->
-                              Name = arweave_throttling_group:registered_name(GroupID),
-                              case arweave_throttling_group:try_throttle_call(Name, Peer) of
+                              {ok, Pid} = arweave_throttling_process:get(GroupID),
+                              case arweave_throttling_group:try_throttle_call(Pid, Peer) of
                                   {queued, Ref} ->
                                       receive
                                           {request_ready, Ref} ->
                                               queued
                                       after 500 ->
-                                              gen_server:cast(Name, {cancel_request, Peer, Ref}),
+                                              gen_server:cast(Pid, {cancel_request, Peer, Ref}),
                                               throttle_receive_timeout
                                       end;
                                   Return ->

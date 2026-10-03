@@ -9,6 +9,7 @@
                   kernel,
                   stdlib,
                   sasl,
+                  arweave_config,
                   prometheus,
                   prometheus_cowboy,
                   prometheus_process_collector,

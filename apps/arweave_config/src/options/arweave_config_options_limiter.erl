@@ -207,7 +207,12 @@ validate_group_at_runtime(GroupID, Field, V) ->
 
 type_for(no_limit) -> boolean;
 type_for(is_external_reduction_enabled) -> boolean;
-type_for(_) -> pos_integer.
+type_for(concurrency_limit) -> pos_integer;
+type_for(sliding_window_duration) -> pos_integer;
+type_for(leaky_tick_ms) -> pos_integer;
+type_for(tick_reduction) -> pos_integer;
+type_for(timestamp_cleanup_tick_ms) -> pos_integer;
+type_for(_) -> non_neg_integer.
 
 group_coverage_for(chunk) ->
     <<"Group covers: /chunk, /chunk2.">>;
@@ -355,11 +360,6 @@ validate_field(GroupID, Field, V) ->
     case field_bounds(Field) of
         none ->
             ok;
-        {min, Min} when V >= Min ->
-            ok;
-        {min, Min} ->
-            field_error(GroupID, Field,
-                io_lib:format("must be minimum ~B", [Min]));
         {Min, Max} when V >= Min, V =< Max ->
             ok;
         {Min, Max} ->
@@ -370,12 +370,11 @@ validate_field(GroupID, Field, V) ->
 %% Inclusive bounds for the timer-driven fields. Every one of them is
 %% handed to `timer:send_interval/3' or compared against the
 %% monotonic clock, so 0 would spin and anything past a day is a
-%% misconfiguration. The plain limits keep the `pos_integer' type's
-%% non-negative check.
-field_bounds(concurrency_limit) -> {min, 1};
+%% misconfiguration. `concurrency_limit' and `tick_reduction' get their
+%% lower bound from the `pos_integer' type; the plain limits keep the
+%% `non_neg_integer' type's non-negative check.
 field_bounds(sliding_window_duration) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(leaky_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};
-field_bounds(tick_reduction) -> {min, 1};
 field_bounds(timestamp_cleanup_tick_ms) -> {1, ?LIMITER_MAX_INTERVAL_MS};
 field_bounds(_Field) -> none.
 

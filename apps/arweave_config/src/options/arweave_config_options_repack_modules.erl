@@ -12,12 +12,12 @@
 %%%
 %%%   [repack_modules, {list_item}, partition] :: non_neg_integer
 %%%   [repack_modules, {list_item}, range_start] :: non_neg_integer
-%%%   [repack_modules, {list_item}, range_end] :: pos_integer
+%%%   [repack_modules, {list_item}, range_end] :: non_neg_integer
 %%%   [repack_modules, {list_item}, from_format] :: unpacked | spora_2_6 | replica_2_9
 %%%   [repack_modules, {list_item}, from_address] :: 32-byte binary
 %%%   [repack_modules, {list_item}, to_format] :: unpacked | spora_2_6 | replica_2_9
 %%%   [repack_modules, {list_item}, to_address] :: 32-byte binary
-%%%   [repack_modules, {list_item}, footprint_limit] :: pos_integer, footprints
+%%%   [repack_modules, {list_item}, footprint_limit] :: non_neg_integer, footprints
 %%%
 %%% A module has either `partition` or an explicit `range.{start, end}`.
 %%% Both `from` and `to` packings are required.
@@ -58,7 +58,7 @@ specs() ->
         #{
             enabled => true,
             option_key => [repack_modules, {list_item}, partition],
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Partition number this repack module covers.">>,
             long_description =>
@@ -71,7 +71,7 @@ specs() ->
         #{
             enabled => true,
             option_key => [repack_modules, {list_item}, range_start],
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Inclusive start byte offset of the range to repack.">>,
             long_description =>
@@ -82,7 +82,7 @@ specs() ->
         #{
             enabled => true,
             option_key => [repack_modules, {list_item}, range_end],
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Exclusive end byte offset of the range to repack.">>,
             long_description =>
@@ -126,7 +126,7 @@ specs() ->
         #{
             enabled => true,
             option_key => [repack_modules, {list_item}, footprint_limit],
-            type => pos_integer,
+            type => non_neg_integer,
             short_description =>
                 <<"Advanced: repack only the first N replica.2.9 entropy "
                   "footprints of each sector; only for a module declared "

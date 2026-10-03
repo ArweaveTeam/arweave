@@ -16,7 +16,7 @@ specs() ->
             option_key => [gossip, block, poll_interval],
             runtime => true,
             default => ?DEFAULT_POLLING_INTERVAL,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => polling,
             short_description =>
                 <<"Frequency in seconds of polling peers for new "
@@ -26,7 +26,7 @@ specs() ->
             enabled => true,
             option_key => [gossip, block, pollers],
             default => ?DEFAULT_BLOCK_POLLERS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => block_pollers,
             short_description =>
                 <<"Number of peer-polling jobs that look for new "
@@ -36,7 +36,7 @@ specs() ->
             enabled => true,
             option_key => [gossip, block, max_peers],
             default => ?DEFAULT_MAX_BLOCK_PROPAGATION_PEERS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => max_block_propagation_peers,
             short_description =>
                 <<"Maximum number of best peers to propagate blocks "
@@ -47,7 +47,7 @@ specs() ->
             option_key => [gossip, block, throttle_by_ip_interval],
             runtime => true,
             default => ?DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => block_throttle_by_ip_interval,
             short_description =>
                 <<"Milliseconds that must pass before we accept "
@@ -58,7 +58,7 @@ specs() ->
             option_key => [gossip, block, throttle_by_solution_interval],
             runtime => true,
             default => ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => block_throttle_by_solution_interval,
             short_description =>
                 <<"Milliseconds that must pass before we accept "
@@ -72,7 +72,7 @@ specs() ->
             enabled => true,
             option_key => [gossip, tx, max_emitters],
             default => ?NUM_EMITTER_PROCESSES,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => max_emitters,
             short_description =>
                 <<"Number of transaction propagation processes to "
@@ -85,7 +85,7 @@ specs() ->
             option_key => [gossip, tx, max_peers],
             runtime => true,
             default => ?DEFAULT_MAX_PROPAGATION_PEERS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => max_propagation_peers,
             short_description =>
                 <<"Maximum number of peers to propagate transactions "
@@ -106,7 +106,7 @@ specs() ->
             option_key => [gossip, tx, post_timeout],
             runtime => true,
             default => ?DEFAULT_POST_TX_TIMEOUT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => post_tx_timeout,
             short_description =>
                 <<"Seconds to wait for an available tx-validation "
@@ -153,7 +153,7 @@ specs() ->
             enabled => true,
             option_key => [gossip, header_sync_jobs],
             default => ?DEFAULT_HEADER_SYNC_JOBS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => header_sync_jobs,
             short_description =>
                 <<"Number of header-syncing jobs.">>,
@@ -166,7 +166,7 @@ specs() ->
             option_key => [gossip, header_cache_size],
             runtime => true,
             default => ?DISK_CACHE_SIZE,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => disk_cache_size,
             short_description =>
                 <<"Maximum size in MiB allocated for storing recent "

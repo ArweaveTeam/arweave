@@ -25,7 +25,7 @@ specs() ->
             enabled => true,
             option_key => [join, workers],
             default => ?DEFAULT_JOIN_WORKERS,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => join_workers,
             short_description =>
                 <<"Number of workers fetching recent blocks and "

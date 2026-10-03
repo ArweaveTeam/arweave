@@ -60,7 +60,7 @@ specs() ->
             option_key => [vdf, max_validation_threads],
             runtime => true,
             default => ?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => max_nonce_limiter_validation_thread_count,
             short_description =>
                 <<"Maximum number of threads used for VDF "
@@ -72,7 +72,7 @@ specs() ->
             runtime => true,
             default =>
                 ?DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => max_nonce_limiter_last_step_validation_thread_count,
             short_description =>
                 <<"Maximum number of threads used for VDF last-step "

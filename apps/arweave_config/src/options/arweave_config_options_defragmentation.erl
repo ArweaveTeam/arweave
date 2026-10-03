@@ -28,7 +28,7 @@ specs() ->
             enabled => true,
             option_key => [defrag, threshold],
             default => 1_500_000_000,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => defragmentation_trigger_threshold,
             short_description =>
                 <<"File size threshold in bytes above which a chunk "

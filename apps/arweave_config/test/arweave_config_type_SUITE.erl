@@ -49,6 +49,7 @@ all() ->
      atom,
      integer,
      boolean,
+     non_neg_integer,
      pos_integer,
      ipv4,
      path,
@@ -97,9 +98,21 @@ integer(_Config) ->
     {ok, 1} = arweave_config_type:integer(<<"1">>),
     {error, a} = arweave_config_type:integer(a).
 
+non_neg_integer(_Config) ->
+    {ok, 1} = arweave_config_type:non_neg_integer(1),
+    {error, -1} = arweave_config_type:non_neg_integer(-1).
+
 pos_integer(_Config) ->
     {ok, 1} = arweave_config_type:pos_integer(1),
-    {error, -1} = arweave_config_type:pos_integer(-1).
+    {ok, 1} = arweave_config_type:pos_integer("1"),
+    {ok, 1} = arweave_config_type:pos_integer(<<"1">>),
+    {ok, infinity} = arweave_config_type:pos_integer(infinity),
+    {ok, infinity} = arweave_config_type:pos_integer("infinity"),
+    {ok, infinity} = arweave_config_type:pos_integer(<<"infinity">>),
+    {error, 0} = arweave_config_type:pos_integer(0),
+    {error, <<"0">>} = arweave_config_type:pos_integer(<<"0">>),
+    {error, -1} = arweave_config_type:pos_integer(-1),
+    {error, a} = arweave_config_type:pos_integer(a).
 
 ipv4(_Config) ->
     {ok, <<"127.0.0.1">>} = arweave_config_type:ipv4("127.0.0.1"),

@@ -24,7 +24,7 @@ specs() ->
             enabled => true,
             option_key => [genesis, difficulty],
             default => ?DEFAULT_DIFF,
-            type => pos_integer,
+            type => non_neg_integer,
             legacy => diff,
             short_description =>
                 <<"Initial mining difficulty (genesis bootstrap "
