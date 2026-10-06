@@ -68,6 +68,11 @@ endif
 CFLAGS   += -I../lib/openssl-sha-lite/include
 CXXFLAGS += -I../lib/openssl-sha-lite/include
 
+# Header changes must rebuild every NIF that includes them, including shared
+# RandomX validation code. Generate dependencies for C and C++ compilation.
+CFLAGS += -MMD -MP
+CXXFLAGS += -MMD -MP
+
 C_SRC_DIR = $(CURDIR)
 
 SECP256K1_CFLAGS += $(CFLAGS)
@@ -145,6 +150,14 @@ SECP256K1_CFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR)
 SECP256K1_LDLIBS += -L $(ERL_INTERFACE_LIB_DIR)
 SECP256K1_OUTPUT ?= $(CURDIR)/../priv/secp256k1_arweave.so
 
+NIF_OBJECTS = $(sort $(RX512_OBJECTS) $(RX4096_OBJECTS) $(RXSQUARED_OBJECTS) $(VDF_OBJECTS) $(SECP256K1_OBJECTS))
+NIF_DEPFILES = $(NIF_OBJECTS:.o=.d)
+
+# Rebuild pre-existing objects once when these compilation rules change.
+$(NIF_OBJECTS): $(C_SRC_DIR)/Makefile
+
+-include $(NIF_DEPFILES)
+
 $(SECP256K1_OUTPUT): $(SECP256K1_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
 	$(link_verbose) $(CXX) $(SECP256K1_OBJECTS) $(SECP256K1_LDLIBS) ../lib/secp256k1/build/lib/libsecp256k1.a -shared -o $(SECP256K1_OUTPUT)
@@ -167,8 +180,7 @@ $(SECP256K1_OUTPUT): $(SECP256K1_OBJECTS)
 all: $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT) $(SECP256K1_OUTPUT)
 
 clean:
-	@rm -f $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT) $(RX512_OBJECTS) $(RX4096_OBJECTS) $(RXSQUARED_OBJECTS) $(VDF_OBJECTS) $(SECP256K1_OUTPUT) $(SECP256K1_OBJECTS)
-
+	@rm -f $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT) $(RX512_OBJECTS) $(RX4096_OBJECTS) $(RXSQUARED_OBJECTS) $(VDF_OBJECTS) $(SECP256K1_OUTPUT) $(SECP256K1_OBJECTS) $(NIF_DEPFILES)
 
 
 

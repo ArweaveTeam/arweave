@@ -30,15 +30,13 @@ if [ -z "${AR_E2E_SKIP_COMPILE}" ]; then
 	./ar-rebar3 e2e compile
 fi
 
-# Build the code path: every dep's ebin under the e2e profile, plus the
-# four arweave apps' test/ebin so SUITE files and helpers resolve.
+# Build the code path: every app's ebin under the e2e profile, plus every
+# app's compiled test/ dir that exists, so SUITE files and helpers resolve
+# whichever app they live in.
 BUILD="${ROOT_DIR}/_build/e2e"
 PATHS=""
-for dir in "${BUILD}"/lib/*/ebin; do
-	PATHS="${PATHS} ${dir}"
-done
-for app in arweave arweave_config arweave_limiter arweave_diagnostic; do
-	PATHS="${PATHS} ${BUILD}/lib/${app}/test"
+for dir in "${BUILD}"/lib/*/ebin "${BUILD}"/lib/*/test; do
+	[ -d "${dir}" ] && PATHS="${PATHS} ${dir}"
 done
 
 # Parse --suite / --case arguments. We need them as a single
