@@ -58,6 +58,13 @@ handle_info({event, tx, _}, State) ->
 handle_info({gun_error, _ConnPid, _StreamRef, {badstate, _Reason}}, State) ->
     {noreply, State};
 
+%% The peer replied before reading the whole request body (e.g. 208 for
+%% something it already has) and reset the stream; gun reports the reset
+%% after the reply was already returned.
+handle_info({gun_error, _ConnPid, _StreamRef,
+        {stream_error, no_error, _Reason}}, State) ->
+    {noreply, State};
+
 handle_info(Info, State) ->
     ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
     {noreply, State}.
