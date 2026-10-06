@@ -1,25 +1,26 @@
-%%% @doc The utilities for managing sets of non-overlapping intervals stored in an ETS table.
-%%% The API is similar to the one of the ar_intervals module. Keeping the intervals in ETS
+%%% Public ETS-backed interval-set API in the arweave_lib library app.
+%%% The API is similar to the one of the arweave_lib_intervals module. Keeping the intervals in ETS
 %%% is a convenient way to share them between processes, e.g. the mining module can quickly
-%%% check whether the given recall byte is synced. ar_intervals, in turn, is helpful
+%%% check whether the given recall byte is synced. arweave_lib_intervals, in turn, is helpful
 %%% for manipulating multiple sets of intervals, e.g. the syncing process uses it to look for
 %%% the intersections between our data and peers' data.
 %%% @end
 -module(arweave_lib_ets_intervals).
--ifdef(AR_TEST).
--export([init_from_gb_set_iterator/2, find_largest_continuous_interval/3, find_largest_continuous_interval/6, remove_inner_intervals/3, assert_is_inside/2, assert_is_not_inside/2]).
--endif.
 
-
-
--export([init_from_gb_set/2, add/3, delete/3, cut/2, is_inside/2, get_interval_with_byte/2,
-         get_next_interval_outside/3, get_next_interval/3, get_intersection_size/3]).
-
+-export([
+    init_from_gb_set/2,
+    to_gb_set/1,
+    add/3,
+    delete/3,
+    cut/2,
+    is_inside/2,
+    get_interval_with_byte/2,
+    get_next_interval_outside/3,
+    get_next_interval/3,
+    get_intersection_size/3
+]).
 
 -include_lib("arweave_lib/include/arweave_lib_constants.hrl").
-
--include_lib("eunit/include/eunit.hrl").
-
 
 %%%===================================================================
 %%% Public interface.
@@ -29,13 +30,16 @@
 init_from_gb_set(Table, Set) ->
     init_from_gb_set_iterator(Table, gb_sets:iterator(Set)).
 
+%% @doc Return the recorded intervals as a gb_sets set of {End, Start} pairs
+%% (the arweave_lib_intervals representation).
+to_gb_set(Table) ->
+    gb_sets:from_ordset(ets:tab2list(Table)).
 
 %% @doc Record an interval, bytes Start + 1, Start + 2 ... End.
 add(Table, End, Start) when End > Start ->
     {End2, Start2, InnerEnds} = find_largest_continuous_interval(Table, End, Start),
     ets:insert(Table, [{End2, Start2}]),
     remove_inner_intervals(Table, InnerEnds, End2).
-
 
 %% @doc Remove the given interval, bytes Start + 1, Start + 2 ... End.
 delete(Table, End, Start) when End > Start ->
@@ -81,7 +85,6 @@ delete(Table, End, Start) when End > Start ->
             end
     end.
 
-
 %% @doc Cut the set by removing all the intervals and interval's parts above Offset.
 cut(Table, Offset) ->
     case ets:next(Table, Offset) of
@@ -101,7 +104,6 @@ cut(Table, Offset) ->
                     cut(Table, Offset)
             end
     end.
-
 
 %% @doc Return true if the given offset is inside one of the intervals, including
 %% the right bound, excluding the left bound.
@@ -131,7 +133,6 @@ is_inside(Table, Offset) ->
             end
     end.
 
-
 %% @doc Return the interval containing the given offset, including the right bound,
 %% excluding the left bound, or not_found.
 %% @end
@@ -154,12 +155,12 @@ get_interval_with_byte(Table, Offset) ->
             end
     end.
 
-
 %% @doc Return the lowest interval outside the recorded set of intervals,
 %% strictly above the given Offset, and with the end offset at most EndOffsetUpperBound.
 %% Return not_found if there are no such intervals.
-get_next_interval_outside(_Table, Offset, EndOffsetUpperBound)
-  when Offset >= EndOffsetUpperBound ->
+get_next_interval_outside(_Table, Offset, EndOffsetUpperBound) when
+    Offset >= EndOffsetUpperBound
+->
     not_found;
 get_next_interval_outside(Table, Offset, EndOffsetUpperBound) ->
     case ets:next(Table, Offset) of
@@ -173,7 +174,6 @@ get_next_interval_outside(Table, Offset, EndOffsetUpperBound) ->
                     get_next_interval_outside(Table, NextOffset, EndOffsetUpperBound)
             end
     end.
-
 
 %% @doc Return the lowest interval inside the recorded set of intervals with the
 %% end offset strictly above the given offset, and with the end offset
@@ -196,7 +196,6 @@ get_next_interval(Table, Offset, EndOffsetUpperBound) ->
                     get_next_interval(Table, Offset, EndOffsetUpperBound)
             end
     end.
-
 
 %% @doc Return the size of the intesection between the stored intervals and the given range.
 get_intersection_size(Table, End, Start) when End > Start ->
@@ -223,7 +222,6 @@ get_intersection_size(Table, End, Start) when End > Start ->
             end
     end.
 
-
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -237,10 +235,8 @@ init_from_gb_set_iterator(Table, Iterator) ->
             init_from_gb_set_iterator(Table, Iterator2)
     end.
 
-
 find_largest_continuous_interval(Table, End, Start) ->
     find_largest_continuous_interval(Table, End, Start, End, Start, []).
-
 
 find_largest_continuous_interval(Table, End, Start, End2, Start2, InnerEnds) ->
     case ets:next(Table, Start - 1) of
@@ -255,16 +251,15 @@ find_largest_continuous_interval(Table, End, Start, End2, Start2, InnerEnds) ->
                     {End2, Start2, InnerEnds};
                 [{End3, Start3}] ->
                     find_largest_continuous_interval(
-                      Table,
-                      End,
-                      End3 + 1,
-                      max(End2, End3),
-                      min(Start2, Start3),
-                      [End3 | InnerEnds]
-                     )
+                        Table,
+                        End,
+                        End3 + 1,
+                        max(End2, End3),
+                        min(Start2, Start3),
+                        [End3 | InnerEnds]
+                    )
             end
     end.
-
 
 remove_inner_intervals(_Table, [], _End) ->
     ok;
@@ -273,19 +268,3 @@ remove_inner_intervals(Table, [End | InnerEnds], End) ->
 remove_inner_intervals(Table, [InnerEnd | InnerEnds], End) ->
     ets:delete(Table, InnerEnd),
     remove_inner_intervals(Table, InnerEnds, End).
-
-
-assert_is_inside(End, End) ->
-    ok;
-assert_is_inside(End, Start) ->
-    ?assertEqual(true, is_inside(ets_intervals_test, Start + 1)),
-    assert_is_inside(End, Start + 1).
-
-
-assert_is_not_inside(End, End) ->
-    ok;
-assert_is_not_inside(End, Start) ->
-    ?assertEqual(false, is_inside(ets_intervals_test, Start + 1)),
-    assert_is_not_inside(End, Start + 1).
-
-
