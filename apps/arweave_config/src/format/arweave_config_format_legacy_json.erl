@@ -434,6 +434,16 @@ parse_options([{<<"sync_jobs">>, Value} | Rest], Opts)
 parse_options([{<<"sync_jobs">>, Value} | _], _Opts) ->
     {error, {bad_type, sync_jobs, number}, Value};
 
+parse_options([{<<"sync_max_download_rate">>, Value} | Rest], Opts)
+  when is_integer(Value), Value >= 0 ->
+    _ = arweave_config:set([sync, max_download_rate], Value),
+    parse_options(Rest, Opts);
+parse_options([{<<"sync_max_download_rate">>, <<"infinity">>} | Rest], Opts) ->
+    _ = arweave_config:set([sync, max_download_rate], infinity),
+    parse_options(Rest, Opts);
+parse_options([{<<"sync_max_download_rate">>, Value} | _], _Opts) ->
+    {error, {bad_type, sync_max_download_rate, number}, Value};
+
 parse_options([{<<"header_sync_jobs">>, Value} | Rest], Opts)
   when is_integer(Value) ->
     _ = arweave_config:set([gossip, header, workers], Value),

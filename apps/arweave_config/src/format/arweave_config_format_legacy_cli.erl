@@ -291,6 +291,13 @@ parse(["sync_jobs", Num | Rest]) ->
     V = list_to_integer(Num),
     _ = arweave_config:set([sync, jobs], V),
     parse(Rest);
+parse(["sync_max_download_rate", "infinity" | Rest]) ->
+    _ = arweave_config:set([sync, max_download_rate], infinity),
+    parse(Rest);
+parse(["sync_max_download_rate", Num | Rest]) ->
+    V = list_to_integer(Num),
+    _ = arweave_config:set([sync, max_download_rate], V),
+    parse(Rest);
 parse(["header_sync_jobs", Num | Rest]) ->
     V = list_to_integer(Num),
     _ = arweave_config:set([gossip, header, workers], V),

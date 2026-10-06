@@ -285,6 +285,7 @@ repack_modules:
     to_format: unpacked
     to_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
 sync:
+  max_download_rate: 12000000
   cache_size_limit: 10000
   max_concurrent_peer_scans: 101
   request_packed_chunks: true
