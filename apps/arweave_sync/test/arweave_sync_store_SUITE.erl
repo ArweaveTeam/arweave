@@ -1,0 +1,465 @@
+-module(arweave_sync_store_SUITE).
+-test_category([fast]).
+-compile([export_all, nowarn_export_all]).
+-include_lib("common_test/include/ct.hrl").
+-include_lib("stdlib/include/assert.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
+-include("arweave_sync_store.hrl").
+
+suite() -> [{timetrap, {seconds, 60}}].
+
+all() ->
+    [
+        capacity_limits_are_chunk_granular,
+        fair_share_splits_cache_by_demand,
+        dispatch_applies_fair_share,
+        admission_headroom_counts_only_queued_tasks,
+        fetching_tasks_do_not_consume_store_cache_limit,
+        unmeasured_store_limits_initial_fetch_probe,
+        footprint_claim_reserves_complete_footprint,
+        dispatch_best_store_orders_by_load,
+        stores_with_room_by_peer_lists_task_and_footprint_sources,
+        pop_work_returns_queued_task,
+        work_removed_from_a_pass_returns_in_the_next_pass,
+        write_rate_uses_tick_samples
+    ].
+
+init_per_testcase(_Case, Config) ->
+    arweave_sync_test_deps:setup(),
+    Config.
+
+end_per_testcase(_Case, _Config) ->
+    arweave_lib_constants:internal_reset_replica_2_9_overrides(),
+    arweave_sync_test_deps:cleanup().
+
+%%====================================================================
+%% Test cases
+%%====================================================================
+
+%% @doc Store limits derive from measured write rates in chunks, with a minimum
+%% progress probe.
+capacity_limits_are_chunk_granular(_Config) ->
+    %% A 100-chunk footprint keeps the limit arithmetic explicit.
+    arweave_lib_constants:internal_override_replica_2_9_entropy_size(
+        100 * ?DATA_CHUNK_SIZE div ?SUB_CHUNK_COUNT),
+    ?assertEqual(
+        100 * ?DATA_CHUNK_SIZE,
+        arweave_lib_constants:get_replica_2_9_footprint_size()
+    ),
+    %% One quarter of a 2000-chunk cache provides 500 bootstrap chunks.
+    ?assertEqual(500, arweave_sync_store:bootstrap_limit(2000)),
+    %% A share of the whole 2000-chunk cache leaves the store limits to
+    %% bound each store.
+    FairShare = 2000,
+    %% An unmeasured store starts with the twenty-five-chunk probe.
+    ?assertEqual(
+        25, arweave_sync_store:cache_limit(#store_state{}, FairShare)),
+    %% Five seconds at 100 chunks/s is 500 chunks.
+    ?assertEqual(
+        500,
+        arweave_sync_store:claim_limit(#store_state{write_rate = 100})
+    ),
+    %% Five seconds at 105 chunks/s is 525 chunks without footprint rounding.
+    ?assertEqual(
+        525,
+        arweave_sync_store:claim_limit(#store_state{write_rate = 105})
+    ),
+    %% Five seconds at fifteen chunks/s is a seventy-five-chunk cache limit.
+    ?assertEqual(
+        75,
+        arweave_sync_store:cache_limit(
+            #store_state{write_rate = 15}, FairShare)
+    ),
+    %% Cached and fetching stages retain eleven seconds, or 165 chunks.
+    ?assertEqual(
+        165,
+        arweave_sync_store:do_pipeline_limit(
+            #store_state{write_rate = 15}, FairShare)
+    ),
+    %% A share below both limits caps them.
+    ?assertEqual(
+        40,
+        arweave_sync_store:do_pipeline_limit(
+            #store_state{write_rate = 15}, 40)
+    ),
+    %% Five seconds at one chunk/s is below the 25-chunk progress probe.
+    ?assertEqual(
+        25,
+        arweave_sync_store:claim_limit(#store_state{write_rate = 1})
+    ).
+
+%% @doc The share is the level at which store demands fill the 2000-chunk
+%% test cache: stores without work take nothing and a store needing less than
+%% an even split keeps only what it needs.
+fair_share_splits_cache_by_demand(_Config) ->
+    %% With no demand, one store may use the whole cache.
+    ?assertEqual(2000, arweave_sync_store:fair_share(arweave_sync_store:new())),
+    %% 100 chunks/s supports an 1100-chunk pipeline (eleven seconds), so these
+    %% stores' demands are their claims.
+    Busy = busy_states([busy1, busy2, busy3, busy4], 1000),
+    %% Four stores wanting 1000 chunks each split the cache evenly.
+    ?assertEqual(500, arweave_sync_store:fair_share(Busy)),
+    %% A light store keeps its 20 chunks and the busy stores split the other
+    %% 1980: 495 chunks each.
+    Light = put_store(light, 20, 100, Busy),
+    ?assertEqual(495, arweave_sync_store:fair_share(Light)),
+    %% Ten stores without claims leave the share unchanged. Dividing by the
+    %% fifteen stores instead would have left each busy store 133 chunks.
+    Idle = lists:foldl(
+        fun(N, Acc) -> put_store({idle, N}, 0, 100, Acc) end,
+        Light,
+        lists:seq(1, 10)),
+    ?assertEqual(495, arweave_sync_store:fair_share(Idle)),
+    %% Footprint reservations count as work: 20 reserved chunks match the
+    %% light store's 20 claimed chunks.
+    Reserved = arweave_sync_store:put_state(
+        #store_state{store_id = light, write_rate = 100,
+            reservation_chunks = 20},
+        Busy),
+    ?assertEqual(495, arweave_sync_store:fair_share(Reserved)),
+    %% A store writing one chunk/s can only use the 25-chunk probe, however
+    %% much it claims. Beside three busy stores it keeps 25 chunks and they
+    %% split the other 1975: 658 chunks each. Counting all 5000 claims would
+    %% have left them 500.
+    Slow = put_store(slow, 5000, 1,
+        busy_states([busy1, busy2, busy3], 1000)),
+    ?assertEqual(658, arweave_sync_store:fair_share(Slow)),
+    %% When every demand fits, no store is capped below the whole cache.
+    Fits = busy_states([busy1, busy2], 300),
+    ?assertEqual(2000, arweave_sync_store:fair_share(Fits)).
+
+%% @doc Each dispatch caps store pipelines at the current fair share.
+dispatch_applies_fair_share(_Config) ->
+    %% Four busy stores and a 20-chunk light store leave the busy stores 495
+    %% chunks each, below their 1100-chunk write-rate limit.
+    States = put_store(light, 20, 100,
+        busy_states([busy1, busy2, busy3, busy4], 1000)),
+    Plan = arweave_sync_store:test_plan(States),
+    #store_plan{pipeline_limit = BusyLimit} = maps:get(busy1, Plan),
+    ?assertEqual(495, BusyLimit),
+    ?assertEqual(495, arweave_sync_store:pipeline_limit(
+        busy1, arweave_sync_store:fair_share(States), States)),
+    %% The light store is capped by the same share, not by its demand, so it
+    %% can grow into the share when it admits more work.
+    #store_plan{pipeline_limit = LightLimit} = maps:get(light, Plan),
+    ?assertEqual(495, LightLimit).
+
+busy_states(StoreIDs, ClaimedChunks) ->
+    lists:foldl(
+        fun(StoreID, Acc) -> put_store(StoreID, ClaimedChunks, 100, Acc) end,
+        arweave_sync_store:new(),
+        StoreIDs).
+
+put_store(StoreID, ClaimedChunks, WriteRate, States) ->
+    arweave_sync_store:put_state(
+        #store_state{store_id = StoreID, claimed_chunks = ClaimedChunks,
+            write_rate = WriteRate},
+        States).
+
+%% @doc Fetching and writing claims do not consume headroom for future queued
+%% tasks.
+admission_headroom_counts_only_queued_tasks(_Config) ->
+    %% One chunk/s resolves to the twenty-five-chunk progress floor. Concrete
+    %% claims already fetching or writing remain for deduplication but do not
+    %% consume future queue capacity.
+    State = #store_state{
+        write_rate = 1,
+        claimed_chunks = 25,
+        queued_task_count = 4
+    },
+    ?assertEqual(21, arweave_sync_store:admission_headroom(State)).
+
+%% @doc Cached chunks and total pipeline work are bounded independently for
+%% measured stores.
+fetching_tasks_do_not_consume_store_cache_limit(_Config) ->
+    %% Once the write rate is measured, peer and global limits bound network requests;
+    %% the store cache limit applies only after chunks enter its cache.
+    StorePlan = #store_plan{
+        state = #store_state{write_rate = 1},
+        cached_chunk_count = 3,
+        fetching_count = 10,
+        cache_limit = 4,
+        pipeline_limit = 14,
+        disk_ready = true
+    },
+    ?assert(arweave_sync_store:has_capacity(StorePlan)),
+    ?assertNot(
+        arweave_sync_store:has_capacity(StorePlan#store_plan{
+            cached_chunk_count = 4
+        })
+    ),
+    ?assertNot(
+        arweave_sync_store:has_capacity(StorePlan#store_plan{
+            fetching_count = 11
+        })
+    ).
+
+%% @doc An unmeasured store's pipeline limit holds the store to the initial
+%% fetch probe.
+unmeasured_store_limits_initial_fetch_probe(_Config) ->
+    State = #store_state{},
+    StorePlan = #store_plan{
+        state = State,
+        fetching_count = ?MIN_CLAIM_LIMIT - 1,
+        cache_limit = 500,
+        pipeline_limit = arweave_sync_store:do_pipeline_limit(State, 500),
+        disk_ready = true
+    },
+    ?assert(arweave_sync_store:has_capacity(StorePlan)),
+    ?assertNot(
+        arweave_sync_store:has_capacity(StorePlan#store_plan{
+            fetching_count = ?MIN_CLAIM_LIMIT
+        })
+    ).
+
+%% @doc Footprint admission charges a complete footprint without using
+%% concrete-task queue headroom.
+footprint_claim_reserves_complete_footprint(_Config) ->
+    Footprint = #footprint{store_id = store1, partition = 0, footprint = 1},
+    OneChunk = arweave_lib_intervals:from_list([{?DATA_CHUNK_SIZE, 0}]),
+    ThreeChunks = arweave_lib_intervals:from_list([
+        {2 * ?DATA_CHUNK_SIZE + 1, 0}
+    ]),
+    Sources = [
+        #task_source{
+            peer = peer1,
+            footprint = Footprint,
+            intervals = OneChunk
+        },
+        #task_source{
+            peer = peer2,
+            footprint = Footprint,
+            intervals = ThreeChunks
+        }
+    ],
+    Reservation = arweave_sync_footprint:new_reservation(store1, Footprint, Sources),
+    %% Task-source coverage is unknown until dispatch binds the reservation, so admission
+    %% reserves the complete footprint rather than either advertised subset.
+    ChunkCacheLimit = (arweave_sync_deps:chunk_cache()):limit(),
+    InitialClaimedChunks = arweave_sync_store:bootstrap_limit(ChunkCacheLimit) - 1,
+    InitialState = arweave_sync_store:put_state(
+        #store_state{
+            store_id = store1,
+            claimed_chunks = InitialClaimedChunks,
+            queued_task_count = InitialClaimedChunks
+        },
+        arweave_sync_store:new()
+    ),
+    {ok, ClaimedChunks, State} = arweave_sync_store:admit(store1, Reservation, InitialState),
+    FootprintChunks = arweave_sync_footprint:claim_size(Reservation),
+    ?assertEqual(FootprintChunks, arweave_sync_store:chunks_in_claim(Reservation)),
+    ?assertEqual(FootprintChunks, ClaimedChunks),
+    ?assertEqual(
+        InitialClaimedChunks + FootprintChunks,
+        arweave_sync_store:claimed_chunks(store1, State)
+    ),
+    ?assertEqual(1, arweave_sync_store:queued_count(store1, State)),
+    ?assertEqual(InitialClaimedChunks, arweave_sync_store:queued_task_count(store1, State)),
+    %% Reservation credit does not consume the one remaining concrete task of
+    %% headroom; exact claims arbitrate overlap when the footprint binds.
+    Task = #task{
+        offset = ?DATA_CHUNK_SIZE,
+        sources = [#task_source{peer = peer1}]
+    },
+    {ok, 1, State2} = arweave_sync_store:admit(store1, Task, State),
+    ?assertEqual(
+        InitialClaimedChunks + 1,
+        arweave_sync_store:queued_task_count(store1, State2)
+    ),
+    %% A reservation may exceed the final positive headroom, but its complete
+    %% footprint charge prevents another reservation from being admitted.
+    Reservation2 = arweave_sync_footprint:new_reservation(
+        store1, Footprint#footprint{footprint = 2}, Sources
+    ),
+    ?assertEqual(blocked, arweave_sync_store:admit(store1, Reservation2, State2)).
+
+%% @doc Store selection prefers fewer active fetches, then fewer pending writes.
+dispatch_best_store_orders_by_load(_Config) ->
+    %% The first dispatch has no active tasks. The next two have one fetch each,
+    %% with the writing task making store_c the more heavily loaded tie.
+    Task = #task{
+        offset = 0,
+        sources = [#task_source{peer = peer}]
+    },
+    WorkQueue = gb_sets:singleton(arweave_sync_store:work_element(Task)),
+    StoreA = #store_plan{
+        state = #store_state{store_id = store_a},
+        disk_ready = true,
+        cache_limit = 100,
+        pipeline_limit = 100,
+        work_queue = WorkQueue
+    },
+    StoreB = #store_plan{
+        state = #store_state{store_id = store_b},
+        disk_ready = true,
+        cache_limit = 100,
+        pipeline_limit = 100,
+        work_queue = WorkQueue,
+        fetching_count = 1
+    },
+    StoreC = #store_plan{
+        state = #store_state{store_id = store_c},
+        fetching_count = 1,
+        cache_limit = 100,
+        pipeline_limit = 100,
+        writing_count = 1,
+        disk_ready = true,
+        work_queue = WorkQueue
+    },
+    Plan = #{store_c => StoreC, store_b => StoreB, store_a => StoreA},
+    {ok, store_a} = arweave_sync_store:best_store(Plan),
+    {ok, store_b} = arweave_sync_store:best_store(maps:remove(store_a, Plan)),
+    {ok, store_c} = arweave_sync_store:best_store(
+        maps:remove(
+            store_b,
+            maps:remove(store_a, Plan)
+        )
+    ).
+
+%% @doc Runnable byte and footprint demand expose their peers; disk-blocked
+%% stores expose none.
+stores_with_room_by_peer_lists_task_and_footprint_sources(_Config) ->
+    StoreID = store1,
+    TaskPeer = task_peer,
+    FootprintPeer = footprint_peer,
+    Task = #task{
+        offset = 0,
+        store_id = StoreID,
+        sources = [#task_source{peer = TaskPeer}]
+    },
+    {ok, 1, States} = arweave_sync_store:admit(StoreID, Task, arweave_sync_store:new()),
+    %% The first footprint and its first chunk are enough to represent bound
+    %% footprint demand; no active child is required while intervals remain.
+    Footprint = #footprint{
+        store_id = StoreID,
+        partition = 0,
+        footprint = 0
+    },
+    Source = #task_source{
+        peer = FootprintPeer,
+        footprint = Footprint,
+        intervals = arweave_lib_intervals:from_list([{?DATA_CHUNK_SIZE, 0}])
+    },
+    Reservation = arweave_sync_footprint:test_reservation(
+        StoreID, Footprint, [Source], FootprintPeer, 0, bound
+    ),
+    Footprints = arweave_sync_footprint:test_state([Reservation]),
+    Plan0 = arweave_sync_store:snapshot(Footprints, #{}, [], States),
+    StorePlan = maps:get(StoreID, Plan0),
+    Plan = #{StoreID => StorePlan#store_plan{disk_ready = true}},
+    ?assertEqual(
+        #{
+            TaskPeer => [StoreID],
+            FootprintPeer => [StoreID]
+        },
+        arweave_sync_store:stores_with_room_by_peer(Plan)
+    ),
+    BlockedPlan = #{
+        StoreID => StorePlan#store_plan{
+            disk_ready = false
+        }
+    },
+    ?assertEqual(#{}, arweave_sync_store:stores_with_room_by_peer(BlockedPlan)).
+
+%% @doc Popping the only queued task removes its store from the current dispatch
+%% pass.
+pop_work_returns_queued_task(_Config) ->
+    Task = #task{
+        offset = 0,
+        sources = [#task_source{peer = peer}]
+    },
+    {ok, 1, State} = arweave_sync_store:admit(store1, Task, arweave_sync_store:new()),
+    StorePlan = arweave_sync_store:test_plan(State),
+    ?assertMatch({#task{}, #{}}, arweave_sync_store:pop_work(store1, StorePlan)).
+
+%% @doc Skipping work in one dispatch pass does not remove it from the
+%% persistent queue.
+work_removed_from_a_pass_returns_in_the_next_pass(_Config) ->
+    First = #task{
+        offset = 0,
+        sources = [#task_source{peer = peer_a}]
+    },
+    Second = #task{
+        offset = ?DATA_CHUNK_SIZE,
+        sources = [#task_source{peer = peer_b}]
+    },
+    {ok, 1, State1} = arweave_sync_store:admit(store1, First, arweave_sync_store:new()),
+    {ok, 1, State2} = arweave_sync_store:admit(store1, Second, State1),
+    StorePlan0 = arweave_sync_store:test_plan(State2),
+    {First, StorePlan1} = arweave_sync_store:pop_work(store1, StorePlan0),
+    %% Leaving blocked work out of the dispatch-local queue exposes the next
+    %% unit of work without changing persistent queued work.
+    {Second, _StorePlan2} = arweave_sync_store:pop_work(store1, StorePlan1),
+    %% A new pass is rebuilt from persistent state, so the first task is ready
+    %% again rather than carrying blocked state across scheduler callbacks.
+    NewStorePlan = arweave_sync_store:test_plan(State2),
+    {First, _NewStorePlan2} = arweave_sync_store:pop_work(store1, NewStorePlan).
+
+%% @doc Write-rate estimates distinguish samples that are not driven from
+%% driven ones and recover promptly.
+write_rate_uses_tick_samples(_Config) ->
+    SampleStartMs = 1_000,
+    SampleIntervalMs = 10_000,
+    InitialRate = 100,
+    State0 = #store_state{
+        write_rate = InitialRate,
+        sample_started_ms = SampleStartMs,
+        completed_writes_since_sample = 200
+    },
+
+    %% Twenty chunks/s without pending writes is only a lower bound, so it
+    %% cannot reduce the existing 100-chunk/s estimate.
+    State1 = arweave_sync_store:sample_write_rate(
+        0, SampleStartMs + SampleIntervalMs, State0
+    ),
+    ?assertEqual(100, State1#store_state.write_rate),
+
+    %% The same twenty-chunk/s sample with pending writes is authoritative.
+    %% The half-weight EMA moves the estimate from 100 to 60 chunks/s.
+    State2 = arweave_sync_store:sample_write_rate(
+        1,
+        SampleStartMs + 2 * SampleIntervalMs,
+        State1#store_state{
+            completed_writes_since_sample = 200,
+            sample_driven = true
+        }
+    ),
+    ?assertEqual(60.0, State2#store_state.write_rate),
+    ?assertEqual(300, arweave_sync_store:claim_limit(State2)),
+
+    %% Eight hundred completions with no pending writes prove at least eighty
+    %% chunks/s and raise the lower bound directly.
+    State3 = arweave_sync_store:sample_write_rate(
+        0,
+        SampleStartMs + 3 * SampleIntervalMs,
+        State2#store_state{completed_writes_since_sample = 800}
+    ),
+    ?assertEqual(80.0, State3#store_state.write_rate),
+
+    %% A higher authoritative sample takes effect immediately so a recovered
+    %% store is not held to its earlier capacity for several long windows.
+    IncreasedState = arweave_sync_store:sample_write_rate(
+        1,
+        SampleStartMs + 4 * SampleIntervalMs,
+        State3#store_state{
+            completed_writes_since_sample = 1000,
+            sample_driven = true
+        }
+    ),
+    ?assertEqual(100.0, IncreasedState#store_state.write_rate),
+
+    %% A fully idle interval carries no new capacity evidence.
+    State4 = arweave_sync_store:sample_write_rate(
+        0, SampleStartMs + 5 * SampleIntervalMs, IncreasedState
+    ),
+    ?assertEqual(100.0, State4#store_state.write_rate),
+
+    %% Pending writes with no completions provide a zero-rate sample, moving
+    %% the half-weight EMA down to forty chunks/s.
+    State5 = arweave_sync_store:sample_write_rate(
+        1,
+        SampleStartMs + 6 * SampleIntervalMs,
+        State4#store_state{sample_driven = true}
+    ),
+    ?assertEqual(50.0, State5#store_state.write_rate).
