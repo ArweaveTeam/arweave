@@ -1,20 +1,14 @@
 -module(arweave_storage_sync_record_sup).
--include_lib("arweave_storage/include/arweave_storage_deps.hrl").
-
 
 -behaviour(supervisor).
 
-
 -export([start_link/0]).
-
 
 -export([init/1]).
 
-
 -include_lib("arweave/include/ar.hrl").
-
 -include_lib("arweave/include/ar_sup.hrl").
-
+-include_lib("arweave_storage/include/arweave_storage_deps.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -23,12 +17,12 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-
 %% ===================================================================
 %% Supervisor callbacks.
 %% ===================================================================
 
 init([]) ->
+    ets:new(arweave_storage_data_sizes, [set, public, named_table]),
     ets:new(sync_records, [set, public, named_table, {read_concurrency, true}]),
     ConfiguredWorkers = lists:map(
         fun(StorageModule) ->
@@ -39,8 +33,12 @@ init([]) ->
         end,
         ?DEP(config):storage_modules()
     ),
-    DefaultSyncRecordWorker = ?CHILD_WITH_ARGS(arweave_storage_sync_record, worker, ar_sync_record_default,
-        [ar_sync_record_default, ?DEFAULT_MODULE]),
+    DefaultSyncRecordWorker = ?CHILD_WITH_ARGS(
+        arweave_storage_sync_record,
+        worker,
+        ar_sync_record_default,
+        [ar_sync_record_default, ?DEFAULT_MODULE]
+    ),
     RepackInPlaceWorkers = lists:map(
         fun({StorageModule, _Packing}) ->
             StoreID = arweave_storage_module:id(StorageModule),
@@ -52,5 +50,3 @@ init([]) ->
     ),
     Workers = [DefaultSyncRecordWorker] ++ ConfiguredWorkers ++ RepackInPlaceWorkers,
     {ok, {{one_for_one, 5, 10}, Workers}}.
-
-

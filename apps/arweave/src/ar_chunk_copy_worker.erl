@@ -68,11 +68,10 @@ read_range(_MessagesRemaining, {Start, End, _, _}) when Start >= End ->
     ok;
 read_range(MessagesRemaining,
            {Start, End, OriginStoreID, TargetStoreID} = Args) ->
-    case arweave_storage_sync_record:is_recorded(Start + 1, ar_data_sync, TargetStoreID) of
+    case arweave_storage:is_recorded(Start + 1, any_packing, {ar_data_sync, byte}, TargetStoreID) of
         {true, _} ->
             %% Chunk already synced at the target — skip to next gap.
-            case arweave_storage_sync_record:get_next_unsynced_interval(
-                   Start, End, ar_data_sync, TargetStoreID) of
+            case arweave_storage:get_next_interval(unsynced, Start, End, any_packing, {ar_data_sync, byte}, TargetStoreID) of
                 not_found ->
                     ok;
                 {_, Start2} ->
@@ -80,8 +79,7 @@ read_range(MessagesRemaining,
                                {Start2, End, OriginStoreID, TargetStoreID})
             end;
         _ ->
-            case arweave_storage_sync_record:is_recorded(Start + 1, ar_data_sync,
-                                            OriginStoreID) of
+            case arweave_storage:is_recorded(Start + 1, any_packing, {ar_data_sync, byte}, OriginStoreID) of
                 {true, Packing} ->
                     read_and_post_chunk(MessagesRemaining, Packing, Args);
                 SyncRecordReply ->
@@ -166,8 +164,7 @@ post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
        absolute_offset = AbsoluteOffset,
        relative_offset = RelativeOffset
       } = Offsets,
-    case arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
-                                    OriginStoreID) of
+    case arweave_storage:is_recorded(AbsoluteOffset, any_packing, {ar_data_sync, byte}, OriginStoreID) of
         {true, Packing} ->
             ar_data_sync:increment_chunk_cache_size(),
             UnpackedChunk = case Packing of

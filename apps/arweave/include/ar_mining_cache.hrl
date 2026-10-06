@@ -1,7 +1,10 @@
 -include_lib("arweave_lib/include/arweave_lib_constants.hrl").
+
 -ifndef(AR_MINING_CACHE_HRL).
 
+
 -define(AR_MINING_CACHE_HRL, true).
+
 
 
 -record(ar_mining_cache_value, {
@@ -15,11 +18,13 @@
                                }).
 
 
+
 -record(ar_mining_cache_session, {
                                   mining_cache = #{} :: #{term() => #ar_mining_cache_value{}},
                                   mining_cache_size_bytes = 0 :: non_neg_integer(),
                                   reserved_mining_cache_bytes = 0 :: non_neg_integer()
                                  }).
+
 
 
 
@@ -31,6 +36,9 @@
                          }).
 
 
+
 -endif.
+
+
 
 

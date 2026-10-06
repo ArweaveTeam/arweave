@@ -71,8 +71,7 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
                                      BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(AbsoluteEndOffset),
                                      case maps:is_key(BucketEndOffset, Acc) of
                                          true ->
-                                             IsRecorded = arweave_storage_sync_record:is_recorded(
-                                                            AbsoluteEndOffset, ar_data_sync, StoreID),
+                                             IsRecorded = arweave_storage:is_recorded(AbsoluteEndOffset, any_packing, {ar_data_sync, byte}, StoreID),
                                              maps:put(BucketEndOffset,
                                                       normalize_sync_record(IsRecorded, AbsoluteEndOffset, Metadata),
                                                       Acc);

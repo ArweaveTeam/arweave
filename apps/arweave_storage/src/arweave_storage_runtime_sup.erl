@@ -8,7 +8,6 @@ start_link(Mode) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, Mode).
 
 init(Mode) ->
-    ets:new(ar_chunk_storage, [set, public, named_table]),
     ets:new(ar_entropy_storage, [set, public, named_table]),
     ets:new(arweave_storage_global_sync_record, [set, public, named_table]),
     Global =

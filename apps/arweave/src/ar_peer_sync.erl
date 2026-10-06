@@ -304,7 +304,7 @@ do_enqueue_footprint(State) ->
             sweep = #sweep{ start = Start, end_ = End, offset = Offset }
             = Sweep } = State,
     Partition = arweave_lib_replica_2_9:get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
-    Footprint = arweave_storage_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE),
+    Footprint = arweave_lib_footprint:get_footprint(Offset + ?DATA_CHUNK_SIZE),
     UnsyncedIntervals =
         case ar_footprint_limit:is_beyond(Offset + ?DATA_CHUNK_SIZE,
                                           FootprintLimit) of
@@ -518,7 +518,7 @@ get_hot_peers(Offset, normal) ->
       fun() -> ar_data_discovery:get_bucket_peers(Bucket) end,
       ?GET_SYNC_RECORD_PATH);
 get_hot_peers(Offset, footprint) ->
-    FootprintBucket = arweave_storage_footprint_record:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE),
+    FootprintBucket = arweave_lib_footprint:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE),
     get_hot_peers_for_bucket(
       fun() -> ar_data_discovery:get_footprint_bucket_peers(FootprintBucket) end,
       ?GET_FOOTPRINT_RECORD_PATH).
@@ -558,7 +558,7 @@ get_unsynced_intervals(Start, End, StoreID) ->
 get_unsynced_intervals(Start, End, Intervals, _StoreID) when Start >= End ->
     Intervals;
 get_unsynced_intervals(Start, End, Intervals, StoreID) ->
-    case arweave_storage_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
+    case arweave_storage:get_next_interval(synced, Start, End, any_packing, {ar_data_sync, byte}, StoreID) of
         not_found ->
             arweave_lib_intervals:add(Intervals, End, Start);
         {End2, Start2} ->
@@ -582,7 +582,7 @@ get_unsynced_intervals(Start, End, Intervals, StoreID) ->
 %% intervals. Remove everything outside [Start, End].
 cut_peer_footprint_intervals(FootprintIntervals, Start, End) ->
     ByteIntervals =
-        arweave_storage_footprint_record:get_intervals_from_footprint_intervals(FootprintIntervals),
+        arweave_lib_footprint:footprint_intervals_to_byte_intervals(FootprintIntervals),
     ByteIntervals2 = arweave_lib_intervals:cut(ByteIntervals, End),
     PaddedStart =
         case arweave_lib_constants:get_chunk_padded_offset(Start) of

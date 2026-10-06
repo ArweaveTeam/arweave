@@ -123,7 +123,7 @@ do_start_copy(StoreID, State) ->
     RangeEnd2 = arweave_lib_constants:get_chunk_padded_offset(RangeEnd),
     SyncStatus = ar_data_sync:init_sync_status(StoreID),
     OtherStorageModules = [arweave_storage_module:id(M)
-                           || M <- arweave_storage_module:get_all(RangeStart2, RangeEnd2),
+                           || M <- arweave_storage:covering_stores(RangeStart2, RangeEnd2),
                               arweave_storage_module:id(M) /= StoreID],
     CopyState = #copy_state{
                    range_start = RangeStart2,
@@ -249,8 +249,7 @@ determine_intervals_to_copy_from_module(_StoreID, _OtherStoreID, RangeStart,
 determine_intervals_to_copy_from_module(StoreID, OtherStoreID, RangeStart,
                                         RangeEnd, Intervals) ->
     FindNextMissing =
-        case arweave_storage_sync_record:get_next_synced_interval(RangeStart, RangeEnd, ar_data_sync,
-                                                     StoreID) of
+        case arweave_storage:get_next_interval(synced, RangeStart, RangeEnd, any_packing, {ar_data_sync, byte}, StoreID) of
             not_found ->
                 {request, {RangeStart, RangeEnd}};
             {End, Start} when Start =< RangeStart ->
@@ -263,8 +262,7 @@ determine_intervals_to_copy_from_module(StoreID, OtherStoreID, RangeStart,
             determine_intervals_to_copy_from_module(StoreID, OtherStoreID, End2,
                                                     RangeEnd, Intervals);
         {request, {Cursor, RightBound}} ->
-            case arweave_storage_sync_record:get_next_synced_interval(Cursor, RightBound, ar_data_sync,
-                                                         OtherStoreID) of
+            case arweave_storage:get_next_interval(synced, Cursor, RightBound, any_packing, {ar_data_sync, byte}, OtherStoreID) of
                 not_found ->
                     determine_intervals_to_copy_from_module(StoreID, OtherStoreID,
                                                             RightBound, RangeEnd, Intervals);

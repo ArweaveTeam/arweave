@@ -221,7 +221,7 @@ verify_packing(Metadata, Offsets, State) ->
     #chunk_metadata{ chunk_size = ChunkSize, chunk_data_key = ChunkDataKey } = Metadata,
     #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
     PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteOffset),
-    StoredPackingCheck = arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID),
+    StoredPackingCheck = arweave_storage:is_recorded(AbsoluteOffset, any_packing, {ar_data_sync, byte}, StoreID),
     ExpectedPacking =
         case arweave_storage_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
             true ->
@@ -295,13 +295,13 @@ verify_chunk_storage(PaddedOffset, Metadata, Offsets, Interval, State) ->
         true ->
             Logs = [
                 {ar_data_sync,
-                    arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID)},
+                    arweave_storage:is_recorded(AbsoluteOffset, any_packing, {ar_data_sync, byte}, StoreID)},
                 {ar_chunk_storage,
-                    arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage, StoreID)},
+                    arweave_storage:is_recorded(AbsoluteOffset, any_packing, {ar_chunk_storage, byte}, StoreID)},
                 {ar_chunk_storage_replica_2_9_1_unpacked,
-                    arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage_replica_2_9_1_unpacked, StoreID)},
+                    arweave_storage:is_recorded(AbsoluteOffset, any_packing, {ar_chunk_storage_replica_2_9_1_unpacked, byte}, StoreID)},
                 {unpacked_padded,
-                    arweave_storage_sync_record:is_recorded(AbsoluteOffset, unpacked_padded, StoreID)},
+                    arweave_storage:is_recorded(AbsoluteOffset, any_packing, {unpacked_padded, byte}, StoreID)},
                 {is_entropy_recorded, arweave_storage_entropy_storage:is_entropy_recorded(
                     AbsoluteOffset, Packing, StoreID)},
                 {is_blacklisted, ar_tx_blacklist:is_byte_blacklisted(AbsoluteOffset)},
@@ -355,8 +355,8 @@ invalidate_sync_record(Type, Cursor, NextCursor, Logs, State) ->
     case Mode of
         purge ->
             arweave_storage_footprint_record:delete(NextCursor, StoreID),
-            arweave_storage_sync_record:delete(NextCursor, Cursor, ar_data_sync, StoreID),
-            arweave_storage_sync_record:delete(NextCursor, Cursor, ar_chunk_storage, StoreID);
+            arweave_storage:delete_sync_record(NextCursor, Cursor, {ar_data_sync, byte}, StoreID),
+            arweave_storage:delete_sync_record(NextCursor, Cursor, {ar_chunk_storage, byte}, StoreID);
         log ->
             ok
     end,
@@ -395,10 +395,8 @@ log_error(Type, AbsoluteOffset, ChunkSize, Logs, State) ->
 %% exists in ar_chunk_storage but not ar_data_sync - or vice versa).
 query_intervals(State) ->
     #state{cursor = Cursor, store_id = StoreID} = State,
-    ChunkStorageInterval = arweave_storage_sync_record:get_next_synced_interval(
-        Cursor, infinity, ar_chunk_storage, StoreID),
-    DataSyncInterval = arweave_storage_sync_record:get_next_synced_interval(
-        Cursor, infinity, ar_data_sync, StoreID),
+    ChunkStorageInterval = arweave_storage:get_next_interval(synced, Cursor, infinity, any_packing, {ar_chunk_storage, byte}, StoreID),
+    DataSyncInterval = arweave_storage:get_next_interval(synced, Cursor, infinity, any_packing, {ar_data_sync, byte}, StoreID),
     {ChunkStorageInterval2, DataSyncInterval2} = align_intervals(
         Cursor, ChunkStorageInterval, DataSyncInterval),
     UnionInterval = union_intervals(ChunkStorageInterval2, DataSyncInterval2),
@@ -504,7 +502,7 @@ sample_chunks(Count, SampledOffsets, SampleReport, State) ->
     end.
 
 sample_offset(Offset, StoreID, SampleReport) ->
-    IsRecorded = case arweave_storage_sync_record:is_recorded(Offset, ar_data_sync, StoreID) of
+    IsRecorded = case arweave_storage:is_recorded(Offset, any_packing, {ar_data_sync, byte}, StoreID) of
         {true, _} ->
             true;
         true ->
