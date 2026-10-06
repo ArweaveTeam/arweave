@@ -12,16 +12,15 @@
 %%%   peer is driven, and restarts the probe.
 %%% - Probing runs only while a peer is driven; a peer that is not driven keeps
 %%%   its cap. A probe measures a baseline window, then steps the cap up and
-%%%   measures a window at the new cap. If the window's goodput rises, the cap
-%%%   moves to new_cap/2: the starting cap scaled by the goodput gain. If
-%%%   goodput doesn't rise, the probe steps down instead, and keeps the lower
-%%%   cap only if goodput holds. The next step is twice as large when goodput
-%%%   rose by at least half as much as the cap did, in proportion, or when a
-%%%   step down held goodput.
-%%% - A probe ends when goodput rises by less than half as much as the cap did,
-%%%   when a step down costs goodput, or when the cap cannot step below
-%%%   ?CONCURRENCY_CAP_INITIAL. After a step down that costs goodput, the cap
-%%%   returns to where the step started and stays there for
+%%%   measures a window at the new cap. If the window's goodput rises, keep
+%%%   that measured cap and probe higher. A window without a gain starts a
+%%%   step down, which keeps the lower cap only if goodput holds.
+%%%   The next step is twice as large when goodput rose by at least half as
+%%%   much as the cap did, in proportion, or when a step down held goodput.
+%%%   Smaller gains keep the step, at least one eighth of the current cap.
+%%% - A probe ends when a step down costs goodput, or when the cap cannot step
+%%%   below ?CONCURRENCY_CAP_INITIAL. After a step down that costs goodput,
+%%%   the cap returns to where the step started and stays there for
 %%%   ?PROBE_REST_SAMPLES goodput samples before the next probe.
 %%% - A new peer starts at ?CONCURRENCY_CAP_INITIAL, and its first probe
 %%%   doubles from there. Failure cuts can go lower, to ?CONCURRENCY_CAP_MIN.
@@ -87,15 +86,17 @@ update(Sample, FailurePressure, Driven, Control) ->
 %% skipping samples after a cap change. A full window is used by phase:
 %% - hold: the window is the baseline, so step the cap up;
 %% - up or down: the window measured the stepped cap, so finish the step.
-add_probe_sample(_Sample, #cap_control{ skip = Skip } = Control)
-        when Skip > 0 ->
-    Control#cap_control{ skip = Skip - 1 };
-add_probe_sample({Bytes, Ms}, Control) ->
-    #cap_control{ window_bytes = WindowBytes, window_ms = WindowMs,
-        window_samples = Count } = Control,
-    Control2 = Control#cap_control{ window_bytes = WindowBytes + Bytes,
-        window_ms = WindowMs + Ms, window_samples = Count + 1 },
-    case Count + 1 < ?GOODPUT_WINDOW_SAMPLES of
+add_probe_sample(_Sample, #cap_control{skip = Skip} = Control) when
+    Skip > 0
+->
+    Control#cap_control{skip = Skip - 1};
+add_probe_sample(
+    {Bytes, Ms},
+    #cap_control{window_samples = Samples} = Control
+) ->
+    Samples2 = [Bytes / Ms | Samples],
+    Control2 = Control#cap_control{window_samples = Samples2},
+    case length(Samples2) < ?PROBE_WINDOW_SAMPLES of
         true ->
             Control2;
         false ->
@@ -142,28 +143,32 @@ base_step(Cap) ->
 next_step(Step, Cap) ->
     min(2 * Step, Cap).
 
-%% @doc Finish a step up by moving the cap to new_cap/2, then:
-%% - If goodput rose by at least half as much as the cap did, in proportion,
-%%   step up again from the new cap, twice as far, and judge that step against
-%%   this window.
-%% - If goodput rose by less, end the probe at the new cap. The next probe
-%%   first measures a baseline at the new cap, because this window measured
-%%   the higher cap the step tried.
-%% - If goodput didn't rise, new_cap/2 returns the cap the step started from,
-%%   and the probe steps down from there.
+%% @doc Keep a productive step, or step down if the window gained nothing.
 finish_up(Control) ->
-    #cap_control{ cap = StepCap, step = Step, baseline_cap = BaselineCap,
-        baseline_goodput = BaselineGoodput } = Control,
+    #cap_control{
+        cap = StepCap,
+        step = Step,
+        baseline_cap = BaselineCap,
+        baseline_goodput = BaselineGoodput
+    } = Control,
     StepGoodput = window_goodput(Control),
-    case new_cap(StepGoodput, Control) of
-        BaselineCap ->
+    case StepGoodput > BaselineGoodput of
+        true ->
+            %% Keep the cap that produced this goodput. Even a small goodput
+            %% gain may require the full increase in concurrency.
+            Step2 =
+                case
+                    2 * (StepGoodput - BaselineGoodput) * BaselineCap >=
+                        BaselineGoodput * (StepCap - BaselineCap)
+                of
+                    true -> next_step(Step, StepCap);
+                    false -> max(Step, base_step(StepCap))
+                end,
+            start_phase(up, StepGoodput, Control#cap_control{step = Step2});
+        false ->
             start_phase(down, BaselineGoodput, Control#cap_control{
-                cap = BaselineCap, step = base_step(BaselineCap) });
-        Cap when 2 * (Cap - BaselineCap) >= StepCap - BaselineCap ->
-            start_phase(up, StepGoodput, Control#cap_control{ cap = Cap,
-                step = next_step(Step, Cap) });
-        Cap ->
-            hold(Cap, ?GOODPUT_TRANSITION_SAMPLES, Control)
+                cap = BaselineCap, step = base_step(BaselineCap)
+            })
     end.
 
 %% @doc Finish a step down. If goodput held, the lower cap is kept and the next
@@ -199,27 +204,13 @@ hold(Cap, Skip, Control) ->
         baseline_goodput = undefined
     }).
 
-%% @doc Return the new cap after a step up. Below the peer's saturation point,
-%% goodput grows in proportion to the cap, so the new cap is the starting cap
-%% scaled by the goodput gain, kept between the starting cap and the stepped
-%% cap. For example, a step from 100 to 113 that raises goodput by 8% moves
-%% the cap to 108; one that raises goodput by less than 0.5% rounds back to
-%% 100. If the baseline window fetched nothing, any goodput at the stepped cap
-%% keeps the stepped cap.
-%%
-%% StepGoodput: the goodput of the window at the stepped cap.
-new_cap(StepGoodput, #cap_control{ cap = StepCap, baseline_cap = BaselineCap,
-        baseline_goodput = BaselineGoodput }) when BaselineGoodput > 0.0 ->
-    min(StepCap,
-        max(BaselineCap, round(BaselineCap * StepGoodput / BaselineGoodput)));
-new_cap(StepGoodput, #cap_control{ cap = StepCap }) when StepGoodput > 0.0 ->
-    StepCap;
-new_cap(_StepGoodput, #cap_control{ baseline_cap = BaselineCap }) ->
-    BaselineCap.
-
-window_goodput(#cap_control{ window_bytes = Bytes, window_ms = Ms }) ->
-    Bytes / Ms.
+%% @doc Estimate the serving rate reached in at least two window samples.
+window_goodput(#cap_control{window_samples = Samples}) ->
+    %% Ignore brief slowdowns and require more than one fast burst to show
+    %% extra capacity. Keep progress visible when slow requests complete in
+    %% batches separated by empty ticks.
+    %% Throughput accounting and failure pressure include every request.
+    lists:nth(length(Samples) - 1, lists:sort(Samples)).
 
 reset_window(Control) ->
-    Control#cap_control{ window_bytes = 0, window_ms = 0,
-        window_samples = 0 }.
+    Control#cap_control{window_samples = []}.

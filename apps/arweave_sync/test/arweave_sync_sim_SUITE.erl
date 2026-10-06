@@ -36,6 +36,10 @@ all() ->
         test_recurring_rate_limit_preserves_throughput,
         test_recurring_client_errors_preserve_throughput,
         test_single_peer_saturation,
+        test_single_peer_recovers_from_variable_latency,
+        test_single_peer_variable_latency_without_slowdowns,
+        test_single_peer_recovers_from_late_slowdown,
+        test_single_peer_recurring_slowdowns_preserve_throughput,
         test_single_throttled_peer_keeps_progressing,
         test_peer_capacity_and_latency_growth,
         test_saturated_peer_concurrency_settles,
@@ -211,11 +215,12 @@ test_steady_state_no_monopoly(_Config) ->
                 latency_ms = 4 * ?SIM_SUBSTEP_MS
             }
         },
-        %% Forty simulated seconds cover the scheduler's ramp with one probe
-        %% of headroom; twenty more provide about 100 chunks from
+        %% Sixty simulated seconds cover discovery and the three longer probe
+        %% windows needed to grow from eight to 64 requests at the fast peer.
+        %% Twenty more provide about 100 chunks from
         %% the slowest peer and reduce endpoint skew in the fast peer's share.
         arweave_sync_sim:start_sim(#sim_world{peers = Peers}),
-        arweave_sync_sim:run_for(40),
+        arweave_sync_sim:run_for(60),
         Measurement = arweave_sync_sim:run_for(20),
         CpsByPeer = arweave_sync_sim:metric(cps_by_peer, Measurement),
         assert_metric_utilization(stored_cps, capacity(Peers), Measurement),
@@ -481,9 +486,9 @@ test_rate_limit_settles_and_recovers(_Config) ->
         arweave_sync_sim:update_world(World#sim_world{
             peers = Peers#{?PEER_LIMITED_1 := LimitedPeer}
         }),
-        %% Twenty ticks expose requests left in flight from the higher rate and let
-        %% failure pressure bring the peer's cap down to its limit.
-        LimitDiscoveryMeasurement = arweave_sync_sim:run_for(20),
+        %% Sixty ticks cover the failure cuts and the longer probe windows that
+        %% restore useful concurrency after the higher-rate work drains.
+        LimitDiscoveryMeasurement = arweave_sync_sim:run_for(60),
         assert_greater_than(
             arweave_sync_sim:metric(
                 {rejected_by_peer, ?PEER_LIMITED_1},
@@ -509,10 +514,10 @@ test_rate_limit_settles_and_recovers(_Config) ->
         ),
 
         arweave_sync_sim:update_world(World),
-        %% Seventy clean scheduler ticks let the cap the rejections cut climb
-        %% back to the 100 requests the original rate needs, doubling its step
-        %% while each one gains goodput, and the probe that checks it finish.
-        arweave_sync_sim:run_for(70),
+        %% Five growing steps need 65 ticks at the longer window. The 132-tick
+        %% budget also covers an in-progress hold, its baseline and the first
+        %% downward probe at the 100 requests the restored rate needs.
+        arweave_sync_sim:run_for(132),
         RecoveryMeasurement = arweave_sync_sim:run_for(10),
         assert_metric_utilization(stored_cps, HighCps, RecoveryMeasurement)
     end).
@@ -654,13 +659,50 @@ test_single_peer_saturation(_Config) ->
         %% Retain one end-to-end scenario with the adversarial alternating-chunk
         %% local layout; other scenarios model the contiguous need of a fresh store.
         arweave_sync_sim:start_sim(#sim_world{peers = Peers, local_data_layout = fragmented}),
-        %% Thirty-two simulated seconds cover the scheduler's ramp.
-        arweave_sync_sim:run_for(32),
-        %% Ten seconds contain 1000 chunks at full rate, enough to average the
-        %% fragmented store layout without extending the scheduler warmup.
+        %% Ten discovery ticks plus the longer growth windows reach the
+        %% concurrency needed for 100 chunks/s by tick 52.
+        arweave_sync_sim:run_for(52),
+        %% Twenty seconds contain 2000 chunks at full rate, enough to average
+        %% the fragmented store layout after the initial probe has settled.
         Measurement = arweave_sync_sim:run_for(20),
         assert_metric_utilization(stored_cps, MaxServeCps, Measurement)
     end).
+
+%% A peer with load-dependent latency still reaches its serving capacity
+%% after a brief slowdown; partial gains must not strand it at a low rate.
+test_single_peer_recovers_from_variable_latency(_Config) ->
+    %% Slow down at three minutes for twenty seconds, then allow seven minutes
+    %% to recover before measuring fetched and stored rates for two minutes.
+    Rates = variable_latency_rates(
+        fun(MS) -> MS >= 180_000 andalso MS < 200_000 end, 62, 6
+    ),
+    ?assert(lists:all(fun(Rate) -> Rate >= 0.95 * 24 end, Rates), Rates).
+
+test_single_peer_variable_latency_without_slowdowns(_Config) ->
+    %% The same peer must reach capacity without a slowdown lowering a probe's
+    %% baseline and accidentally making its next small increase look useful.
+    Rates = variable_latency_rates(fun(_) -> false end, 62, 6),
+    ?assert(lists:all(fun(Rate) -> Rate >= 0.95 * 24 end, Rates), Rates).
+
+test_single_peer_recovers_from_late_slowdown(_Config) ->
+    %% Shift the existing twenty-second interruption from 180s to 250s, when
+    %% gains are smaller. Keep the same 620s deadline and two minute samples.
+    Rates = variable_latency_rates(
+        fun(MS) -> MS >= 250_000 andalso MS < 270_000 end, 62, 6
+    ),
+    ?assert(lists:all(fun(Rate) -> Rate >= 0.95 * 24 end, Rates), Rates).
+
+test_single_peer_recurring_slowdowns_preserve_throughput(_Config) ->
+    %% Repeated forty-second slowdowns every four minutes must not restart
+    %% long holds at insufficient concurrency. Allow twenty minutes to settle.
+    %% Each eight-minute measurement covers two full slowdown cycles.
+    Rates = variable_latency_rates(
+        fun(MS) -> (MS + 40_000) rem 240_000 >= 200_000 end, 120, 48
+    ),
+    %% Double latency can halve service during 4/24 ticks: at least 11/12 of
+    %% normal capacity remains. Require 95% of that achievable average.
+    MinimumCPS = 0.95 * 24 * 11 / 12,
+    ?assert(lists:all(fun(Rate) -> Rate >= MinimumCPS end, Rates), Rates).
 
 %% Scenario: A peer near its outbound request quota remains usable when it is
 %% the only source of needed data.
@@ -762,7 +804,7 @@ test_saturated_peer_concurrency_settles(_Config) ->
 %% - The scheduler observes every ten seconds, as in production.
 %%
 %% Timeline:
-%% - Grow the cap for ten minutes, then measure five while probing continues
+%% - Grow the cap for sixteen minutes, then measure five while probing continues
 %%   in both directions.
 %%
 %% Contract:
@@ -782,10 +824,10 @@ test_slow_peer_keeps_parallel_concurrency(_Config) ->
         Seed = rand:seed_s(exsss, {7, 11, 13}),
         %% 100 chunks/s at four seconds needs 400 requests in flight. A fresh
         %% peer's doubling steps reach that from the eight-request seed in six
-        %% steps of seven observations; sixty ticks leave room for the probe
-        %% that settles it.
+        %% two-minute windows, with one transition tick each. Ninety-six ticks
+        %% leave room for discovery and the first probe at serving capacity.
         {_Warmup, Seed2} = run_with_capacity_noise(
-            World, ?PEER_UNLIMITED, Peer, 0.1, 60, Seed
+            World, ?PEER_UNLIMITED, Peer, 0.1, 96, Seed
         ),
         %% Thirty ticks cover a probe's upward and downward steps, so a cut
         %% that cost the peer its parallelism would show.
@@ -903,10 +945,10 @@ test_client_error_recovery_with_http_headroom(_Config) ->
                 ?PEER_UNLIMITED := Peer#sim_peer{http_inflight_limit = 30}
             }
         }),
-        %% Sixty ticks let the cap the client errors cut to a few requests be
-        %% probed back up to about 25, doubling its step while each increase
-        %% gains goodput, and let the first downward step and its hold finish.
-        arweave_sync_sim:run_for(60),
+        %% Five thirteen-tick steps recover from the one-request failure
+        %% floor to 32. Ninety-six ticks also cover residual failures and
+        %% the first downward probe around the 25-request serving need.
+        arweave_sync_sim:run_for(96),
         Measurement = arweave_sync_sim:run_for(10),
         Errors = arweave_sync_sim:metric(
             {client_errors_by_peer, ?PEER_UNLIMITED}, Measurement
@@ -964,9 +1006,11 @@ test_fast_peer_turns_slow(_Config) ->
         World = #sim_world{peers = Peers},
         arweave_sync_sim:start_sim(World),
         %% Establish the peer's high-rate state before reducing its serving
-        %% capacity: sixty ticks cover discovery, the doubling steps up to the
-        %% 75 requests 300 chunks/s needs, and the probe that checks it.
-        arweave_sync_sim:run_for(60),
+        %% capacity. Discovery takes ten ticks; four thirteen-tick probe
+        %% windows reach 128 requests, above the 75 that 300 chunks/s needs.
+        %% Eighty ticks also cover a further probe window and its transition,
+        %% keeping the initial rate check out of the ramp's settling period.
+        arweave_sync_sim:run_for(80),
         %% Twenty ticks average out delivery that swings by a fifth between
         %% ticks while the cap sits near the peer's need.
         InitialMeasurement = arweave_sync_sim:run_for(20),
@@ -1091,10 +1135,11 @@ test_starved_peer_recovers(_Config) ->
             1,
             #{peer => ?PEER_TIMEOUT, metric => cps}
         ),
-        %% Tick 40 begins recovery. Forty control intervals cover the
-        %% scheduler's ramp with probe headroom; twenty more average
+        %% Tick 40 begins recovery. Four thirteen-tick steps can restore
+        %% the ten requests this peer needs from the one-request floor.
+        %% Seventy-two ticks also cover residual timeouts; twenty more average
         %% dispatch/refill boundaries for the lower-rate recovered peer.
-        arweave_sync_sim:run_for(40),
+        arweave_sync_sim:run_for(72),
         Measurement = arweave_sync_sim:run_for(20),
         ?assertEqual(
             0,
@@ -1344,9 +1389,9 @@ test_shared_slow_device_isolation(_Config) ->
             node_config = #{[packing, cache_size] => 1500}
         },
         arweave_sync_sim:start_sim(World),
-        %% Twenty ticks let each peer demonstrate its full serving capacity before
-        %% its store stalls.
-        arweave_sync_sim:run_for(20),
+        %% Thirty-two ticks cover discovery and the first twelve-sample
+        %% baseline, growing from eight to sixteen requests for 50 chunks/s.
+        arweave_sync_sim:run_for(32),
         InitialMeasurement = arweave_sync_sim:run_for(10),
         lists:foreach(
             fun({N, {_StoreID, _Range}}) ->
@@ -1381,10 +1426,10 @@ test_shared_slow_device_isolation(_Config) ->
             SlowStores
         ),
         arweave_sync_sim:update_world(StalledWorld#sim_world{peers = Peers}),
-        %% Fifty-five ticks let the newly available paths' caps double up from the
-        %% floor that their rejections cut them to, and the first probe at their
-        %% need finish its cut, so the measurement falls in the rest that follows.
-        arweave_sync_sim:run_for(55),
+        %% Four thirteen-tick steps restore sixteen requests from the failure
+        %% floor. Eighty ticks also let the first downward probe finish before
+        %% measuring the newly available paths.
+        arweave_sync_sim:run_for(80),
         %% Ten seconds contain 500 chunks from each healthy 50 chunks/s path.
         Measurement = arweave_sync_sim:run_for(10),
         ProgressByStore = arweave_sync_sim:metric(
@@ -1740,9 +1785,10 @@ test_more_stores_than_entropy_slots_keep_footprints(_Config) ->
                 [packing, entropy, cache_size] => Slots * 256
             }
         }),
-        %% Thirty seconds cover discovery, peer-cap growth and the first
-        %% footprint bindings.
-        arweave_sync_sim:run_for(30),
+        %% Ninety ticks cover discovery, the twelve-sample baseline and five
+        %% thirteen-tick up/down steps. Measure entropy reuse after this
+        %% initial capacity probe, not while it tests an insufficient cap.
+        arweave_sync_sim:run_for(90),
         %% Sixty seconds at 40 chunks/s store about 2400 chunks, more than
         %% two 1024-chunk footprints.
         Measurement = arweave_sync_sim:run_for(60),
@@ -1932,13 +1978,13 @@ test_single_footprint_peer_store_bursts_preserve_throughput(_Config) ->
                 [packing, cache_size] => 88473
             }
         }),
-        %% Forty-five observations cover metadata discovery, the cap's growth
-        %% to the roughly 300 requests two-second responses need at 150
-        %% chunks/s, and the footprint-transition settling observed by this
-        %% bursty scenario. The six-observation, sixty-second measurement
+        %% Six thirteen-observation steps can grow the eight-request seed
+        %% past the roughly 300 requests two-second responses need at 150
+        %% chunks/s. Eighty-four observations also cover discovery and the
+        %% first footprint transitions. The six-observation measurement
         %% contains twenty complete three-second burst cycles and makes endpoint
         %% backlog less than five percent of total capacity.
-        arweave_sync_sim:run_for(45),
+        arweave_sync_sim:run_for(84),
         Measurement = arweave_sync_sim:run_for(6),
         assert_chunks_spread_across_stores(Measurement),
         assert_metric_utilization(stored_cps, AggregateStoreCPS, Measurement)
@@ -2123,10 +2169,11 @@ test_low_local_completion_observation_does_not_limit_recovery(_Config) ->
         %% five chunks/s observation.
         LowObservationBatchSize = 12,
         RecoveredBatchSize = StoreCPS * BatchPeriod,
-        %% Thirty-two production observations let the delayed request pipeline
-        %% grow to and settle at the low rate before the completion rate
-        %% changes. Batches follow simulated seconds, not observations.
-        RecoveryTick = 32,
+        %% Four thirteen-observation steps grow the eight-request seed past
+        %% the 72 requests the initial 18 chunks/s needs at four seconds.
+        %% Sixty-four ticks also cover discovery and settling before recovery.
+        %% Batches follow simulated seconds, not observations.
+        RecoveryTick = 64,
         StoreCompletionCPS = fun(_StoreID, Tick) ->
             Second = arweave_sim:monotonic_ms() div 1000,
             case Second rem BatchPeriod of
@@ -2170,10 +2217,10 @@ test_low_local_completion_observation_does_not_limit_recovery(_Config) ->
             0.8 * AggregateStoreCPS,
             #{metric => initial_stored_cps}
         ),
-        %% Forty observations cover a pending hold of up to eight windows and the
-        %% steps that double the cap to the 120 requests four-second responses
-        %% need at 30 chunks/s.
-        arweave_sync_sim:run_for(40),
+        %% Eighty observations cover a pending 48-tick hold and two
+        %% thirteen-tick growth steps toward the 120 requests needed for
+        %% 30 chunks/s with four-second responses.
+        arweave_sync_sim:run_for(80),
         %% Four observations average ten complete batches from every store so one
         %% partially populated completion wave cannot decide the utilization result.
         Measurement = arweave_sync_sim:run_for(4),
@@ -2618,8 +2665,8 @@ test_unpromoted_footprint_work_does_not_block_store(_Config) ->
             sync_availability = {intervals, FirstFootprintIntervals},
             footprint_coverage = exact
         },
-        %% Sixteen one-GiB sweep steps provide 16,384 healthy chunks, enough for more
-        %% than the complete 40-second warm-up and measurement at 100 chunks/s.
+        %% Sixteen one-GiB sweep steps provide 16,384 healthy chunks, enough for
+        %% the recovery warmup and measurement at 100 chunks/s.
         %% Four empty byte sweep steps let the slow footprint bind before the
         %% healthy range is discovered. The healthy range then has enough work to
         %% sustain both the warmup and measurement.
@@ -2683,9 +2730,10 @@ test_unpromoted_footprint_work_does_not_block_store(_Config) ->
             arweave_lib_intervals:sum(CachedIntervals)
         ),
         arweave_sync_sim:update_world(FullWorld),
-        %% Forty ticks let the newly available path's cap recover from its initial
-        %% client errors before steady throughput is measured.
-        arweave_sync_sim:run_for(40),
+        %% Five thirteen-tick steps recover from the failure floor to the
+        %% 25 requests needed at 100 chunks/s. Ninety-six ticks also cover
+        %% residual errors and the first downward probe before measurement.
+        arweave_sync_sim:run_for(96),
         Measurement = arweave_sync_sim:run_for(20),
         assert_metric_utilization(
             {cps_by_peer, HealthyBytePeer}, HealthyPeerCPS, Measurement
@@ -2762,9 +2810,10 @@ test_sparse_footprint_sources_preserve_throughput(_Config) ->
                 [packing, entropy, cache_size] => 16384
             }
         }),
-        %% Fifty seconds cover detailed metadata and peer-cap growth. Twenty
+        %% Seventy-six seconds cover discovery and four thirteen-tick growth
+        %% steps, with headroom for the sparse-footprint transitions. Twenty
         %% measurement seconds retain the stable sparse-footprint rate.
-        arweave_sync_sim:run_for(50),
+        arweave_sync_sim:run_for(76),
         Measurement = arweave_sync_sim:run_for(20),
         assert_metric_utilization(stored_cps, PeerCPS, Measurement)
     end).
@@ -3155,7 +3204,7 @@ test_metadata_scarce_store_spread(_Config) ->
                 max_serve_cps = 400,
                 %% Six stores need six concurrent metadata requests. Requests beyond
                 %% one per store model endpoint overload and cannot complete during
-                %% this sixty-five-second scenario.
+                %% this ninety-six-second scenario.
                 chunk_interval_latency_ms = fun(NumInflight) ->
                     case NumInflight =< ?SIM_STORES of
                         true -> MetadataLatencySeconds * 1000;
@@ -3168,10 +3217,10 @@ test_metadata_scarce_store_spread(_Config) ->
         arweave_sync_sim:start_sim(#sim_world{
             peers = Peers
         }),
-        %% Forty-five seconds warm detailed metadata, distribute requests across
-        %% every store, and probe the peer's cap up to the roughly 80 requests
-        %% the sweep-paced rate needs.
-        arweave_sync_sim:run_for(45),
+        %% Seventy-six seconds cover discovery and four thirteen-tick steps
+        %% past the roughly 80 requests the sweep-paced rate needs, with time
+        %% for the metadata-fed pipeline to settle.
+        arweave_sync_sim:run_for(76),
         Measurement = arweave_sync_sim:run_for(20),
         %% Each store's sweep keeps eight ranges queued and claims each one ten
         %% seconds after requesting its metadata, so with one-second responses
@@ -3315,15 +3364,21 @@ test_disjoint_peer_holdings(_Config) ->
     arweave_config:internal_with_test_config(fun() ->
         StoreRanges = arweave_sim:store_ranges(),
         PeerCps = 100,
+        %% The 820-second warmup and measurement can consume 82,000 chunks
+        %% per peer. Thirty-two billion-byte sweep ranges contain over
+        %% 122,000 chunks; the default eight ranges would run out mid-test.
+        RangeCount = 32,
         Peers = maps:from_list([
             {{10, 1, 0, N, 1984}, #sim_peer{
                 max_serve_cps = PeerCps,
                 %% At one second, each 100 chunks/s peer needs about 100 concurrent
                 %% requests to use its declared capacity.
                 latency_ms = 4 * ?SIM_SUBSTEP_MS,
-                sync_availability = {stores, [StoreID]}
+                sync_availability = {intervals, [
+                    sweep_chunk_interval(StoreRange, 0, RangeCount)
+                ]}
             }}
-         || {N, {StoreID, _Range}} <-
+         || {N, {_StoreID, StoreRange}} <-
                 lists:zip(lists:seq(1, length(StoreRanges)), StoreRanges)
         ]),
         %% Production observations keep the one-second request latency inside
@@ -3332,10 +3387,10 @@ test_disjoint_peer_holdings(_Config) ->
         arweave_sync_sim:start_sim(#sim_world{
             peers = Peers
         }),
-        %% Forty observations cover discovery for all six peer-store paths, each
-        %% cap's growth from the seed to the 100 requests its peer needs, and
-        %% the first downward step.
-        arweave_sync_sim:run_for(40),
+        %% Eighty observations cover discovery and four thirteen-tick steps
+        %% past the 100 requests each peer needs, then the first downward
+        %% probe for all six independent paths.
+        arweave_sync_sim:run_for(80),
         %% Two observations contain 2000 chunks from each 100 chunks/s store path.
         Measurement = arweave_sync_sim:run_for(2),
         %% Six independent 100 chunks/s peers provide 600 chunks/s. The common
@@ -3529,6 +3584,38 @@ test_unaligned_store_matches_aligned_throughput(_Config) ->
 %%====================================================================
 %% Helpers
 %%====================================================================
+
+%% @doc Measure fetched and stored rates through the real sync pipeline.
+variable_latency_rates(Slowdown, WarmTicks, MeasurementTicks) ->
+    arweave_config:internal_with_test_config(fun() ->
+        %% Same load-dependent latency as the original regression: 500 ms
+        %% plus 250 ms per eight requests, with a 24 chunks/s serving limit.
+        Peer = #sim_peer{
+            max_serve_cps = 24,
+            latency_ms = fun(Inflight) ->
+                Latency = ?SIM_SUBSTEP_MS * (2 + ceil(Inflight / 8)),
+                case Slowdown(arweave_sim:monotonic_ms()) of
+                    true -> 2 * Latency;
+                    false -> Latency
+                end
+            end
+        },
+        arweave_sync_scheduler:override_tick_interval_ms(10_000),
+        arweave_sync_sim:start_sim(#sim_world{
+            peers = #{?PEER_UNLIMITED => Peer}
+        }),
+        arweave_sync_sim:run_for(WarmTicks),
+        First = arweave_sync_sim:run_for(MeasurementTicks),
+        Second = arweave_sync_sim:run_for(MeasurementTicks),
+        Rates = [
+            arweave_sync_sim:metric(stored_cps, First),
+            arweave_sync_sim:metric(stored_cps, Second),
+            arweave_sync_sim:metric({cps_by_peer, ?PEER_UNLIMITED}, First),
+            arweave_sync_sim:metric({cps_by_peer, ?PEER_UNLIMITED}, Second)
+        ],
+        ct:pal("Variable latency: stored/fetched CPS ~p", [Rates]),
+        Rates
+    end).
 
 %% @doc Combine adjacent measurements while retaining their outer snapshots.
 combine_measurements([FirstMeasurement | _] = Measurements) ->
@@ -3824,6 +3911,11 @@ testcase_timeout(test_rate_limit_settles_and_recovers) -> 400;
 testcase_timeout(test_recurring_rate_limit_preserves_throughput) -> 400;
 testcase_timeout(test_recurring_client_errors_preserve_throughput) -> 400;
 testcase_timeout(test_single_peer_saturation) -> 300;
+testcase_timeout(test_single_peer_recovers_from_variable_latency) -> 300;
+testcase_timeout(test_single_peer_variable_latency_without_slowdowns) -> 300;
+testcase_timeout(test_single_peer_recovers_from_late_slowdown) -> 300;
+testcase_timeout(test_single_peer_recurring_slowdowns_preserve_throughput) ->
+    400;
 testcase_timeout(test_single_throttled_peer_keeps_progressing) -> 300;
 testcase_timeout(test_peer_capacity_and_latency_growth) -> 400;
 testcase_timeout(test_saturated_peer_concurrency_settles) -> 300;
