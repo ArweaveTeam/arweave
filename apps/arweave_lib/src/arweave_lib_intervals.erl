@@ -1,17 +1,13 @@
-%%% @doc A set of non-overlapping intervals.
+%%% Public immutable interval-set API in the arweave_lib library app.
 -module(arweave_lib_intervals).
--ifdef(AR_TEST).
--export([add2/4, delete2/4, serialize_random_subset/3, serialize_empty/1, serialize_random_subset/5, serialize_list/2, serialize_item/3, serialize_subset/5, serialize_subset/6, from_etf/1, from_etf/3, inverse/1, inverse/3, intersection/3, compare/2]).
--endif.
-
-
 
 -export([new/0, from_list/1, add/3, delete/3, cut/2, is_inside/2, sum/1, union/2, serialize/2,
-         safe_from_etf/1, count/1, is_empty/1, take_smallest/1, take_largest/1, largest/1,
-         smallest/1, to_list/1, iterator_from/2, next/1, fold/3, outerjoin/2, intersection/2]).
+        safe_from_etf/1, count/1, is_empty/1, take_smallest/1, take_largest/1, largest/1,
+        smallest/1, to_list/1, iterator_from/2, next/1, fold/3, outerjoin/2, intersection/2]).
+-export_type([interval/0, intervals/0]).
 
-
--include_lib("eunit/include/eunit.hrl").
+-type interval() :: {integer(), integer()}.
+-type intervals() :: gb_sets:set(interval()).
 
 
 %%%===================================================================
@@ -22,11 +18,9 @@
 new() ->
     gb_sets:new().
 
-
 %% @doc Create a set from a list of {End, Start} pairs.
 from_list(L) ->
     lists:foldl(fun({End, Start}, Acc) -> add(Acc, End, Start) end, new(), L).
-
 
 %% @doc Add a new interval. Intervals are compacted - e.g., (2, 1) and (1, 0) are joined
 %% into (2, 0). Also, if two intervals intersect each other, they are joined.
@@ -35,12 +29,10 @@ add(Intervals, End, Start) when End > Start ->
     Iter = gb_sets:iterator_from({Start - 1, Start - 1}, Intervals),
     add2(Iter, Intervals, End, Start).
 
-
 %% @doc Remove the given interval from the set.
 delete(Intervals, End, Start) ->
     Iter = gb_sets:iterator_from({Start - 1, Start - 1}, Intervals),
     delete2(Iter, Intervals, End, Start).
-
 
 %% @doc Remove the interval above the given cut. If there is an interval containing
 %% the cut, replace it with its part up to the cut.
@@ -60,7 +52,6 @@ cut(Intervals, Cut) ->
             end
     end.
 
-
 %% @doc Return true if the given number is inside one of the intervals, false otherwise.
 %% The left bounds of the intervals are excluded from search, the right bounds are included.
 %% @end
@@ -77,11 +68,9 @@ is_inside(Intervals, Number) ->
             false
     end.
 
-
 %% @doc Return the sum of the lengths of the intervals.
 sum(Intervals) ->
     gb_sets:fold(fun({End, Start}, Acc) -> Acc + End - Start end, 0, Intervals).
-
 
 %% @doc Return the set of intervals consisting of the points of intervals from both sets.
 union(I1, I2) ->
@@ -93,13 +82,12 @@ union(I1, I2) ->
                 {I2, I1}
         end,
     gb_sets:fold(
-      fun({End, Start}, Acc) ->
-              add(Acc, End, Start)
-      end,
-      Longer,
-      Shorter
-     ).
-
+        fun({End, Start}, Acc) ->
+            add(Acc, End, Start)
+        end,
+        Longer,
+        Shorter
+    ).
 
 %% @doc Serialize a subset of the intervals using the requested format, etf | json.
 %% The subset is always smaller than or equal to Limit. If random_subset key is present,
@@ -110,7 +98,6 @@ serialize(#{ random_subset := _, limit := Limit, format := Format }, Intervals) 
 serialize(#{ start := Start, limit := Limit, format := Format } = Args, Intervals) ->
     RightBound = maps:get(right_bound, Args, infinity),
     serialize_subset(Intervals, Start, RightBound, Limit, Format).
-
 
 %% @doc Convert the binary produced by to_etf/2 into the set of intervals.
 %% Return {error, invalid} if the binary is not a valid ETF representation of the
@@ -124,16 +111,13 @@ safe_from_etf(Binary) ->
             {error, invalid}
     end.
 
-
 %% @doc Return the number of intervals in the set.
 count(Intervals) ->
     gb_sets:size(Intervals).
 
-
 %% @doc Return true if the set of intervals is empty, false otherwise.
 is_empty(Intervals) ->
     gb_sets:is_empty(Intervals).
-
 
 %% @doc Return {Interval, Intervals2} when Interval is the interval with the smallest
 %% right bound and Intervals2 is the set of intervals with this interval removed.
@@ -141,43 +125,35 @@ is_empty(Intervals) ->
 take_smallest(Intervals) ->
     gb_sets:take_smallest(Intervals).
 
-
 %% @doc Return {Interval, Intervals2} when Interval is the interval with the largest
 %% right bound and Intervals2 is the set of intervals with this interval removed.
 %% @end
 take_largest(Intervals) ->
     gb_sets:take_largest(Intervals).
 
-
 %% @doc A proxy for gb_sets:smallest/1.
 smallest(Intervals) ->
     gb_sets:smallest(Intervals).
-
 
 %% @doc A proxy for gb_sets:largest/1.
 largest(Intervals) ->
     gb_sets:largest(Intervals).
 
-
 %% @doc A proxy for gb_sets:iterator_from/2.
 iterator_from(Interval, Intervals) ->
     gb_sets:iterator_from(Interval, Intervals).
-
 
 %% @doc A proxy for gb_sets:next/1.
 next(Iterator) ->
     gb_sets:next(Iterator).
 
-
 %% @doc A proxy for gb_sets:fold/3.
 fold(Fun, Acc, Intervals) ->
     gb_sets:fold(Fun, Acc, Intervals).
 
-
 %% @doc A proxy for gb_sets:to_list/1.
 to_list(Intervals) ->
     gb_sets:to_list(Intervals).
-
 
 %% @doc Return a set of intervals containing the points from the second given set of
 %% intervals and excluding the points from the first given set of intervals.
@@ -186,7 +162,6 @@ outerjoin(I1, I2) ->
     %% expensive. intersection(I1, I2) is expected to be relatively small so inverting it
     %% is quick.
     intersection(inverse(intersection(I1, I2)), I2).
-
 
 %% @doc Return the set of intervals - the intersection of the two given sets.
 intersection(I1, I2) ->
@@ -198,9 +173,8 @@ intersection(I1, I2) ->
             {_, Start2} = gb_sets:smallest(I2),
             Start = min(Start1, Start2),
             intersection(gb_sets:iterator_from({Start, infinity}, I1),
-                         gb_sets:iterator_from({Start, infinity}, I2), new())
+                    gb_sets:iterator_from({Start, infinity}, I2), new())
     end.
-
 
 %%%===================================================================
 %%% Private functions.
@@ -217,7 +191,6 @@ add2(Iter, Intervals, End, Start) ->
         _ ->
             gb_sets:add_element({End, Start}, Intervals)
     end.
-
 
 delete2(Iter, Intervals, End, Start) ->
     case gb_sets:next(Iter) of
@@ -244,7 +217,6 @@ delete2(Iter, Intervals, End, Start) ->
             Intervals
     end.
 
-
 serialize_random_subset(Intervals, Limit, Format) ->
     case gb_sets:is_empty(Intervals) of
         true ->
@@ -255,12 +227,10 @@ serialize_random_subset(Intervals, Limit, Format) ->
             serialize_random_subset(Intervals, RandomOffsets, Format, arweave_lib_intervals:new(), Limit)
     end.
 
-
 serialize_empty(etf) ->
     term_to_binary([]);
 serialize_empty(json) ->
     jiffy:encode([]).
-
 
 serialize_random_subset(_Intervals, [], Format, PickedIntervals, Limit) ->
     serialize_subset(PickedIntervals, 0, infinity, Limit, Format);
@@ -271,21 +241,18 @@ serialize_random_subset(Intervals, [Offset | Offsets], Format, PickedIntervals, 
             serialize_random_subset(Intervals, Offsets, Format, PickedIntervals, Limit);
         {{End, Start}, _} ->
             serialize_random_subset(Intervals, Offsets, Format,
-                                    arweave_lib_intervals:add(PickedIntervals, End, Start), Limit)
+                arweave_lib_intervals:add(PickedIntervals, End, Start), Limit)
     end.
-
 
 serialize_list(L, etf) ->
     term_to_binary(L);
 serialize_list(L, json) ->
     jiffy:encode(L).
 
-
 serialize_item(End, Start, etf) ->
     {<< End:256 >>, << Start:256 >>};
 serialize_item(End, Start, json) ->
     #{ integer_to_binary(End) => integer_to_binary(Start) }.
-
 
 serialize_subset(Intervals, Start, End, Limit, Format) ->
     case gb_sets:is_empty(Intervals) of
@@ -295,7 +262,6 @@ serialize_subset(Intervals, Start, End, Limit, Format) ->
             Iterator = gb_sets:iterator_from({Start, 0}, Intervals),
             serialize_subset(Iterator, [], 0, End, Limit, Format)
     end.
-
 
 serialize_subset(_Iterator, L, Count, _RightBound, Limit, Format) when Count == Limit ->
     serialize_list(L, Format);
@@ -309,22 +275,20 @@ serialize_subset(Iterator, L, Count, RightBound, Limit, Format) ->
             serialize_list(L, Format)
     end.
 
-
+from_etf(<<131, 80, _/binary>>) ->
+    error(compressed_etf);
 from_etf(Binary) ->
-    {ok, L} = ar_serialize:etf_decode(Binary),
+    L = binary_to_term(Binary, [safe]),
     from_etf(L, infinity, new()).
-
 
 from_etf([], _, Intervals) ->
     {ok, Intervals};
 from_etf([{<< End:256 >>, << Start:256 >>} | List], R, Intervals)
-  when End > Start andalso R > End andalso Start >= 0 ->
+        when End > Start andalso R > End andalso Start >= 0 ->
     from_etf(List, Start, gb_sets:add_element({End, Start}, Intervals)).
-
 
 inverse(Intervals) ->
     inverse(gb_sets:iterator(Intervals), 0, new()).
-
 
 inverse(Iterator, L, G) ->
     case gb_sets:next(Iterator) of
@@ -341,7 +305,6 @@ inverse(Iterator, L, G) ->
             end
     end.
 
-
 intersection(I1, I2, G) ->
     case {gb_sets:next(I1), gb_sets:next(I2)} of
         {none, _} ->
@@ -357,15 +320,3 @@ intersection(I1, I2, G) ->
         {{{End1, Start1}, _UpdatedI1}, {{End2, Start2}, UpdatedI2}} when End1 > End2 ->
             intersection(I1, UpdatedI2, gb_sets:add_element({End2, max(Start1, Start2)}, G))
     end.
-
-
-compare(I1, I2) ->
-    ?assertEqual(
-       serialize(#{ format => json, limit => count(I1), start => 0 }, I1),
-       serialize(#{ format => json, limit => count(I2), start => 0 }, I2)
-      ),
-    Folded1 = gb_sets:fold(fun({K, V}, Acc) -> [{K, V} | Acc] end, [], I1),
-    Folded2 = gb_sets:fold(fun({K, V}, Acc) -> [{K, V} | Acc] end, [], I2),
-    ?assertEqual(Folded1, Folded2).
-
-

@@ -1,19 +1,11 @@
+%%% Public replica.2.9 entropy-mapping API in the arweave_lib library app.
 -module(arweave_lib_replica_2_9).
--ifdef(AR_TEST).
--export([get_entropy_bucket_start/1, assert_slice_index/2, assert_entropy_index/2, walk_sub_chunks/3]).
--endif.
-
-
+-export([get_next_fetch_offset/3]).
 
 -export([get_entropy_partition/1, get_entropy_partition_range/1, get_entropy_key/3,
-    get_slice_index/1, get_partition_offset/1, get_entropy_index/2,
-    get_next_fetch_offset/3]).
-
+    get_slice_index/1, get_partition_offset/1, get_entropy_index/2]).
 
 -include_lib("arweave_lib/include/arweave_lib_constants.hrl").
-
--include_lib("eunit/include/eunit.hrl").
-
 
 -moduledoc """
     This module handles mapping the 2.9 replica entropy to chunks and sub-chunks.
@@ -92,7 +84,6 @@
             there are 1024 slices per entropy, which yields 1024 sectors per partition.
 """.
 
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -103,25 +94,128 @@
 -spec get_entropy_partition(
         AbsoluteChunkEndOffset :: non_neg_integer()
 ) -> non_neg_integer().
-
 get_entropy_partition(AbsoluteChunkEndOffset) ->
-    BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
-    ar_node:get_partition_number(BucketStart).
+    BucketStart =
+        arweave_lib_constants:get_chunk_bucket_start(AbsoluteChunkEndOffset),
+    BucketStart div arweave_lib_constants:partition_size().
 
+get_entropy_partition_range(PartitionNumber) ->
+    %% The goal of this function is to return the minimum and maximum byte offsets that, when
+    %% fed to arweave_lib_replica_2_9:get_entropy_partition/1 will yield the provided PartitinNumber.
+    %% 
+    %% To do this we do a rough reversal of the steps taken by
+    %% arweave_lib_replica_2_9:get_entropy_partition/1:
+    %% 
+    %% get_entropy_partition(AbsoluteChunkEndOffset) ->
+    %%    BucketStart = arweave_lib_constants:get_chunk_bucket_start(AbsoluteChunkEndOffset),
+    %%    BucketStart div arweave_lib_constants:partition_size().
+    %% 
+    %% I say "rough reverseal" because several of the steps are not reversible (e.g. 
+    %% rounding down to a bucket boundary discards data). 
+    %% 
+    %% 1. Reverse BucketStart div arweave_lib_constants:partition_size() to get the pick offsets
+    %%    representing the byte boundaries of the recall partition.
+    StartRecall = PartitionNumber * arweave_lib_constants:partition_size(),
+    EndRecall = (PartitionNumber + 1) * arweave_lib_constants:partition_size(),
+    %% 2. The next 3 steps reverse arweave_lib_constants:get_chunk_bucket_start/1 to yield the
+    %%    first and last bytes of the entropy partition.
+    %% 
+    %%    Get the first bucket boundary greater than the recall boundaries. This represents
+    %%    the bucket end offset of the bucket which contains the first/last byte of the
+    %%    recall partition. 
+    %% 
+    %%    Note: by passing 0 into get_padded_offset/2 we ignore the strict data split
+    %%    threshold and focus on just finding the nearest 256 KiB aligned boundary greater
+    %%    than the recall boundaries.
+    StartBucket1 = arweave_lib_constants:get_padded_offset(StartRecall, 0),
+    EndBucket1 = arweave_lib_constants:get_padded_offset(EndRecall, 0),
+    %% 3. arweave_lib_replica_2_9:get_entropy_partition/1 allocates this straddling bucket to the 
+    %%    previous partition. So the start of the entropy partition is the first byte which
+    %%    falls in the *next* bucket, and the end of the entropy partition is the last byte
+    %%    which falls in *this* bucket. To get those bytes we'll advance to the next bucket...
+    StartBucket2 = StartBucket1 + ?DATA_CHUNK_SIZE,
+    EndBucket2 = EndBucket1 + ?DATA_CHUNK_SIZE,
+    %% 4. ... and then get the first byte which falls in that bucket
+    StartByte1 =
+        arweave_lib_constants:get_chunk_byte_from_bucket_end(StartBucket2) + 1,
+    EndByte1 = arweave_lib_constants:get_chunk_byte_from_bucket_end(EndBucket2),
 
-%% @doc Walk a chunk-by-chunk cursor through the storage module range
-%% [Start, End), advancing one chunk at a time within a sector and then
-%% jumping to the next partition once we've covered every footprint in
-%% the current partition. Within one sector each chunk has a unique
-%% replica.2.9 entropy (and therefore a unique footprint), so one sector's
-%% worth of chunks is enough to touch every footprint in the partition;
-%% continuing past the sector would re-fetch footprints we've already
-%% covered.
--spec get_next_fetch_offset(
-        Offset :: non_neg_integer(),
-        Start :: non_neg_integer(),
-        End :: non_neg_integer()
+    %% 5. Handle the special case of partition 0. Since it has no preceding partition its
+    %%    byte start is 0.
+    StartByte2 = case PartitionNumber of
+        0 ->
+            0;
+        _ ->
+            StartByte1
+    end,
+
+    {StartByte2, EndByte1}.
+
+%% @doc Return the key used to generate the entropy for the 2.9 replication format.
+%% RewardAddr: The address of the miner that mined the chunk.
+%% AbsoluteEndOffset: The absolute end offset of the chunk.
+%% SubChunkStartOffset: The start offset of the sub-chunk within the chunk. 0 is the first
+%% sub-chunk of the chunk, (?DATA_CHUNK_SIZE - ?SUB_CHUNK_SIZE) is the
+%% last sub-chunk of the chunk.
+-spec get_entropy_key(
+        RewardAddr :: binary(),
+        AbsoluteEndOffset :: non_neg_integer(),
+        SubChunkStartOffset :: non_neg_integer()
+) -> binary().
+get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
+    Partition = get_entropy_partition(AbsoluteEndOffset),
+    %% We use the key to generate a large entropy shared by many chunks.
+    EntropyIndex = get_entropy_index(AbsoluteEndOffset, SubChunkStartOffset),
+    crypto:hash(sha256, << Partition:256, EntropyIndex:256, RewardAddr/binary >>).
+
+%% @doc Return the 0-based index indicating which area within a 2.9 entropy the
+%% given sub-chunk is mapped to (aka slice index). Sub-chunks of the same chunk are mapped to
+%% different entropies but all use the same slice index.
+-spec get_slice_index(
+        AbsoluteChunkEndOffset :: non_neg_integer()
 ) -> non_neg_integer().
+get_slice_index(AbsoluteChunkEndOffset) ->
+    PartitionRelativeOffset = get_partition_offset(AbsoluteChunkEndOffset),
+    SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
+    (PartitionRelativeOffset div SectorSize) rem arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy().
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+%% @doc Return the offset of the chunk within its partition.
+-spec get_partition_offset(AbsoluteChunkEndOffset :: non_neg_integer()) -> non_neg_integer().
+get_partition_offset(AbsoluteChunkEndOffset) ->
+    BucketStart =
+        arweave_lib_constants:get_chunk_bucket_start(AbsoluteChunkEndOffset),
+    Partition = get_entropy_partition(AbsoluteChunkEndOffset),
+    PartitionStart = Partition * arweave_lib_constants:partition_size(),
+    BucketStart - PartitionStart.
+
+%% @doc Returns the index of the entropy containing the slice for specified chunk's sub-chunk. 
+%% An entropy index is 0-based index used to identify a specific entropy within an entropy
+%% partition. It is not unique - the same index will refer to different entropies in different
+%% partitions and for different mining addresses. For a unique entropy identifier see
+%% get_entropy_key/3.
+%% 
+%% The entropy index is for the 2.9 replication format.
+-spec get_entropy_index(
+    AbsoluteChunkEndOffset :: non_neg_integer(),
+    SubChunkStartOffset :: non_neg_integer()
+) -> non_neg_integer().
+get_entropy_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
+    %% Assert that SubChunkStartOffset is less than ?DATA_CHUNK_SIZE
+    true = SubChunkStartOffset < ?DATA_CHUNK_SIZE,
+    PartitionRelativeOffset = get_partition_offset(AbsoluteChunkEndOffset),
+    SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
+    %% Index of this chunk into the sector (i.e. how many chunks into the sector it falls)
+    ChunkBucket = (PartitionRelativeOffset rem SectorSize) div ?DATA_CHUNK_SIZE,
+    %% Index of this sub-chunk into the chunk (i.e. how many sub-chunks into the chunk it
+    %% falls)
+    SubChunkBucket = SubChunkStartOffset div ?SUB_CHUNK_SIZE,
+    ChunkBucket * ?SUB_CHUNK_COUNT + SubChunkBucket.
+
+
 
 get_next_fetch_offset(Offset, Start, End) ->
     SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
@@ -137,183 +231,3 @@ get_next_fetch_offset(Offset, Start, End) ->
                 Offset + ?DATA_CHUNK_SIZE
         end,
     min(Offset2, End).
-
-
-get_entropy_partition_range(PartitionNumber) ->
-    %% The goal of this function is to return the minimum and maximum byte offsets that, when
-    %% fed to arweave_lib_replica_2_9:get_entropy_partition/1 will yield the provided PartitinNumber.
-    %% 
-    %% To do this we do a rough reversal of the steps taken by
-    %% arweave_lib_replica_2_9:get_entropy_partition/1:
-    %% 
-    %% get_entropy_partition(AbsoluteChunkEndOffset) ->
-    %%    BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
-    %%    ar_node:get_partition_number(BucketStart).
-    %% 
-    %% I say "rough reverseal" because several of the steps are not reversible (e.g. 
-    %% arweave_util:floor_int/2 discards data and so it not perfectly reversible). 
-    %% 
-    %% 1. Reverse ar_node:get_partition_number(BucketStart) to get the pick offsets
-    %%    representing the byte boundaries of the recall partition.
-    StartRecall = PartitionNumber * arweave_lib_constants:partition_size(),
-    EndRecall = (PartitionNumber + 1) * arweave_lib_constants:partition_size(),
-    %% 2. The next 3 steps reverse arweave_lib_replica_2_9:get_entropy_bucket_start/1 to yield the
-    %%    first and last bytes of the entropy partition.
-    %% 
-    %%    Get the first bucket boundary greater than the recall boundaries. This represents
-    %%    the bucket end offset of the bucket which contains the first/last byte of the
-    %%    recall partition. 
-    %% 
-    %%    Note: by passing 0 into get_padded_offset/2 we ignore the strict data split
-    %%    threshold and focus on just finding the nearest 256 KiB aligned boundary greater
-    %%    than the recall boundaries.
-    StartBucket1 = ar_poa:get_padded_offset(StartRecall, 0),
-    EndBucket1 = ar_poa:get_padded_offset(EndRecall, 0),
-    %% 3. arweave_lib_replica_2_9:get_entropy_partition/1 allocates this straddling bucket to the 
-    %%    previous partition. So the start of the entropy partition is the first byte which
-    %%    falls in the *next* bucket, and the end of the entropy partition is the last byte
-    %%    which falls in *this* bucket. To get those bytes we'll advance to the next bucket...
-    StartBucket2 = StartBucket1 + ?DATA_CHUNK_SIZE,
-    EndBucket2 = EndBucket1 + ?DATA_CHUNK_SIZE,
-    %% 4. ... and then get the first byte which falls in that bucket
-    StartByte1 = arweave_lib_constants:get_chunk_byte_from_bucket_end(StartBucket2) + 1,
-    EndByte1 = arweave_lib_constants:get_chunk_byte_from_bucket_end(EndBucket2),
-
-    %% 5. Handle the special case of partition 0. Since it has no preceding partition its
-    %%    byte start is 0.
-    StartByte2 = case PartitionNumber of
-        0 ->
-            0;
-        _ ->
-            StartByte1
-    end,
-
-    {StartByte2, EndByte1}.
-
-
-%% @doc Return the key used to generate the entropy for the 2.9 replication format.
-%% RewardAddr: The address of the miner that mined the chunk.
-%% AbsoluteEndOffset: The absolute end offset of the chunk.
-%% SubChunkStartOffset: The start offset of the sub-chunk within the chunk. 0 is the first
-%% sub-chunk of the chunk, (?DATA_CHUNK_SIZE - ?SUB_CHUNK_SIZE) is the
-%% last sub-chunk of the chunk.
--spec get_entropy_key(
-        RewardAddr :: binary(),
-        AbsoluteEndOffset :: non_neg_integer(),
-        SubChunkStartOffset :: non_neg_integer()
-) -> binary().
-
-get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
-    Partition = get_entropy_partition(AbsoluteEndOffset),
-    %% We use the key to generate a large entropy shared by many chunks.
-    EntropyIndex = get_entropy_index(AbsoluteEndOffset, SubChunkStartOffset),
-    crypto:hash(sha256, << Partition:256, EntropyIndex:256, RewardAddr/binary >>).
-
-
-%% @doc Return the 0-based index indicating which area within a 2.9 entropy the
-%% given sub-chunk is mapped to (aka slice index). Sub-chunks of the same chunk are mapped to
-%% different entropies but all use the same slice index.
--spec get_slice_index(
-        AbsoluteChunkEndOffset :: non_neg_integer()
-) -> non_neg_integer().
-
-get_slice_index(AbsoluteChunkEndOffset) ->
-    PartitionRelativeOffset = get_partition_offset(AbsoluteChunkEndOffset),
-    SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
-    (PartitionRelativeOffset div SectorSize) rem arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy().
-
-
-%%%===================================================================
-%%% Private functions.
-%%%===================================================================
-
-%% @doc Return the start offset of the bucket containing the given chunk offset.
-%% A chunk bucket is a 0-based, 256-KiB wide, 256-KiB aligned range. A chunk belongs to
-%% the bucket that contains the first byte of the chunk.
--spec get_entropy_bucket_start(non_neg_integer()) -> non_neg_integer().
-
-get_entropy_bucket_start(AbsoluteChunkEndOffset) ->
-    PaddedEndOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteChunkEndOffset),
-    PickOffset = max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE),
-    BucketStart = arweave_util:floor_int(PickOffset, ?DATA_CHUNK_SIZE),
-
-    true = BucketStart == arweave_lib_constants:get_chunk_bucket_start(PaddedEndOffset),
-    
-    BucketStart.
-
-
-%% @doc Return the offset of the chunk within its partition.
--spec get_partition_offset(AbsoluteChunkEndOffset :: non_neg_integer()) -> non_neg_integer().
-
-get_partition_offset(AbsoluteChunkEndOffset) ->
-    BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
-    Partition = get_entropy_partition(AbsoluteChunkEndOffset),
-    PartitionStart = Partition * arweave_lib_constants:partition_size(),
-    BucketStart - PartitionStart.
-
-
-%% @doc Returns the index of the entropy containing the slice for specified chunk's sub-chunk. 
-%% An entropy index is 0-based index used to identify a specific entropy within an entropy
-%% partition. It is not unique - the same index will refer to different entropies in different
-%% partitions and for different mining addresses. For a unique entropy identifier see
-%% get_entropy_key/3.
-%% 
-%% The entropy index is for the 2.9 replication format.
--spec get_entropy_index(
-    AbsoluteChunkEndOffset :: non_neg_integer(),
-    SubChunkStartOffset :: non_neg_integer()
-) -> non_neg_integer().
-
-get_entropy_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
-    %% Assert that SubChunkStartOffset is less than ?DATA_CHUNK_SIZE
-    true = SubChunkStartOffset < ?DATA_CHUNK_SIZE,
-    PartitionRelativeOffset = get_partition_offset(AbsoluteChunkEndOffset),
-    SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
-    %% Index of this chunk into the sector (i.e. how many chunks into the sector it falls)
-    ChunkBucket = (PartitionRelativeOffset rem SectorSize) div ?DATA_CHUNK_SIZE,
-    %% Index of this sub-chunk into the chunk (i.e. how many sub-chunks into the chunk it
-    %% falls)
-    SubChunkBucket = SubChunkStartOffset div ?SUB_CHUNK_SIZE,
-    ChunkBucket * ?SUB_CHUNK_COUNT + SubChunkBucket.
-
-
-assert_slice_index(_ExpectedIndex, []) ->
-    ok; 
-assert_slice_index(ExpectedIndex, [AbsoluteChunkByteOffset | Rest]) ->
-    ?assertEqual(
-        ExpectedIndex, get_slice_index(AbsoluteChunkByteOffset),
-        lists:flatten(io_lib:format("get_slice_index(~p)", 
-            [AbsoluteChunkByteOffset]))
-    ),
-    assert_slice_index(ExpectedIndex, Rest).
-
-
-assert_entropy_index(_ExpectedIndex, []) ->
-    ok; 
-assert_entropy_index(ExpectedIndex, [AbsoluteChunkByteOffset | Rest]) ->
-    walk_sub_chunks(ExpectedIndex, AbsoluteChunkByteOffset, 0),
-    assert_entropy_index(ExpectedIndex, Rest).
-
-
-walk_sub_chunks(_ExpectedIndex, _AbsoluteChunkByteOffset, SubChunkStartOffset)
-    when SubChunkStartOffset >= ?DATA_CHUNK_SIZE ->
-        ok;
-walk_sub_chunks(ExpectedIndex, AbsoluteChunkByteOffset, SubChunkStartOffset) ->
-    ?assertEqual(
-        ExpectedIndex, get_entropy_index(AbsoluteChunkByteOffset, SubChunkStartOffset),
-        lists:flatten(io_lib:format("get_entropy_index(~p, ~p)", 
-            [AbsoluteChunkByteOffset, SubChunkStartOffset]))
-    ),
-    ?assertEqual(
-        ExpectedIndex, get_entropy_index(AbsoluteChunkByteOffset, SubChunkStartOffset+1),
-        lists:flatten(io_lib:format("get_entropy_index(~p, ~p)", 
-            [AbsoluteChunkByteOffset, SubChunkStartOffset+1]))
-    ),
-    ?assertEqual(
-        ExpectedIndex, get_entropy_index(AbsoluteChunkByteOffset,  SubChunkStartOffset+8192-1),
-        lists:flatten(io_lib:format("get_entropy_index(~p, ~p)", 
-            [AbsoluteChunkByteOffset,  SubChunkStartOffset+8192-1]))
-    ),
-    walk_sub_chunks(ExpectedIndex+1, AbsoluteChunkByteOffset, SubChunkStartOffset+8192).
-
-

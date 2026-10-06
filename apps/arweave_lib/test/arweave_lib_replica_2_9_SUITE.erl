@@ -1,420 +1,252 @@
 -module(arweave_lib_replica_2_9_SUITE).
 -test_category([fast]).
--export([all/0, get_entropy_key/1, get_entropy_partition_range/1, slice_index_walk/1, entropy_index_walk/1, get_next_fetch_offset/1]).
+-compile([export_all, nowarn_export_all]).
+
 -include_lib("eunit/include/eunit.hrl").
--include_lib("arweave/include/ar.hrl").
-all() -> [get_entropy_key, get_entropy_partition_range, slice_index_walk, entropy_index_walk, get_next_fetch_offset].
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 
+suite() -> [{timetrap, {seconds, 30}}].
 
-
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
-
-get_entropy_key_test_() ->
-    ar_test_util:with_mocked([
-        {arweave_lib_constants, partition_size, fun() -> 2_000_000 end},
-        {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
-        {arweave_lib_constants, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
-        {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end}
-    ],
-    fun test_get_entropy_key/0, 30).
-
-get_entropy_key(_Config) ->
-    get_entropy_key_test_().
-
-
-
-test_get_entropy_key() ->
-    SubChunkSize = ?SUB_CHUNK_SIZE,
-    SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
-    EntropyPartitionSize = arweave_lib_constants:get_replica_2_9_entropy_partition_size(),
-    Addr = << 0:256 >>,
-    ?assertEqual(32, ?SUB_CHUNK_COUNT),
-    ?assertEqual(0, arweave_lib_replica_2_9:get_entropy_index(1, 0)),
-    EntropyKey = arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 1, 0)),
-    ?assertEqual(EntropyKey,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 1, 0))),
-    ?assertEqual(EntropyKey,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144, 0))),
-    %% The strict data split threshold in tests is 262144 * 3. Before the strict data
-    %% split threshold, the mapping works such that the chunk end offset up to but excluding
-    %% the bucket border is mapped to the previous bucket.
-    ?assertEqual(EntropyKey,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 2 - 1, 0))),
-    EntropyKey2 = arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 2, 0)),
-    ?assertNotEqual(EntropyKey, EntropyKey2),
-    ?assertEqual(EntropyKey2,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 3 - 1, 0))),
-    EntropyKey3 = arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 3, 0)),
-    ?assertNotEqual(EntropyKey2, EntropyKey3),
-    EntropyKey4 = arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 3 + 1, 0)),
-    %% 262144 * 3 is the strict data split threshold so chunks ending after it are mapped
-    %% to the first bucket after the threshold so the key does not equal the one of the
-    %% chunk ending exactly at the threshold which is still mapped to the previous bucket.
-    ?assertNotEqual(EntropyKey3, EntropyKey4),
-    ?assertEqual(EntropyKey4,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 4 - 1, 0))),
-    ?assertEqual(EntropyKey4,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 4, 0))),
-    %% The mapping then goes this way indefinitely.
-    EntropyKey5 = arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 5, 0)),
-    ?assertNotEqual(EntropyKey4, EntropyKey5),
-    %% Shift by sector size.
-    ?assertEqual(EntropyKey4,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 3 + 1 + SectorSize, 0))),
-    ?assertEqual(EntropyKey4,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 4 + SectorSize, 0))),
-    ?assertEqual(EntropyKey5,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 4 + 1 + SectorSize, 0))),
-    ?assertEqual(EntropyKey5,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 5 + SectorSize, 0))),
-
-    %% Exactly equal to the recall partition size:
-    ?assertEqual(0, arweave_lib_replica_2_9:get_entropy_partition(262144 * 5 + SectorSize)),
-    %% One greater than the recall partition size:
-    ?assertEqual(1, arweave_lib_replica_2_9:get_entropy_partition(262144 * 5 + SectorSize + 1)),
-    %% Greater than the entropy partition size (shouldn't matter since we map chunks
-    %% based on recall partition size)
-    ?assertEqual(1, arweave_lib_replica_2_9:get_entropy_partition(262144 * 6 + SectorSize + 1)),
-    %% The new partition => the new entropy.
-    EntropyKey6 =
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 5 + 2 * SectorSize, 0)),
-    ?assertNotEqual(EntropyKey6, EntropyKey5),
-    %% There is, of course, regularity within every partition.
-    ?assertEqual(EntropyKey6,
-            arweave_util:encode(arweave_lib_replica_2_9:get_entropy_key(Addr, 262144 * 5 + 3 * SectorSize, 0))),
-
-    %% Test the edges of recall partition vs. entropy partition.
-    ?assertEqual(0, arweave_lib_replica_2_9:get_entropy_partition(arweave_lib_constants:partition_size())),    
-    ?assertEqual(1, arweave_lib_replica_2_9:get_entropy_partition(EntropyPartitionSize)),
-    ?assertEqual(1, arweave_lib_replica_2_9:get_entropy_partition(2 * arweave_lib_constants:partition_size())),
-    ?assertEqual(2, arweave_lib_replica_2_9:get_entropy_partition(arweave_lib_constants:partition_size() + EntropyPartitionSize)),
-    ?assertEqual(2, arweave_lib_replica_2_9:get_entropy_partition(3 * arweave_lib_constants:partition_size())),
-    ?assertEqual(3, arweave_lib_replica_2_9:get_entropy_partition(2 * arweave_lib_constants:partition_size() + EntropyPartitionSize)),
-    ?assertEqual(10, arweave_lib_replica_2_9:get_entropy_partition(11 * arweave_lib_constants:partition_size())),
-    ?assertEqual(11, arweave_lib_replica_2_9:get_entropy_partition(10 * arweave_lib_constants:partition_size() + EntropyPartitionSize)),
-    %% This sub-chunk offset isn't used in practice, just adding a bounds check.
-    ?assertMatch(
-        {'EXIT', {{badmatch, false}, _}},  catch arweave_lib_replica_2_9:get_entropy_index(0, 32 * SubChunkSize)).
-
-
-get_entropy_partition_range_test_() ->
+all() ->
     [
-        ar_test_util:with_mocked([
-                {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end}
-            ],
-            fun test_get_entropy_partition_range_after_strict/0, 30),
-        ar_test_util:with_mocked([
-                {arweave_lib_constants, strict_data_split_threshold, fun() -> 5_000_000 end}
-            ],
-            fun test_get_entropy_partition_range_before_strict/0, 30)
+        entropy_key,
+        entropy_partition_range_after_strict,
+        entropy_partition_range_before_strict,
+        slice_index_walk,
+        entropy_index_walk
     ].
 
-get_entropy_partition_range(_Config) ->
-    get_entropy_partition_range_test_().
+init_per_testcase(_, Config) ->
+    meck:new(arweave_lib_constants, [passthrough]),
+    Config.
 
+end_per_testcase(_, _) ->
+    meck:unload(arweave_lib_constants).
 
+%%====================================================================
+%% Test cases
+%%====================================================================
 
-test_get_entropy_partition_range_after_strict() ->
-    Start0 = 0,
-    End0 = 2272864,
-    ?assertEqual(0, arweave_lib_replica_2_9:get_entropy_partition(Start0)),
-    ?assertEqual(0, arweave_lib_replica_2_9:get_entropy_partition(End0)),
-    ?assertEqual({Start0, End0}, arweave_lib_replica_2_9:get_entropy_partition_range(0)),
-
-    Start1 = 2272865,
-    End1 = 4370016,
-    ?assertEqual(1, arweave_lib_replica_2_9:get_entropy_partition(Start1)),
-    ?assertEqual(1, arweave_lib_replica_2_9:get_entropy_partition(End1)),
-    ?assertEqual({Start1, End1}, arweave_lib_replica_2_9:get_entropy_partition_range(1)),
-
-    Start2 = 4370017,
-    End2 = 6205024,
-    ?assertEqual(2, arweave_lib_replica_2_9:get_entropy_partition(Start2)),
-    ?assertEqual(2, arweave_lib_replica_2_9:get_entropy_partition(End2)),
-    ?assertEqual({Start2, End2}, arweave_lib_replica_2_9:get_entropy_partition_range(2)),
-    ok.
-
-
-test_get_entropy_partition_range_before_strict() ->
-    Start0 = 0,
-    End0 = 2359295,
-    ?assertEqual(0, arweave_lib_replica_2_9:get_entropy_partition(Start0)),
-    ?assertEqual(0, arweave_lib_replica_2_9:get_entropy_partition(End0)),
-    ?assertEqual({Start0, End0}, arweave_lib_replica_2_9:get_entropy_partition_range(0)),
-    
-    Start1 = 2359296,
-    End1 = 4456447,
-    ?assertEqual(1, arweave_lib_replica_2_9:get_entropy_partition(Start1)),
-    ?assertEqual(1, arweave_lib_replica_2_9:get_entropy_partition(End1)),
-    ?assertEqual({Start1, End1}, arweave_lib_replica_2_9:get_entropy_partition_range(1)),
-    
-    Start2 = 4456448,
-    End2 = 6048576,
-    ?assertEqual(2, arweave_lib_replica_2_9:get_entropy_partition(Start2)),
-    ?assertEqual(2, arweave_lib_replica_2_9:get_entropy_partition(End2)),
-    ?assertEqual({Start2, End2}, arweave_lib_replica_2_9:get_entropy_partition_range(2)),
-    ok.
-
-
-
-%% @doc Walk sequentially through all chunks in a couple partitions and verify their slice
-%% indices
-slice_index_walk_test_() ->
-    ar_test_util:with_mocked([
-        {arweave_lib_constants, partition_size, fun() -> 8 * 262144 end},
-        {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
-        {arweave_lib_constants, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
-        {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
-        {arweave_lib_constants, strict_data_split_threshold, fun() -> 3 * 262144 end}
-    ],
-    fun test_slice_index_walk/0, 30).
-
-slice_index_walk(_Config) ->
-    slice_index_walk_test_().
-
-
-
-test_slice_index_walk() ->
-    %% --------------------------------------------------------------------------
-    %% Before the strict data split threshold:
-    %% --------------------------------------------------------------------------
-    
-    %% Partition start
-    %% Sector start
-    %% All sub-chunks in a chunk have the same slice index
-    arweave_lib_replica_2_9:assert_slice_index(0, [
-        0
+%% @doc Chunks in the same bucket share an entropy key, and the key changes
+%% at bucket, strict data split threshold and partition boundaries.
+entropy_key(_) ->
+    mock_constants([
+        {partition_size, 2_000_000},
+        {get_replica_2_9_entropy_sector_size, 786432},
+        {get_replica_2_9_entropy_partition_size, 2359296},
+        {get_sub_chunks_per_replica_2_9_entropy, 3}
     ]),
-    arweave_lib_replica_2_9:assert_slice_index(0, [
-        1, 262144-1, 262144
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(0, [
-        262144+1, 2*262144-1
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(0, [
-        2*262144, 2*262144+1, 3*262144-1
-    ]),
-
-    %% The strict data split threshold:
-    %% The end offset exactly at the strict data split threshold is mapped to the
-    %% second bucket, therefore it is still the same sector size.
-    arweave_lib_replica_2_9:assert_slice_index(0, [
-        3*262144
-    ]),
-
-    %% --------------------------------------------------------------------------
-    %% After the strict data split threshold, all end offsets are padded to a multiple of
-    %% ?DATA_CHUNK_SIZE (i.e. 262144).
-    %% --------------------------------------------------------------------------
-    
-    %% Sector start
-    arweave_lib_replica_2_9:assert_slice_index(1, [
-        3*262144+1, 4*262144-1, 4*262144
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(1, [
-        4*262144+1, 5*262144-1, 5*262144
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(1, [
-        5*262144+1 , 6*262144-1, 6*262144
-    ]),
-
-    %% Sector start
-    arweave_lib_replica_2_9:assert_slice_index(2, [
-        6*262144+1, 7*262144-1, 7*262144
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(2, [
-        7*262144+1, 8*262144-1, 8*262144
-    ]),
-
-    %% Recall partition start
-    %% Sector start
-    arweave_lib_replica_2_9:assert_slice_index(0, [
-        8*262144+1, 9*262144-1, 9*262144
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(0, [
-        9*262144+1, 10*262144-1, 10*262144
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(0, [
-        10*262144+1, 11*262144-1, 11*262144
-    ]),
-
-    %% Sector start
-    arweave_lib_replica_2_9:assert_slice_index(1, [
-        11*262144+1, 12*262144-1, 12*262144
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(1, [
-        12*262144+1, 13*262144-1, 13*262144
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(1, [
-        13*262144+1, 14*262144-1, 14*262144
-    ]),
-    
-    %% Sector start
-    arweave_lib_replica_2_9:assert_slice_index(2, [
-        14*262144+1, 15*262144-1, 15*262144
-    ]),
-    arweave_lib_replica_2_9:assert_slice_index(2, [
-        15*262144+1, 16*262144-1, 16*262144
-    ]),
-
-    %% Recall partition start
-    %% Sector start
-    arweave_lib_replica_2_9:assert_slice_index(0, [
-        16*262144+1, 17*262144-1, 17*262144
-    ]),
-
-    ?assertEqual(arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy() - 1,
-            arweave_lib_replica_2_9:get_slice_index(arweave_lib_constants:partition_size())),
-    ?assertEqual(0,
-            arweave_lib_replica_2_9:get_slice_index(arweave_lib_constants:partition_size() + 1)),
-
-    ok.
-
-
-
-%% @doc Walk through every sub-chunk of each chunk and verify its entropy index and
-%% entropy sub-chunk index.
-entropy_index_walk_test_() ->
-    ar_test_util:with_mocked([
-        {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
-        {arweave_lib_constants, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
-        {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end}
-    ],
-    fun test_entropy_index_walk/0, 30).
-
-entropy_index_walk(_Config) ->
-    entropy_index_walk_test_().
-
-
-
-test_entropy_index_walk() ->
-    %% assert_entropy_index takes a list of chunk end offsets and verifies the entropy
-    %% index for each sub-chunk in the chunk. The first argument is the expected entropy
-    %% index for the first sub-chunk in the chunk, for each subsequent sub-chunk the
-    %% expected index is incremented by 1.
-    %% 
-    %% The sector size determines the number of entropy indices. During tests the sector
-    %% size is 3*262144, so the total number of entropy indices is 3*262144 / 8192 = 96 (one
-    %% for each sub-chunk in each sector).
-    
-    %% In tests the strict data split threshold is 262144 * 3, before that offset chunks
-    %% were not padded. So each provided end offset is taken as is. After the threshold each
-    %% offset is padded to a multiple of ?DATA_CHUNK_SIZE (i.e. 262144) off of the threshold
-    %% value.
-
-    %% --------------------------------------------------------------------------
-    %% Before the strict data split threshold:
-    %% --------------------------------------------------------------------------
-    
-    %% Partition start
-    %% Sector start
-    arweave_lib_replica_2_9:assert_entropy_index(0, [
-        0
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(0, [
-        1, 262144-1, 262144
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(0, [
-        262144+1, 2*262144-1
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(32, [
-        2*262144, 2*262144+1, 3*262144-1
-    ]),
-
-    %% The strict data split threshold:
-    arweave_lib_replica_2_9:assert_entropy_index(64, [
-        3*262144
-    ]),
-
-    %% --------------------------------------------------------------------------
-    %% After the strict data split threshold, all end offsets are padded to a multiple of
-    %% ?DATA_CHUNK_SIZE (i.e. 262144).
-    %% --------------------------------------------------------------------------
-    
-    %% Sector start
-    arweave_lib_replica_2_9:assert_entropy_index(0, [
-        3*262144+1, 4*262144-1, 4*262144
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(32, [
-        4*262144+1, 5*262144-1, 5*262144
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(64, [
-        5*262144+1 , 6*262144-1, 6*262144
-    ]),
-
-    %% Sector start
-    arweave_lib_replica_2_9:assert_entropy_index(0, [
-        6*262144+1, 7*262144-1, 7*262144
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(32, [
-        7*262144+1, 8*262144-1, 8*262144
-    ]),
-
-    %% Partition start
-    %% Sector start
-    arweave_lib_replica_2_9:assert_entropy_index(0, [
-        8*262144+1, 9*262144-1, 9*262144
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(32, [
-        9*262144+1, 10*262144-1, 10*262144
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(64, [
-        10*262144+1, 11*262144-1, 11*262144
-    ]),
-
-    %% Sector start
-    arweave_lib_replica_2_9:assert_entropy_index(0, [
-        11*262144+1, 12*262144-1, 12*262144
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(32, [
-        12*262144+1, 13*262144-1, 13*262144
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(64, [
-        13*262144+1, 14*262144-1, 14*262144
-    ]),
-
-    %% Sector start
-    arweave_lib_replica_2_9:assert_entropy_index(0, [
-        14*262144+1, 15*262144-1, 15*262144
-    ]),
-    arweave_lib_replica_2_9:assert_entropy_index(32, [
-        15*262144+1, 16*262144-1, 16*262144
-    ]),
-
-    %% Partition start
-    %% Sector start
-    arweave_lib_replica_2_9:assert_entropy_index(0, [
-        16*262144+1, 17*262144-1, 17*262144
-    ]),
-
-
-    ok.
-
-
-get_next_fetch_offset_test() ->
     SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
-    {P0Start, P0End} = arweave_lib_replica_2_9:get_entropy_partition_range(0),
-    Chunk = ?DATA_CHUNK_SIZE,
+    EntropyPartitionSize =
+        arweave_lib_constants:get_replica_2_9_entropy_partition_size(),
+    PartitionSize = arweave_lib_constants:partition_size(),
+    Key = fun(Offset) ->
+        arweave_lib_replica_2_9:get_entropy_key(<<0:256>>, Offset, 0)
+    end,
+    Partition = fun arweave_lib_replica_2_9:get_entropy_partition/1,
+    ?assertEqual(32, ?SUB_CHUNK_COUNT),
+    ?assertEqual(0, arweave_lib_replica_2_9:get_entropy_index(1, 0)),
+    EntropyKey = Key(1),
+    ?assertEqual(EntropyKey, Key(1)),
+    ?assertEqual(EntropyKey, Key(262144)),
+    %% The strict data split threshold in tests is 262144 * 3. Before the
+    %% threshold, a chunk end offset up to but excluding the bucket border is
+    %% mapped to the previous bucket.
+    ?assertEqual(EntropyKey, Key(262144 * 2 - 1)),
+    EntropyKey2 = Key(262144 * 2),
+    ?assertNotEqual(EntropyKey, EntropyKey2),
+    ?assertEqual(EntropyKey2, Key(262144 * 3 - 1)),
+    EntropyKey3 = Key(262144 * 3),
+    ?assertNotEqual(EntropyKey2, EntropyKey3),
+    %% Chunks ending after the threshold are mapped to the first bucket after
+    %% it, so their key differs from the key of the chunk ending exactly at
+    %% the threshold, which is still mapped to the previous bucket.
+    EntropyKey4 = Key(262144 * 3 + 1),
+    ?assertNotEqual(EntropyKey3, EntropyKey4),
+    ?assertEqual(EntropyKey4, Key(262144 * 4 - 1)),
+    ?assertEqual(EntropyKey4, Key(262144 * 4)),
+    %% The mapping then continues the same way.
+    EntropyKey5 = Key(262144 * 5),
+    ?assertNotEqual(EntropyKey4, EntropyKey5),
+    %% Shift by the sector size.
+    ?assertEqual(EntropyKey4, Key(262144 * 3 + 1 + SectorSize)),
+    ?assertEqual(EntropyKey4, Key(262144 * 4 + SectorSize)),
+    ?assertEqual(EntropyKey5, Key(262144 * 4 + 1 + SectorSize)),
+    ?assertEqual(EntropyKey5, Key(262144 * 5 + SectorSize)),
 
-    ?assertEqual(P0Start + Chunk,
-        arweave_lib_replica_2_9:get_next_fetch_offset(P0Start, P0Start, P0End),
-        "simple advance"),
+    %% Exactly equal to the recall partition size.
+    ?assertEqual(0, Partition(262144 * 5 + SectorSize)),
+    %% One greater than the recall partition size.
+    ?assertEqual(1, Partition(262144 * 5 + SectorSize + 1)),
+    %% Greater than the entropy partition size. Chunks are mapped by the
+    %% recall partition size, so this is still partition 1.
+    ?assertEqual(1, Partition(262144 * 6 + SectorSize + 1)),
+    %% A new partition uses a new entropy.
+    EntropyKey6 = Key(262144 * 5 + 2 * SectorSize),
+    ?assertNotEqual(EntropyKey6, EntropyKey5),
+    %% The mapping repeats within every partition.
+    ?assertEqual(EntropyKey6, Key(262144 * 5 + 3 * SectorSize)),
 
-    ?assertEqual(P0Start + 1000,
-        arweave_lib_replica_2_9:get_next_fetch_offset(P0Start, P0Start, P0Start + 1000),
-        "simple advance, limited by End"),
+    %% The edges of the recall partition and the entropy partition.
+    ?assertEqual(0, Partition(PartitionSize)),
+    ?assertEqual(1, Partition(EntropyPartitionSize)),
+    ?assertEqual(1, Partition(2 * PartitionSize)),
+    ?assertEqual(2, Partition(PartitionSize + EntropyPartitionSize)),
+    ?assertEqual(2, Partition(3 * PartitionSize)),
+    ?assertEqual(3, Partition(2 * PartitionSize + EntropyPartitionSize)),
+    ?assertEqual(10, Partition(11 * PartitionSize)),
+    ?assertEqual(11, Partition(10 * PartitionSize + EntropyPartitionSize)),
+    %% This sub-chunk offset isn't used in practice; it checks the bound.
+    ?assertMatch({'EXIT', {{badmatch, false}, _}},
+        catch arweave_lib_replica_2_9:get_entropy_index(0,
+            32 * ?SUB_CHUNK_SIZE)).
 
-    ?assertEqual(P0End,
-        arweave_lib_replica_2_9:get_next_fetch_offset(P0Start + SectorSize - 1, P0Start, P0End),
-        "jump to PartitionEnd"),
+%% @doc Each entropy partition range spans the offsets mapped to that
+%% partition, when the partitions lie above the strict data split threshold.
+entropy_partition_range_after_strict(_) ->
+    mock_constants([{strict_data_split_threshold, 700_000}]),
+    Partition = fun arweave_lib_replica_2_9:get_entropy_partition/1,
+    Range = fun arweave_lib_replica_2_9:get_entropy_partition_range/1,
+    ?assertEqual(0, Partition(0)),
+    ?assertEqual(0, Partition(2272864)),
+    ?assertEqual({0, 2272864}, Range(0)),
+    ?assertEqual(1, Partition(2272865)),
+    ?assertEqual(1, Partition(4370016)),
+    ?assertEqual({2272865, 4370016}, Range(1)),
+    ?assertEqual(2, Partition(4370017)),
+    ?assertEqual(2, Partition(6205024)),
+    ?assertEqual({4370017, 6205024}, Range(2)).
 
-    ?assertEqual(P0Start + SectorSize,
-        arweave_lib_replica_2_9:get_next_fetch_offset(P0Start + SectorSize - 1, P0Start, P0Start + SectorSize),
-        "jump to PartitionEnd, limited by End"),
+%% @doc Each entropy partition range spans the offsets mapped to that
+%% partition, when the partitions lie below the strict data split threshold.
+entropy_partition_range_before_strict(_) ->
+    mock_constants([{strict_data_split_threshold, 5_000_000}]),
+    Partition = fun arweave_lib_replica_2_9:get_entropy_partition/1,
+    Range = fun arweave_lib_replica_2_9:get_entropy_partition_range/1,
+    ?assertEqual(0, Partition(0)),
+    ?assertEqual(0, Partition(2359295)),
+    ?assertEqual({0, 2359295}, Range(0)),
+    ?assertEqual(1, Partition(2359296)),
+    ?assertEqual(1, Partition(4456447)),
+    ?assertEqual({2359296, 4456447}, Range(1)),
+    ?assertEqual(2, Partition(4456448)),
+    ?assertEqual(2, Partition(6048576)),
+    ?assertEqual({4456448, 6048576}, Range(2)).
 
-    ok.
+%% @doc Walk through the chunks of a few partitions and check their slice
+%% indices. All sub-chunks of a chunk share a slice index.
+slice_index_walk(_) ->
+    C = ?DATA_CHUNK_SIZE,
+    mock_constants([
+        {partition_size, 8 * C},
+        {get_replica_2_9_entropy_sector_size, 786432},
+        {get_replica_2_9_entropy_partition_size, 2359296},
+        {get_sub_chunks_per_replica_2_9_entropy, 3},
+        {strict_data_split_threshold, 3 * C}
+    ]),
+    %% Each entry is a slice index and the chunk end offsets that map to it.
+    Walk = [
+        %% Before the strict data split threshold. Partition and sector
+        %% start.
+        {0, [0]},
+        {0, [1, C - 1, C]},
+        {0, [C + 1, 2 * C - 1]},
+        {0, [2 * C, 2 * C + 1, 3 * C - 1]},
+        %% The end offset exactly at the threshold is mapped to the second
+        %% bucket, so it is still in the first sector.
+        {0, [3 * C]},
+        %% After the threshold, end offsets are padded to a multiple of
+        %% ?DATA_CHUNK_SIZE. Sector start.
+        {1, [3 * C + 1, 4 * C - 1, 4 * C]},
+        {1, [4 * C + 1, 5 * C - 1, 5 * C]},
+        {1, [5 * C + 1, 6 * C - 1, 6 * C]},
+        %% Sector start.
+        {2, [6 * C + 1, 7 * C - 1, 7 * C]},
+        {2, [7 * C + 1, 8 * C - 1, 8 * C]},
+        %% Recall partition and sector start.
+        {0, [8 * C + 1, 9 * C - 1, 9 * C]},
+        {0, [9 * C + 1, 10 * C - 1, 10 * C]},
+        {0, [10 * C + 1, 11 * C - 1, 11 * C]},
+        %% Sector start.
+        {1, [11 * C + 1, 12 * C - 1, 12 * C]},
+        {1, [12 * C + 1, 13 * C - 1, 13 * C]},
+        {1, [13 * C + 1, 14 * C - 1, 14 * C]},
+        %% Sector start.
+        {2, [14 * C + 1, 15 * C - 1, 15 * C]},
+        {2, [15 * C + 1, 16 * C - 1, 16 * C]},
+        %% Recall partition and sector start.
+        {0, [16 * C + 1, 17 * C - 1, 17 * C]}
+    ],
+    [?assertEqual(Index, arweave_lib_replica_2_9:get_slice_index(Offset),
+            {offset, Offset})
+        || {Index, Offsets} <- Walk, Offset <- Offsets],
+    PartitionSize = arweave_lib_constants:partition_size(),
+    ?assertEqual(
+        arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy() - 1,
+        arweave_lib_replica_2_9:get_slice_index(PartitionSize)),
+    ?assertEqual(0,
+        arweave_lib_replica_2_9:get_slice_index(PartitionSize + 1)).
 
-get_next_fetch_offset(_Config) ->
-    get_next_fetch_offset_test().
+%% @doc Walk through every sub-chunk of the chunks in a few partitions and
+%% check its entropy index. The sub-chunks of a chunk use consecutive indices.
+entropy_index_walk(_) ->
+    C = ?DATA_CHUNK_SIZE,
+    mock_constants([
+        {get_replica_2_9_entropy_sector_size, 786432},
+        {get_replica_2_9_entropy_partition_size, 2359296},
+        {get_sub_chunks_per_replica_2_9_entropy, 3}
+    ]),
+    %% Each entry is the entropy index of the first sub-chunk and the chunk
+    %% end offsets it applies to. The sector size is 3 * C, so there are
+    %% 3 * C / 8192 = 96 entropy indices, one per sub-chunk in a sector. The
+    %% strict data split threshold is 3 * C; end offsets after it are padded
+    %% to a multiple of ?DATA_CHUNK_SIZE.
+    Walk = [
+        %% Before the strict data split threshold. Partition and sector
+        %% start.
+        {0, [0]},
+        {0, [1, C - 1, C]},
+        {0, [C + 1, 2 * C - 1]},
+        {32, [2 * C, 2 * C + 1, 3 * C - 1]},
+        %% The strict data split threshold.
+        {64, [3 * C]},
+        %% After the threshold. Sector start.
+        {0, [3 * C + 1, 4 * C - 1, 4 * C]},
+        {32, [4 * C + 1, 5 * C - 1, 5 * C]},
+        {64, [5 * C + 1, 6 * C - 1, 6 * C]},
+        %% Sector start.
+        {0, [6 * C + 1, 7 * C - 1, 7 * C]},
+        {32, [7 * C + 1, 8 * C - 1, 8 * C]},
+        %% Partition and sector start.
+        {0, [8 * C + 1, 9 * C - 1, 9 * C]},
+        {32, [9 * C + 1, 10 * C - 1, 10 * C]},
+        {64, [10 * C + 1, 11 * C - 1, 11 * C]},
+        %% Sector start.
+        {0, [11 * C + 1, 12 * C - 1, 12 * C]},
+        {32, [12 * C + 1, 13 * C - 1, 13 * C]},
+        {64, [13 * C + 1, 14 * C - 1, 14 * C]},
+        %% Sector start.
+        {0, [14 * C + 1, 15 * C - 1, 15 * C]},
+        {32, [15 * C + 1, 16 * C - 1, 16 * C]},
+        %% Partition and sector start.
+        {0, [16 * C + 1, 17 * C - 1, 17 * C]}
+    ],
+    [?assertEqual(First + SubChunk,
+            arweave_lib_replica_2_9:get_entropy_index(Offset,
+                SubChunk * ?SUB_CHUNK_SIZE + Shift),
+            {Offset, SubChunk, Shift})
+        || {First, Offsets} <- Walk, Offset <- Offsets,
+            SubChunk <- lists:seq(0, ?SUB_CHUNK_COUNT - 1),
+            Shift <- [0, 1, ?SUB_CHUNK_SIZE - 1]].
+
+%%====================================================================
+%% Helpers
+%%====================================================================
+
+mock_constants(Values) ->
+    lists:foreach(
+        fun({Name, Value}) ->
+            meck:expect(arweave_lib_constants, Name, fun() -> Value end)
+        end,
+        Values
+    ).
