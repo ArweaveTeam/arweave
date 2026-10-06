@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
 -include_lib("arweave/include/ar_sync_buckets.hrl").
 -include_lib("arweave_storage/include/arweave_storage_deps.hrl").
 

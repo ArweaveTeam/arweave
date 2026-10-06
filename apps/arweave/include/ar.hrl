@@ -21,6 +21,7 @@
 %% multiple places, with a more reasonable value.
 %% Is a subject for future changes.
 -define(DEFAULT_CALL_TIMEOUT, 600000).
+-define(NODE_JOIN_RETRY_DELAY_MS, 1_000).
 
 
 
