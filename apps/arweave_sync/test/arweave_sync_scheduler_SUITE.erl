@@ -7,6 +7,7 @@
 -include_lib("arweave/include/ar_peers.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave_sync/include/arweave_sync.hrl").
+-include_lib("arweave_sync/include/arweave_sync_peer_cap.hrl").
 -include_lib("arweave_sync/include/arweave_sync_scheduler.hrl").
 
 suite() -> [{timetrap, {seconds, 30}}].
@@ -1490,7 +1491,7 @@ cap(_Config) ->
         1,
         arweave_sync_peer:concurrency_cap(known, PeerPlan)
     ),
-    %% First tick has no productive request time, so both peers remain at
+    %% First tick has no previous goodput sample, so both peers remain at
     %% the eight-request exploration bound despite each having a queued
     %% task behind eight active fetches.
     InitialPeerState = record_peer_results(
@@ -1510,11 +1511,10 @@ cap(_Config) ->
     ),
     ?assertEqual(8, arweave_sync_peer:concurrency_cap(PeerA, PeerPlan1)),
     ?assertEqual(8, arweave_sync_peer:concurrency_cap(PeerB, PeerPlan1)),
-    %% Productive driven samples fill a six-sample baseline window at the
-    %% eight-request cap; the window's last sample starts a fresh
-    %% peer's doubled probe.
+    %% The cap stays at eight until the last driven sample fills the probe
+    %% baseline window, then doubles for the fresh peer's first probe.
     ProductiveTiming = #fetch_timing{productive_ms = 1000},
-    BaselineTicks = 5,
+    BaselineTicks = ?PROBE_WINDOW_SAMPLES - 1,
     State2 = productive_ticks(
         [PeerA, PeerB], #{PeerA => 8, PeerB => 8}, ProductiveTiming,
         State1, 2000, BaselineTicks
