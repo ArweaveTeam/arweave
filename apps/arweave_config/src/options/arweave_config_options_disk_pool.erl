@@ -20,17 +20,19 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [disk_pool, jobs],
+            option_key => [disk_pool, workers],
             default => ?DEFAULT_DISK_POOL_JOBS,
             type => non_neg_integer,
             legacy => disk_pool_jobs,
             short_description =>
-                <<"Number of disk-pool jobs.">>,
+                <<"Number of concurrent disk-pool scan loops.">>,
             long_description =>
-                <<"Disk-pool jobs scan the disk pool to index "
+                <<"Scan loops index "
                   "no-longer-pending or orphaned chunks, schedule "
                   "packing for chunks with a sufficient number of "
-                  "confirmations, and remove abandoned chunks.">>
+                  "confirmations, and remove abandoned chunks. Set to 0 "
+                  "to disable scanning. Independent of "
+                  "sync.max_download_rate.">>
         },
         #{
             enabled => true,
@@ -40,8 +42,17 @@ specs() ->
             type => non_neg_integer,
             legacy => max_disk_pool_buffer_mb,
             short_description =>
-                <<"Maximum total size in MiB of pending chunks in "
-                  "the disk pool.">>
+                <<
+                    "Maximum total size in MiB of pending chunks kept "
+                    "on disk in the disk pool."
+                >>,
+            long_description =>
+                <<
+                    "Limits pending chunk data on disk, not RAM. Also "
+                    "contributes to the free-disk-space reserve. Chunks read "
+                    "from the disk pool for packing or final storage use "
+                    "the separate in-memory packing.cache_size limit."
+                >>
         },
         #{
             enabled => true,
@@ -51,8 +62,10 @@ specs() ->
             type => non_neg_integer,
             legacy => max_disk_pool_data_root_buffer_mb,
             short_description =>
-                <<"Maximum size in MiB per data root of pending "
-                  "chunks in the disk pool.">>
+                <<
+                    "Maximum size in MiB per data root of pending "
+                    "chunks kept on disk in the disk pool."
+                >>
         }
     ].
 

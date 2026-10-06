@@ -293,7 +293,7 @@ parse(["sync_jobs", Num | Rest]) ->
     parse(Rest);
 parse(["header_sync_jobs", Num | Rest]) ->
     V = list_to_integer(Num),
-    _ = arweave_config:set([gossip, header_sync_jobs], V),
+    _ = arweave_config:set([gossip, header, workers], V),
     parse(Rest);
 parse(["enable_data_roots_syncing", "true" | Rest]) ->
     _ = arweave_config:set([gossip, data_roots, syncing_enabled], true),
@@ -311,7 +311,7 @@ parse(["post_tx_timeout", Num | Rest]) ->
 parse(["max_connections", Num | Rest]) ->
     try list_to_integer(Num) of
         N when N >= 1 ->
-            _ = arweave_config:set([network, server, tcp, max_connections], N),
+            _ = arweave_config:set([network, server, http, max_connections], N),
             parse(Rest);
         _ ->
             io:format("Invalid max_connections ~p", [Num]),
@@ -343,7 +343,7 @@ parse(["max_duplicate_data_roots", Num | Rest]) ->
     parse(Rest);
 parse(["disk_cache_size_mb", Num | Rest]) ->
     V = list_to_integer(Num),
-    _ = arweave_config:set([gossip, header_cache_size], V),
+    _ = arweave_config:set([gossip, header, cache_size], V),
     parse(Rest);
 parse(["packing_workers", Num | Rest]) ->
     V = list_to_integer(Num),
@@ -411,7 +411,7 @@ parse(["defragment_module", DefragModuleString | Rest]) ->
     end;
 parse(["http_api.tcp.idle_timeout_seconds", Num | Rest]) ->
     V = list_to_integer(Num) * 1000,
-    _ = arweave_config:set([network, server, transport, idle_timeout], V),
+    _ = arweave_config:set([network, server, http, idle_timeout], V),
     parse(Rest);
 parse(["coordinated_mining" | Rest]) ->
     _ = arweave_config:set([cm, enabled], true),
@@ -485,15 +485,15 @@ parse(["rocksdb_wal_sync_interval", Seconds | Rest]) ->
 %% TCP shutdown procedure.
 parse(["network.tcp.connection_timeout", Delay|Rest]) ->
     V = list_to_integer(Delay),
-    _ = arweave_config:set([network, server, shutdown_connection_timeout], V),
+    _ = arweave_config:set([network, server, shutdown, connection_timeout], V),
     parse(Rest);
 parse(["network.tcp.shutdown.mode", RawMode|Rest]) ->
     case RawMode of
         "shutdown" ->
-            _ = arweave_config:set([network, server, shutdown_mode], shutdown),
+            _ = arweave_config:set([network, server, shutdown, mode], shutdown),
             parse(Rest);
         "close" ->
-            _ = arweave_config:set([network, server, shutdown_mode], close),
+            _ = arweave_config:set([network, server, shutdown, mode], close),
             parse(Rest);
         Mode ->
             io:format("Mode ~p is invalid.~n", [Mode]),
@@ -504,10 +504,10 @@ parse(["network.tcp.shutdown.mode", RawMode|Rest]) ->
 parse(["network.socket.backend", Backend|Rest]) ->
     case Backend of
         "inet" ->
-            _ = arweave_config:set([network, server, socket_backend], inet),
+            _ = arweave_config:set([network, server, socket, backend], inet),
             parse(Rest);
         "socket" ->
-            _ = arweave_config:set([network, server, socket_backend], socket),
+            _ = arweave_config:set([network, server, socket, backend], socket),
             parse(Rest);
         _ ->
             io:format("Invalid socket.backend ~p.", [Backend]),
@@ -534,10 +534,10 @@ parse(["http_client.http.keepalive", Keepalive|Rest]) ->
 parse(["http_client.tcp.delay_send", DelaySend|Rest]) ->
     case DelaySend of
         "true" ->
-            _ = arweave_config:set([network, client, tcp, delay_send], true),
+            _ = arweave_config:set([network, client, socket, delay_send], true),
             parse(Rest);
         "false" ->
-            _ = arweave_config:set([network, client, tcp, delay_send], false),
+            _ = arweave_config:set([network, client, socket, delay_send], false),
             parse(Rest);
         _ ->
             io:format("Invalid http_client.tcp.delay_send ~p.", [DelaySend]),
@@ -546,10 +546,10 @@ parse(["http_client.tcp.delay_send", DelaySend|Rest]) ->
 parse(["http_client.tcp.keepalive", Keepalive|Rest]) ->
     case Keepalive of
         "true" ->
-            _ = arweave_config:set([network, client, tcp, keepalive], true),
+            _ = arweave_config:set([network, client, socket, keepalive], true),
             parse(Rest);
         "false" ->
-            _ = arweave_config:set([network, client, tcp, keepalive], false),
+            _ = arweave_config:set([network, client, socket, keepalive], false),
             parse(Rest);
         _ ->
             io:format("Invalid http_client.tcp.keepalive ~p.", [Keepalive]),
@@ -558,10 +558,10 @@ parse(["http_client.tcp.keepalive", Keepalive|Rest]) ->
 parse(["http_client.tcp.linger", Linger|Rest]) ->
     case Linger of
         "true" ->
-            _ = arweave_config:set([network, client, tcp, linger], true),
+            _ = arweave_config:set([network, client, socket, linger], true),
             parse(Rest);
         "false" ->
-            _ = arweave_config:set([network, client, tcp, linger], false),
+            _ = arweave_config:set([network, client, socket, linger], false),
             parse(Rest);
         _ ->
             io:format("Invalid http_client.tcp.linger ~p.", [Linger]),
@@ -570,7 +570,7 @@ parse(["http_client.tcp.linger", Linger|Rest]) ->
 parse(["http_client.tcp.linger_timeout", Timeout|Rest]) ->
     try list_to_integer(Timeout) of
         T when T >= 0 ->
-            _ = arweave_config:set([network, client, tcp, linger_timeout], T),
+            _ = arweave_config:set([network, client, socket, linger_timeout], T),
             parse(Rest);
         _ ->
             io:format("Invalid http_client.tcp.linger_timeout ~p.", [Timeout]),
@@ -583,10 +583,10 @@ parse(["http_client.tcp.linger_timeout", Timeout|Rest]) ->
 parse(["http_client.tcp.nodelay", Nodelay|Rest]) ->
     case Nodelay of
         "true" ->
-            _ = arweave_config:set([network, client, tcp, nodelay], true),
+            _ = arweave_config:set([network, client, socket, nodelay], true),
             parse(Rest);
         "false" ->
-            _ = arweave_config:set([network, client, tcp, nodelay], false),
+            _ = arweave_config:set([network, client, socket, nodelay], false),
             parse(Rest);
         _ ->
             io:format("Invalid http_client.tcp.nodelay ~p.", [Nodelay]),
@@ -595,10 +595,10 @@ parse(["http_client.tcp.nodelay", Nodelay|Rest]) ->
 parse(["http_client.tcp.send_timeout_close", Value|Rest]) ->
     case Value of
         "true" ->
-            _ = arweave_config:set([network, client, tcp, send_timeout_close], true),
+            _ = arweave_config:set([network, client, socket, send_timeout_close], true),
             parse(Rest);
         "false" ->
-            _ = arweave_config:set([network, client, tcp, send_timeout_close], false),
+            _ = arweave_config:set([network, client, socket, send_timeout_close], false),
             parse(Rest);
         _ ->
             io:format("Invalid http_client.tcp.send_timeout_close ~p.", [Value]),
@@ -607,7 +607,7 @@ parse(["http_client.tcp.send_timeout_close", Value|Rest]) ->
 parse(["http_client.tcp.send_timeout", Timeout|Rest]) ->
     try list_to_integer(Timeout) of
         T when T >= 0 ->
-            _ = arweave_config:set([network, client, tcp, send_timeout], T),
+            _ = arweave_config:set([network, client, socket, send_timeout], T),
             parse(Rest);
         _ ->
             io:format("Invalid http_client.tcp.send_timeout ~p.", [Timeout]),
@@ -674,7 +674,7 @@ parse(["http_api.http.request_timeout", Timeout|Rest]) ->
 parse(["http_api.tcp.backlog", Backlog|Rest]) ->
     try list_to_integer(Backlog)of
         B when B >= 1 ->
-            _ = arweave_config:set([network, server, tcp, backlog], B),
+            _ = arweave_config:set([network, server, socket, backlog], B),
             parse(Rest);
         _ ->
             io:format("Invalid http_api.tcp.backlog ~p.", [Backlog]),
@@ -687,20 +687,20 @@ parse(["http_api.tcp.backlog", Backlog|Rest]) ->
 parse(["http_api.tcp.delay_send", DelaySend|Rest]) ->
     case DelaySend of
         "true" ->
-            _ = arweave_config:set([network, server, tcp, delay_send], true),
+            _ = arweave_config:set([network, server, socket, delay_send], true),
             parse(Rest);
         "false" ->
-            _ = arweave_config:set([network, server, tcp, delay_send], false),
+            _ = arweave_config:set([network, server, socket, delay_send], false),
             parse(Rest);
         _ ->
             io:format("Invalid http_api.tcp.delay_send ~p.", [DelaySend]),
             parse(Rest)
     end;
 parse(["http_api.tcp.keepalive", "true"|Rest]) ->
-    _ = arweave_config:set([network, server, tcp, keepalive], true),
+    _ = arweave_config:set([network, server, socket, keepalive], true),
     parse(Rest);
 parse(["http_api.tcp.keepalive", "false"|Rest]) ->
-    _ = arweave_config:set([network, server, tcp, keepalive], false),
+    _ = arweave_config:set([network, server, socket, keepalive], false),
     parse(Rest);
 parse(["http_api.tcp.keepalive", Keepalive|Rest]) ->
     io:format("Invalid http_api.tcp.keepalive ~p.", [Keepalive]),
@@ -708,10 +708,10 @@ parse(["http_api.tcp.keepalive", Keepalive|Rest]) ->
 parse(["http_api.tcp.linger", Linger|Rest]) ->
     case Linger of
         "true" ->
-            _ = arweave_config:set([network, server, tcp, linger], true),
+            _ = arweave_config:set([network, server, socket, linger], true),
             parse(Rest);
         "false" ->
-            _ = arweave_config:set([network, server, tcp, linger], false),
+            _ = arweave_config:set([network, server, socket, linger], false),
             parse(Rest);
         _ ->
             io:format("Invalid http_api.tcp.linger ~p.", [Linger]),
@@ -720,7 +720,7 @@ parse(["http_api.tcp.linger", Linger|Rest]) ->
 parse(["http_api.tcp.linger_timeout", Timeout|Rest]) ->
     try list_to_integer(Timeout) of
         T when T >= 0 ->
-            _ = arweave_config:set([network, server, tcp, linger_timeout], T),
+            _ = arweave_config:set([network, server, socket, linger_timeout], T),
             parse(Rest);
         _ ->
             io:format("Invalid http_api.tcp.linger_timeout ~p.", [Timeout]),
@@ -731,15 +731,15 @@ parse(["http_api.tcp.linger_timeout", Timeout|Rest]) ->
             parse(Rest)
     end;
 parse(["http_api.tcp.listener_shutdown", "brutal_kill"|Rest]) ->
-    _ = arweave_config:set([network, server, tcp, listener_shutdown], brutal_kill),
+    _ = arweave_config:set([network, server, http, listener_shutdown], brutal_kill),
     parse(Rest);
 parse(["http_api.tcp.listener_shutdown", "infinity"|Rest]) ->
-    _ = arweave_config:set([network, server, tcp, listener_shutdown], infinity),
+    _ = arweave_config:set([network, server, http, listener_shutdown], infinity),
     parse(Rest);
 parse(["http_api.tcp.listener_shutdown", Shutdown|Rest]) ->
     try list_to_integer(Shutdown) of
         S when S >= 0 ->
-            _ = arweave_config:set([network, server, tcp, listener_shutdown], S),
+            _ = arweave_config:set([network, server, http, listener_shutdown], S),
             parse(Rest);
         _ ->
             io:format("Invalid http_api.tcp.listener_shutdown ~p.", [Shutdown]),
@@ -752,10 +752,10 @@ parse(["http_api.tcp.listener_shutdown", Shutdown|Rest]) ->
 parse(["http_api.tcp.nodelay", Nodelay|Rest]) ->
     case Nodelay of
         "true" ->
-            _ = arweave_config:set([network, server, tcp, nodelay], true),
+            _ = arweave_config:set([network, server, socket, nodelay], true),
             parse(Rest);
         "false" ->
-            _ = arweave_config:set([network, server, tcp, nodelay], false),
+            _ = arweave_config:set([network, server, socket, nodelay], false),
             parse(Rest);
         _ ->
             io:format("Invalid http_api.tcp.nodelay ~p.", [Nodelay]),
@@ -764,7 +764,7 @@ parse(["http_api.tcp.nodelay", Nodelay|Rest]) ->
 parse(["http_api.tcp.num_acceptors", Acceptors|Rest]) ->
     try list_to_integer(Acceptors) of
         N when N >= 0 ->
-            _ = arweave_config:set([network, server, tcp, num_acceptors], N),
+            _ = arweave_config:set([network, server, http, num_acceptors], N),
             parse(Rest);
         _ ->
             io:format("Invalid http_api.tcp.num_acceptors ~p.", [Acceptors]),
@@ -777,10 +777,10 @@ parse(["http_api.tcp.num_acceptors", Acceptors|Rest]) ->
 parse(["http_api.tcp.send_timeout_close", Value|Rest]) ->
     case Value of
         "true" ->
-            _ = arweave_config:set([network, server, tcp, send_timeout_close], true),
+            _ = arweave_config:set([network, server, socket, send_timeout_close], true),
             parse(Rest);
         "false" ->
-            _ = arweave_config:set([network, server, tcp, send_timeout_close], false),
+            _ = arweave_config:set([network, server, socket, send_timeout_close], false),
             parse(Rest);
         _ ->
             io:format("Invalid http_api.tcp.send_timeout_close ~p.", [Value]),
@@ -789,7 +789,7 @@ parse(["http_api.tcp.send_timeout_close", Value|Rest]) ->
 parse(["http_api.tcp.send_timeout", Timeout|Rest]) ->
     try list_to_integer(Timeout) of
         T when T >= 0 ->
-            _ = arweave_config:set([network, server, tcp, send_timeout], T),
+            _ = arweave_config:set([network, server, socket, send_timeout], T),
             parse(Rest);
         _ ->
             io:format("Invalid http_api.tcp.send_timeout ~p.", [Timeout]),

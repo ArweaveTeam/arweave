@@ -1128,7 +1128,7 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, 
 handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, Bytes}},
             #data_sync_state{ store_id = StoreID } = State) ->
     MaxDiskPoolBufferMb = arweave_config:get([disk_pool, max_buffer_size]),
-    DiskCacheSizeMb = arweave_config:get([gossip, header_cache_size]),
+    DiskCacheSizeMb = arweave_config:get([gossip, header, cache_size]),
     %% Default values:
     %% max_disk_pool_buffer_mb = ?DEFAULT_MAX_DISK_POOL_BUFFER_MB = 100_000
     %% disk_cache_size = ?DISK_CACHE_SIZE = 5_120

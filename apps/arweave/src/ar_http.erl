@@ -392,19 +392,19 @@ open_connection(#{ peer := Peer } = Args, Protocol) ->
     HTTPKeepalive = arweave_config:get(
                       [network, client, http, keepalive]),
     TCPDelaySend = arweave_config:get(
-                     [network, client, tcp, delay_send]),
+                     [network, client, socket, delay_send]),
     TCPKeepalive = arweave_config:get(
-                     [network, client, tcp, keepalive]),
+                     [network, client, socket, keepalive]),
     TCPLinger = arweave_config:get(
-                  [network, client, tcp, linger]),
+                  [network, client, socket, linger]),
     TCPLingerTimeout = arweave_config:get(
-                         [network, client, tcp, linger_timeout]),
+                         [network, client, socket, linger_timeout]),
     TCPNodelay = arweave_config:get(
-                   [network, client, tcp, nodelay]),
+                   [network, client, socket, nodelay]),
     TCPSendTimeoutClose = arweave_config:get(
-                            [network, client, tcp, send_timeout_close]),
+                            [network, client, socket, send_timeout_close]),
     TCPSendTimeout = arweave_config:get(
-                       [network, client, tcp, send_timeout]),
+                       [network, client, socket, send_timeout]),
     GunOpts = #{
                 retry => 0,
                 connect_timeout => ConnectTimeout,

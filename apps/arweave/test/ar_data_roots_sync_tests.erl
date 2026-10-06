@@ -66,7 +66,7 @@ test_data_roots_sync_from_peer() ->
     %% Cover only the first partition and half of the second one to ensure partial coverage.
     MainConfig = #{
         [mining, enabled] => false,
-        [gossip, header_sync_jobs] => 0
+        [gossip, header, workers] => 0
     },
     MainStorageModules = [
         %% The first MB of the weave.
@@ -238,7 +238,7 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
     MainConfig = #{
         [mining, enabled] => false,
         [sync, jobs] => 0,
-        [gossip, header_sync_jobs] => 0,
+        [gossip, header, workers] => 0,
         [gossip, data_roots, syncing_enabled] => true
     },
     MainStorageModules = [
@@ -458,7 +458,7 @@ join_main_on_peer1(ExpectedHeight, EnableBackgroundSync, MaxDuplicateDataRoots) 
     BaseOverrides = #{
         [mining, enabled] => false,
         [sync, jobs] => 0,
-        [gossip, header_sync_jobs] =>
+        [gossip, header, workers] =>
             case EnableBackgroundSync of
                 true -> 2;
                 false -> 0
