@@ -10,6 +10,13 @@
 -define(SAMPLE_SCHEDULERS_INTERVAL, 30000).
 -define(SAMPLE_SCHEDULERS_DURATION, 5000).
 -define(LONG_MESSAGE_QUEUE_THRESHOLD, 1000).
+%% Peek a process's mailbox head by copying it (process_info(Pid, messages) copies
+%% the WHOLE mailbox) inside a throwaway helper capped by max_heap_size: a
+%% pathologically large mailbox kills the helper instead of OOMing the node, while
+%% any normal mailbox - a long queue of small messages, or a big-heap process with
+%% a light queue - is peeked. Cap in words (8 bytes each on 64-bit); ~1 GiB.
+-define(PEEK_HELPER_MAX_HEAP_WORDS, 128 * 1024 * 1024).
+-define(PEEK_HELPER_TIMEOUT_MS, 5000).
 
 -record(state, {
                 scheduler_samples = undefined
@@ -197,12 +204,8 @@ log_long_message_queues(ProcessName, AggregateMsgQueueLen, ProcessesForName)
     lists:foreach(
       fun(Process) ->
               Pid = maps:get(pid, Process),
-              HeadMessages = case process_info(Pid, messages) of
-                                 {messages, Messages} ->
-                                     format_head_messages(maps:get(message_queue_len, Process), Messages);
-                                 undefined ->
-                                     []
-                             end,
+            MsgQueueLen = maps:get(message_queue_len, Process),
+            HeadMessages = peek_head_messages(Pid, MsgQueueLen),
               ?LOG_DEBUG([{event, process_long_message_queue}, {pid, Pid},
                           {process_name, ProcessName},
                           {current_function, maps:get(current_function, Process)},
@@ -216,6 +219,38 @@ log_long_message_queues(ProcessName, AggregateMsgQueueLen, ProcessesForName)
       TopProcesses);
 log_long_message_queues(_ProcessName, _AggregateMsgQueueLen, _ProcessesForName) ->
     ok.
+
+%% Peek the head messages of Pid's mailbox without risking an OOM. process_info(
+%% Pid, messages) copies the ENTIRE mailbox, so run it in a throwaway helper
+%% capped by max_heap_size: a pathologically large mailbox kills the helper (not
+%% the node) and we report it as too large; otherwise the helper formats the head
+%% (small) and sends just that back. Sampling is sequential, so at most one
+%% helper's transient heap is live at a time.
+peek_head_messages(Pid, MsgQueueLen) ->
+    Self = self(),
+    {Helper, Ref} = spawn_opt(
+        fun() ->
+            Formatted = case process_info(Pid, messages) of
+                {messages, Messages} ->
+                    format_head_messages(MsgQueueLen, Messages);
+                _ ->
+                    []
+            end,
+            Self ! {peek_result, self(), Formatted}
+        end,
+        [monitor, {max_heap_size, #{ size => ?PEEK_HELPER_MAX_HEAP_WORDS,
+                kill => true, error_logger => false }}]),
+    receive
+        {peek_result, Helper, Formatted} ->
+            demonitor(Ref, [flush]),
+            Formatted;
+        {'DOWN', Ref, process, Helper, _Reason} ->
+            [mailbox_too_large_to_sample]
+    after ?PEEK_HELPER_TIMEOUT_MS ->
+        demonitor(Ref, [flush]),
+        exit(Helper, kill),
+        [mailbox_too_large_to_sample]
+    end.
 
 log_binary_alloc() ->
     [Instance0 | _Rest] = erlang:system_info({allocator, binary_alloc}),

@@ -1,4 +1,5 @@
 -module(ar_util).
+-export([system_memory/0]).
 -export([assert_file_exists_and_readable/1, block_index_entry_from_block/1, cast_after/3, do_until/3, genesis_wallets/0, get_system_device/1, message_queue_len/1, print_stacktrace/0, safe_ets_lookup/2, terminal_clear/0]).
 -include("ar.hrl").
 
@@ -127,3 +128,50 @@ assert_file_exists_and_readable(FilePath) ->
             io:format("~nThe filepath ~p doesn't exist or isn't readable.~n~n", [FilePath]),
             init:stop(1)
     end.
+
+
+
+%% @doc Return total memory in bytes, capped by container limits, or undefined.
+system_memory() ->
+    %% A container's limit can be smaller than the host's physical memory.
+    lists:foldl(
+        fun limit_memory/2,
+        host_memory(),
+        [
+            "/sys/fs/cgroup/memory.max",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+        ]
+    ).
+
+host_memory() ->
+    case file:read_file("/proc/meminfo") of
+        {ok, <<"MemTotal:", Rest/binary>>} ->
+            {KiB, _} = string:to_integer(string:trim(binary_to_list(Rest))),
+            KiB * 1024;
+        _ ->
+            try
+                proplists:get_value(
+                    total_memory,
+                    memsup:get_system_memory_data()
+                )
+            catch
+                _:_ -> undefined
+            end
+    end.
+
+limit_memory(Path, Total) ->
+    case file:read_file(Path) of
+        {ok, Value} ->
+            do_limit_memory(string:to_integer(binary_to_list(Value)), Total);
+        _ ->
+            Total
+    end.
+
+do_limit_memory({Bytes, _}, Total) when is_integer(Bytes), Bytes > 0 ->
+    case Total of
+        undefined -> Bytes;
+        _ -> min(Total, Bytes)
+    end;
+do_limit_memory(_, Total) ->
+    %% Missing numeric limits (including cgroup's "max") do not restrict RAM.
+    Total.
