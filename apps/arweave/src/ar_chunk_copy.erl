@@ -119,8 +119,8 @@ do_start_copy(StoreID, State) ->
     {RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
     %% Match ar_data_sync's range adjustment.
     RangeStart2 = max(0,
-                      ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
-    RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
+                      arweave_lib_constants:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
+    RangeEnd2 = arweave_lib_constants:get_chunk_padded_offset(RangeEnd),
     SyncStatus = ar_data_sync:init_sync_status(StoreID),
     OtherStorageModules = [ar_storage_module:id(M)
                            || M <- ar_storage_module:get_all(RangeStart2, RangeEnd2),
@@ -146,7 +146,7 @@ maybe_step(StoreID, State) ->
                 active ->
                     step(StoreID, CopyState2, State);
                 paused ->
-                    arweave_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE,
+                    ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE,
                                        {step, StoreID}),
                     save_progress(StoreID, CopyState2, State);
                 _ ->

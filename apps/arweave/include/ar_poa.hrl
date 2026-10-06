@@ -1,7 +1,11 @@
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 -ifndef(AR_POA_HRL).
+
 -define(AR_POA_HRL, true).
 
+
 -include("ar.hrl").
+
 
 -record(chunk_proof, {
                       metadata :: #chunk_metadata{},
@@ -22,4 +26,7 @@
                       chunk_is_valid = not_validated :: 'not_validated' | 'valid' | 'invalid'
                      }).
 
+
 -endif.
+
+

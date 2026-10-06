@@ -154,7 +154,7 @@ list_value_writes(_Config) ->
 
 list_root_set_get(_Config) ->
     arweave_config:with_test_config(fun() ->
-        PartitionSize = ar_block:partition_size(),
+        PartitionSize = arweave_lib_constants:partition_size(),
         StorageMap = #{
             partition => 0,
             packing_format => unpacked,

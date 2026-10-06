@@ -19,8 +19,8 @@ init_per_testcase(hostname_peer_round_trip, Config) ->
     ok = arweave_config:start(),
     %% Resolve example.com deterministically so the eager-role test stays
     %% hermetic (no DNS).
-    meck:new(arweave_util, [passthrough]),
-    meck:expect(arweave_util, safe_parse_peer, fun(Peer) ->
+    meck:new(arweave_config_peer, [passthrough]),
+    meck:expect(arweave_config_peer, safe_parse_peer, fun(Peer) ->
         case iolist_to_binary([Peer]) of
             <<"example.com:1984">> -> {ok, [{1, 2, 3, 4, 1984}]};
             _ -> meck:passthrough([Peer])
@@ -32,7 +32,7 @@ init_per_testcase(_TestCase, Config) ->
     Config.
 
 end_per_testcase(hostname_peer_round_trip, _Config) ->
-    meck:unload(arweave_util),
+    meck:unload(arweave_config_peer),
     ok = arweave_config:stop();
 end_per_testcase(_TestCase, _Config) ->
     ok = arweave_config:stop().

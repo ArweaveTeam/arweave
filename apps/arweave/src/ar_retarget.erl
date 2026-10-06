@@ -31,26 +31,6 @@
         )
     ).
 
-%% @doc The unconditional difficulty reduction coefficient applied at the
-%% first 2.5 block.
--define(DIFF_DROP_2_5, 2).
-
-%% @doc The unconditional difficulty reduction coefficient applied at the
-%% first 2.6 block.
--define(INITIAL_DIFF_DROP_2_6, 100).
-
-%% @doc The additional difficulty reduction coefficient applied every 10 minutes at the
-%% first 2.6 block.
--define(DIFF_DROP_2_6, 2).
-
-%% @doc The unconditional difficulty reduction coefficient applied at the
-%% first 2.7.2 block.
--define(INITIAL_DIFF_DROP_2_7_2, 10).
-
-%% @doc The additional difficulty reduction coefficient applied every 10 minutes at the
-%% first 2.7.2 block.
--define(DIFF_DROP_2_7_2, 2).
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -77,13 +57,13 @@ calculate_difficulty(OldDiff, _TS, _Last, _Height, _PrevTS) ->
     OldDiff.
 -else.
 calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
-    Fork_1_7 = ar_fork:height_1_7(),
-    Fork_1_8 = ar_fork:height_1_8(),
-    Fork_1_9 = ar_fork:height_1_9(),
-    Fork_2_4 = ar_fork:height_2_4(),
-    Fork_2_5 = ar_fork:height_2_5(),
-    Fork_2_6 = ar_fork:height_2_6(),
-    Fork_2_7_2 = ar_fork:height_2_7_2(),
+    Fork_1_7 = arweave_lib_fork:height_1_7(),
+    Fork_1_8 = arweave_lib_fork:height_1_8(),
+    Fork_1_9 = arweave_lib_fork:height_1_9(),
+    Fork_2_4 = arweave_lib_fork:height_2_4(),
+    Fork_2_5 = arweave_lib_fork:height_2_5(),
+    Fork_2_6 = arweave_lib_fork:height_2_6(),
+    Fork_2_7_2 = arweave_lib_fork:height_2_7_2(),
     Fork_Testnet = ar_consensus:testnet_fork_height(),
     case Height of
         _ when Height == Fork_Testnet ->
@@ -156,7 +136,7 @@ calculate_difficulty(OldDiff, TS, Last, Height) ->
     TargetTime = ?RETARGET_BLOCKS * ar_consensus:target_block_time(Height),
     TargetTimeUpperBound = TargetTime + ar_consensus:target_block_time(Height),
     TargetTimeLowerBound = TargetTime - ar_consensus:target_block_time(Height),
-    ActualTime = max(TS - Last, ar_block:get_max_timestamp_deviation()),
+    ActualTime = max(TS - Last, arweave_lib_constants:get_max_timestamp_deviation()),
 
     case ActualTime < TargetTimeUpperBound andalso ActualTime > TargetTimeLowerBound of
         true ->
@@ -174,7 +154,7 @@ calculate_difficulty_at_2_5(OldDiff, TS, Last, Height, PrevTS) ->
 
 calculate_difficulty_with_drop(OldDiff, TS, Last, Height, PrevTS, InitialCoeff, Coeff) ->
     TargetTime = ?RETARGET_BLOCKS * ar_consensus:target_block_time(Height),
-    ActualTime = max(TS - Last, ar_block:get_max_timestamp_deviation()),
+    ActualTime = max(TS - Last, arweave_lib_constants:get_max_timestamp_deviation()),
     Step = 10 * 60,
     %% Drop the difficulty InitialCoeff times right away, then drop extra Coeff times
     %% for every 10 minutes passed.
@@ -196,7 +176,7 @@ calculate_difficulty_after_2_4_before_2_5(OldDiff, TS, Last, Height) ->
             MaxDiff = ?MAX_DIFF,
             MinDiff = ar_difficulty:min_difficulty(Height),
             DiffInverse = erlang:trunc((MaxDiff - OldDiff) * TimeDelta),
-            arweave_util:between(
+            arweave_lib_util:between(
                 MaxDiff - DiffInverse,
                 MinDiff,
                 MaxDiff
@@ -215,7 +195,7 @@ calculate_difficulty_at_2_4(OldDiff, TS, Last, Height) ->
     MaxDiff = ?MAX_DIFF,
     MinDiff = ar_difficulty:min_difficulty(Height),
     DiffInverse = erlang:trunc((MaxDiff - OldDiff) * TimeDelta),
-    arweave_util:between(
+    arweave_lib_util:between(
         MaxDiff - DiffInverse,
         MinDiff,
         MaxDiff
@@ -231,13 +211,13 @@ calculate_difficulty_at_and_after_1_9_before_2_4(OldDiff, TS, Last, Height) ->
         false ->
             MaxDiff = ?MAX_DIFF,
             MinDiff = ar_difficulty:min_difficulty(Height),
-            EffectiveTimeDelta = arweave_util:between(
+            EffectiveTimeDelta = arweave_lib_util:between(
                 ActualTime / TargetTime,
                 1 / ?DIFF_ADJUSTMENT_UP_LIMIT,
                 ?DIFF_ADJUSTMENT_DOWN_LIMIT
             ),
             DiffInverse = erlang:trunc((MaxDiff - OldDiff) * EffectiveTimeDelta),
-            arweave_util:between(
+            arweave_lib_util:between(
                 MaxDiff - DiffInverse,
                 MinDiff,
                 MaxDiff
@@ -254,7 +234,7 @@ calculate_difficulty_after_1_8_before_1_9(OldDiff, TS, Last, Height) ->
         false ->
             MaxDiff = ?MAX_DIFF,
             MinDiff = ar_difficulty:min_difficulty(Height),
-            arweave_util:between(
+            arweave_lib_util:between(
                 MaxDiff - (MaxDiff - OldDiff) * ActualTime div TargetTime,
                 max(MinDiff, OldDiff div 2),
                 min(MaxDiff, OldDiff * 4)
@@ -301,7 +281,7 @@ simple_retarget_test_() ->
     end}.
 
 calculate_difficulty_linear_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_5, fun() -> 0 end}],
+    ar_test_node:test_with_all_nodes_mocked([{arweave_lib_fork, height_2_5, fun() -> 0 end}],
         fun test_calculate_difficulty_linear/0, 120).
 
 test_calculate_difficulty_linear() ->

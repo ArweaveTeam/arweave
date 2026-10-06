@@ -63,7 +63,7 @@ start_link() ->
 init([]) ->
     Delay = ?MIN_START_DELAY_MS
         + rand:uniform(?MAX_START_DELAY_MS - ?MIN_START_DELAY_MS + 1) - 1,
-    arweave_util:cast_after(Delay, self(), step),
+    ar_util:cast_after(Delay, self(), step),
     {ok, #state{}}.
 
 handle_call(Request, _From, State) ->
@@ -81,7 +81,7 @@ handle_cast(step, State) ->
             false ->
                 {?DISABLED_INTERVAL_MS, State}
         end,
-    arweave_util:cast_after(Delay, self(), step),
+    ar_util:cast_after(Delay, self(), step),
     {noreply, State2};
 
 handle_cast(Cast, State) ->

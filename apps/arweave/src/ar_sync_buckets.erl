@@ -36,7 +36,7 @@ from_intervals(Intervals) ->
 %% @doc Add the data from a set of intervals (see ar_intervals) to the given buckets.
 from_intervals(Intervals, SyncBuckets) ->
     {Size, Map} = SyncBuckets,
-    {Size, ar_intervals:fold(
+    {Size, arweave_lib_intervals:fold(
         fun({End, Start}, Acc) ->
             add(Start, End, Size, Acc)
         end,
@@ -175,7 +175,7 @@ add(Start, End, Size, Map) ->
             maps:put(Bucket, min(1, (Share * Size + Increase) / Size), Map)).
 
 bucket_upper_bound(Offset, Size) ->
-    arweave_util:ceil_int(Offset, Size).
+    arweave_lib_util:ceil_int(Offset, Size).
 
 delete(Start, End, _Size, Map) when Start >= End ->
     Map;

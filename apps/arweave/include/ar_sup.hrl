@@ -1,9 +1,15 @@
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 %% The number of milliseconds the supervisor gives every process for shutdown.
 -ifdef(AR_TEST).
+
 -define(SHUTDOWN_TIMEOUT, 30_000).
+
 -else.
+
 -define(SHUTDOWN_TIMEOUT, 300_000).
+
 -endif.
+
 
 -define(CHILD(I, Type), #{
                           id => I,
@@ -14,6 +20,7 @@
                           modules => [I]
                          }).
 
+
 -define(CHILD_WITH_ARGS(I, Type, Name, Args), #{
                                                 id => Name,
                                                 start => {I, start_link, Args},
@@ -22,6 +29,7 @@
                                                 type => Type,
                                                 modules => [Name]
                                                }).
+
 
 %% From the Erlang docs:
 %%
@@ -39,3 +47,5 @@
                               type => Type,
                               modules => [I]
                              }).
+
+

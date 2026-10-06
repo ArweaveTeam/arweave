@@ -14,7 +14,7 @@
 %% @doc Return the block time hash rate for the given difficulty.
 get_hash_rate_fixed_ratio(B) ->
     HashRate = ?MAX_DIFF div (?MAX_DIFF - B#block.diff),
-    case B#block.height >= ar_fork:height_2_8() of
+    case B#block.height >= arweave_lib_fork:height_2_8() of
         true ->
             HashRate;
         false ->
@@ -47,7 +47,7 @@ get_hash_rate_fixed_ratio(B) ->
 
 %% @doc Calculate the cumulative difficulty for the next block.
 next_cumulative_diff(OldCDiff, NewDiff, Height) ->
-    case Height >= ar_fork:height_1_6() of
+    case Height >= arweave_lib_fork:height_1_6() of
         true ->
             next_cumulative_diff2(OldCDiff, NewDiff, Height);
         false ->
@@ -67,7 +67,7 @@ diff_pair(Block) ->
     {poa1_diff(Diff, Height), Diff}.
 
 poa1_diff_multiplier(Height) ->
-    case Height >= ar_fork:height_2_7_2() of
+    case Height >= arweave_lib_fork:height_2_7_2() of
         true ->
             ?POA1_DIFF_MULTIPLIER;
         false ->
@@ -91,7 +91,7 @@ scale_diff(Diff, {ScaleDividend, ScaleDivisor}, Height) ->
     %% Scale DiffInverse by ScaleDivisor/ScaleDividend because it's an inverse value.
     %% I.e. passing in {100, 1} will scale DiffInverse by 1/100 and *increase* the difficulty.
     DiffInverse = (MaxDiff - Diff) * ScaleDivisor div ScaleDividend,
-    arweave_util:between(
+    arweave_lib_util:between(
       MaxDiff - DiffInverse,
       MinDiff,
       MaxDiff - 1
@@ -137,9 +137,9 @@ min_sha384_difficulty() ->
 
 min_difficulty(Height) ->
     Diff =
-        case Height >= ar_fork:height_1_7() of
+        case Height >= arweave_lib_fork:height_1_7() of
             true ->
-                case Height >= ar_fork:height_2_4() of
+                case Height >= arweave_lib_fork:height_2_4() of
                     true ->
                         min_spora_difficulty(Height);
                     false ->
@@ -148,9 +148,9 @@ min_difficulty(Height) ->
             false ->
                 min_sha384_difficulty()
         end,
-    case Height >= ar_fork:height_1_8() of
+    case Height >= arweave_lib_fork:height_1_8() of
         true ->
-            case Height >= ar_fork:height_2_5() of
+            case Height >= arweave_lib_fork:height_2_5() of
                 true ->
                     ar_retarget:switch_to_linear_diff(Diff);
                 false ->
@@ -173,12 +173,12 @@ switch_to_randomx_fork_diff(OldDiff) ->
 
 next_cumulative_diff2(OldCDiff, NewDiff, Height) ->
     Delta =
-        case Height >= ar_fork:height_1_8() of
+        case Height >= arweave_lib_fork:height_1_8() of
             false ->
                 NewDiff * NewDiff;
             true  ->
                 %% The number of hashes to try on average to find a solution.
-                case Height >= ar_fork:height_2_5() of
+                case Height >= arweave_lib_fork:height_2_5() of
                     false ->
                         erlang:trunc(?MAX_DIFF / (?MAX_DIFF - NewDiff));
                     true ->

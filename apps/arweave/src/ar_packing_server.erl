@@ -45,22 +45,22 @@ request_unpack(Ref, Args) ->
     request_unpack(Ref, self(), Args).
 
 request_unpack(Ref, ReplyTo, Args) ->
-    arweave_util:cast_after(600000, ReplyTo, {expire_unpack_request, Ref}),
+    ar_util:cast_after(600000, ReplyTo, {expire_unpack_request, Ref}),
     gen_server:cast(?MODULE, {unpack_request, ReplyTo, Ref, Args}).
 
 request_repack(Ref, Args) ->
     request_repack(Ref, self(), Args).
 
 request_repack(Ref, ReplyTo, Args) ->
-    arweave_util:cast_after(600000, ReplyTo, {expire_repack_request, Ref}),
+    ar_util:cast_after(600000, ReplyTo, {expire_repack_request, Ref}),
     gen_server:cast(?MODULE, {repack_request, ReplyTo, Ref, Args}).
 
 request_encipher(Ref, ReplyTo, {Chunk, Entropy}) ->
-    arweave_util:cast_after(600000, ReplyTo, {expire_encipher_request, Ref}),
+    ar_util:cast_after(600000, ReplyTo, {expire_encipher_request, Ref}),
     gen_server:cast(?MODULE, {encipher_request, ReplyTo, Ref, {Chunk, Entropy}}).
 
 request_decipher(Ref, ReplyTo, {Chunk, Entropy}) ->
-    arweave_util:cast_after(600000, ReplyTo, {expire_decipher_request, Ref}),
+    ar_util:cast_after(600000, ReplyTo, {expire_decipher_request, Ref}),
     gen_server:cast(?MODULE, {decipher_request, ReplyTo, Ref, {Chunk, Entropy}}).
 
 request_entropy_generation(
@@ -109,7 +109,7 @@ unpack_sub_chunk({replica_2_9, RewardAddr} = Packing,
             Entropy = generate_replica_2_9_entropy(
                         RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
             RandomXState = get_randomx_state_by_packing(Packing, PackingState),
-            EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
+            EntropySubChunkIndex = arweave_lib_replica_2_9:get_slice_index(AbsoluteEndOffset),
             case prometheus_histogram:observe_duration(packing_duration_milliseconds,
                                                        [unpack_sub_chunk, replica_2_9, external], fun() ->
                                                                                                           ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk({RandomXState,
@@ -152,7 +152,7 @@ set_buffer_size_limit(PackingCacheSizeLimit) ->
             undefined ->
                 Free = proplists:get_value(free_memory,
                                            memsup:get_system_memory_data(), 2000000000),
-                arweave_util:ceil_int(
+                arweave_lib_util:ceil_int(
                   min(1200, erlang:ceil(Free * 0.9 / 3 / ?DATA_CHUNK_SIZE)), 100);
             Limit ->
                 Limit
@@ -262,10 +262,10 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) -
         CacheEntropy :: boolean()
        ) -> binary().
 generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, false) ->
-    Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
+    Key = arweave_lib_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
     do_generate_entropy(RewardAddr, Key);
 generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, true) ->
-    Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
+    Key = arweave_lib_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
     Partition = ar_node:get_partition_number(BucketEndOffset),
 
     entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
@@ -315,8 +315,8 @@ pack_replica_2_9_chunk(RewardAddr, AbsoluteEndOffset, Chunk) ->
 init([]) ->
     ar:console("~nInitialising RandomX datasets. Keys: ~p, ~p. "
                "The process may take several minutes.~n",
-               [arweave_util:encode(?RANDOMX_PACKING_KEY),
-                arweave_util:encode(?RANDOMX_PACKING_KEY)]),
+               [arweave_lib_util:encode(?RANDOMX_PACKING_KEY),
+                arweave_lib_util:encode(?RANDOMX_PACKING_KEY)]),
     {RandomXState512, _RandomXState4096, _RandomXStateSharedEntropy}
         = PackingState = init_packing_state(),
     ar:console("RandomX dataset initialisation complete.~n", []),
@@ -613,7 +613,7 @@ pack_replica_2_9_sub_chunks(_RewardAddr, _AbsoluteEndOffset, _RandomXState,
      iolist_to_binary(lists:reverse(EntropyParts))};
 pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
                             SubChunkStartOffset, [SubChunk | SubChunks], PackedSubChunks, EntropyParts) ->
-    EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
+    EntropySubChunkIndex = arweave_lib_replica_2_9:get_slice_index(AbsoluteEndOffset),
     Entropy = generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
     case prometheus_histogram:observe_duration(packing_duration_milliseconds,
                                                [pack_sub_chunk, replica_2_9, internal], fun() ->
@@ -640,7 +640,7 @@ unpack_replica_2_9_sub_chunks(_RewardAddr, _AbsoluteEndOffset, _RandomXState,
     {ok, iolist_to_binary(lists:reverse(UnpackedSubChunks))};
 unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
                               SubChunkStartOffset, [SubChunk | SubChunks], UnpackedSubChunks) ->
-    EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
+    EntropySubChunkIndex = arweave_lib_replica_2_9:get_slice_index(AbsoluteEndOffset),
     Entropy = generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
     case prometheus_histogram:observe_duration(packing_duration_milliseconds,
                                                [unpack_sub_chunk, replica_2_9, internal], fun() ->
@@ -924,8 +924,8 @@ maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubC
             Partition = ar_node:get_partition_number(BucketEndOffset),
             arweave_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, redundant]),
             ?LOG_DEBUG([{event, possibly_redundant_entropy_generation},
-                        {reward_addr, arweave_util:encode(RewardAddr)},
-                        {key, arweave_util:encode(Key)},
+                        {reward_addr, arweave_lib_util:encode(RewardAddr)},
+                        {key, arweave_lib_util:encode(Key)},
                         {bucket_end_offset, BucketEndOffset},
                         {sub_chunk_start_offset, SubChunkStartOffset},
                         {count, Count},

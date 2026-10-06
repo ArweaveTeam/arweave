@@ -570,7 +570,7 @@ resolve_peer(Peer) when is_tuple(Peer) ->
         {error, _} = Err -> Err
     end;
 resolve_peer(Peer) ->
-    case arweave_util:safe_parse_peer(Peer) of
+    case arweave_config:safe_parse_peer(Peer) of
         {ok, [_ | _] = PeerIDs} -> {ok, PeerIDs};
         _ -> {error, {invalid_peer, Peer}}
     end.

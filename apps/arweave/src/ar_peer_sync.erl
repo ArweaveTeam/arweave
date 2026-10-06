@@ -159,8 +159,8 @@ init_range(StoreID) ->
     case (catch ar_storage_module:get_range(StoreID)) of
         {'EXIT', _} -> {-1, -1};
         {RangeStart, RangeEnd} ->
-            {max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
-             ar_block:get_chunk_padded_offset(RangeEnd)}
+            {max(0, arweave_lib_constants:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
+             arweave_lib_constants:get_chunk_padded_offset(RangeEnd)}
     end.
 
 handle_call(Request, _From, State) ->
@@ -178,7 +178,7 @@ handle_cast(enqueue, State) ->
         active ->
             enqueue(State2);
         paused ->
-            arweave_util:cast_after(?DEVICE_LOCK_WAIT, self(), enqueue),
+            ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), enqueue),
             {noreply, State2};
         _ ->
             %% off / complete — not in sync mode. The loop is re-kicked by
@@ -231,7 +231,7 @@ enqueue(#state{ sweep = undefined } = State) ->
             {noreply, State#state{ sweep = Sweep }};
         not_ready ->
             %% Node not joined yet, or footprint migration in flight.
-            arweave_util:cast_after(1000, self(), enqueue),
+            ar_util:cast_after(1000, self(), enqueue),
             {noreply, State}
     end;
 enqueue(#state{ sweep = #sweep{} } = State) ->
@@ -243,13 +243,13 @@ enqueue(#state{ sweep = #sweep{} } = State) ->
             %% weave tip without ever rewriting end_.
             complete_sweep(State);
         {wait, _Reason, Delay} ->
-            arweave_util:cast_after(Delay, self(), enqueue),
+            ar_util:cast_after(Delay, self(), enqueue),
             {noreply, State};
         ready ->
             {Action, NewState} = do_enqueue(State),
             case Action of
                 cast_now -> gen_server:cast(self(), enqueue);
-                {cast_after, Ms} -> arweave_util:cast_after(Ms, self(), enqueue)
+                {cast_after, Ms} -> ar_util:cast_after(Ms, self(), enqueue)
             end,
             {noreply, NewState}
     end.
@@ -267,7 +267,7 @@ do_enqueue_normal(State) ->
     UnsyncedIntervals = limit_unsynced_intervals(
         get_unsynced_intervals(Offset, End2, StoreID),
         Offset, End2, FootprintLimit),
-    case ar_intervals:is_empty(UnsyncedIntervals) of
+    case arweave_lib_intervals:is_empty(UnsyncedIntervals) of
         true ->
             NewSweep = Sweep#sweep{ offset = End2 },
             {cast_now, State#state{ sweep = NewSweep }};
@@ -303,20 +303,20 @@ do_enqueue_footprint(State) ->
     #state{ store_id = StoreID, queue = Q, footprint_limit = FootprintLimit,
             sweep = #sweep{ start = Start, end_ = End, offset = Offset }
             = Sweep } = State,
-    Partition = ar_replica_2_9:get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
+    Partition = arweave_lib_replica_2_9:get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
     Footprint = ar_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE),
     UnsyncedIntervals =
         case ar_footprint_limit:is_beyond(Offset + ?DATA_CHUNK_SIZE,
                                           FootprintLimit) of
             true ->
-                ar_intervals:new();
+                arweave_lib_intervals:new();
             false ->
                 ar_footprint_record:get_unsynced_intervals(
                     Partition, Footprint, StoreID)
         end,
-    case ar_intervals:is_empty(UnsyncedIntervals) of
+    case arweave_lib_intervals:is_empty(UnsyncedIntervals) of
         true ->
-            Offset2 = ar_replica_2_9:get_next_fetch_offset(Offset, Start, End),
+            Offset2 = arweave_lib_replica_2_9:get_next_fetch_offset(Offset, Start, End),
             NewSweep = Sweep#sweep{ offset = Offset2 },
             {cast_now, State#state{ sweep = NewSweep }};
         false ->
@@ -330,7 +330,7 @@ do_enqueue_footprint(State) ->
                     ar_sync_dispatcher:enqueue(Tasks),
                     Produced = length(Tasks),
                     maybe_log_chunk_sync_started(StoreID, footprint, Sweep, Produced),
-                    Offset2 = ar_replica_2_9:get_next_fetch_offset(Offset, Start, End),
+                    Offset2 = arweave_lib_replica_2_9:get_next_fetch_offset(Offset, Start, End),
                     NewSweep = Sweep#sweep{
                                  offset = Offset2,
                                  tasks_produced = Sweep#sweep.tasks_produced
@@ -383,12 +383,12 @@ complete_sweep(#state{ store_id = StoreID,
                 {next_mode, NextMode}]),
     case start_sweep(State, NextMode) of
         {ok, Sweep2} ->
-            arweave_util:cast_after(?SWEEP_RESTART_DELAY_MS, self(), enqueue),
+            ar_util:cast_after(?SWEEP_RESTART_DELAY_MS, self(), enqueue),
             {noreply, State#state{ sweep = Sweep2 }};
         not_ready ->
             %% Clear the sweep so later enqueue casts hit the sweep=undefined clause
             %% (silent retry) instead of re-logging sweep_complete every second.
-            arweave_util:cast_after(1000, self(), enqueue),
+            ar_util:cast_after(1000, self(), enqueue),
             {noreply, State#state{ sweep = undefined }}
     end.
 
@@ -440,9 +440,9 @@ determine_fetchable_intervals_normal(Left, Peers, UnsyncedIntervals) ->
       fun(Peer, {RightAcc, Acc}) ->
               case ar_data_discovery:get_peer_intervals(Peer, Left, infinity) of
                   {ok, PeerIntervals, PeerRight} ->
-                      FetchableIntervals = ar_intervals:intersection(
+                      FetchableIntervals = arweave_lib_intervals:intersection(
                                              PeerIntervals, UnsyncedIntervals),
-                      case ar_intervals:is_empty(FetchableIntervals) of
+                      case arweave_lib_intervals:is_empty(FetchableIntervals) of
                           true -> {min(RightAcc, PeerRight), Acc};
                           false ->
                               {min(RightAcc, PeerRight),
@@ -462,9 +462,9 @@ determine_fetchable_intervals_footprint(
       fun(Peer, Acc) ->
               case ar_data_discovery:get_peer_footprint_intervals(Peer, Partition, Footprint) of
                   {ok, PeerIntervals} ->
-                      FetchableIntervals = ar_intervals:intersection(
+                      FetchableIntervals = arweave_lib_intervals:intersection(
                                              PeerIntervals, UnsyncedIntervals),
-                      case ar_intervals:is_empty(FetchableIntervals) of
+                      case arweave_lib_intervals:is_empty(FetchableIntervals) of
                           true -> Acc;
                           false ->
                               ByteIntervals = cut_peer_footprint_intervals(
@@ -493,7 +493,7 @@ claim_tasks(StoreID, PeerEntries, Queue) ->
     ScalingFactor = 1.5,
     ChunksPerPeer = trunc(((TotalChunksToEnqueue + NumPeers - 1) div NumPeers) * ScalingFactor),
     Queue2 = ar_sync_task_queue:insert_batch(
-               arweave_util:shuffle_list(PeerEntries), ChunksPerPeer, Queue),
+               arweave_lib_util:shuffle_list(PeerEntries), ChunksPerPeer, Queue),
     {Drained, Queue3} = ar_sync_task_queue:drain(Queue2),
     Tasks = [#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
                          store_id = StoreID, footprint_key = FootprintKey }
@@ -548,25 +548,25 @@ get_hot_peers_for_bucket(GetAllFun, Path) ->
 %% the module keeps.
 limit_unsynced_intervals(Intervals, Start, End, FootprintLimit) ->
     Kept = ar_footprint_limit:kept_intervals(Start, End, FootprintLimit),
-    ar_intervals:intersection(Intervals, Kept).
+    arweave_lib_intervals:intersection(Intervals, Kept).
 
 get_unsynced_intervals(Start, End, StoreID) ->
-    UnsyncedIntervals = get_unsynced_intervals(Start, End, ar_intervals:new(), StoreID),
+    UnsyncedIntervals = get_unsynced_intervals(Start, End, arweave_lib_intervals:new(), StoreID),
     BlacklistedIntervals = ar_tx_blacklist:get_blacklisted_intervals(Start, End),
-    ar_intervals:outerjoin(BlacklistedIntervals, UnsyncedIntervals).
+    arweave_lib_intervals:outerjoin(BlacklistedIntervals, UnsyncedIntervals).
 
 get_unsynced_intervals(Start, End, Intervals, _StoreID) when Start >= End ->
     Intervals;
 get_unsynced_intervals(Start, End, Intervals, StoreID) ->
     case ar_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
         not_found ->
-            ar_intervals:add(Intervals, End, Start);
+            arweave_lib_intervals:add(Intervals, End, Start);
         {End2, Start2} ->
             case Start2 > Start of
                 true ->
                     End3 = min(Start2, End),
                     get_unsynced_intervals(End2, End,
-                                           ar_intervals:add(Intervals, End3, Start), StoreID);
+                                           arweave_lib_intervals:add(Intervals, End3, Start), StoreID);
                 _ ->
                     get_unsynced_intervals(End2, End, Intervals, StoreID)
             end
@@ -583,14 +583,14 @@ get_unsynced_intervals(Start, End, Intervals, StoreID) ->
 cut_peer_footprint_intervals(FootprintIntervals, Start, End) ->
     ByteIntervals =
         ar_footprint_record:get_intervals_from_footprint_intervals(FootprintIntervals),
-    ByteIntervals2 = ar_intervals:cut(ByteIntervals, End),
+    ByteIntervals2 = arweave_lib_intervals:cut(ByteIntervals, End),
     PaddedStart =
-        case ar_block:get_chunk_padded_offset(Start) of
+        case arweave_lib_constants:get_chunk_padded_offset(Start) of
             Start -> Start;
             PaddedOffset -> PaddedOffset - ?DATA_CHUNK_SIZE
         end,
-    ar_intervals:outerjoin(
-      ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2).
+    arweave_lib_intervals:outerjoin(
+      arweave_lib_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2).
 
 ready_to_start(_StoreID, undefined) ->
     false;
@@ -617,46 +617,46 @@ flip_mode(undefined) -> normal.
 
 cut_peer_footprint_intervals_test() ->
     ?assertEqual(
-       ar_intervals:from_list([{786432, 524288}, {1310720, 1048576}]),
+       arweave_lib_intervals:from_list([{786432, 524288}, {1310720, 1048576}]),
        cut_peer_footprint_intervals(
-         ar_intervals:from_list([{4, 0}]), 262144, 1572864),
+         arweave_lib_intervals:from_list([{4, 0}]), 262144, 1572864),
        "Full Footprint 0, aligned boundaries"),
 
     ?assertEqual(
-       ar_intervals:from_list([{524288,262144}, {1048576,786432}, {1572864,1310720}]),
+       arweave_lib_intervals:from_list([{524288,262144}, {1048576,786432}, {1572864,1310720}]),
        cut_peer_footprint_intervals(
-         ar_intervals:from_list([{8, 4}]), 262144, 1572864),
+         arweave_lib_intervals:from_list([{8, 4}]), 262144, 1572864),
        "Full Footprint 1 cut to aligned boundaries"),
 
     ?assertEqual(
-       ar_intervals:from_list([
+       arweave_lib_intervals:from_list([
                                {262144,200000}, {786432, 524288}, {1310720, 1048576}, {1600000,1572864}]),
        cut_peer_footprint_intervals(
-         ar_intervals:from_list([{4, 0}]), 200000, 1600000),
+         arweave_lib_intervals:from_list([{4, 0}]), 200000, 1600000),
        "Full Footprint 0, unaligned boundaries, pre-strict"),
 
     ?assertEqual(
-       ar_intervals:from_list([{524288,262144}, {1048576, 786432}, {1572864, 1310720}]),
+       arweave_lib_intervals:from_list([{524288,262144}, {1048576, 786432}, {1572864, 1310720}]),
        cut_peer_footprint_intervals(
-         ar_intervals:from_list([{8, 4}]), 200000, 1600000),
+         arweave_lib_intervals:from_list([{8, 4}]), 200000, 1600000),
        "Full Footprint 1, unaligned boundaries, pre-strict"),
 
     ?assertEqual(
-       ar_intervals:from_list([{2883584,2621440}, {3407872,3145728}]),
+       arweave_lib_intervals:from_list([{2883584,2621440}, {3407872,3145728}]),
        cut_peer_footprint_intervals(
-         ar_intervals:from_list([{12, 8}]), 2400000, 3500000),
+         arweave_lib_intervals:from_list([{12, 8}]), 2400000, 3500000),
        "Full Footprint 2, unaligned boundaries, post-strict"),
 
     ?assertEqual(
-       ar_intervals:from_list([{2621440,2359296}, {3145728,2883584}, {3500000,3407872}]),
+       arweave_lib_intervals:from_list([{2621440,2359296}, {3145728,2883584}, {3500000,3407872}]),
        cut_peer_footprint_intervals(
-         ar_intervals:from_list([{16, 12}]), 2400000, 3500000),
+         arweave_lib_intervals:from_list([{16, 12}]), 2400000, 3500000),
        "Full Footprint 3, unaligned boundaries, post-strict"),
 
     ?assertEqual(
-       ar_intervals:from_list([{2621440,2359296}, {3500000,3407872}]),
+       arweave_lib_intervals:from_list([{2621440,2359296}, {3500000,3407872}]),
        cut_peer_footprint_intervals(
-         ar_intervals:from_list([{16, 14}, {13, 12}]), 2400000, 3500000),
+         arweave_lib_intervals:from_list([{16, 14}, {13, 12}]), 2400000, 3500000),
        "Partial Footprint 3, unaligned boundaries, post-strict"),
 
     ok.
@@ -664,7 +664,7 @@ cut_peer_footprint_intervals_test() ->
 set_weave_size_decrease_keeps_sweep_and_queue_test() ->
     Queue = ar_sync_task_queue:insert_batch(
               [{{127, 0, 0, 1, 1984},
-                ar_intervals:from_list([{2 * ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}]), none}],
+                arweave_lib_intervals:from_list([{2 * ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}]), none}],
               1,
               ar_sync_task_queue:new()),
     Sweep = #sweep{
@@ -695,7 +695,7 @@ flip_mode_test() ->
 %% ranges in the in-flight intervals (deduping), and is a no-op on empty input.
 claim_tasks_test() ->
     Peer = {1, 2, 3, 4, 1984},
-    Entries = [{Peer, ar_intervals:from_list([{2 * ?DATA_CHUNK_SIZE, 0}]), none}],
+    Entries = [{Peer, arweave_lib_intervals:from_list([{2 * ?DATA_CHUNK_SIZE, 0}]), none}],
     Q0 = ar_sync_task_queue:new(),
     %% Empty input -> no tasks, queue unchanged.
     ?assertEqual({[], Q0}, claim_tasks(store1, [], Q0)),

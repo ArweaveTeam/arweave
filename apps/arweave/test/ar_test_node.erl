@@ -101,14 +101,14 @@ new_custom_size_rsa_wallet(Size) ->
                 [
                     {kty, <<"RSA">>},
                     {ext, true},
-                    {e, arweave_util:encode(Expnt)},
-                    {n, arweave_util:encode(Pub)},
-                    {d, arweave_util:encode(Priv)},
-                    {p, arweave_util:encode(P1)},
-                    {q, arweave_util:encode(P2)},
-                    {dp, arweave_util:encode(E1)},
-                    {dq, arweave_util:encode(E2)},
-                    {qi, arweave_util:encode(C)}
+                    {e, arweave_lib_util:encode(Expnt)},
+                    {n, arweave_lib_util:encode(Pub)},
+                    {d, arweave_lib_util:encode(Priv)},
+                    {p, arweave_lib_util:encode(P1)},
+                    {q, arweave_lib_util:encode(P2)},
+                    {dp, arweave_lib_util:encode(E1)},
+                    {dq, arweave_lib_util:encode(E2)},
+                    {qi, arweave_lib_util:encode(C)}
                 ]
             }
         ),
@@ -358,7 +358,7 @@ start_node(B0, Overrides, WaitUntilSync) when is_map(Overrides) ->
 start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
     %% Set weave larger than what we'll cover with the 3 nodes so that every node can find
     %% a solution.
-    [B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ar_block:partition_size() * 5),
+    [B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), arweave_lib_constants:partition_size() * 5),
     ExitPeer = peer_ip(peer1),
     ValidatorPeer = peer_ip(main),
     MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
@@ -367,7 +367,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
     RewardAddr = maps:get([mining, address], BaseCMConfig),
     ExitNodeOverrides = BaseCMConfig#{
         [mining, enabled] => true,
-        [peers, local] => [arweave_util:format_peer(peer_ip(P)) || P <- MinerNodes]
+        [peers, local] => [arweave_lib_util:format_peer(peer_ip(P)) || P <- MinerNodes]
     },
     %% Validator boots WITHOUT any trusted peers — `validate_trusted_peers/0'
     %% would otherwise try to GET each peer's network info during init,
@@ -395,9 +395,9 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
             MinerPeers = lists:filter(fun(Peer) -> Peer /= MinerNode end, MinerNodes),
             MinerPeerIPs = [peer_ip(Peer) || Peer <- MinerPeers],
             MinerOverrides = BaseCMConfig#{
-                [peers, cm_exit] => arweave_util:format_peer(ExitPeer),
-                [peers, cm_peer] => [arweave_util:format_peer(Peer) || Peer <- MinerPeerIPs],
-                [peers, local] => [arweave_util:format_peer(Peer) || Peer <- MinerPeerIPs ++ [ExitPeer]]
+                [peers, cm_exit] => arweave_lib_util:format_peer(ExitPeer),
+                [peers, cm_peer] => [arweave_lib_util:format_peer(Peer) || Peer <- MinerPeerIPs],
+                [peers, local] => [arweave_lib_util:format_peer(Peer) || Peer <- MinerPeerIPs ++ [ExitPeer]]
             },
             MinerStorageModules =
                 get_cm_storage_modules(RewardAddr, I, MiningNodeCount),
@@ -413,7 +413,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 %% @doc Return a base map of overrides used to start a coordinated-mining node.
 base_cm_config(Peers) ->
     RewardAddr = generate_address(peer1),
-    maps:merge(#{[peers, trusted] => [arweave_util:format_peer(Peer) || Peer <- Peers]}, #{
+    maps:merge(#{[peers, trusted] => [arweave_lib_util:format_peer(Peer) || Peer <- Peers]}, #{
         [mining, cache_size]                    => 128,
         [join, start_from_latest_state]         => true,
         [join, auto]                            => true,
@@ -446,7 +446,7 @@ http_get_block(H, Node) ->
     Port = remote_call(Node, arweave_config, get, [[port]]),
     Peer = {127, 0, 0, 1, Port},
     case ar_http:req(#{ peer => Peer, method => get,
-            path => "/block2/hash/" ++ binary_to_list(arweave_util:encode(H)) }) of
+            path => "/block2/hash/" ++ binary_to_list(arweave_lib_util:encode(H)) }) of
         {ok, {{<<"200">>, _}, _, BlockBin, _, _}} ->
             ar_serialize:binary_to_block(BlockBin);
         {error, Reason} ->
@@ -490,11 +490,11 @@ mock_to_force_cross_node_h2() ->
 %% @doc Mock out packing-related constants to replicate mainnet behavior.
 mainnet_packing_mocks() ->
     [
-        {ar_block, partition_size, fun() -> 3_600_000_000_000 end},
-        {ar_block, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
+        {arweave_lib_constants, partition_size, fun() -> 3_600_000_000_000 end},
+        {arweave_lib_constants, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
         {ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
-        {ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
-        {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
+        {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
+        {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
     ].
 
 get_difficulty_for_invalid_hash() ->
@@ -541,14 +541,14 @@ write_genesis_files(DataDir, B0) ->
     BH = B0#block.indep_hash,
     BlockDir = filename:join(DataDir, ?BLOCK_DIR),
     ok = filelib:ensure_dir(BlockDir ++ "/"),
-    BlockFilepath = filename:join(BlockDir, binary_to_list(arweave_util:encode(BH)) ++ ".bin"),
+    BlockFilepath = filename:join(BlockDir, binary_to_list(arweave_lib_util:encode(BH)) ++ ".bin"),
     ok = file:write_file(BlockFilepath, ar_serialize:block_to_binary(B0)),
     TXDir = filename:join(DataDir, ?TX_DIR),
     ok = filelib:ensure_dir(TXDir ++ "/"),
     lists:foreach(
         fun(TX) ->
             TXID = TX#tx.id,
-            TXFilepath = filename:join(TXDir, binary_to_list(arweave_util:encode(TXID)) ++ ".json"),
+            TXFilepath = filename:join(TXDir, binary_to_list(arweave_lib_util:encode(TXID)) ++ ".json"),
             TXJSON = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
             ok = file:write_file(TXFilepath, TXJSON)
         end,
@@ -572,7 +572,7 @@ write_genesis_files(DataDir, B0) ->
         ok = ar_kv:put(block_index_db, << 0:256 >>,
                 term_to_binary({H, WeaveSize, TXRoot, <<>>})),
         ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
-        case ar_fork:height_2_7() of
+        case arweave_lib_fork:height_2_7() of
             0 ->
                 ok = ar_kv:put(block_time_history_db, H,
                         term_to_binary(hd(B0#block.block_time_history)));
@@ -598,7 +598,7 @@ write_genesis_files(DataDir, B0) ->
     ok = filelib:ensure_dir(WalletListDir ++ "/"),
     RootHash = B0#block.wallet_list,
     WalletListFilepath =
-        filename:join(WalletListDir, binary_to_list(arweave_util:encode(RootHash)) ++ ".json"),
+        filename:join(WalletListDir, binary_to_list(arweave_lib_util:encode(RootHash)) ++ ".json"),
     WalletListJSON =
         ar_serialize:jsonify(
             ar_serialize:wallet_list_to_json_struct(B0#block.reward_addr, false,
@@ -631,8 +631,8 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
     %% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
     %% Note that replica_2_9 modules do not have ?OVERLAP.
     RangeNumber = lists:nth(N, [0, 2, 4]),
-    [{RangeNumber * ar_block:partition_size(),
-        (RangeNumber + 1) * ar_block:partition_size(),
+    [{RangeNumber * arweave_lib_constants:partition_size(),
+        (RangeNumber + 1) * arweave_lib_constants:partition_size(),
         storage_module_packing(RewardAddr, 0)}].
 
 remote_call(Node, Module, Function, Args) ->
@@ -645,7 +645,7 @@ remote_call(Node, Module, Function, Args, Timeout) ->
             apply(Module, Function, Args);
         false ->
             Key = rpc:async_call(NodeName, Module, Function, Args),
-            Result = arweave_util:do_until(
+            Result = ar_util:do_until(
                 fun() ->
                     case rpc:nb_yield(Key) of
                         timeout ->
@@ -797,7 +797,7 @@ get_tx_price(Node, DataSize) ->
 get_tx_price(Node, DataSize, Target) ->
     Peer = peer_ip(Node),
     Path = "/price/" ++ integer_to_list(DataSize) ++ "/"
-            ++ binary_to_list(arweave_util:encode(Target)),
+            ++ binary_to_list(arweave_lib_util:encode(Target)),
     {ok, {{<<"200">>, _}, _, Reply, _, _}} =
         ar_http:req(#{
             method => get,
@@ -815,7 +815,7 @@ get_tx_price(Node, DataSize, Target) ->
 
 get_tx_price2(Node, DataSize, Target) ->
     Path = "/price2/" ++ integer_to_list(DataSize) ++ "/"
-            ++ binary_to_list(arweave_util:encode(Target)),
+            ++ binary_to_list(arweave_lib_util:encode(Target)),
     {ok, {{<<"200">>, _}, _, Reply, _, _}} =
         ar_http:req(#{
             method => get,
@@ -837,7 +837,7 @@ get_optimistic_tx_price(Node, DataSize) ->
 %% node.
 get_optimistic_tx_price(Node, DataSize, Target) ->
     Path = "/optimistic_price/" ++ integer_to_list(DataSize) ++ "/"
-            ++ binary_to_list(arweave_util:encode(Target)),
+            ++ binary_to_list(arweave_lib_util:encode(Target)),
     {ok, {{<<"200">>, _}, _, Reply, _, _}} =
         ar_http:req(#{
             method => get,
@@ -1110,7 +1110,7 @@ join(JoinOnNode, Rejoin, Overrides) when is_map(Overrides) ->
     JoinDefaults = #{
         [join, start_from_latest_state] => false,
         [join, auto]                    => true,
-        [peers, trusted]                => [arweave_util:format_peer(Peer)]
+        [peers, trusted]                => [arweave_lib_util:format_peer(Peer)]
     },
     update_config(maps:merge(JoinDefaults, Overrides)),
     start_dependencies(),
@@ -1129,7 +1129,7 @@ storage_module_packing(RewardAddr, _Index, Options) ->
         replica_2_9 ->
             {replica_2_9, RewardAddr};
         not_set ->
-            case ar_fork:height_2_9() of
+            case arweave_lib_fork:height_2_9() of
                 0 -> {replica_2_9, RewardAddr};
                 _ -> {spora_2_6, RewardAddr}
             end
@@ -1151,13 +1151,13 @@ storage_module_config(RewardAddr, Partitions, Options) ->
     }.
 
 %% @doc Return wide runtime module tuples `{RangeStart, RangeEnd,
-%% Packing}`. Each module spans `10 * ar_block:partition_size()`.
+%% Packing}`. Each module spans `10 * arweave_lib_constants:partition_size()`.
 %% Use `storage_module_config/2,3` when building override maps.
 wide_storage_modules(RewardAddr, Partitions) ->
     wide_storage_modules(RewardAddr, Partitions, #{}).
 
 wide_storage_modules(RewardAddr, Partitions, Options) ->
-    Size = 10 * ar_block:partition_size(),
+    Size = 10 * arweave_lib_constants:partition_size(),
     [{Partition * Size, (Partition + 1) * Size,
             storage_module_packing(RewardAddr, Partition, Options)}
         || Partition <- Partitions].
@@ -1280,10 +1280,10 @@ post_tx_to_peer(Node, TX, Wait, Retries) ->
                 "Failed to post transaction.~nTX: ~s.~nTX format: ~B.~nTX fee: ~B.~n"
                 "TX size: ~B.~nTX last_tx: ~s.~nTX owner: ~s.~nTX owner address: ~s.~n"
                 "Error(s): ~p.~nReply: ~p.~n",
-                [arweave_util:encode(TX#tx.id), TX#tx.format, TX#tx.reward,
-                    TX#tx.data_size, arweave_util:encode(TX#tx.last_tx),
-                    arweave_util:encode(TX#tx.owner),
-                    arweave_util:encode(Addr),
+                [arweave_lib_util:encode(TX#tx.id), TX#tx.format, TX#tx.reward,
+                    TX#tx.data_size, arweave_lib_util:encode(TX#tx.last_tx),
+                    arweave_lib_util:encode(TX#tx.owner),
+                    arweave_lib_util:encode(Addr),
                     remote_call(Node, ar_tx_db, get_error_codes, [TX#tx.id]),
                     ErrorInfo]),
             noop
@@ -1305,14 +1305,14 @@ get_tx_anchor(Node) ->
             peer => peer_ip(Node),
             path => "/tx_anchor"
         }),
-    arweave_util:decode(Reply).
+    arweave_lib_util:decode(Reply).
 
 get_tx_confirmations(Node, TXID) ->
     Response =
         ar_http:req(#{
             method => get,
             peer => peer_ip(Node),
-            path => "/tx/" ++ binary_to_list(arweave_util:encode(TXID)) ++ "/status"
+            path => "/tx/" ++ binary_to_list(arweave_lib_util:encode(TXID)) ++ "/status"
         }),
     case Response of
         {ok, {{<<"200">>, _}, _, Reply, _, _}} ->
@@ -1533,12 +1533,12 @@ random_v1_data(Size) ->
     << (crypto:strong_rand_bytes(Size - 1))/binary, <<"a">>/binary >>.
 
 assert_get_tx_data(Node, TXID, ExpectedData) ->
-    ?debugFmt("Polling for data of ~s.", [arweave_util:encode(TXID)]),
+    ?debugFmt("Polling for data of ~s.", [arweave_lib_util:encode(TXID)]),
     Peer = peer_ip(Node),
     ok = ar_test_await:http_tx_data_matches(Node, TXID, ExpectedData),
     {ok, {{<<"200">>, _}, _, OffsetJSON, _, _}}
             = ar_http:req(#{ method => get, peer => Peer,
-                    path => "/tx/" ++ binary_to_list(arweave_util:encode(TXID)) ++ "/offset" }),
+                    path => "/tx/" ++ binary_to_list(arweave_lib_util:encode(TXID)) ++ "/offset" }),
     Map = jiffy:decode(OffsetJSON, [return_maps]),
     Offset = binary_to_integer(maps:get(<<"offset">>, Map)),
     Size = binary_to_integer(maps:get(<<"size">>, Map)),
@@ -1549,22 +1549,22 @@ get_tx_data_in_chunks(Offset, Size, Peer) ->
     get_tx_data_in_chunks(Offset, Offset - Size, Peer, []).
 
 get_tx_data_in_chunks(Offset, Start, _Peer, Bin) when Offset =< Start ->
-    arweave_util:encode(iolist_to_binary(Bin));
+    arweave_lib_util:encode(iolist_to_binary(Bin));
 get_tx_data_in_chunks(Offset, Start, Peer, Bin) ->
     JSON = get_tx_data_chunk(Peer, Offset),
     Map = jiffy:decode(JSON, [return_maps]),
-    Chunk = arweave_util:decode(maps:get(<<"chunk">>, Map)),
+    Chunk = arweave_lib_util:decode(maps:get(<<"chunk">>, Map)),
     get_tx_data_in_chunks(Offset - byte_size(Chunk), Start, Peer, [Chunk | Bin]).
 
 get_tx_data_in_chunks_traverse_forward(Offset, Size, Peer) ->
     get_tx_data_in_chunks_traverse_forward(Offset, Offset - Size, Peer, []).
 
 get_tx_data_in_chunks_traverse_forward(Offset, Start, _Peer, Bin) when Offset =< Start ->
-    arweave_util:encode(iolist_to_binary(lists:reverse(Bin)));
+    arweave_lib_util:encode(iolist_to_binary(lists:reverse(Bin)));
 get_tx_data_in_chunks_traverse_forward(Offset, Start, Peer, Bin) ->
     JSON = get_tx_data_chunk(Peer, Start + 1),
     Map = jiffy:decode(JSON, [return_maps]),
-    Chunk = arweave_util:decode(maps:get(<<"chunk">>, Map)),
+    Chunk = arweave_lib_util:decode(maps:get(<<"chunk">>, Map)),
     get_tx_data_in_chunks_traverse_forward(Offset, Start + byte_size(Chunk), Peer,
             [Chunk | Bin]).
 
@@ -1586,7 +1586,7 @@ get_tx_data_chunk(Peer, Path, Offset, Deadline) ->
                 _ ->
                     ?debugFmt("Failed to fetch TX data chunk. Offset: ~B. Peer: ~s. "
                             "Response: ~p.~n",
-                            [Offset, arweave_util:format_peer(Peer), Response]),
+                            [Offset, arweave_lib_util:format_peer(Peer), Response]),
                     ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, Response)
             end
     end.

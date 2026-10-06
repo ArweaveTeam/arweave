@@ -1,7 +1,7 @@
 %%% @doc Named, semantic waits for asynchronous test conditions
 %%% (sync-record coverage, HTTP availability, partition state, etc.),
 %%% all behind one polling primitive. Prefer a named helper; add one
-%%% here rather than writing a fresh `arweave_util:do_until' loop in a test.
+%%% here rather than writing a fresh `ar_util:do_until' loop in a test.
 %%% Reserve raw `timer:sleep' for deliberately time-based behaviour,
 %%% never as a stand-in for a condition wait.
 %%%
@@ -216,8 +216,8 @@ global_sync_record_matches(Options, Expected) ->
 global_sync_record_excludes(Options, Range) ->
     do_until_true(global_sync_record_excludes,
         fun() ->
-            ar_intervals:is_empty(
-                ar_intervals:intersection(global_sync_record(Options), Range))
+            arweave_lib_intervals:is_empty(
+                arweave_lib_intervals:intersection(global_sync_record(Options), Range))
         end).
 
 %%%===================================================================
@@ -293,7 +293,7 @@ http_tx_data(Node, TXID) ->
 %% `GET /tx/<TXID>/data' from `Node'.
 request_tx_data(Node, TXID) ->
     ar_http:req(#{ method => get, peer => ar_test_node:peer_ip(Node),
-        path => "/tx/" ++ binary_to_list(arweave_util:encode(TXID)) ++ "/data" }).
+        path => "/tx/" ++ binary_to_list(arweave_lib_util:encode(TXID)) ++ "/data" }).
 
 %% @doc Wait until `POST /chunk' of `Proof' to `Node' responds with the
 %% HTTP status `Status' (e.g. `<<"303">>').
@@ -748,11 +748,11 @@ is_chunk_recorded(Node, Offset, Opts) ->
 %% set. Raises on a fetch or decode failure (a hard fault, not poll-again).
 global_sync_record(Options) ->
     {ok, Binary} = ar_global_sync_record:get_serialized_sync_record(Options),
-    {ok, Global} = ar_intervals:safe_from_etf(Binary),
+    {ok, Global} = arweave_lib_intervals:safe_from_etf(Binary),
     Global.
 
 global_sync_record_to_list(Options) ->
-    ar_intervals:to_list(global_sync_record(Options)).
+    arweave_lib_intervals:to_list(global_sync_record(Options)).
 
 data_roots_block_start(B) ->
     B#block.weave_size - B#block.block_size.
@@ -778,7 +778,7 @@ has_range(Node, StartOffset, EndOffset) ->
         {ok, RegularIntervals} ->
             FootprintIntervals = collect_footprint_intervals(
                 NodeIP, StartOffset, EndOffset),
-            AllIntervals = ar_intervals:union(RegularIntervals, FootprintIntervals),
+            AllIntervals = arweave_lib_intervals:union(RegularIntervals, FootprintIntervals),
             interval_contains(AllIntervals, StartOffset, EndOffset);
         Error ->
             erlang:error({sync_record_fetch_failed,
@@ -786,11 +786,11 @@ has_range(Node, StartOffset, EndOffset) ->
     end.
 
 collect_footprint_intervals(NodeIP, StartOffset, EndOffset) ->
-    StartPartition = ar_replica_2_9:get_entropy_partition(StartOffset + 1),
-    LastPartition = ar_replica_2_9:get_entropy_partition(EndOffset + 1),
+    StartPartition = arweave_lib_replica_2_9:get_entropy_partition(StartOffset + 1),
+    LastPartition = arweave_lib_replica_2_9:get_entropy_partition(EndOffset + 1),
     FootprintsPerPartition = ar_footprint_record:get_footprints_per_partition(),
     collect_footprint_intervals(NodeIP, StartPartition, LastPartition,
-        0, FootprintsPerPartition - 1, ar_intervals:new()).
+        0, FootprintsPerPartition - 1, arweave_lib_intervals:new()).
 
 collect_footprint_intervals(_NodeIP, Partition, LastPartition,
         _Footprint, _MaxFootprint, Acc) when Partition > LastPartition ->
@@ -810,13 +810,13 @@ collect_footprint_intervals(NodeIP, Partition, LastPartition,
                 ?LOG_INFO([{event, footprint_record_not_found},
                     {node_ip, NodeIP}, {partition, Partition},
                     {footprint, Footprint}]),
-                ar_intervals:new();
+                arweave_lib_intervals:new();
             Error ->
                 erlang:error({footprint_fetch_failed,
                     [{node_ip, NodeIP}, {partition, Partition},
                      {footprint, Footprint}, {error, Error}]})
         end,
-    NewAcc = ar_intervals:union(Acc, FootprintByteIntervals),
+    NewAcc = arweave_lib_intervals:union(Acc, FootprintByteIntervals),
     collect_footprint_intervals(NodeIP, Partition, LastPartition,
         Footprint + 1, MaxFootprint, NewAcc).
 

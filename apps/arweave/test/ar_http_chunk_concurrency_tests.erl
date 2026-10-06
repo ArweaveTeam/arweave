@@ -42,7 +42,7 @@ test_chunk_requests_are_served_concurrently() ->
         %% The node requests chunks from itself: the client and the server
         %% are the ones peers use.
         Peer = ar_test_node:peer_ip(main),
-        Replies = arweave_util:pmap(
+        Replies = arweave_lib_util:pmap(
             fun(I) ->
                 ar_http_iface_client:get_chunk_binary(
                     Peer,

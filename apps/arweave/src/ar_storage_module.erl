@@ -52,9 +52,9 @@ id({Start, End, Packing}) ->
     id(Start, End, packing_string(Packing)).
 
 packing_string({spora_2_6, Addr}) ->
-    arweave_util:encode(Addr);
+    arweave_lib_util:encode(Addr);
 packing_string({replica_2_9, Addr}) ->
-    << (arweave_util:encode(Addr))/binary, ".replica.2.9" >>;
+    << (arweave_lib_util:encode(Addr))/binary, ".replica.2.9" >>;
 packing_string(Packing) ->
     atom_to_list(Packing).
 
@@ -268,7 +268,7 @@ disk_dir_name(StoreID) ->
 %% already matches the legacy partition-form directory name.
 legacy_bucket_dir_name(Start, End, Packing) ->
     Len = End - Start,
-    case Len =/= ar_block:partition_size() andalso Start rem Len == 0 of
+    case Len =/= arweave_lib_constants:partition_size() andalso Start rem Len == 0 of
         true ->
             binary_to_list(iolist_to_binary(io_lib:format(
                 "storage_module_~B_~B_~s",
@@ -302,7 +302,7 @@ is_repack_in_place(ID) ->
 %% should crash rather than silently name a directory.
 id(Start, End, PackingString) when End > Start ->
     Len = End - Start,
-    IsWholePartition = Len == ar_block:partition_size()
+    IsWholePartition = Len == arweave_lib_constants:partition_size()
         andalso Start rem Len == 0,
     case IsWholePartition of
         true ->
@@ -363,12 +363,12 @@ has_any(Offset, [{ModuleStart, ModuleEnd, Packing} | StorageModules]) ->
     end.
 
 get_unique_sorted_intervals(StorageModules) ->
-    get_unique_sorted_intervals(StorageModules, ar_intervals:new()).
+    get_unique_sorted_intervals(StorageModules, arweave_lib_intervals:new()).
 
 get_unique_sorted_intervals([], Intervals) ->
-    [{Start, End} || {End, Start} <- ar_intervals:to_list(Intervals)];
+    [{Start, End} || {End, Start} <- arweave_lib_intervals:to_list(Intervals)];
 get_unique_sorted_intervals([{Start, End, _Packing} | StorageModules], Intervals) ->
-    get_unique_sorted_intervals(StorageModules, ar_intervals:add(Intervals, End, Start)).
+    get_unique_sorted_intervals(StorageModules, arweave_lib_intervals:add(Intervals, End, Start)).
 
 has_range(PartitionStart, PartitionEnd, _Intervals)
         when PartitionStart >= PartitionEnd ->
@@ -441,7 +441,7 @@ label_test() ->
     ets:delete(?MODULE, last_address_label),
     try
         arweave_config:with_test_config(fun() ->
-            P0 = ar_block:partition_size(),
+            P0 = arweave_lib_constants:partition_size(),
             StorageModules = [
                 {0, P0, {spora_2_6, ?LABEL_TEST_ADDR_A}},
                 {2 * P0, 3 * P0, {spora_2_6, ?LABEL_TEST_ADDR_A}},
@@ -454,7 +454,7 @@ label_test() ->
             ok = arweave_config:force_config(#{
                 [storage_modules] => StorageModules
             }),
-            P = ar_block:partition_size(),
+            P = arweave_lib_constants:partition_size(),
             ?assertEqual("storage_module_0_spora_2_6_1",
                 label(id({0, P, {spora_2_6, ?LABEL_TEST_ADDR_A}}))),
             ?assertEqual("storage_module_2_spora_2_6_1",
@@ -482,7 +482,7 @@ label_test() ->
 
 disk_dir_name_test() ->
     arweave_config:with_test_config(fun() ->
-        P = ar_block:partition_size(),
+        P = arweave_lib_constants:partition_size(),
         BucketModule = {2 * 524288, 3 * 524288, unpacked},
         PartitionModule = {0, P, unpacked},
         ok = arweave_config:force_config(

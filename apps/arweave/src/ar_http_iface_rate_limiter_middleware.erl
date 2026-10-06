@@ -43,10 +43,10 @@ execute(Req0, Env) ->
 
 get_limiter_ref(Req) ->
     LocalIPs = [
-                arweave_util:peer_to_ip(Peer)
+                arweave_lib_util:peer_to_ip(Peer)
                 || Peer <- arweave_config:get([peers, local])
                ],
-    PeerIP = arweave_util:peer_to_ip(get_peer_key(Req)),
+    PeerIP = arweave_lib_util:peer_to_ip(get_peer_key(Req)),
 
     case lists:member(PeerIP, LocalIPs) of
         true ->

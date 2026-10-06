@@ -1,2 +1,3 @@
-%% Size in bytes of the timestamp and last_retarget block fields.
--define(TIMESTAMP_FIELD_SIZE_LIMIT, 12).
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
+
+

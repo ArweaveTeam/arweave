@@ -122,7 +122,7 @@ init({StoreID, ToPacking}) ->
     %% bucket and entropy ranges may differ from this chunk range.
     Module = ar_storage_module:get_by_id(StoreID),
     {ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module),
-    PaddedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd),
+    PaddedModuleEnd = arweave_lib_constants:get_chunk_padded_offset(ModuleEnd),
     Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
     {BatchSize, NumEntropyOffsets} = compute_repack_sizing(FromPacking, ToPacking),
@@ -174,22 +174,22 @@ get_read_range(BucketEndOffset, #state{} = State) ->
         non_neg_integer(), non_neg_integer(), non_neg_integer()) ->
           {non_neg_integer(), non_neg_integer(), [non_neg_integer()]}.
 get_read_range(BucketEndOffset, RangeEnd, BatchSize) ->
-    ReadRangeStart = ar_chunk_storage:get_chunk_byte_from_bucket_end(BucketEndOffset),
+    ReadRangeStart = arweave_lib_constants:get_chunk_byte_from_bucket_end(BucketEndOffset),
 
     Partition = ar_node:get_partition_number(BucketEndOffset),
     {EntropyPartitionStart, EntropyPartitionEnd} =
-        ar_replica_2_9:get_entropy_partition_range(Partition),
-    SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
-    EntropyPartitionStartBucket = ar_chunk_storage:get_chunk_bucket_start(EntropyPartitionStart),
+        arweave_lib_replica_2_9:get_entropy_partition_range(Partition),
+    SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
+    EntropyPartitionStartBucket = arweave_lib_constants:get_chunk_bucket_start(EntropyPartitionStart),
     %% Assign the bucket to a sector by its start offset (a bucket ending exactly on a
     %% sector boundary belongs to the sector it ends, not the one it starts); an
     %% end-anchored division pushes the cap a sector too far, so the read range would
     %% swallow the footprint's next entropy offset and produce duplicate buckets.
-    BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(BucketEndOffset),
+    BucketStartOffset = arweave_lib_constants:get_chunk_bucket_start(BucketEndOffset),
     Sector = (BucketStartOffset - EntropyPartitionStartBucket) div SectorSize,
     SectorBucketEnd = EntropyPartitionStartBucket + (Sector + 1) * SectorSize,
     SectorChunkEnd =
-        ar_chunk_storage:get_chunk_byte_from_bucket_end(SectorBucketEnd) + ?DATA_CHUNK_SIZE,
+        arweave_lib_constants:get_chunk_byte_from_bucket_end(SectorBucketEnd) + ?DATA_CHUNK_SIZE,
 
     FullRangeSize = ?DATA_CHUNK_SIZE * BatchSize,
     ReadRangeEnd = lists:min([
@@ -225,7 +225,7 @@ handle_cast(repack, #state{} = State) ->
                  active ->
                      repack(State2);
                  paused ->
-                     arweave_util:cast_after(?DEVICE_LOCK_WAIT, self(), repack),
+                     ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), repack),
                      State2;
                  _ ->
                      State2
@@ -275,7 +275,7 @@ handle_cast({expire_decipher_request, _Ref}, #state{} = State) ->
 
 handle_cast(count_states, #state{} = State) ->
     count_states(cache, State),
-    arweave_util:cast_after(?STATE_COUNT_INTERVAL, self(), count_states),
+    ar_util:cast_after(?STATE_COUNT_INTERVAL, self(), count_states),
     {noreply, State};
 
 handle_cast(recompute_sizing, #state{} = State) ->
@@ -404,7 +404,7 @@ handle_info(Request, #state{} = State) ->
     {noreply, State}.
 
 terminate(Reason, #state{} = State) ->
-    log_debug(terminate, State, [{reason, arweave_util:safe_format(Reason)}]),
+    log_debug(terminate, State, [{reason, arweave_lib_util:safe_format(Reason)}]),
     store_cursor(State),
     ?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
     ok.
@@ -414,7 +414,7 @@ terminate(Reason, #state{} = State) ->
 %%%===================================================================
 
 calculate_num_entropy_offsets(CacheSize, BatchSize) ->
-    min(ar_block:get_sub_chunks_per_replica_2_9_entropy(), (CacheSize * 4) div BatchSize).
+    min(arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy(), (CacheSize * 4) div BatchSize).
 
 %% @doc Determine the read batch size and entropy footprint for this repack module.
 %%
@@ -444,7 +444,7 @@ compute_repack_sizing(FromPacking, ToPacking) ->
                         true -> ConfiguredBatch;
                         false -> derive_repack_batch_size(NumEntropies)
                     end,
-            {Batch, ar_block:get_sub_chunks_per_replica_2_9_entropy()}
+            {Batch, arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy()}
     end.
 
 %% @doc Number of distinct replica.2.9 entropies generated per repacked chunk: one for each
@@ -458,7 +458,7 @@ entropies_per_repack(FromPacking, ToPacking) ->
 derive_repack_batch_size(NumEntropies) ->
     EntropyCacheMiB = arweave_config:get([packing, entropy, cache_size]),
     NumModules = repack_module_count(),
-    FootprintMiB = ar_block:get_replica_2_9_footprint_size() div ?MiB,
+    FootprintMiB = arweave_lib_constants:get_replica_2_9_footprint_size() div ?MiB,
     max(1, EntropyCacheMiB div (FootprintMiB * NumModules * NumEntropies)).
 
 repack_module_count() ->
@@ -476,7 +476,7 @@ log_repack_sizing(StoreID, FromPacking, ToPacking, Batch, Footprint) ->
         NumEntropies ->
             EntropyCacheMiB = arweave_config:get([packing, entropy, cache_size]),
             NumModules = repack_module_count(),
-            FootprintMiB = ar_block:get_replica_2_9_footprint_size() div ?MiB,
+            FootprintMiB = arweave_lib_constants:get_replica_2_9_footprint_size() div ?MiB,
             ChunkCacheMiB = Batch * FootprintMiB * NumModules,
             EntropyWorkingSetMiB = ChunkCacheMiB * NumEntropies,
             TotalMiB = ChunkCacheMiB + EntropyWorkingSetMiB,
@@ -544,7 +544,7 @@ repack(#state{ next_cursor = Cursor, module_end = ModuleEnd } = State)
         _ ->
             log_debug(repacking_complete_but_waiting, State, [
                                                               {target_packing, ar_serialize:encode_packing(TargetPacking, false)}]),
-            arweave_util:cast_after(5000, self(), repack),
+            ar_util:cast_after(5000, self(), repack),
             State
     end;
 
@@ -555,14 +555,14 @@ repack(#state{} = State) ->
         true ->
             log_debug(waiting_for_repack_buffer, State, [
                                                          {target_packing, ar_serialize:encode_packing(TargetPacking, false)}]),
-            arweave_util:cast_after(200, self(), repack),
+            ar_util:cast_after(200, self(), repack),
             State;
         false ->
             repack_footprint(Cursor, State)
     end.
 
 repack_footprint(Cursor, #state{ footprint_limit = FootprintLimit } = State) ->
-    BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
+    BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(Cursor),
     case ar_footprint_limit:is_beyond(BucketEndOffset, FootprintLimit) of
         true ->
             %% The rest of this sector is past the footprint limit: move to
@@ -591,8 +591,8 @@ do_repack_footprint(Cursor, #state{} = State) ->
             read_batch_size = ReadBatchSize,
             footprint_limit = FootprintLimit } = State,
 
-    BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
-    BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
+    BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(Cursor),
+    BucketStartOffset = arweave_lib_constants:get_chunk_bucket_start(Cursor),
     %% A batch spans consecutive footprints; do not let it cross the limit.
     BatchSize = ar_footprint_limit:clip(BucketEndOffset, ReadBatchSize,
                                         FootprintLimit),
@@ -627,7 +627,7 @@ do_repack_footprint(Cursor, #state{} = State) ->
 
             {_, EntropyEnd, _} = get_read_range(BucketEndOffset, State2),
             State3 = State2#state{
-                       entropy_end = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd)
+                       entropy_end = arweave_lib_constants:get_chunk_bucket_end(EntropyEnd)
                       },
             State4 = init_repack_chunk_map(FootprintOffsets, State3),
 
@@ -666,7 +666,7 @@ do_repack_footprint(Cursor, #state{} = State) ->
 should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
     #state{ module_start = ModuleStart, module_end = ModuleEnd,
             target_packing = TargetPacking, store_id = StoreID } = State,
-    PaddedEndOffset = ar_block:get_chunk_padded_offset(Cursor),
+    PaddedEndOffset = arweave_lib_constants:get_chunk_padded_offset(Cursor),
     IsChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
     IsEntropyRecorded = ar_entropy_storage:is_entropy_recorded(
                           PaddedEndOffset, TargetPacking, StoreID),
@@ -749,7 +749,7 @@ needs_entropy(_) -> false.
 %% - at most NumEntropyOffsets offsets are returned
 footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd) ->
     %% sanity checks
-    BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(BucketEndOffset),
+    BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(BucketEndOffset),
     %% end sanity checks
 
     EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset, ModuleEnd),
@@ -770,8 +770,8 @@ footprint_end(FootprintOffsets, ModuleEnd, BatchSize) ->
     {_, LastOffsetRangeEnd, _} = get_read_range(LastOffset, ModuleEnd, BatchSize),
 
     %% makes sure all offsets are in the same entropy partition
-    Partition = ar_replica_2_9:get_entropy_partition(FirstOffset),
-    {_, EntropyPartitionEnd} = ar_replica_2_9:get_entropy_partition_range(Partition),
+    Partition = arweave_lib_replica_2_9:get_entropy_partition(FirstOffset),
+    {_, EntropyPartitionEnd} = arweave_lib_replica_2_9:get_entropy_partition_range(Partition),
 
     min(LastOffsetRangeEnd, EntropyPartitionEnd).
 
@@ -844,7 +844,7 @@ add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = Stat
                  repack_chunk_map = RepackChunkMap
                 } = Acc,
 
-              BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
+              BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(AbsoluteEndOffset),
               RepackChunk =  maps:get(BucketEndOffset, RepackChunkMap, not_found),
               RepackChunk2 = assemble_repack_chunk(
                                RepackChunk, AbsoluteEndOffset, TargetPacking,
@@ -864,8 +864,8 @@ assemble_repack_chunk(
   ConfiguredPacking, StoreID) ->
     #chunk_metadata{ chunk_size = ChunkSize } = Metadata,
 
-    BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
-    PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
+    BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(AbsoluteEndOffset),
+    PaddedEndOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteEndOffset),
 
     SourcePacking = get_chunk_packing(PaddedEndOffset, ConfiguredPacking, StoreID),
 
@@ -880,9 +880,9 @@ assemble_repack_chunk(
     case {ShouldRepack, RepackChunk} of
         {true, not_found} ->
             log_error(chunk_not_found_in_map, [
-                                               {bucket_end_offset, ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset)},
+                                               {bucket_end_offset, arweave_lib_constants:get_chunk_bucket_end(AbsoluteEndOffset)},
                                                {absolute_end_offset, AbsoluteEndOffset},
-                                               {padded_end_offset, ar_block:get_chunk_padded_offset(AbsoluteEndOffset)},
+                                               {padded_end_offset, arweave_lib_constants:get_chunk_padded_offset(AbsoluteEndOffset)},
                                                {chunk_size, ChunkSize}
                                               ]),
             not_found;
@@ -1330,7 +1330,7 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 
 cache_size_test_() ->
     ar_test_node:test_with_all_nodes_mocked([
-                                             {ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end}
+                                             {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end}
                                             ],
                                             fun test_cache_size/0, 30).
 
@@ -1358,31 +1358,31 @@ entropies_per_repack_test() ->
 footprint_offsets_test_() ->
     [
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
-                                              {ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
-                                              {ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
-                                              {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+                                              {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
+                                              {arweave_lib_constants, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
+                                              {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end}
                                              ],
                                              fun test_footprint_offsets_small/0, 30),
 
      %% Run footprint_offsets tests using the production constant values.
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, partition_size, fun() -> 3_600_000_000_000 end},
-                                              {ar_block, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
+                                              {arweave_lib_constants, partition_size, fun() -> 3_600_000_000_000 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
                                               {ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
-                                              {ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
-                                              {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
+                                              {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
+                                              {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
                                              ],
                                              fun test_footprint_offsets_large/0, 30)
     ].
 
 test_footprint_offsets_small() ->
-    {Start0, End0} = ar_storage_module:module_range({0, ar_block:partition_size(), unpacked}),
-    {Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 2 * ar_block:partition_size(), unpacked}),
-    PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
-    PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
+    {Start0, End0} = ar_storage_module:module_range({0, arweave_lib_constants:partition_size(), unpacked}),
+    {Start1, End1} = ar_storage_module:module_range({arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked}),
+    PaddedEnd0 = arweave_lib_constants:get_chunk_padded_offset(End0),
+    PaddedEnd1 = arweave_lib_constants:get_chunk_padded_offset(End1),
 
-    ?assertEqual(3, ar_block:get_sub_chunks_per_replica_2_9_entropy()),
+    ?assertEqual(3, arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy()),
     ?assertEqual({0, 2262144}, {Start0, End0}),
     ?assertEqual({2000000, 4262144}, {Start1, End1}),
     ?assertEqual(2272864, PaddedEnd0),
@@ -1418,15 +1418,15 @@ test_footprint_offsets_small() ->
 
 %% @doc run a series of footprint_offsets tests using the production constant values.
 test_footprint_offsets_large() ->
-    {Start0, End0} = ar_storage_module:module_range({0, ar_block:partition_size(), unpacked}),
-    {Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 2 * ar_block:partition_size(), unpacked}),
-    {Start30, End30} = ar_storage_module:module_range({30 * ar_block:partition_size(), 31 * ar_block:partition_size(), unpacked}),
-    PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
-    PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
-    PaddedEnd30 = ar_block:get_chunk_padded_offset(End30),
+    {Start0, End0} = ar_storage_module:module_range({0, arweave_lib_constants:partition_size(), unpacked}),
+    {Start1, End1} = ar_storage_module:module_range({arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked}),
+    {Start30, End30} = ar_storage_module:module_range({30 * arweave_lib_constants:partition_size(), 31 * arweave_lib_constants:partition_size(), unpacked}),
+    PaddedEnd0 = arweave_lib_constants:get_chunk_padded_offset(End0),
+    PaddedEnd1 = arweave_lib_constants:get_chunk_padded_offset(End1),
+    PaddedEnd30 = arweave_lib_constants:get_chunk_padded_offset(End30),
 
-    ?assertEqual(1024, ar_block:get_sub_chunks_per_replica_2_9_entropy()),
-    ?assertEqual(3515875328, ar_block:get_replica_2_9_entropy_sector_size()),
+    ?assertEqual(1024, arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy()),
+    ?assertEqual(3515875328, arweave_lib_constants:get_replica_2_9_entropy_sector_size()),
     ?assertEqual({0, 3600104857600}, {Start0, End0}),
     ?assertEqual({3600000000000, 7200104857600}, {Start1, End1}),
     ?assertEqual({108000000000000, 111600104857600}, {Start30, End30}),
@@ -1437,29 +1437,29 @@ test_footprint_offsets_large() ->
     TestCases = [
                  %% {ExpectedFootprintOffsetsLength, End, BucketEndOffset}
                  %% Partition 0 - special case as there is no lower partition
-                 {1024, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0)},
-                 {1024, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + ?DATA_CHUNK_SIZE)},
-                 {1024, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ?DATA_CHUNK_SIZE))},
-                 {1023, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (ar_block:get_replica_2_9_entropy_sector_size()))},
-                 {1023, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
-                 {1022, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ar_block:get_replica_2_9_entropy_sector_size()))},
-                 {1022, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
+                 {1024, PaddedEnd0, arweave_lib_constants:get_chunk_bucket_end(Start0)},
+                 {1024, PaddedEnd0, arweave_lib_constants:get_chunk_bucket_end(Start0 + ?DATA_CHUNK_SIZE)},
+                 {1024, PaddedEnd0, arweave_lib_constants:get_chunk_bucket_end(Start0 + (2 * ?DATA_CHUNK_SIZE))},
+                 {1023, PaddedEnd0, arweave_lib_constants:get_chunk_bucket_end(Start0 + (arweave_lib_constants:get_replica_2_9_entropy_sector_size()))},
+                 {1023, PaddedEnd0, arweave_lib_constants:get_chunk_bucket_end(Start0 + (arweave_lib_constants:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
+                 {1022, PaddedEnd0, arweave_lib_constants:get_chunk_bucket_end(Start0 + (2 * arweave_lib_constants:get_replica_2_9_entropy_sector_size()))},
+                 {1022, PaddedEnd0, arweave_lib_constants:get_chunk_bucket_end(Start0 + (2 * arweave_lib_constants:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
                  %% Partition 1 - before the strict data split threshold
-                 {1, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1)},
-                 {1, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + ?DATA_CHUNK_SIZE)},
-                 {1024, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ?DATA_CHUNK_SIZE))},
-                 {1023, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (ar_block:get_replica_2_9_entropy_sector_size()))},
-                 {1023, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
-                 {1022, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ar_block:get_replica_2_9_entropy_sector_size()))},
-                 {1022, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
+                 {1, PaddedEnd1, arweave_lib_constants:get_chunk_bucket_end(Start1)},
+                 {1, PaddedEnd1, arweave_lib_constants:get_chunk_bucket_end(Start1 + ?DATA_CHUNK_SIZE)},
+                 {1024, PaddedEnd1, arweave_lib_constants:get_chunk_bucket_end(Start1 + (2 * ?DATA_CHUNK_SIZE))},
+                 {1023, PaddedEnd1, arweave_lib_constants:get_chunk_bucket_end(Start1 + (arweave_lib_constants:get_replica_2_9_entropy_sector_size()))},
+                 {1023, PaddedEnd1, arweave_lib_constants:get_chunk_bucket_end(Start1 + (arweave_lib_constants:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
+                 {1022, PaddedEnd1, arweave_lib_constants:get_chunk_bucket_end(Start1 + (2 * arweave_lib_constants:get_replica_2_9_entropy_sector_size()))},
+                 {1022, PaddedEnd1, arweave_lib_constants:get_chunk_bucket_end(Start1 + (2 * arweave_lib_constants:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
                  %% Partition 30 - after the strict data split threshold
-                 {1, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30)},
-                 {1024, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + ?DATA_CHUNK_SIZE)},
-                 {1024, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ?DATA_CHUNK_SIZE))},
-                 {1023, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (ar_block:get_replica_2_9_entropy_sector_size()))},
-                 {1023, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
-                 {1022, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ar_block:get_replica_2_9_entropy_sector_size()))},
-                 {1022, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))}
+                 {1, PaddedEnd30, arweave_lib_constants:get_chunk_bucket_end(Start30)},
+                 {1024, PaddedEnd30, arweave_lib_constants:get_chunk_bucket_end(Start30 + ?DATA_CHUNK_SIZE)},
+                 {1024, PaddedEnd30, arweave_lib_constants:get_chunk_bucket_end(Start30 + (2 * ?DATA_CHUNK_SIZE))},
+                 {1023, PaddedEnd30, arweave_lib_constants:get_chunk_bucket_end(Start30 + (arweave_lib_constants:get_replica_2_9_entropy_sector_size()))},
+                 {1023, PaddedEnd30, arweave_lib_constants:get_chunk_bucket_end(Start30 + (arweave_lib_constants:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
+                 {1022, PaddedEnd30, arweave_lib_constants:get_chunk_bucket_end(Start30 + (2 * arweave_lib_constants:get_replica_2_9_entropy_sector_size()))},
+                 {1022, PaddedEnd30, arweave_lib_constants:get_chunk_bucket_end(Start30 + (2 * arweave_lib_constants:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))}
                 ],
 
     lists:foreach(
@@ -1476,26 +1476,26 @@ test_footprint_offsets_large() ->
 footprint_end_test_() ->
     [
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
-                                              {ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
-                                              {ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
-                                              {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+                                              {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
+                                              {arweave_lib_constants, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
+                                              {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end}
                                              ],
                                              fun test_footprint_end_small/0, 30)
     ].
 
 test_footprint_end_small() ->
-    {Start0, End0} = ar_storage_module:module_range({0, ar_block:partition_size(), unpacked}),
-    {Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 2 * ar_block:partition_size(), unpacked}),
-    PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
-    PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
+    {Start0, End0} = ar_storage_module:module_range({0, arweave_lib_constants:partition_size(), unpacked}),
+    {Start1, End1} = ar_storage_module:module_range({arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked}),
+    PaddedEnd0 = arweave_lib_constants:get_chunk_padded_offset(End0),
+    PaddedEnd1 = arweave_lib_constants:get_chunk_padded_offset(End1),
 
-    ?assertEqual(3, ar_block:get_sub_chunks_per_replica_2_9_entropy()),
+    ?assertEqual(3, arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy()),
     ?assertEqual({0, 2262144}, {Start0, End0}),
     ?assertEqual({2000000, 4262144}, {Start1, End1}),
     ?assertEqual(2272864, PaddedEnd0),
     ?assertEqual(4370016, PaddedEnd1),
-    ?assertEqual({0, 2272864}, ar_replica_2_9:get_entropy_partition_range(0)),
+    ?assertEqual({0, 2272864}, arweave_lib_replica_2_9:get_entropy_partition_range(0)),
 
     ?assertEqual(2010720,
                  footprint_end([262144, 1048576, 1835008], PaddedEnd0, 1)),
@@ -1735,31 +1735,31 @@ test_assemble_repack_chunk_too_small_packed() ->
 should_repack_test_() ->
     [
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
                                               {ar_sync_record, is_recorded, fun(_, _, _) -> false end},
                                               {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
                                              ],
                                              fun test_should_repack_no_chunk_no_entropy/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
                                               {ar_sync_record, is_recorded, fun(_, _, _) -> {true, {replica_2_9, <<"addr">>}} end},
                                               {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
                                              ],
                                              fun test_should_repack_chunk_and_entropy/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
                                               {ar_sync_record, is_recorded, fun(_, _, _) -> false end},
                                               {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
                                              ],
                                              fun test_should_repack_entropy_but_no_chunk/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
                                               {ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
                                               {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
                                              ],
                                              fun test_should_repack_unpacked_chunk_and_entropy/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
                                               {ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
                                               {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
                                              ],
@@ -2018,10 +2018,10 @@ init_repack_chunk_map_test_() ->
      ar_test_node:test_with_all_nodes_mocked(ar_test_node:mainnet_packing_mocks(),
                                              fun test_init_repack_chunk_map_b/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 524288 end},
-                                              {ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2097152 end},
-                                              {ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 4 end},
-                                              {ar_block, strict_data_split_threshold, fun() -> 786432 end}
+                                              {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 524288 end},
+                                              {arweave_lib_constants, get_replica_2_9_entropy_partition_size, fun() -> 2097152 end},
+                                              {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 4 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 786432 end}
                                              ],
                                              fun test_init_repack_chunk_map_sector_boundary/0, 30)
     ].
@@ -2029,7 +2029,7 @@ init_repack_chunk_map_test_() ->
 %% @doc This tests a specific off-by-one error that occurred in the footprint_end calculation.
 %% Previously there was an ar_entropy_gen:footprint_end function which was incorrect. The
 %% fix removes the ar_entropy_gen:footprint_end function and has everyone use
-%% ar_replica_2_9:get_entropy_partition_range instead, as that one does the correct end of
+%% arweave_lib_replica_2_9:get_entropy_partition_range instead, as that one does the correct end of
 %% range calculation.
 %%
 %% Keeping this test as it's an easy way to assert no future regressions in this logic.
@@ -2038,8 +2038,8 @@ test_init_repack_chunk_map_a() ->
     ModuleStart = 18000000000000,
     ModuleEnd = 21600104857600,
     BatchSize = 100,
-    BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
-    BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
+    BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(Cursor),
+    BucketStartOffset = arweave_lib_constants:get_chunk_bucket_start(Cursor),
     FootprintOffsets = footprint_offsets(BucketEndOffset, 1024, ModuleEnd),
     FootprintStart = BucketStartOffset+1,
     FootprintEnd = footprint_end(FootprintOffsets, ModuleEnd, BatchSize),
@@ -2068,13 +2068,13 @@ test_init_repack_chunk_map_b() ->
     ModuleStart = 18000000000000,
     ModuleEnd = 21600104857600,
     BatchSize = 100,
-    BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
-    BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
+    BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(Cursor),
+    BucketStartOffset = arweave_lib_constants:get_chunk_bucket_start(Cursor),
     FootprintOffsets = footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd),
     FootprintStart = BucketStartOffset+1,
     FootprintEnd = footprint_end(FootprintOffsets, ModuleEnd, BatchSize),
     {_, EntropyEnd, _} = get_read_range(BucketEndOffset, FootprintEnd, BatchSize),
-    EntropyEnd2 = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd),
+    EntropyEnd2 = arweave_lib_constants:get_chunk_bucket_end(EntropyEnd),
     {_ReadRangeStart, _ReadRangeEnd, ReadRangeOffsets} = get_read_range(
                                                            BucketEndOffset, FootprintEnd, BatchSize),
     State = #state{
@@ -2093,7 +2093,7 @@ test_init_repack_chunk_map_b() ->
 
     MaxChunkMap = lists:max(maps:keys(State2#state.repack_chunk_map)),
 
-    ?assertEqual(ar_chunk_storage:get_chunk_bucket_end(FootprintEnd), MaxChunkMap),
+    ?assertEqual(arweave_lib_constants:get_chunk_bucket_end(FootprintEnd), MaxChunkMap),
     ?assertEqual(EntropyEnd2, lists:max(ReadRangeOffsets)),
     ok.
 
@@ -2106,8 +2106,8 @@ test_init_repack_chunk_map_sector_boundary() ->
     ModuleStart = 1_000_000,
     ModuleEnd = 1_572_864,
     BatchSize = 500,
-    BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
-    BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
+    BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(Cursor),
+    BucketStartOffset = arweave_lib_constants:get_chunk_bucket_start(Cursor),
     ?assertEqual(1_048_576, BucketEndOffset),
     FootprintOffsets = footprint_offsets(BucketEndOffset, 4, ModuleEnd),
     ?assertEqual([1_048_576, 1_572_864], FootprintOffsets),
@@ -2133,22 +2133,22 @@ test_init_repack_chunk_map_sector_boundary() ->
 get_read_range_test_() ->
     [
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
-                                              {ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
-                                              {ar_block, strict_data_split_threshold, fun() -> 5_000_000 end}
+                                              {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
+                                              {arweave_lib_constants, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 5_000_000 end}
                                              ],
                                              fun test_get_read_range_before_strict/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
-                                              {ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
-                                              {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+                                              {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
+                                              {arweave_lib_constants, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
+                                              {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end}
                                              ],
                                              fun test_get_read_range_after_strict/0, 30)
     ].
 
 test_get_read_range_before_strict() ->
-    ?assertEqual({2359296, 4456447}, ar_replica_2_9:get_entropy_partition_range(1)),
-    ?assertEqual(786432, ar_block:get_replica_2_9_entropy_sector_size()),
+    ?assertEqual({2359296, 4456447}, arweave_lib_replica_2_9:get_entropy_partition_range(1)),
+    ?assertEqual(786432, arweave_lib_constants:get_replica_2_9_entropy_sector_size()),
     %% no limit
     ?assertEqual(
        {2097151, 2883583, [2097152, 2359296, 2621440]},
@@ -2183,8 +2183,8 @@ test_get_read_range_before_strict() ->
     ok.
 
 test_get_read_range_after_strict() ->
-    ?assertEqual({2272865, 4370016}, ar_replica_2_9:get_entropy_partition_range(1)),
-    ?assertEqual(786432, ar_block:get_replica_2_9_entropy_sector_size()),
+    ?assertEqual({2272865, 4370016}, arweave_lib_replica_2_9:get_entropy_partition_range(1)),
+    ?assertEqual(786432, arweave_lib_constants:get_replica_2_9_entropy_sector_size()),
     %% no limit
     ?assertEqual(
        {2272864, 3059296, [2359296, 2621440, 2883584]},

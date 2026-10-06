@@ -50,7 +50,7 @@ read_json(Req) ->
 %% the production interval is 10 minutes.
 webhooks_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_9_6, fun() -> infinity end},
+        [{arweave_lib_fork, height_2_9_6, fun() -> infinity end},
          {ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
         fun test_webhooks/0,
         ?TEST_NODE_TIMEOUT
@@ -148,7 +148,7 @@ test_webhooks_body(Wallet, B0) ->
                     end,
                     10000
                 ),
-                await_webhook_event(webhook_tx_event, {tx, arweave_util:encode(TX#tx.id)},
+                await_webhook_event(webhook_tx_event, {tx, arweave_lib_util:encode(TX#tx.id)},
                     fun(TX2) ->
                         Struct = ar_serialize:tx_to_json_struct(TX),
                         Expected =
@@ -173,7 +173,7 @@ test_webhooks_body(Wallet, B0) ->
             lists:seq(1, 10)
         ),
         await_webhook_event(webhook_unconfirmed_tx_event,
-            {tx, arweave_util:encode(UnconfirmedTX#tx.id)},
+            {tx, arweave_lib_util:encode(UnconfirmedTX#tx.id)},
             fun(TX) ->
                 Struct = ar_serialize:tx_to_json_struct(UnconfirmedTX),
                 Expected =
@@ -235,15 +235,15 @@ create_v2_tx(Wallet) ->
 
 encode_proof(Proof) ->
     ar_serialize:jsonify(#{
-        chunk => arweave_util:encode(maps:get(chunk, Proof)),
-        data_path => arweave_util:encode(maps:get(data_path, Proof)),
-        data_root => arweave_util:encode(maps:get(data_root, Proof)),
+        chunk => arweave_lib_util:encode(maps:get(chunk, Proof)),
+        data_path => arweave_lib_util:encode(maps:get(data_path, Proof)),
+        data_root => arweave_lib_util:encode(maps:get(data_root, Proof)),
         data_size => integer_to_binary(maps:get(data_size, Proof)),
         offset => integer_to_binary(maps:get(offset, Proof))
     }).
 
 assert_transaction_data_synced(TXID) ->
-    EncodedTXID = arweave_util:encode(TXID),
+    EncodedTXID = arweave_lib_util:encode(TXID),
     await_webhook_event(webhook_tx_data_synced,
         {tx_data_payload, EncodedTXID},
         fun(JSON) ->
@@ -263,15 +263,15 @@ random_tx_blacklist_filename() ->
     filename:join(DataDir,
         "ar-webhook-tests-transaction-blacklist-"
         ++
-        binary_to_list(arweave_util:encode(crypto:strong_rand_bytes(32)))).
+        binary_to_list(arweave_lib_util:encode(crypto:strong_rand_bytes(32)))).
 
 append_txid_to_file(TXID, Filename) ->
     {ok, F} = file:open(Filename, [append]),
-    ok = file:write(F, io_lib:format("~s~n", [arweave_util:encode(TXID)])),
+    ok = file:write(F, io_lib:format("~s~n", [arweave_lib_util:encode(TXID)])),
     file:close(F).
 
 assert_transaction_data_removed(TXID) ->
-    EncodedTXID = arweave_util:encode(TXID),
+    EncodedTXID = arweave_lib_util:encode(TXID),
     await_webhook_event(webhook_tx_data_removed,
         {tx_data_payload, EncodedTXID},
         fun(JSON) ->

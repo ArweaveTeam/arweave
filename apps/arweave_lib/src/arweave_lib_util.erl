@@ -1,0 +1,353 @@
+%%% Public pure helpers extracted from the node utility application.
+-module(arweave_lib_util).
+-export([batch_pmap/3, batch_pmap/4, between/3, binary_to_integer/1, bool_to_int/1, bytes_to_mb_string/1, ceil_int/2, count/2, decode/1, encode/1, encode_list_indices/1, floor_int/2, format_peer/1, integer_to_binary/1, int_to_bool/1, parse_list_indices/1, parse_port/1, parse_port_split/1, peer_to_ip/1, peer_to_str/1, pfilter/2, pick_random/1, pick_random/2, pmap/2, pmap/3, safe_decode/1, safe_divide/2, safe_encode/1, safe_format/1, safe_format/3, ema/3, shuffle_list/1, take_every_nth/2, timestamp_to_seconds/1, invert_map/1, unique/1, pad_to_closest_multiple_equal_or_above/2]).
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
+-define(DEFAULT_PMAP_TIMEOUT, 60_000).
+
+
+bool_to_int(true) -> 1;
+bool_to_int(_) -> 0.
+
+
+int_to_bool(1) -> true;
+int_to_bool(0) -> false.
+
+
+%% @doc Implementations of integer_to_binary and binary_to_integer that can handle infinity.
+integer_to_binary(infinity) ->
+    <<"infinity">>;
+integer_to_binary(N) ->
+    erlang:integer_to_binary(N).
+
+
+binary_to_integer(<<"infinity">>) ->
+    infinity;
+binary_to_integer(N) ->
+    erlang:binary_to_integer(N).
+
+
+%% @doc: rounds IntValue up to the nearest multiple of Nearest.
+%% Rounds up even if IntValue is already a multiple of Nearest.
+ceil_int(IntValue, Nearest) ->
+    IntValue - (IntValue rem Nearest) + Nearest.
+
+
+%% @doc: rounds IntValue down to the nearest multiple of Nearest.
+%% Doesn't change IntValue if it's already a multiple of Nearest.
+floor_int(IntValue, Nearest) ->
+    IntValue - (IntValue rem Nearest).
+
+
+%% @doc: clamp N to be between Min and Max.
+between(N, Min, _) when N < Min -> Min;
+between(N, _, Max) when N > Max -> Max;
+between(N, _, _) -> N.
+
+
+%% @doc Pick a list of random elements from a given list.
+pick_random(_, 0) -> [];
+pick_random([], _) -> [];
+pick_random(List, N) ->
+    Elem = pick_random(List),
+    [Elem|pick_random(List -- [Elem], N - 1)].
+
+
+%% @doc Select a random element from a list.
+pick_random(Xs) ->
+    lists:nth(rand:uniform(length(Xs)), Xs).
+
+
+%% @doc Encode a binary to URL safe base64 binary string.
+encode(Bin) ->
+    b64fast:encode(Bin).
+
+
+%% @doc Try to decode a URL safe base64 into a binary or throw an error when
+%% invalid.
+decode(Input) ->
+    b64fast:decode(Input).
+
+
+safe_encode(Bin) when is_binary(Bin) ->
+    encode(Bin);
+safe_encode(Bin) ->
+    Bin.
+
+
+%% @doc Safely decode a URL safe base64 into a binary returning an ok or error
+%% tuple.
+safe_decode(E) ->
+    try
+        D = decode(E),
+        {ok, D}
+    catch
+        _:_ ->
+            {error, invalid}
+    end.
+
+
+%% @doc Convert an erlang:timestamp() to seconds since the Unix Epoch.
+timestamp_to_seconds({MegaSecs, Secs, _MicroSecs}) ->
+    MegaSecs * 1000000 + Secs.
+
+invert_map(Map) ->
+    maps:fold(
+    fun(Key, Value, Acc) ->
+        CurrentSet = maps:get(Value, Acc, sets:new()),
+        UpdatedSet = sets:add_element(Key, CurrentSet),
+        maps:put(Value, UpdatedSet, Acc)
+    end,
+    #{},
+    Map
+    ).
+
+
+peer_to_str(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+peer_to_str(Str) when is_list(Str) ->
+    Str;
+peer_to_str({A, B, C, D, Port}) ->
+    integer_to_list(A) ++ "_" ++
+    integer_to_list(B) ++ "_" ++
+    integer_to_list(C) ++ "_" ++
+    integer_to_list(D) ++ "_" ++
+    integer_to_list(Port).
+
+
+%% @doc Reduce a peer tuple to its 4-tuple IP. Rate limiting is
+%% IP-only by convention, but local_peers entries may arrive as 4-tuples
+%% (`{A,B,C,D}`, e.g. when a user lists just an IP or when the
+%% `ar_test_node:update_config' default fires) or 5-tuples
+%% (`{A,B,C,D,Port}`, what the CLI/config parsers and `peer_ip/1' return).
+%% Incoming Peers from `ar_http' are always 5-tuples. Normalize both
+%% sides to the 4-tuple before comparing — see `arweave_throttling:throttle/2'
+%% (client side) and `ar_http_iface_rate_limiter_middleware' (server side).
+peer_to_ip({A, B, C, D}) -> {A, B, C, D};
+peer_to_ip({A, B, C, D, _Port}) -> {A, B, C, D};
+peer_to_ip({{A, B, C, D}, _Port}) -> {A, B, C, D};
+peer_to_ip(Other) -> Other.
+
+
+%% @doc Parses a port string into an integer.
+parse_port(Int) when is_integer(Int) -> Int;
+parse_port("") -> ?DEFAULT_HTTP_IFACE_PORT;
+parse_port(PortStr) ->
+    {ok, [Port], ""} = io_lib:fread("~d", PortStr),
+    Port.
+
+
+parse_port_split(Str) ->
+    case string:tokens(Str, ":") of
+    [Addr] -> [Addr, ?DEFAULT_HTTP_IFACE_PORT];
+    [Addr, Port] -> [Addr, Port];
+    _ -> throw({invalid_peer_string, Str})
+    end.
+
+format_peer([{Host, Port}|_]) ->
+    format_peer({Host, Port});
+format_peer([{A, B, C, D, Port}|_]) ->
+    format_peer({A, B, C, D, Port});
+format_peer(Host) when is_list(Host) ->
+    case lists:member($:, Host) of
+        true -> list_to_binary(Host);
+        false -> format_peer({Host, ?DEFAULT_HTTP_IFACE_PORT})
+    end;
+format_peer({A, B, C, D}) ->
+    format_peer({A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT});
+format_peer({A, B, C, D, Port}) ->
+    iolist_to_binary(io_lib:format("~w.~w.~w.~w:~w", [A, B, C, D, Port]));
+format_peer({Host, Port}) ->
+    iolist_to_binary(io_lib:format("~s:~w", [Host, Port]));
+format_peer(Peer) when is_binary(Peer) ->
+    Peer.
+
+
+%% @doc Count occurences of element within list.
+count(A, List) ->
+    length([ B || B <- List, A == B ]).
+
+
+%% @doc Takes a list and returns the unique values in it (preserving the order of the first
+%% occurence of each value).
+unique(Xs) when not is_list(Xs) ->
+[Xs];
+unique(Xs) -> unique([], Xs).
+
+unique(Res, []) -> lists:reverse(Res);
+unique(Res, [X|Xs]) ->
+    case lists:member(X, Res) of
+        false -> unique([X|Res], Xs);
+        true -> unique(Res, Xs)
+    end.
+
+pad_to_closest_multiple_equal_or_above(Value, Multiple) ->
+    (Value + Multiple - 1) div Multiple * Multiple.
+
+
+%% @doc Run a map in parallel, throw {pmap_timeout, ?DEFAULT_PMAP_TIMEOUT}
+%% if a worker takes longer than ?DEFAULT_PMAP_TIMEOUT milliseconds.
+pmap(Mapper, List) ->
+    pmap(Mapper, List, ?DEFAULT_PMAP_TIMEOUT).
+
+
+%% @doc Run a map in parallel, throw {pmap_timeout, Timeout} if a worker
+%% takes longer than Timeout milliseconds.
+pmap(Mapper, List, Timeout) ->
+    Master = self(),
+    ListWithRefs = [{Elem, make_ref()} || Elem <- List],
+    lists:foreach(fun({Elem, Ref}) ->
+        spawn_link(fun() ->
+            Master ! {pmap_work, Ref, Mapper(Elem)}
+        end)
+    end, ListWithRefs),
+    lists:map(
+        fun({_, Ref}) ->
+            receive
+                {pmap_work, Ref, Mapped} -> Mapped
+            after Timeout ->
+                throw({pmap_timeout, Timeout})
+            end
+        end,
+        ListWithRefs
+    ).
+
+
+%% @doc Run a map in parallel, one batch at a time. If a worker does not
+%% finish within Timeout milliseconds, return {error, timeout, Elem} for that element
+%% instead of throwing.
+batch_pmap(Mapper, List, BatchSize) ->
+    batch_pmap(Mapper, List, BatchSize, ?DEFAULT_PMAP_TIMEOUT).
+
+
+%% @doc Run a map in parallel, one batch at a time. If a worker takes
+%% longer than Timeout milliseconds, return {error, timeout, Elem}.
+batch_pmap(_Mapper, [], _BatchSize, _Timeout) ->
+    [];
+batch_pmap(Mapper, List, BatchSize, Timeout)
+        when BatchSize > 0 ->
+    Self = self(),
+    {Batch, Rest} =
+        case length(List) >= BatchSize of
+            true ->
+                lists:split(BatchSize, List);
+            false ->
+                {List, []}
+        end,
+    ListWithRefs = [{Elem, make_ref()} || Elem <- Batch],
+    lists:foreach(fun({Elem, Ref}) ->
+        spawn_link(fun() ->
+            Self ! {pmap_work, Ref, Mapper(Elem)}
+        end)
+    end, ListWithRefs),
+    lists:map(
+        fun({Elem, Ref}) ->
+            receive
+                {pmap_work, Ref, Mapped} -> Mapped
+            after Timeout ->
+                {error, batch_pmap_timeout, Elem}
+            end
+        end,
+        ListWithRefs
+    ) ++ batch_pmap(Mapper, Rest, BatchSize, Timeout).
+
+
+%% @doc Filter the list in parallel.
+pfilter(Fun, List) ->
+    Master = self(),
+    ListWithRefs = [{Elem, make_ref()} || Elem <- List],
+    lists:foreach(fun({Elem, Ref}) ->
+        spawn_link(fun() ->
+            Master ! {pmap_work, Ref, Fun(Elem)}
+        end)
+    end, ListWithRefs),
+    lists:filtermap(
+        fun({Elem, Ref}) ->
+            receive
+                {pmap_work, Ref, false} -> false;
+                {pmap_work, Ref, true} -> {true, Elem};
+                {pmap_work, Ref, {true, Result}} -> {true, Result}
+            end
+        end,
+        ListWithRefs
+    ).
+
+
+%% @doc Convert the given number of bytes into the "%s MiB" string.
+bytes_to_mb_string(Bytes) ->
+    integer_to_list(Bytes div 1024 div 1024) ++ " MiB".
+
+
+%% @doc Encode the given list of sorted numbers into a binary where the nth bit
+%% is 1 the corresponding number is present in the given list; 0 otherwise.
+encode_list_indices(Indices) ->
+    encode_list_indices(Indices, 0).
+
+
+encode_list_indices([Index | Indices], N) ->
+    << 0:(Index - N), 1:1, (encode_list_indices(Indices, Index + 1))/bitstring >>;
+encode_list_indices([], N) when N rem 8 == 0 ->
+    <<>>;
+encode_list_indices([], N) ->
+    << 0:(8 - N rem 8) >>.
+
+
+%% @doc Return a list of position numbers corresponding to 1 bits of the given binary.
+parse_list_indices(Input) ->
+    parse_list_indices(Input, 0).
+
+
+parse_list_indices(<< 0:1, Rest/bitstring >>, N) ->
+    parse_list_indices(Rest, N + 1);
+parse_list_indices(<< 1:1, Rest/bitstring >>, N) ->
+    case parse_list_indices(Rest, N + 1) of
+        error ->
+            error;
+        Indices ->
+            [N | Indices]
+    end;
+parse_list_indices(<<>>, _N) ->
+    [];
+parse_list_indices(_BadInput, _N) ->
+    error.
+
+
+ema(OldValue, NewValue, Alpha) ->
+    Alpha * NewValue + (1 - Alpha) * OldValue.
+
+
+shuffle_list(List) ->
+    lists:sort(fun(_,_) -> rand:uniform() < 0.5 end, List).
+
+safe_format(Value) ->
+    safe_format(Value, 5, 2000).
+
+
+safe_format(Value, Depth, Limit) ->
+    ValueStr = io_lib:format("~P", [Value, Depth]),  % Depth limited to 5
+    case length(ValueStr) > Limit of
+        true ->
+            string:slice(ValueStr, 0, Limit) ++ "... (truncated)";
+        false ->
+            ValueStr
+    end.
+
+
+take_every_nth(N, L) ->
+    take_every_nth(N, L, 0).
+
+
+take_every_nth(_N, [], _I) ->
+    [];
+take_every_nth(N, [El | L], I) when I rem N == 0 ->
+    [El | take_every_nth(N, L, I + 1)];
+take_every_nth(N, [_El | L], I) ->
+    take_every_nth(N, L, I + 1).
+
+
+safe_divide(A, B) ->
+    case catch A / B of
+        {'EXIT', _} ->
+            A div B;
+        Result ->
+            Result
+    end.

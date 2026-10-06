@@ -37,7 +37,7 @@ snapshot(DataDir, OutputDir, Height) ->
         {ok, #{ height := TipHeight, hash := H, weave_size := WeaveSize }} ->
             ar:console("Snapshot written to ~s~n", [OutputDir]),
             ar:console("Tip height: ~B~n", [TipHeight]),
-            ar:console("Tip hash: ~s~n", [arweave_util:encode(H)]),
+            ar:console("Tip hash: ~s~n", [arweave_lib_util:encode(H)]),
             ar:console("Weave size: ~B~n", [WeaveSize]),
             warn_fork_height(TipHeight),
             true;

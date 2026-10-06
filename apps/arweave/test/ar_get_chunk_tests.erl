@@ -42,7 +42,7 @@ test_get_chunk_below_strict_threshold() ->
     B = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [TX]),
     [{AbsoluteEndOffset, Proof} | _] = ar_test_data_sync:build_proofs(B, TX, Chunks),
     post_and_wait_for_chunks([{AbsoluteEndOffset, Proof}]),
-    ?assert(AbsoluteEndOffset =< ar_block:strict_data_split_threshold()),
+    ?assert(AbsoluteEndOffset =< arweave_lib_constants:strict_data_split_threshold()),
     fetch_and_assert_chunk(AbsoluteEndOffset, Proof).
 
 test_get_chunk_below_strict_threshold_small_tail() ->
@@ -57,7 +57,7 @@ test_get_chunk_below_strict_threshold_small_tail() ->
     [{AbsoluteEndOffset, Proof} | _] = ar_test_data_sync:build_proofs(B, TX, Chunks),
     post_and_wait_for_chunks([{AbsoluteEndOffset, Proof}]),
     ?assert(byte_size(lists:last(Chunks)) < ?DATA_CHUNK_SIZE),
-    ?assert(AbsoluteEndOffset =< ar_block:strict_data_split_threshold()),
+    ?assert(AbsoluteEndOffset =< arweave_lib_constants:strict_data_split_threshold()),
     fetch_and_assert_chunk(AbsoluteEndOffset, Proof).
 
 test_get_chunk_above_strict_threshold() ->
@@ -71,7 +71,7 @@ test_get_chunk_above_strict_threshold() ->
     [{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}] =
         ar_test_data_sync:build_proofs(B, TX, Chunks),
     post_and_wait_for_chunks([{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}]),
-    Threshold = ar_block:strict_data_split_threshold(),
+    Threshold = arweave_lib_constants:strict_data_split_threshold(),
     AboveThreshold = [{AbsoluteEndOffset, Proof} || {AbsoluteEndOffset, Proof}
         <- [{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}],
         AbsoluteEndOffset > Threshold],
@@ -95,14 +95,14 @@ test_get_chunk_above_strict_threshold_small_tail() ->
     [{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}] =
         ar_test_data_sync:build_proofs(B, TX, Chunks),
     post_and_wait_for_chunks([{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}]),
-    Threshold = ar_block:strict_data_split_threshold(),
+    Threshold = arweave_lib_constants:strict_data_split_threshold(),
     ?assert(FirstEndOffset > Threshold),
     ?assert(SecondEndOffset > Threshold),
     fetch_and_assert_chunk(FirstEndOffset, FirstProof),
     fetch_and_assert_chunk(SecondEndOffset, SecondProof).
 
 fetch_and_assert_chunk(AbsoluteEndOffset, ExpectedProof) ->
-    ChunkSize = byte_size(arweave_util:decode(maps:get(chunk, ExpectedProof))),
+    ChunkSize = byte_size(arweave_lib_util:decode(maps:get(chunk, ExpectedProof))),
     StartOffset = AbsoluteEndOffset - ChunkSize,
     Offsets = unique_offsets([
         AbsoluteEndOffset,
@@ -145,9 +145,9 @@ fetch_chunk_response(binary, Offset) ->
     {ok, Response} = ar_serialize:binary_to_poa(ProofBinary),
     #{
         headers => Headers,
-        chunk => arweave_util:encode(maps:get(chunk, Response)),
-        data_path => arweave_util:encode(maps:get(data_path, Response)),
-        tx_path => arweave_util:encode(maps:get(tx_path, Response)),
+        chunk => arweave_lib_util:encode(maps:get(chunk, Response)),
+        data_path => arweave_lib_util:encode(maps:get(data_path, Response)),
+        tx_path => arweave_lib_util:encode(maps:get(tx_path, Response)),
         absolute_end_offset => proplists:get_value(<<"arweave-absolute-end-offset">>, Headers),
         chunk_size => integer_to_binary(byte_size(maps:get(chunk, Response))),
         packing => iolist_to_binary(ar_serialize:encode_packing(maps:get(packing, Response), true))
@@ -160,7 +160,7 @@ assert_chunk_response(Response, AbsoluteEndOffset, ExpectedProof) ->
     ?assertEqual(maps:get(tx_path, ExpectedProof), maps:get(tx_path, Response)),
     ?assertEqual(integer_to_binary(AbsoluteEndOffset), maps:get(absolute_end_offset, Response)),
     ?assertEqual(
-        integer_to_binary(byte_size(arweave_util:decode(maps:get(chunk, ExpectedProof)))),
+        integer_to_binary(byte_size(arweave_lib_util:decode(maps:get(chunk, ExpectedProof)))),
         maps:get(chunk_size, Response)
     ),
     ?assertEqual(
@@ -178,7 +178,7 @@ assert_absolute_end_offset_header(Headers, AbsoluteEndOffset) ->
     ).
 
 strict_data_split_threshold_mock(Value) ->
-    {ar_block, strict_data_split_threshold, fun() -> Value end}.
+    {arweave_lib_constants, strict_data_split_threshold, fun() -> Value end}.
 
 setup_node() ->
     Wallet = {_, Pub} = ar_wallet:new(),

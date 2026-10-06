@@ -83,7 +83,7 @@ add_delayed_task(Worker, TaskType, Candidate) ->
     %% in particular when the chunk cache fills up it's possible for all queued compute_h0 tasks
     %% to be delayed at about the same time.
     Delay = rand:uniform(?TASK_CHECK_INTERVAL_MS) + ?TASK_CHECK_INTERVAL_MS,
-    arweave_util:cast_after(Delay, Worker, ?MSG_ADD_TASK({TaskType, Candidate, []})).
+    ar_util:cast_after(Delay, Worker, ?MSG_ADD_TASK({TaskType, Candidate, []})).
 
 -spec chunks_read(
         Worker :: pid(),
@@ -188,7 +188,7 @@ handle_cast(?MSG_ADD_TASK({TaskType, Candidate, _ExtraArgs} = Task), State) ->
 handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
     case gb_sets:is_empty(Q) of
         true ->
-            arweave_util:cast_after(?TASK_CHECK_INTERVAL_MS, self(), ?MSG_HANDLE_TASK),
+            ar_util:cast_after(?TASK_CHECK_INTERVAL_MS, self(), ?MSG_HANDLE_TASK),
             {noreply, State};
         _ ->
             gen_server:cast(self(), ?MSG_HANDLE_TASK),
@@ -209,7 +209,7 @@ handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
 
 handle_cast(?MSG_CHECK_WORKER_STATUS, State) ->
     maybe_warn_about_lag(State#state.task_queue, State#state.name),
-    arweave_util:cast_after(?STATUS_CHECK_INTERVAL_MS, self(), ?MSG_CHECK_WORKER_STATUS),
+    ar_util:cast_after(?STATUS_CHECK_INTERVAL_MS, self(), ?MSG_CHECK_WORKER_STATUS),
     {noreply, State};
 
 handle_cast(?MSG_GARBAGE_COLLECT, State) ->
@@ -217,7 +217,7 @@ handle_cast(?MSG_GARBAGE_COLLECT, State) ->
     {noreply, State};
 
 handle_cast(?MSG_REPORT_CHUNK_CACHE_METRICS, State) ->
-    arweave_util:cast_after(?REPORT_CHUNK_CACHE_METRICS_INTERVAL_MS, self(), ?MSG_REPORT_CHUNK_CACHE_METRICS),
+    ar_util:cast_after(?REPORT_CHUNK_CACHE_METRICS_INTERVAL_MS, self(), ?MSG_REPORT_CHUNK_CACHE_METRICS),
     {noreply, report_chunk_cache_metrics(State)};
 
 handle_cast(Cast, State) ->
@@ -360,7 +360,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
             ar_mining_server:prepare_and_post_solution(Candidate);
         true ->
             log_info(found_h1_solution, Candidate, State1, [
-                                                            {h1, arweave_util:encode(H1)},
+                                                            {h1, arweave_lib_util:encode(H1)},
                                                             {difficulty, get_difficulty(State1, Candidate)}]),
             ar_mining_server:prepare_and_post_solution(Candidate),
             ar_mining_stats:h1_solution()
@@ -418,13 +418,13 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
         false -> ok;
         partial ->
             log_info(found_h2_partial_solution, Candidate, State1, [
-                                                                    {h0, arweave_util:safe_encode(Candidate#mining_candidate.h0)},
-                                                                    {h2, arweave_util:safe_encode(H2)},
+                                                                    {h0, arweave_lib_util:safe_encode(Candidate#mining_candidate.h0)},
+                                                                    {h2, arweave_lib_util:safe_encode(H2)},
                                                                     {partial_difficulty, get_partial_difficulty(State1, Candidate)}]);
         true ->
             log_info(found_h2_solution, Candidate, State1, [
-                                                            {h0, arweave_util:safe_encode(Candidate#mining_candidate.h0)},
-                                                            {h2, arweave_util:safe_encode(H2)},
+                                                            {h0, arweave_lib_util:safe_encode(Candidate#mining_candidate.h0)},
+                                                            {h2, arweave_lib_util:safe_encode(H2)},
                                                             {difficulty, get_difficulty(State1, Candidate)},
                                                             {partial_difficulty, get_partial_difficulty(State1, Candidate)}]),
             ar_mining_stats:h2_solution()
@@ -508,9 +508,9 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 
 process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
     PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
-    NoncesPerRecallRange = ar_block:get_max_nonce(PackingDifficulty),
-    NoncesPerChunk = ar_block:get_nonces_per_chunk(PackingDifficulty),
-    SubChunkSize = ar_block:get_sub_chunk_size(PackingDifficulty),
+    NoncesPerRecallRange = arweave_lib_constants:get_max_nonce(PackingDifficulty),
+    NoncesPerChunk = arweave_lib_constants:get_nonces_per_chunk(PackingDifficulty),
+    SubChunkSize = arweave_lib_constants:get_sub_chunk_size(PackingDifficulty),
     process_chunks(
       WhichChunk, Candidate, RangeStart, 0, NoncesPerChunk,
       NoncesPerRecallRange, ChunkOffsets, SubChunkSize, 0, State
@@ -668,7 +668,7 @@ process_sub_chunk(chunk1, Candidate, SubChunk, State) ->
             %% will be dropped immediately — preventing orphaned entries from filling the cache.
             %% Marking as failed adds no binary data (size difference = 0), so it succeeds even
             %% when the cache is full.
-            SubChunkSize = ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty),
+            SubChunkSize = arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty),
             case ar_mining_cache:with_cached_value(
                    ?CACHE_KEY(Candidate#mining_candidate.cache_ref, Candidate#mining_candidate.nonce),
                    Candidate#mining_candidate.session_key,
@@ -701,13 +701,13 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
                (#ar_mining_cache_value{ chunk1_failed = true }) ->
                    %% chunk1 already failed, so there was no reservation for it.
                    %% Since there is no need to calculate H2, we can just drop the cached value.
-                                                  {ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
+                                                  {ok, drop, -arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
                (#ar_mining_cache_value{ h1_passes_diff_checks = true } = _CachedValue) ->
                    %% H1 passes diff checks, so we skip H2 for this nonce.
                    %% Drop the cached data, we don't need it anymore.
                    %% Since we already reserved the cache size for chunk2, but we never store it,
                    %% we need to drop the reservation here.
-                                                  {ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
+                                                  {ok, drop, -arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
                (#ar_mining_cache_value{ h1 = undefined } = CachedValue) ->
                    %% H1 is not yet calculated, cache the chunk2 for this nonce.
                                                   {ok, CachedValue#ar_mining_cache_value{ chunk2 = SubChunk }};
@@ -722,7 +722,7 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
             log_error(mining_worker_failed_to_process_chunk2, Candidate1, State, [{reason, Reason}]),
             %% Mark chunk2 as failed for this nonce. This releases the sub-chunk reservation
             %% and prevents orphaned cache entries from accumulating.
-            SubChunkSize = ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty),
+            SubChunkSize = arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty),
             case ar_mining_cache:with_cached_value(
                    ?CACHE_KEY(Candidate1#mining_candidate.cache_ref, Candidate1#mining_candidate.nonce),
                    Candidate#mining_candidate.session_key,
@@ -871,7 +871,7 @@ try_to_reserve_cache_range_space(Multiplier, SessionKey, #state{
                                                             packing_difficulty = PackingDifficulty,
                                                             chunk_cache = ChunkCache0
                                                            } = State) ->
-    ReserveSize = Multiplier * ar_block:get_recall_range_size(PackingDifficulty),
+    ReserveSize = Multiplier * arweave_lib_constants:get_recall_range_size(PackingDifficulty),
     case ar_mining_cache:reserve_for_session(SessionKey, ReserveSize, ChunkCache0) of
         {ok, ChunkCache1} ->
             State1 = State#state{ chunk_cache = ChunkCache1 },
@@ -891,7 +891,7 @@ release_cache_range_space(Multiplier, SessionKey, #state{
                                                      packing_difficulty = PackingDifficulty,
                                                      chunk_cache = ChunkCache0
                                                     } = State) ->
-    ReleaseSize = Multiplier * ar_block:get_recall_range_size(PackingDifficulty),
+    ReleaseSize = Multiplier * arweave_lib_constants:get_recall_range_size(PackingDifficulty),
     case ar_mining_cache:release_for_session(SessionKey, ReleaseSize, ChunkCache0) of
         {ok, ChunkCache1} -> State#state{ chunk_cache = ChunkCache1 };
         {error, Reason} ->
@@ -909,7 +909,7 @@ release_cache_range_space(Multiplier, SessionKey, #state{
 %% This function is called for one chunk1.
 mark_single_chunk1_failed_or_drop(Nonce, Candidate, State) ->
     #mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
-    SubChunksPerChunk = ar_block:get_nonces_per_chunk(PackingDifficulty),
+    SubChunksPerChunk = arweave_lib_constants:get_nonces_per_chunk(PackingDifficulty),
     mark_single_chunk1_failed_or_drop(Nonce, SubChunksPerChunk, Candidate, State).
 
 mark_single_chunk1_failed_or_drop(_Nonce, 0, _Candidate, State) -> State;
@@ -924,15 +924,15 @@ mark_single_chunk1_failed_or_drop(Nonce, NoncesLeft, Candidate, State) ->
                (#ar_mining_cache_value{ chunk2_failed = true }) ->
                    %% chunk2 already failed, so there was no reservation for it.
                    %% We can just drop the cached value.
-                                                  {ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
+                                                  {ok, drop, -arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
                (#ar_mining_cache_value{chunk2 = Chunk2}) when is_binary(Chunk2) ->
                    %% We've already read the chunk2 from disk, so we can just drop the cached value.
                    %% The cache reservation for corresponding chunk2 was already consumed.
-                                                  {ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
+                                                  {ok, drop, -arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
                (#ar_mining_cache_value{chunk2 = undefined} = CachedValue) ->
                    %% Mark the chunk1 as failed.
                    %% When the corresponding chunk2 will be read from disk, it will be dropped immediately.
-                                                  {ok, CachedValue#ar_mining_cache_value{ chunk1_failed = true }, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)}
+                                                  {ok, CachedValue#ar_mining_cache_value{ chunk1_failed = true }, -arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)}
                                           end
           ) of
         {ok, ChunkCache1} ->
@@ -946,7 +946,7 @@ mark_single_chunk1_failed_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 %% @doc Mark the chunk2 as failed for a single chunk.
 mark_single_chunk2_failed_or_drop(Nonce, Candidate, State) ->
     #mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
-    SubChunksPerChunk = ar_block:get_nonces_per_chunk(PackingDifficulty),
+    SubChunksPerChunk = arweave_lib_constants:get_nonces_per_chunk(PackingDifficulty),
     mark_single_chunk2_failed_or_drop(Nonce, SubChunksPerChunk, Candidate, State).
 
 mark_single_chunk2_failed_or_drop(_Nonce, 0, _Candidate, State) -> State;
@@ -959,21 +959,21 @@ mark_single_chunk2_failed_or_drop(Nonce, NoncesLeft, Candidate, State) ->
                (#ar_mining_cache_value{ chunk1_failed = true }) ->
                    %% chunk1 already failed, so the reservation for it was released.
                    %% We can just drop the cached value and release the reservation for a single subchunk.
-                                                  {ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
+                                                  {ok, drop, -arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
                (#ar_mining_cache_value{chunk1 = Chunk1, h1 = undefined} = CachedValue) when is_binary(Chunk1) ->
                    %% We have the corresponding chunk1, but we didn't calculate H1 yet.
                    %% Mark chunk2 as failed to drop the cached value after we calculate H1.
                    %% Drop the reservation for a single subchunk.
-                                                  {ok, CachedValue#ar_mining_cache_value{ chunk2_failed = true }, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
+                                                  {ok, CachedValue#ar_mining_cache_value{ chunk2_failed = true }, -arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
                (#ar_mining_cache_value{h1 = H1}) when is_binary(H1) ->
                    %% We've already calculated H1, so we can drop the cached value.
                    %% Drop the reservation for a single subchunk.
-                                                  {ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
+                                                  {ok, drop, -arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
                (CachedValue) ->
                    %% chunk1 hasn't arrived yet, so
                    %% we just mark the chunk2 as failed and continue.
                    %% Drop the reservation for a single subchunk.
-                                                  {ok, CachedValue#ar_mining_cache_value{ chunk2_failed = true }, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)}
+                                                  {ok, CachedValue#ar_mining_cache_value{ chunk2_failed = true }, -arweave_lib_constants:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)}
                                           end
           ) of
         {ok, ChunkCache1} ->
@@ -989,7 +989,7 @@ mark_single_chunk2_failed_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 %% @doc Mark the chunk1 or chunk2 as failed for the whole recall range.
 mark_recall_range_failed(WhichChunk, Candidate, State) ->
     #mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
-    mark_recall_range_failed(WhichChunk, 0, ar_block:get_nonces_per_recall_range(PackingDifficulty), Candidate, State).
+    mark_recall_range_failed(WhichChunk, 0, arweave_lib_constants:get_nonces_per_recall_range(PackingDifficulty), Candidate, State).
 
 mark_recall_range_failed(_WhichChunk, _Nonce, 0, _Candidate, State) -> State;
 mark_recall_range_failed(WhichChunk, Nonce, NoncesLeft, Candidate, State) ->

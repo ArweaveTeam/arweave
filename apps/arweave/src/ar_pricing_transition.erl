@@ -173,7 +173,7 @@ get_transition_price(Height, V2Price) ->
             Interval2 = PriceTransitionEnd - Height,
             InterpolatedPrice =
                 (StartPrice * Interval2 + V2Price * Interval1) div (Interval1 + Interval2),
-            PricePerGiBPerMinute = arweave_util:between(InterpolatedPrice, LowerBound, UpperBound),
+            PricePerGiBPerMinute = arweave_lib_util:between(InterpolatedPrice, LowerBound, UpperBound),
             ?LOG_DEBUG([{event, get_price_per_gib_minute},
                         {height, Height}, {price1, StartPrice}, {price2, V2Price},
                         {lower_bound, LowerBound}, {upper_bound, UpperBound},
@@ -201,12 +201,12 @@ is_v2_pricing_height(Height) ->
         ar_pricing_transition:transition_length_2_7_2().
 
 transition_start_2_6_8() ->
-    ar_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START.
+    arweave_lib_fork:height_2_6_8() + ?PRICE_2_6_8_TRANSITION_START.
 
 transition_start_2_7_2() ->
     %% Note: Even though this constant is related to the *2.7.2* fork we count the blocks
     %% since the *2.6.8* fork for easier comparison with ?PRICE_2_6_8_TRANSITION_START
-    ar_fork:height_2_6_8() + ?PRICE_2_7_2_TRANSITION_START.
+    arweave_lib_fork:height_2_6_8() + ?PRICE_2_7_2_TRANSITION_START.
 
 transition_length_2_6_8() ->
     ?PRICE_2_6_8_TRANSITION_BLOCKS.
@@ -263,7 +263,7 @@ transition_start_price(Height) ->
 
 transition_upper_bound(Height) ->
     TransitionStart_2_7_2 = ar_pricing_transition:transition_start_2_7_2(),
-    Fork_2_7_2 = ar_fork:height_2_7_2(),
+    Fork_2_7_2 = arweave_lib_fork:height_2_7_2(),
 
     case Height of
         _ when Height >= TransitionStart_2_7_2 ->
@@ -276,7 +276,7 @@ transition_upper_bound(Height) ->
 
 transition_lower_bound(Height) ->
     TransitionStart_2_7_2 = ar_pricing_transition:transition_start_2_7_2(),
-    Fork_2_7_2 = ar_fork:height_2_7_2(),
+    Fork_2_7_2 = arweave_lib_fork:height_2_7_2(),
 
     case Height of
         _ when Height >= TransitionStart_2_7_2 ->

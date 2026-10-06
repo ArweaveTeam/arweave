@@ -101,7 +101,7 @@ read_range(MessagesRemaining,
 %% outcome through the range scan.
 read_and_post_chunk(MessagesRemaining, Packing,
                     {Start, End, OriginStoreID, TargetStoreID}) ->
-    PaddedEnd = ar_block:get_chunk_padded_offset(End),
+    PaddedEnd = arweave_lib_constants:get_chunk_padded_offset(End),
     case ar_data_sync:read_chunk_with_full_metadata(Start + 1, OriginStoreID) of
         no_chunk ->
             %% No chunk at or after `Start + 1' in this prefix; skip ahead.
@@ -131,7 +131,7 @@ read_and_post_chunk(MessagesRemaining, Packing,
             #chunk_offsets{ absolute_offset = AbsoluteOffset2 } = Offsets2,
             ?LOG_ERROR([{event, failed_to_read_chunk},
                         {absolute_end_offset, AbsoluteOffset2},
-                        {chunk_data_key, arweave_util:encode(ChunkDataKey)},
+                        {chunk_data_key, arweave_lib_util:encode(ChunkDataKey)},
                         {reason, io_lib:format("~p", [Reason])}]),
             read_range(MessagesRemaining,
                        {Start + ChunkSize2, End, OriginStoreID, TargetStoreID});
@@ -291,7 +291,7 @@ past_range_reply() ->
 
 read_range_mocks(ReadFun) ->
     [
-     {ar_block, get_chunk_padded_offset, fun(Offset) -> Offset end},
+     {arweave_lib_constants, get_chunk_padded_offset, fun(Offset) -> Offset end},
      {ar_sync_record, is_recorded, fun(_Offset, ar_data_sync, StoreID) ->
                                            case StoreID of
                                                target_store -> false;

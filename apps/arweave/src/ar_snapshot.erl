@@ -132,7 +132,7 @@ read_state(BI, CustomDir) ->
 %% @doc Return the part of BI the block time history is read for.
 block_time_history_bi(BI) ->
     lists:sublist(BI, ar_block_time_history:history_length()
-            + ar_block:get_consensus_window_size()).
+            + arweave_lib_constants:get_consensus_window_size()).
 
 %% @doc Create the snapshot directory; refuse to reuse an existing one.
 ensure_dir(Dir) ->
@@ -170,7 +170,7 @@ write_new(Dir, State, CustomDir) ->
 write_manifest(Dir, Info) ->
     #{ height := Height, hash := H, weave_size := WeaveSize } = Info,
     JSON = ar_serialize:jsonify(#{ height => Height,
-            indep_hash => arweave_util:encode(H), weave_size => WeaveSize }),
+            indep_hash => arweave_lib_util:encode(H), weave_size => WeaveSize }),
     case file:write_file(filename:join(Dir, "manifest.json"), JSON) of
         ok ->
             ok;
@@ -307,7 +307,7 @@ store_tx_headers([TX | TXs], CustomDir, DB) ->
                     Error
             end;
         _ ->
-            {error, {tx_unavailable, arweave_util:encode(tx_id(TX))}}
+            {error, {tx_unavailable, arweave_lib_util:encode(tx_id(TX))}}
     end.
 
 %% @doc Store the header of TX in DB, keeping the data of format 1
@@ -334,9 +334,9 @@ copy_history([{H, _, _} | BI], NodeDBName, SourceDB, DB, ok) ->
             {ok, Bin} ->
                 ar_kv:put(DB, H, Bin);
             not_found ->
-                {error, {NodeDBName, not_found, arweave_util:encode(H)}};
+                {error, {NodeDBName, not_found, arweave_lib_util:encode(H)}};
             {error, Reason} ->
-                {error, {NodeDBName, Reason, arweave_util:encode(H)}}
+                {error, {NodeDBName, Reason, arweave_lib_util:encode(H)}}
         end,
     copy_history(BI, NodeDBName, SourceDB, DB, Result).
 
@@ -348,7 +348,7 @@ store_wallet_list(Blocks, SearchDepth, ReadWalletList, DB) ->
         {ok, {B, Tree}} ->
             {RootHash, _Tree2, UpdateMap} = ar_block:hash_wallet_list(Tree),
             ar:console("Snapshot: account tree ~s height ~B~n",
-                    [arweave_util:encode(RootHash), B#block.height]),
+                    [arweave_lib_util:encode(RootHash), B#block.height]),
             case RootHash == B#block.wallet_list of
                 true ->
                     store_account_tree(UpdateMap, DB);
@@ -359,7 +359,7 @@ store_wallet_list(Blocks, SearchDepth, ReadWalletList, DB) ->
         not_found ->
             B = window_base_block(Blocks),
             {error, {account_tree_not_found, B#block.height,
-                    arweave_util:encode(B#block.wallet_list)}}
+                    arweave_lib_util:encode(B#block.wallet_list)}}
     end.
 
 find_wallet_tree([], _SearchDepth, _Skipped, _ReadWalletList) ->
@@ -447,7 +447,7 @@ verify_blocks([B | Blocks], DB) ->
         {ok, _} ->
             verify_blocks(Blocks, DB);
         not_found ->
-            {error, {snapshot_block_missing, arweave_util:encode(H)}};
+            {error, {snapshot_block_missing, arweave_lib_util:encode(H)}};
         {error, _} = Error ->
             Error
     end.
@@ -491,7 +491,7 @@ close_dbs(Names) ->
 %% @doc Return the oldest block of the consensus window that starts at the
 %% head of Blocks, or the last block when there are fewer.
 window_base_block(Blocks) ->
-    WindowSize = ar_block:get_consensus_window_size(),
+    WindowSize = arweave_lib_constants:get_consensus_window_size(),
     case length(Blocks) >= WindowSize of
         true ->
             lists:nth(WindowSize, Blocks);

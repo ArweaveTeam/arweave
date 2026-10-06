@@ -85,7 +85,7 @@ handle_info(Request, #state{} = State) ->
 terminate(Reason, #state{} = State) ->
     log_debug(terminate, State, [
                                  {module, ?MODULE},
-                                 {reason, arweave_util:safe_format(Reason)}
+                                 {reason, arweave_lib_util:safe_format(Reason)}
                                 ]).
 
 %%%===================================================================

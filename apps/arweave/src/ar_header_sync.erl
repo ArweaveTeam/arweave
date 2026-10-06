@@ -74,7 +74,7 @@ init([]) ->
     {SyncRecord, Height, CurrentBI} =
         case ar_storage:read_term(header_sync_state) of
             not_found ->
-                {ar_intervals:new(), -1, []};
+                {arweave_lib_intervals:new(), -1, []};
             {ok, StoredState} ->
                 StoredState
         end,
@@ -85,14 +85,14 @@ init([]) ->
       lists:seq(1, HeaderSyncJobs)
      ),
     gen_server:cast(self(), store_sync_state),
-    ets:insert(?MODULE, {synced_blocks, ar_intervals:sum(SyncRecord)}),
+    ets:insert(?MODULE, {synced_blocks, arweave_lib_intervals:sum(SyncRecord)}),
     {ok,
      #state{
         sync_record = SyncRecord,
         height = Height,
         block_index = CurrentBI,
         retry_queue = queue:new(),
-        retry_record = ar_intervals:new(),
+        retry_record = arweave_lib_intervals:new(),
         is_disk_space_sufficient = true
        }}.
 
@@ -119,8 +119,8 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
                 {error, State2};
             {_, {IntersectionHeight, _}} ->
                 State3 = State2#state{
-                           sync_record = ar_intervals:cut(SyncRecord, IntersectionHeight),
-                           retry_record = ar_intervals:cut(RetryRecord, IntersectionHeight) },
+                           sync_record = arweave_lib_intervals:cut(SyncRecord, IntersectionHeight),
+                           retry_record = arweave_lib_intervals:cut(RetryRecord, IntersectionHeight) },
                 ok = store_sync_state(State3),
                 %% Delete from the kv store only after the sync record is saved - no matter
                 %% what happens to the process, if a height is in the record, it must be
@@ -150,8 +150,8 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
             block_index = CurrentBI, height = PrevHeight } = State,
     BaseHeight = get_base_height(CurrentBI, PrevHeight, RecentBI),
     State2 = State#state{
-               sync_record = ar_intervals:cut(SyncRecord, BaseHeight),
-               retry_record = ar_intervals:cut(RetryRecord, BaseHeight),
+               sync_record = arweave_lib_intervals:cut(SyncRecord, BaseHeight),
+               retry_record = arweave_lib_intervals:cut(RetryRecord, BaseHeight),
                block_index = RecentBI,
                height = Height
               },
@@ -175,7 +175,7 @@ handle_cast({add_historical_block, _, _, _, _, _},
     gen_server:cast(self(), process_item),
     {noreply, State};
 handle_cast({add_historical_block, B, H, H2, TXRoot, Backoff}, State) ->
-    case ar_intervals:is_inside(State#state.sync_record, B#block.height) of
+    case arweave_lib_intervals:is_inside(State#state.sync_record, B#block.height) of
         true ->
             %% The node worker stored its validated copy of the block while
             %% the download was in flight; keep that copy.
@@ -197,7 +197,7 @@ handle_cast({add_block, B}, State) ->
     {noreply, element(2, add_block(B, State))};
 
 handle_cast(process_item, #state{ is_disk_space_sufficient = false } = State) ->
-    arweave_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, self(), process_item),
+    ar_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, self(), process_item),
     {noreply, State};
 handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecord } = State) ->
     arweave_metrics:gauge_set(downloader_queue_size, queue:len(Queue)),
@@ -219,7 +219,7 @@ handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecor
                     %% the weave is very costly. Therefore, a list of 2.0 hashes for 1.0
                     %% blocks was computed and stored along with the network client.
                     H2 =
-                        case Height < ar_fork:height_2_0() of
+                        case Height < arweave_lib_fork:height_2_0() of
                             true ->
                                 ar_node:get_2_0_hash_of_1_0_block(Height);
                             false ->
@@ -227,7 +227,7 @@ handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecor
                         end,
                     {noreply, State2#state{
                                 retry_queue = enqueue({block, {H, H2, TXRoot, Height}}, Queue2),
-                                retry_record = ar_intervals:add(RetryRecord, Height, Height - 1) }}
+                                retry_record = arweave_lib_intervals:add(RetryRecord, Height, Height - 1) }}
             end
     end;
 
@@ -248,7 +248,7 @@ handle_cast({remove_block, Height}, State) ->
     {noreply, State2};
 
 handle_cast(store_sync_state, State) ->
-    arweave_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, self(), store_sync_state),
+    ar_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, self(), store_sync_state),
     case store_sync_state(State) of
         ok ->
             {noreply, State};
@@ -272,9 +272,9 @@ handle_info({event, tx, {preparing_unblacklisting, TXID}}, State) ->
     case ar_storage:get_tx_confirmation_data(TXID) of
         {ok, {Height, _BH}} ->
             ?LOG_DEBUG([{event, mark_block_with_blacklisted_tx_for_resyncing},
-                        {tx, arweave_util:encode(TXID)}, {height, Height}]),
-            State2 = State#state{ sync_record = ar_intervals:delete(SyncRecord, Height,
-                                                                    Height - 1), retry_record = ar_intervals:delete(RetryRecord, Height,
+                        {tx, arweave_lib_util:encode(TXID)}, {height, Height}]),
+            State2 = State#state{ sync_record = arweave_lib_intervals:delete(SyncRecord, Height,
+                                                                    Height - 1), retry_record = arweave_lib_intervals:delete(RetryRecord, Height,
                                                                                                                     Height - 1) },
             ok = store_sync_state(State2),
             ok = ar_kv:delete(?MODULE, << Height:256 >>),
@@ -371,7 +371,7 @@ terminate(Reason, _State) ->
 
 store_sync_state(State) ->
     #state{ sync_record = SyncRecord, height = LastHeight, block_index = BI } = State,
-    SyncedCount = ar_intervals:sum(SyncRecord),
+    SyncedCount = arweave_lib_intervals:sum(SyncRecord),
     arweave_metrics:gauge_set(synced_blocks, SyncedCount),
     ets:insert(?MODULE, {synced_blocks, SyncedCount}),
     ar_storage:write_term(header_sync_state, {SyncRecord, LastHeight, BI}).
@@ -411,17 +411,17 @@ add_block2(B, #state{ sync_record = SyncRecord, retry_record = RetryRecord } = S
     #block{ indep_hash = H, previous_block = PrevH, height = Height } = B,
     case ar_storage:write_full_block(B, B#block.txs) of
         ok ->
-            case ar_intervals:is_inside(SyncRecord, Height) of
+            case arweave_lib_intervals:is_inside(SyncRecord, Height) of
                 true ->
                     {ok, State};
                 false ->
                     ok = ar_kv:put(?MODULE, << Height:256 >>, term_to_binary({H, PrevH})),
-                    SyncRecord2 = ar_intervals:add(SyncRecord, Height, Height - 1),
-                    RetryRecord2 = ar_intervals:delete(RetryRecord, Height, Height - 1),
+                    SyncRecord2 = arweave_lib_intervals:add(SyncRecord, Height, Height - 1),
+                    RetryRecord2 = arweave_lib_intervals:delete(RetryRecord, Height, Height - 1),
                     {ok, State#state{ sync_record = SyncRecord2, retry_record = RetryRecord2 }}
             end;
         {error, Reason} ->
-            ?LOG_WARNING([{event, failed_to_store_block}, {block, arweave_util:encode(H)},
+            ?LOG_WARNING([{event, failed_to_store_block}, {block, arweave_lib_util:encode(H)},
                           {height, Height}, {reason, Reason}]),
             {{error, Reason}, State}
     end.
@@ -430,12 +430,12 @@ add_block2(B, #state{ sync_record = SyncRecord, retry_record = RetryRecord } = S
 %% Return 'nothing_to_sync' if everything is either synced or in the retry queue.
 pick_unsynced_block(#state{ height = Height, sync_record = SyncRecord,
                             retry_record = RetryRecord }) ->
-    Union = ar_intervals:union(SyncRecord, RetryRecord),
-    case ar_intervals:is_empty(Union) of
+    Union = arweave_lib_intervals:union(SyncRecord, RetryRecord),
+    case arweave_lib_intervals:is_empty(Union) of
         true ->
             Height;
         false ->
-            case ar_intervals:take_largest(Union) of
+            case arweave_lib_intervals:take_largest(Union) of
                 {{End, _Start}, _Union2} when Height > End ->
                     Height;
                 {{_End, -1}, _Union2} ->
@@ -455,11 +455,11 @@ process_item(Queue) ->
     Now = os:system_time(second),
     case queue:out(Queue) of
         {empty, _Queue} ->
-            arweave_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
+            ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
             Queue;
         {{value, {Item, {BackoffTimestamp, _} = Backoff}}, Queue2}
           when BackoffTimestamp > Now ->
-            arweave_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
+            ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
             enqueue(Item, Backoff, Queue2);
         {{value, {{block, {H, H2, TXRoot, Height}}, Backoff}}, Queue2} ->
             case check_fork(Height, H, TXRoot) of
@@ -493,7 +493,7 @@ update_backoff({_Timestamp, Interval}) ->
     {os:system_time(second) + Interval2, Interval2}.
 
 check_fork(Height, H, TXRoot) ->
-    case Height < ar_fork:height_2_0() of
+    case Height < arweave_lib_fork:height_2_0() of
         true ->
             true;
         false ->
@@ -520,13 +520,13 @@ download_block(H, H2, TXRoot) ->
     end.
 
 download_block(Peers, H, H2, TXRoot) ->
-    Fork_2_0 = ar_fork:height_2_0(),
+    Fork_2_0 = arweave_lib_fork:height_2_0(),
     Opts = #{ rand_min => length(Peers) },
     case ar_http_iface_client:get_block_shadow(Peers, H, Opts) of
         unavailable ->
             ?LOG_WARNING([
                           {event, ar_header_sync_failed_to_download_block_header},
-                          {block, arweave_util:encode(H)}
+                          {block, arweave_lib_util:encode(H)}
                          ]),
             {error, block_header_unavailable};
         {Peer, #block{ height = Height } = B, Time, BlockSize} ->
@@ -551,8 +551,8 @@ download_block(Peers, H, H2, TXRoot) ->
                 _ ->
                     ?LOG_WARNING([
                                   {event, ar_header_sync_block_hash_mismatch},
-                                  {block, arweave_util:encode(H)},
-                                  {peer, arweave_util:format_peer(Peer)}
+                                  {block, arweave_lib_util:encode(H)},
+                                  {peer, arweave_lib_util:format_peer(Peer)}
                                  ]),
                     {error, block_hash_mismatch}
             end
@@ -570,26 +570,26 @@ download_txs(Peers, B, TXRoot) ->
                 _ ->
                     ?LOG_WARNING([
                                   {event, ar_header_sync_block_tx_root_mismatch},
-                                  {block, arweave_util:encode(B#block.indep_hash)}
+                                  {block, arweave_lib_util:encode(B#block.indep_hash)}
                                  ]),
                     {error, block_tx_root_mismatch}
             end;
         {error, txs_exceed_block_size_limit} ->
             ?LOG_WARNING([
                           {event, ar_header_sync_block_txs_exceed_block_size_limit},
-                          {block, arweave_util:encode(B#block.indep_hash)}
+                          {block, arweave_lib_util:encode(B#block.indep_hash)}
                          ]),
             {error, txs_exceed_block_size_limit};
         {error, txs_count_exceeds_limit} ->
             ?LOG_WARNING([
                           {event, ar_header_sync_block_txs_count_exceeds_limit},
-                          {block, arweave_util:encode(B#block.indep_hash)}
+                          {block, arweave_lib_util:encode(B#block.indep_hash)}
                          ]),
             {error, txs_count_exceeds_limit};
         {error, tx_not_found} ->
             ?LOG_WARNING([
                           {event, ar_header_sync_block_tx_not_found},
-                          {block, arweave_util:encode(B#block.indep_hash)}
+                          {block, arweave_lib_util:encode(B#block.indep_hash)}
                          ]),
             {error, tx_not_found}
     end.
@@ -598,15 +598,15 @@ log_download_source(B, BlockSource) ->
     ?LOG_DEBUG([
                 {event, header_sync_block_synced},
                 {height, B#block.height},
-                {block, arweave_util:encode(B#block.indep_hash)},
+                {block, arweave_lib_util:encode(B#block.indep_hash)},
                 {block_source, BlockSource},
                 {tx_count, length(B#block.txs)}
                ]).
 
 unsync_block(Height, #state{ sync_record = SyncRecord, retry_record = RetryRecord } = State) ->
     State2 = State#state{
-               sync_record = ar_intervals:delete(SyncRecord, Height, Height - 1),
-               retry_record = ar_intervals:delete(RetryRecord, Height, Height - 1)
+               sync_record = arweave_lib_intervals:delete(SyncRecord, Height, Height - 1),
+               retry_record = arweave_lib_intervals:delete(RetryRecord, Height, Height - 1)
               },
     ok = store_sync_state(State2),
     ok = ar_kv:delete(?MODULE, << Height:256 >>),

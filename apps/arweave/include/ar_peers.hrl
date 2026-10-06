@@ -1,10 +1,15 @@
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 -ifndef(AR_PEERS_HRL).
+
 -define(AR_PEERS_HRL, true).
+
 
 -include_lib("ar.hrl").
 
+
 %% The maximum number of peers to return from get_peers/0.
 -define(MAX_PEER_DISCOVERY_LIST_LEN, 1000).
+
 
 -record(performance, {
                       version = 3,
@@ -19,4 +24,7 @@
                       current_rating = 0 %% shorter time window
                      }).
 
+
 -endif.
+
+

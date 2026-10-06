@@ -10,7 +10,7 @@
 -import(ar_test_node, [test_with_all_nodes_mocked/2]).
 
 mines_off_only_last_chunks_test_() ->
-    test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
+    test_with_all_nodes_mocked([{arweave_lib_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
             fun test_mines_off_only_last_chunks/0).
 
 mock_reset_frequency() ->
@@ -34,8 +34,8 @@ test_mines_off_only_last_chunks() ->
             ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX]),
             Offset = ?DATA_CHUNK_SIZE + 1,
             DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),
-            Proof = #{ data_root => arweave_util:encode(DataRoot),
-                    data_path => arweave_util:encode(DataPath), chunk => arweave_util:encode(Chunk),
+            Proof = #{ data_root => arweave_lib_util:encode(DataRoot),
+                    data_path => arweave_lib_util:encode(DataPath), chunk => arweave_lib_util:encode(Chunk),
                     offset => integer_to_binary(Offset),
                     data_size => integer_to_binary(DataSize) },
             ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
@@ -64,7 +64,7 @@ test_mines_off_only_last_chunks() ->
                             [ar_chunk_storage:delete(O, ar_storage_module:id(Module))
                                     || Module <- arweave_config:storage_modules()]
                         end,
-                        lists:seq(?DATA_CHUNK_SIZE, ar_block:strict_data_split_threshold(),
+                        lists:seq(?DATA_CHUNK_SIZE, arweave_lib_constants:strict_data_split_threshold(),
                                 ?DATA_CHUNK_SIZE)
                     );
                 _ ->

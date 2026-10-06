@@ -190,7 +190,7 @@ is_recorded(Offset, ID, StoreID) ->
         [] ->
             false;
         [{_, TID}] ->
-            case ar_ets_intervals:is_inside(TID, Offset) of
+            case arweave_lib_ets_intervals:is_inside(TID, Offset) of
                 false ->
                     false;
                 true ->
@@ -211,7 +211,7 @@ is_recorded(Offset, Packing, ID, StoreID) ->
         [] ->
             false;
         [{_, TID}] ->
-            ar_ets_intervals:is_inside(TID, Offset)
+            arweave_lib_ets_intervals:is_inside(TID, Offset)
     end.
 
 %% @doc Return the lowest synced interval with the end offset strictly above the given Offset
@@ -222,7 +222,7 @@ get_next_synced_interval(Offset, EndOffsetUpperBound, ID, StoreID) ->
         [] ->
             not_found;
         [{_, TID}] ->
-            ar_ets_intervals:get_next_interval(TID, Offset, EndOffsetUpperBound)
+            arweave_lib_ets_intervals:get_next_interval(TID, Offset, EndOffsetUpperBound)
     end.
 
 %% @doc Return the lowest unsynced interval with the end offset strictly above the given Offset
@@ -237,7 +237,7 @@ get_next_unsynced_interval(Offset, EndOffsetUpperBound, ID, StoreID) ->
         [] ->
             {EndOffsetUpperBound, Offset};
         [{_, TID}] ->
-            ar_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
+            arweave_lib_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
     end.
 
 %% @doc Return the lowest synced interval with the end offset strictly above the given Offset
@@ -248,7 +248,7 @@ get_next_synced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
         [] ->
             not_found;
         [{_, TID}] ->
-            ar_ets_intervals:get_next_interval(TID, Offset, EndOffsetUpperBound)
+            arweave_lib_ets_intervals:get_next_interval(TID, Offset, EndOffsetUpperBound)
     end.
 
 %% @doc Return the lowest unsynced interval with the end offset strictly above the given Offset
@@ -263,7 +263,7 @@ get_next_unsynced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
         [] ->
             {EndOffsetUpperBound, Offset};
         [{_, TID}] ->
-            ar_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
+            arweave_lib_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
     end.
 
 %% @doc Return the interval containing the given Offset, including the right bound,
@@ -274,7 +274,7 @@ get_interval(Offset, ID, StoreID) ->
         [] ->
             not_found;
         [{_, TID}] ->
-            ar_ets_intervals:get_interval_with_byte(TID, Offset)
+            arweave_lib_ets_intervals:get_interval_with_byte(TID, Offset)
     end.
 
 %% @doc Return the size of the intersection between the intervals and the given range.
@@ -284,7 +284,7 @@ get_intersection_size(End, Start, ID, StoreID) ->
         [] ->
             0;
         [{_, TID}] ->
-            ar_ets_intervals:get_intersection_size(TID, End, Start)
+            arweave_lib_ets_intervals:get_intersection_size(TID, End, Start)
     end.
 
 %%%===================================================================
@@ -342,11 +342,11 @@ init(StoreID) ->
 
 handle_call({get, ID}, _From, State) ->
     #state{ sync_record_by_id = SyncRecordByID } = State,
-    {reply, maps:get(ID, SyncRecordByID, ar_intervals:new()), State};
+    {reply, maps:get(ID, SyncRecordByID, arweave_lib_intervals:new()), State};
 
 handle_call({get, Packing, ID}, _From, State) ->
     #state{ sync_record_by_id_type = SyncRecordByIDType } = State,
-    {reply, maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()), State};
+    {reply, maps:get({ID, Packing}, SyncRecordByIDType, arweave_lib_intervals:new()), State};
 
 handle_call({add, End, Start, ID}, _From, State) ->
     {Reply, State2} = add2(End, Start, ID, State),
@@ -363,16 +363,16 @@ handle_call({delete, End, Start, ID}, _From, State) ->
 handle_call({cut, Offset, ID}, _From, State) ->
     #state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
             state_db = StateDB, store_id = StoreID } = State,
-    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-    SyncRecord2 = ar_intervals:cut(SyncRecord, Offset),
+    SyncRecord = maps:get(ID, SyncRecordByID, arweave_lib_intervals:new()),
+    SyncRecord2 = arweave_lib_intervals:cut(SyncRecord, Offset),
     SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
     TID = get_or_create_type_tid({ID, StoreID}),
-    ar_ets_intervals:cut(TID, Offset),
+    arweave_lib_ets_intervals:cut(TID, Offset),
     SyncRecordByIDType2 =
         maps:map(
             fun
                 ({ID2, _}, ByType) when ID2 == ID ->
-                    ar_intervals:cut(ByType, Offset);
+                    arweave_lib_intervals:cut(ByType, Offset);
                 (_, ByType) ->
                     ByType
             end,
@@ -381,7 +381,7 @@ handle_call({cut, Offset, ID}, _From, State) ->
     ets:foldl(
         fun
             ({{ID2, _, SID}, TypeTID}, _) when ID2 == ID, SID == StoreID ->
-                ar_ets_intervals:cut(TypeTID, Offset);
+                arweave_lib_ets_intervals:cut(TypeTID, Offset);
             (_, _) ->
                 ok
         end,
@@ -469,11 +469,11 @@ name(StoreID) ->
 add2(End, Start, ID, State) ->
     #state{ sync_record_by_id = SyncRecordByID, state_db = StateDB,
             store_id = StoreID, storage_module = Module } = State,
-    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-    SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
+    SyncRecord = maps:get(ID, SyncRecordByID, arweave_lib_intervals:new()),
+    SyncRecord2 = arweave_lib_intervals:add(SyncRecord, End, Start),
     SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
     TID = get_or_create_type_tid({ID, StoreID}),
-    ar_ets_intervals:add(TID, End, Start),
+    arweave_lib_ets_intervals:add(TID, End, Start),
     State2 = State#state{ sync_record_by_id = SyncRecordByID2 },
     {Reply, State3} = update_write_ahead_log({add, {End, Start, ID}}, StateDB, State2),
     case Reply of
@@ -487,16 +487,16 @@ add2(End, Start, ID, State) ->
 add2(End, Start, Packing, ID, State) ->
     #state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
             state_db = StateDB, store_id = StoreID, storage_module = Module } = State,
-    ByType = maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()),
-    ByType2 = ar_intervals:add(ByType, End, Start),
+    ByType = maps:get({ID, Packing}, SyncRecordByIDType, arweave_lib_intervals:new()),
+    ByType2 = arweave_lib_intervals:add(ByType, End, Start),
     SyncRecordByIDType2 = maps:put({ID, Packing}, ByType2, SyncRecordByIDType),
     TypeTID = get_or_create_type_tid({ID, Packing, StoreID}),
-    ar_ets_intervals:add(TypeTID, End, Start),
-    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-    SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
+    arweave_lib_ets_intervals:add(TypeTID, End, Start),
+    SyncRecord = maps:get(ID, SyncRecordByID, arweave_lib_intervals:new()),
+    SyncRecord2 = arweave_lib_intervals:add(SyncRecord, End, Start),
     SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
     TID = get_or_create_type_tid({ID, StoreID}),
-    ar_ets_intervals:add(TID, End, Start),
+    arweave_lib_ets_intervals:add(TID, End, Start),
     State2 = State#state{ sync_record_by_id = SyncRecordByID2,
         sync_record_by_id_type = SyncRecordByIDType2 },
     {Reply, State3} = update_write_ahead_log({{add, Packing}, {End, Start, ID}}, StateDB, State2),
@@ -511,16 +511,16 @@ add2(End, Start, Packing, ID, State) ->
 delete2(End, Start, ID, State) ->
     #state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
             state_db = StateDB, store_id = StoreID } = State,
-    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-    SyncRecord2 = ar_intervals:delete(SyncRecord, End, Start),
+    SyncRecord = maps:get(ID, SyncRecordByID, arweave_lib_intervals:new()),
+    SyncRecord2 = arweave_lib_intervals:delete(SyncRecord, End, Start),
     SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
     TID = get_or_create_type_tid({ID, StoreID}),
-    ar_ets_intervals:delete(TID, End, Start),
+    arweave_lib_ets_intervals:delete(TID, End, Start),
     SyncRecordByIDType2 =
         maps:map(
             fun
                 ({ID2, _}, ByType) when ID2 == ID ->
-                    ar_intervals:delete(ByType, End, Start);
+                    arweave_lib_intervals:delete(ByType, End, Start);
                 (_, ByType) ->
                     ByType
             end,
@@ -529,7 +529,7 @@ delete2(End, Start, ID, State) ->
     ets:foldl(
         fun
             ({{ID2, _, SID}, TypeTID}, _) when ID2 == ID, SID == StoreID ->
-                ar_ets_intervals:delete(TypeTID, End, Start);
+                arweave_lib_ets_intervals:delete(TypeTID, End, Start);
             (_, _) ->
                 ok
         end,
@@ -575,7 +575,7 @@ is_recorded2(_Offset, '$end_of_table', _ID, _StoreID) ->
 is_recorded2(Offset, {ID, Packing, StoreID}, ID, StoreID) ->
     case ets:lookup(sync_records, {ID, Packing, StoreID}) of
         [{_, TID}] ->
-            case ar_ets_intervals:is_inside(TID, Offset) of
+            case arweave_lib_ets_intervals:is_inside(TID, Offset) of
                 true ->
                     {true, Packing};
                 false ->
@@ -629,8 +629,8 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
             case Op of
                 add ->
                     {End, Start, ID} = Params,
-                    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-                    SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
+                    SyncRecord = maps:get(ID, SyncRecordByID, arweave_lib_intervals:new()),
+                    SyncRecord2 = arweave_lib_intervals:add(SyncRecord, End, Start),
                     emit_add_range(Start, End, ID, #{ module => Module }),
                     SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
                     replay_write_ahead_log(
@@ -638,11 +638,11 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
                         WAL, StateDB, StoreID, Module);
                 {add, Packing} ->
                     {End, Start, ID} = Params,
-                    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-                    SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
+                    SyncRecord = maps:get(ID, SyncRecordByID, arweave_lib_intervals:new()),
+                    SyncRecord2 = arweave_lib_intervals:add(SyncRecord, End, Start),
                     SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-                    ByType = maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()),
-                    ByType2 = ar_intervals:add(ByType, End, Start),
+                    ByType = maps:get({ID, Packing}, SyncRecordByIDType, arweave_lib_intervals:new()),
+                    ByType2 = arweave_lib_intervals:add(ByType, End, Start),
                     emit_add_range(Start, End, ID, #{ module => Module, packing => Packing }),
                     SyncRecordByIDType2 = maps:put({ID, Packing}, ByType2, SyncRecordByIDType),
                     replay_write_ahead_log(
@@ -650,15 +650,15 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
                         WAL, StateDB, StoreID, Module);
                 delete ->
                     {End, Start, ID} = Params,
-                    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-                    SyncRecord2 = ar_intervals:delete(SyncRecord, End, Start),
+                    SyncRecord = maps:get(ID, SyncRecordByID, arweave_lib_intervals:new()),
+                    SyncRecord2 = arweave_lib_intervals:delete(SyncRecord, End, Start),
                     emit_remove_range(Start, End, Module),
                     SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
                     SyncRecordByIDType2 =
                         maps:map(
                             fun
                                 ({ID2, _}, ByType) when ID2 == ID ->
-                                    ar_intervals:delete(ByType, End, Start);
+                                    arweave_lib_intervals:delete(ByType, End, Start);
                                 (_, ByType) ->
                                     ByType
                             end,
@@ -669,15 +669,15 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
                         WAL, StateDB, StoreID, Module);
                 cut ->
                     {Offset, ID} = Params,
-                    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-                    SyncRecord2 = ar_intervals:cut(SyncRecord, Offset),
+                    SyncRecord = maps:get(ID, SyncRecordByID, arweave_lib_intervals:new()),
+                    SyncRecord2 = arweave_lib_intervals:cut(SyncRecord, Offset),
                     emit_cut(Offset, Module),
                     SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
                     SyncRecordByIDType2 =
                         maps:map(
                             fun
                                 ({ID2, _}, ByType) when ID2 == ID ->
-                                    ar_intervals:cut(ByType, Offset);
+                                    arweave_lib_intervals:cut(ByType, Offset);
                                 (_, ByType) ->
                                     ByType
                             end,
@@ -710,7 +710,7 @@ initialize_sync_record_by_id_ets2(none, _StoreID) ->
     ok;
 initialize_sync_record_by_id_ets2({ID, SyncRecord, Iterator}, StoreID) ->
     TID = ets:new(sync_record_type, [ordered_set, public, {read_concurrency, true}]),
-    ar_ets_intervals:init_from_gb_set(TID, SyncRecord),
+    arweave_lib_ets_intervals:init_from_gb_set(TID, SyncRecord),
     ets:insert(sync_records, {{ID, StoreID}, TID}),
     initialize_sync_record_by_id_ets2(maps:next(Iterator), StoreID).
 
@@ -722,7 +722,7 @@ initialize_sync_record_by_id_type_ets2(none, _StoreID) ->
     ok;
 initialize_sync_record_by_id_type_ets2({{ID, Packing}, SyncRecord, Iterator}, StoreID) ->
     TID = ets:new(sync_record_type, [ordered_set, public, {read_concurrency, true}]),
-    ar_ets_intervals:init_from_gb_set(TID, SyncRecord),
+    arweave_lib_ets_intervals:init_from_gb_set(TID, SyncRecord),
     ets:insert(sync_records, {{ID, Packing, StoreID}, TID}),
     initialize_sync_record_by_id_type_ets2(maps:next(Iterator), StoreID).
 
@@ -758,7 +758,7 @@ store_state(State) ->
                 fun ({ar_data_sync, Packing}, TypeRecord) ->
                         ar_mining_stats:set_storage_module_data_size(
                             StorageModule, Packing, PartitionNumber,
-                            ar_intervals:sum(TypeRecord));
+                            arweave_lib_intervals:sum(TypeRecord));
                     (_, _) ->
                         ok
                 end,

@@ -14,30 +14,30 @@ get_price_per_gib_minute_test_() ->
         {timeout, 30, fun test_price_per_gib_minute_pre_block_time_history/0},
         ar_test_node:test_with_all_nodes_mocked(
             [
-                {ar_fork, height_2_7_2, fun() -> 10 end},
+                {arweave_lib_fork, height_2_7_2, fun() -> 10 end},
                 {ar_pricing_transition, transition_start_2_6_8, fun() -> 5 end},
                 {ar_pricing_transition, transition_start_2_7_2, fun() -> 15 end},
                 {ar_pricing_transition, transition_length_2_6_8, fun() -> 20 end},
                 {ar_pricing_transition, transition_length_2_7_2, fun() -> 40 end},
                 %% This test uses specific price constants computed for this partition size.
-                {ar_block, partition_size, fun() -> 2097152 end}
+                {arweave_lib_constants, partition_size, fun() -> 2097152 end}
             ],
             fun test_price_per_gib_minute_transition_phases/0),
         ar_test_node:test_with_all_nodes_mocked(
             [
-                {ar_block, partition_size, fun() -> 2097152 end}
+                {arweave_lib_constants, partition_size, fun() -> 2097152 end}
             ],
             fun test_v2_price/0),
         ar_test_node:test_with_all_nodes_mocked(
             [
-                {ar_block, partition_size, fun() -> 2097152 end},
+                {arweave_lib_constants, partition_size, fun() -> 2097152 end},
                 {ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
             ],
             fun test_v2_price_with_poa1_diff_multiplier/0)
     ].
 
 %% @doc This test verifies an edge case code path that probably shouldn't ever be triggered.
-%% ar_fork:height_2_7() and ar_fork:height_2_6_8() are 0
+%% arweave_lib_fork:height_2_7() and arweave_lib_fork:height_2_6_8() are 0
 %% ?BLOCK_TIME_HISTORY_BLOCKS is 3
 %% ?PRICE_2_6_8_TRANSITION_START is 2
 %% So when the price transition starts we don't have enough block time history to apply the
@@ -271,9 +271,9 @@ recalculate_price_per_gib_minute_test_block() ->
 
 recalculate_price_per_gib_minute_2_7_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> infinity end}],
+        [{arweave_lib_fork, height_2_6, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7_1, fun() -> infinity end}],
         fun() ->
             B = recalculate_price_per_gib_minute_test_block(),
             ?assertEqual({15000, 8162}, ar_pricing:recalculate_price_per_gib_minute(B)),
@@ -282,9 +282,9 @@ recalculate_price_per_gib_minute_2_7_test_() ->
 
 recalculate_price_per_gib_minute_2_7_1_ema_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> -1 end}],
+        [{arweave_lib_fork, height_2_6, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7_1, fun() -> -1 end}],
         fun() ->
             B = recalculate_price_per_gib_minute_test_block(),
             ?assertEqual({15000, 14316}, ar_pricing:recalculate_price_per_gib_minute(B)),
@@ -294,7 +294,7 @@ recalculate_price_per_gib_minute_2_7_1_ema_test_() ->
 auto_redenomination_and_endowment_debt_test_() ->
     %% Set some weird mocks to preserve the existing behavior of this test
     ar_test_node:test_with_all_nodes_mocked([
-            {ar_fork, height_2_9_6, fun() -> infinity end},
+            {arweave_lib_fork, height_2_9_6, fun() -> infinity end},
             {ar_pricing_transition, transition_start_2_7_2, fun() -> 3 end},
             {ar_pricing_transition, transition_length_2_7_2, fun() -> 1 end}
         ],
@@ -533,7 +533,7 @@ test_auto_redenomination_and_endowment_debt() ->
     ?assert(ar_difficulty:get_hash_rate_fixed_ratio(B11) > 1),
     ?assertEqual(lists:sublist([{MinerAddr, ar_difficulty:get_hash_rate_fixed_ratio(B11), B11#block.reward, 1}
             | B10#block.reward_history],
-            ?REWARD_HISTORY_BLOCKS + ar_block:get_consensus_window_size()),
+            ?REWARD_HISTORY_BLOCKS + arweave_lib_constants:get_consensus_window_size()),
             B11#block.reward_history),
     TX11 = ar_test_node:sign_tx(main, Key3, #{ denomination => 1, target => ar_wallet:to_address(Pub5),
             quantity => 100 }),
@@ -649,7 +649,7 @@ get_balance(Pub) ->
         ar_http:req(#{
             method => get,
             peer => Peer,
-            path => "/wallet/" ++ binary_to_list(arweave_util:encode(Address)) ++ "/balance"
+            path => "/wallet/" ++ binary_to_list(arweave_lib_util:encode(Address)) ++ "/balance"
         }),
     Balance = binary_to_integer(Reply),
     B = ar_node:get_current_block(),
@@ -657,8 +657,8 @@ get_balance(Pub) ->
         ar_http:req(#{
             method => get,
             peer => Peer,
-            path => "/wallet_list/" ++ binary_to_list(arweave_util:encode(B#block.wallet_list))
-                    ++ "/" ++ binary_to_list(arweave_util:encode(Address)) ++ "/balance"
+            path => "/wallet_list/" ++ binary_to_list(arweave_lib_util:encode(B#block.wallet_list))
+                    ++ "/" ++ binary_to_list(arweave_lib_util:encode(Address)) ++ "/balance"
         }),
     case binary_to_integer(Reply2) of
         Balance ->
@@ -674,7 +674,7 @@ get_reserved_balance(Address) ->
         ar_http:req(#{
             method => get,
             peer => Peer,
-            path => "/wallet/" ++ binary_to_list(arweave_util:encode(Address))
+            path => "/wallet/" ++ binary_to_list(arweave_lib_util:encode(Address))
                     ++ "/reserved_rewards_total"
         }),
     binary_to_integer(Reply).

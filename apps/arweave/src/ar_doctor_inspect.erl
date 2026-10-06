@@ -19,14 +19,14 @@ main(Args) ->
         ["bitmap", DataDir, StorageModuleConfig] ->
             bitmap(DataDir, StorageModuleConfig);
         ["chunks", Dir, StartStr, EndStr | AddrListStr] when length(AddrListStr) >= 1 ->
-            Addresses = [arweave_util:decode(AddrStr) || AddrStr <- AddrListStr],
+            Addresses = [arweave_lib_util:decode(AddrStr) || AddrStr <- AddrListStr],
             ok = arweave_config:load(#{ [randomx, large_pages] => true }),
             arweave_metrics:register(),
             ar_packing_sup:start_link(),
-            Start = ar_block:get_chunk_padded_offset(list_to_integer(StartStr)),
-            End = ar_block:get_chunk_padded_offset(list_to_integer(EndStr)),
+            Start = arweave_lib_constants:get_chunk_padded_offset(list_to_integer(StartStr)),
+            End = arweave_lib_constants:get_chunk_padded_offset(list_to_integer(EndStr)),
             ar:console("~nInspecting chunks from padded offset ~p to ~p~n", [Start, End]),
-            EncodedAddresses = [arweave_util:encode(Address) || Address <- Addresses],
+            EncodedAddresses = [arweave_lib_util:encode(Address) || Address <- Addresses],
             ar:console("~nChecking chunks against unpacked and all addresses: ~p~n",
                        [EncodedAddresses]),
             inspect_range(Dir, Start, End, Addresses),
@@ -77,14 +77,14 @@ inspect_chunk(Dir, PaddedEndOffset, Addresses) ->
     ChunkSize = byte_size(ExpectedChunk),
     ExpectedChunkID = ar_tx:generate_chunk_id(ExpectedChunk),
     ar:console("~nExpected chunk size: ~p~n", [byte_size(ExpectedChunk)]),
-    ar:console("Expected chunk ID: ~p~n", [arweave_util:encode(ExpectedChunkID)]),
+    ar:console("Expected chunk ID: ~p~n", [arweave_lib_util:encode(ExpectedChunkID)]),
 
     %% Read local chunk from disk.
     {RawChunkOffset, RawChunk} = read_local_chunk(Filepath, Position),
     ar:console("~nRaw chunk: ~p~n", [byte_size(RawChunk)]),
     ar:console("Raw chunk offset: ~p~n", [RawChunkOffset]),
     RawChunkID = ar_tx:generate_chunk_id(RawChunk),
-    ar:console("Raw chunk ID: ~p~n", [arweave_util:encode(RawChunkID)]),
+    ar:console("Raw chunk ID: ~p~n", [arweave_lib_util:encode(RawChunkID)]),
 
     %% Try unpacking the local chunk a number of different ways to see if any match the
     %% expected chunk ID.

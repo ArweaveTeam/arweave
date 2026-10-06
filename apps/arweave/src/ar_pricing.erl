@@ -45,8 +45,8 @@ get_price_per_gib_minute(Height, B) ->
     ar_pricing_transition:get_transition_price(Height, V2Price).
 
 get_v2_price_per_gib_minute(Height, B) ->
-    OneDifficultyHeight = ar_fork:height_2_7() + ar_block_time_history:history_length(),
-    TwoDifficultyHeight = ar_fork:height_2_7_2() + ar_block_time_history:history_length(),
+    OneDifficultyHeight = arweave_lib_fork:height_2_7() + ar_block_time_history:history_length(),
+    TwoDifficultyHeight = arweave_lib_fork:height_2_7_2() + ar_block_time_history:history_length(),
 
     case Height of
         _ when Height >= TwoDifficultyHeight ->
@@ -108,7 +108,7 @@ get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
     %% with the expected number of solutions per partition per VDF step to arrive a single
     %% number that can be used in the PricePerGiBPerMinute calculation.
     PoA1Mult = ar_difficulty:poa1_diff_multiplier(Height),
-    RecallRangeSize = ar_block:get_recall_range_size(0),
+    RecallRangeSize = arweave_lib_constants:get_recall_range_size(0),
     MaxSolutionsPerPartition =
         (PoA1Mult + 1) * RecallRangeSize div (?DATA_CHUNK_SIZE * PoA1Mult),
     SolutionsPerPartitionPerVDFStep =
@@ -134,7 +134,7 @@ get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
     %%          (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal
     %% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_BLOCK_TIME,
     %% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
-    %% EstimatedDataSizeInGiB = EstimatedPartitionCount * (ar_block:partition_size()) div (?GiB),
+    %% EstimatedDataSizeInGiB = EstimatedPartitionCount * (arweave_lib_constants:partition_size()) div (?GiB),
     %% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
     %% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_BLOCK_TIME
     %% PricePerGiBPerMinute = PricePerGiBPerSecond * 60,
@@ -145,7 +145,7 @@ get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
      )
         div
         (
-         IntervalTotal * max(1, HashRateTotal) * (ar_block:partition_size())
+         IntervalTotal * max(1, HashRateTotal) * (arweave_lib_constants:partition_size())
         ),
     log_price_metrics(get_v2_price_per_gib_minute_two_difficulty,
                       Height, History, HashRateTotal, RewardTotal,
@@ -201,7 +201,7 @@ get_v2_price_per_gib_minute_one_difficulty(Height, B) ->
     %%          (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal
     %% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_BLOCK_TIME,
     %% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
-    %% EstimatedDataSizeInGiB = EstimatedPartitionCount * (ar_block:partition_size()) div (?GiB),
+    %% EstimatedDataSizeInGiB = EstimatedPartitionCount * (arweave_lib_constants:partition_size()) div (?GiB),
     %% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
     %% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_BLOCK_TIME
     %% PricePerGiBPerMinute = PricePerGiBPerSecond * 60,
@@ -212,7 +212,7 @@ get_v2_price_per_gib_minute_one_difficulty(Height, B) ->
      )
         div
         (
-         IntervalTotal * max(1, HashRateTotal) * (ar_block:partition_size())
+         IntervalTotal * max(1, HashRateTotal) * (arweave_lib_constants:partition_size())
         ),
     log_price_metrics(get_v2_price_per_gib_minute_one_difficulty,
                       Height, History, HashRateTotal, RewardTotal,
@@ -233,7 +233,7 @@ get_v2_price_per_gib_minute_simple(B) ->
     %% in gibibytes.
     (max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerBlock)
         div (max(1, HashRateTotal)
-             * (ar_block:partition_size())
+             * (arweave_lib_constants:partition_size())
              * 2    % The reward is paid every two minutes whereas we are calculating
                                                 % the minute rate here.
             ).
@@ -376,8 +376,8 @@ recalculate_price_per_gib_minute(B) ->
             price_per_gib_minute = Price,
             scheduled_price_per_gib_minute = ScheduledPrice } = B,
     Height = PrevHeight + 1,
-    Fork_2_7 = ar_fork:height_2_7(),
-    Fork_2_7_1 = ar_fork:height_2_7_1(),
+    Fork_2_7 = arweave_lib_fork:height_2_7(),
+    Fork_2_7_1 = arweave_lib_fork:height_2_7_1(),
     case Height of
         Fork_2_7 ->
             {ar_pricing_transition:static_price(), ar_pricing_transition:static_price()};
@@ -487,7 +487,7 @@ get_miner_reward_and_endowment_pool(Args) ->
 %% @doc Return the effective USD to AR rate corresponding to the given block
 %% considering its previous block.
 usd_to_ar_rate(#block{ height = PrevHeight } = PrevB) ->
-    Height_2_5 = ar_fork:height_2_5(),
+    Height_2_5 = arweave_lib_fork:height_2_5(),
     Height = PrevHeight + 1,
     case PrevHeight < Height_2_5 of
         true ->
@@ -513,14 +513,14 @@ usd_to_ar({Dividend, Divisor}, Rate, Height) ->
 
 recalculate_usd_to_ar_rate(#block{ height = PrevHeight } = B) ->
     Height = PrevHeight + 1,
-    Fork_2_5 = ar_fork:height_2_5(),
+    Fork_2_5 = arweave_lib_fork:height_2_5(),
     true = Height >= Fork_2_5,
     case Height > Fork_2_5 of
         false ->
             Rate = ?INITIAL_USD_TO_AR(Height)(),
             {Rate, Rate};
         true ->
-            Fork_2_6 = ar_fork:height_2_6(),
+            Fork_2_6 = arweave_lib_fork:height_2_6(),
             case Height == Fork_2_6 of
                 true ->
                     {B#block.usd_to_ar_rate, ?FORK_2_6_PRE_TRANSITION_USD_TO_AR_RATE};
@@ -555,7 +555,7 @@ get_expected_min_decline_rate(Timestamp, Period, Amount, Size, Rate, Height) ->
 %% @doc Get the share of the maintenance cost the miner receives for a transation.
 get_miner_fee_share(MaintenanceCost, Height) ->
     {Dividend, Divisor} = ?MINING_REWARD_MULTIPLIER,
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_lib_fork:height_2_5() of
         false ->
             erlang:trunc(MaintenanceCost * (Dividend / Divisor));
         true ->
@@ -571,7 +571,7 @@ distribute_transaction_fees([TX | TXs], EndowmentPool, Miner, Height) ->
     TXFee = TX#tx.reward,
     {Dividend, Divisor} = ?MINING_REWARD_MULTIPLIER,
     MinerFee =
-        case Height >= ar_fork:height_2_5() of
+        case Height >= arweave_lib_fork:height_2_5() of
             false ->
                 erlang:trunc((Dividend / Divisor) * TXFee / ((Dividend / Divisor) + 1));
             true ->
@@ -590,7 +590,7 @@ get_perpetual_gb_cost_at_timestamp(Timestamp, Height) ->
 
 -spec get_perpetual_gb_cost(Init::usd(), Height::nonegint()) -> usd().
 get_perpetual_gb_cost(Init, Height) ->
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_lib_fork:height_2_5() of
         true ->
             {LnDecayDividend, LnDecayDivisor} = ?LN_PRICE_DECAY_ANNUAL,
             {InitDividend, InitDivisor} = Init,
@@ -620,7 +620,7 @@ get_gb_cost_per_year_at_datetime({{Y, M, _}, _} = DT, Height) ->
     FracY = fraction_of_year(PrevY, NextY, DT, Height),
     PrevYCost = usd_p_gby(PrevY, Height),
     NextYCost = usd_p_gby(NextY, Height),
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_lib_fork:height_2_5() of
         true ->
             {FracYDividend, FracYDivisor} = FracY,
             {PrevYCostDividend, PrevYCostDivisor} = PrevYCost,
@@ -660,7 +660,7 @@ next_jun_30_year(Y, _M) ->
 %% @doc Return the cost in USD of storing 1 GB per average block time.
 -spec get_gb_cost_per_block_at_datetime(DT::datetime(), Height::nonegint()) -> usd().
 get_gb_cost_per_block_at_datetime(DT, Height) ->
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_lib_fork:height_2_5() of
         true ->
             {Dividend, Divisor} = get_gb_cost_per_year_at_datetime(DT, Height),
             {Dividend, Divisor * ar_inflation:blocks_per_year(Height)};
@@ -675,7 +675,7 @@ get_gb_cost_per_block_at_datetime(DT, Height) ->
 -spec usd_p_gby(nonegint(), nonegint()) -> usd().
 usd_p_gby(2018, Height) ->
     {Dividend, Divisor} = ?USD_PER_GBY_2018,
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_lib_fork:height_2_5() of
         true ->
             {Dividend, Divisor};
         false ->
@@ -683,14 +683,14 @@ usd_p_gby(2018, Height) ->
     end;
 usd_p_gby(2019, Height) ->
     {Dividend, Divisor} = ?USD_PER_GBY_2019,
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_lib_fork:height_2_5() of
         true ->
             {Dividend, Divisor};
         false ->
             Dividend / Divisor
     end;
 usd_p_gby(Y, Height) ->
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_lib_fork:height_2_5() of
         true ->
             {KDividend, KDivisor} = ?USD_PER_GBY_2019,
             {ADividend, ADivisor} = ?LN_PRICE_DECAY_ANNUAL,
@@ -715,7 +715,7 @@ fraction_of_year(PrevY, NextY, {{Y, Mo, D}, {H, Mi, S}}, Height) ->
     Start = calendar:datetime_to_gregorian_seconds({{PrevY, 6, 30}, {23, 59, 59}}),
     Now = calendar:datetime_to_gregorian_seconds({{Y, Mo, D}, {H, Mi, S}}),
     End = calendar:datetime_to_gregorian_seconds({{NextY, 6, 30}, {23, 59, 59}}),
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_lib_fork:height_2_5() of
         true ->
             {Now - Start, End - Start};
         false ->
@@ -734,7 +734,7 @@ recalculate_usd_to_ar_rate2(#block{ height = PrevHeight } = B) ->
         false ->
             {B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
         true ->
-            Fork_2_6 = ar_fork:height_2_6(),
+            Fork_2_6 = arweave_lib_fork:height_2_6(),
             true = PrevHeight + 1 /= Fork_2_6,
             case PrevHeight + 1 > Fork_2_6 of
                 true ->
@@ -760,14 +760,14 @@ recalculate_usd_to_ar_rate3(#block{ height = PrevHeight, diff = Diff } = B) ->
                                                ar_fraction:minimum(ScheduledRate, MaxAdjustmentUp), MaxAdjustmentDown),
                                              ?USD_TO_AR_FRACTION_REDUCTION_LIMIT),
     ?LOG_DEBUG([{event, recalculated_rate},
-                {new_rate, arweave_util:safe_divide(element(1, Rate), element(2, Rate))},
-                {new_scheduled_rate, arweave_util:safe_divide(element(1, CappedScheduledRate),
+                {new_rate, arweave_lib_util:safe_divide(element(1, Rate), element(2, Rate))},
+                {new_scheduled_rate, arweave_lib_util:safe_divide(element(1, CappedScheduledRate),
                                                          element(2, CappedScheduledRate))},
                 {new_scheduled_rate_without_capping,
-                 arweave_util:safe_divide(element(1, ScheduledRate), element(2, ScheduledRate))},
-                {max_adjustment_up, arweave_util:safe_divide(element(1, MaxAdjustmentUp),
+                 arweave_lib_util:safe_divide(element(1, ScheduledRate), element(2, ScheduledRate))},
+                {max_adjustment_up, arweave_lib_util:safe_divide(element(1, MaxAdjustmentUp),
                                                         element(2,MaxAdjustmentUp))},
-                {max_adjustment_down, arweave_util:safe_divide(element(1, MaxAdjustmentDown),
+                {max_adjustment_down, arweave_lib_util:safe_divide(element(1, MaxAdjustmentDown),
                                                           element(2,MaxAdjustmentDown))}]),
     {Rate, CappedScheduledRate}.
 
@@ -807,7 +807,7 @@ network_data_size(Height,
         0 -> 0;
         _ ->
             EstimatedPartitionCount = AverageHashRate div SolutionsPerPartitionPerBlock,
-            EstimatedPartitionCount * (ar_block:partition_size())
+            EstimatedPartitionCount * (arweave_lib_constants:partition_size())
     end.
 
 %%%===================================================================
@@ -816,11 +816,11 @@ network_data_size(Height,
 
 get_gb_cost_per_year_at_datetime_is_monotone_test_() ->
     [
-     ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_5, fun() -> infinity end}],
+     ar_test_node:test_with_all_nodes_mocked([{arweave_lib_fork, height_2_5, fun() -> infinity end}],
                                              fun test_get_gb_cost_per_year_at_datetime_is_monotone/0, 120)
     |
      [
-      ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_5, fun() -> Height end}],
+      ar_test_node:test_with_all_nodes_mocked([{arweave_lib_fork, height_2_5, fun() -> Height end}],
                                               fun test_get_gb_cost_per_year_at_datetime_is_monotone/0, 120)
       || Height <- lists:seq(0, 20)
      ]

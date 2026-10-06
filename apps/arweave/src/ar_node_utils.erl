@@ -53,7 +53,7 @@ update_accounts(B, PrevB, Accounts) ->
                                              Rate, PricePerGiBMinute, KryderPlusRateMultiplierLatch,
                                              KryderPlusRateMultiplier, Denomination, BlockInterval}),
     Accounts2 = apply_txs(Accounts, Denomination, TXs),
-    true = B#block.height >= ar_fork:height_2_6(),
+    true = B#block.height >= arweave_lib_fork:height_2_6(),
     update_accounts2(B, PrevB, Accounts2, Args).
 
 %%--------------------------------------------------------------------
@@ -73,7 +73,7 @@ update_accounts(B, PrevB, Accounts) ->
       Reason :: term().
 
 validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
-    ?LOG_INFO([{event, validating_block}, {hash, arweave_util:encode(NewB#block.indep_hash)}]),
+    ?LOG_INFO([{event, validating_block}, {hash, arweave_lib_util:encode(NewB#block.indep_hash)}]),
     case timer:tc(
            fun() ->
                    try
@@ -85,7 +85,7 @@ validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
                                        {class, C},
                                        {reason, R},
                                        {stacktrace, S},
-                                       {hash, arweave_util:encode(NewB#block.indep_hash)},
+                                       {hash, arweave_lib_util:encode(NewB#block.indep_hash)},
                                        {height, NewB#block.height}
                                       ]),
                            {invalid, validation_exception}
@@ -95,22 +95,22 @@ validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
           ) of
         {TimeTaken, valid} ->
             ?LOG_INFO([{event, block_validation_successful},
-                       {hash, arweave_util:encode(NewB#block.indep_hash)},
+                       {hash, arweave_lib_util:encode(NewB#block.indep_hash)},
                        {time_taken_us, TimeTaken}]),
             valid;
         {TimeTaken, {invalid, Reason}} ->
             ?LOG_INFO([{event, block_validation_failed}, {reason, Reason},
-                       {hash, arweave_util:encode(NewB#block.indep_hash)},
+                       {hash, arweave_lib_util:encode(NewB#block.indep_hash)},
                        {time_taken_us, TimeTaken}]),
             {invalid, Reason};
         {TimeTaken, {error, Reason}} ->
             ?LOG_INFO([{event, block_validation_failed}, {reason, Reason},
-                       {hash, arweave_util:encode(NewB#block.indep_hash)},
+                       {hash, arweave_lib_util:encode(NewB#block.indep_hash)},
                        {time_taken_us, TimeTaken}]),
             {invalid, Reason};
         {TimeTaken, Else} ->
             ?LOG_ERROR([{event, block_validation_failed}, {reason, Else},
-                        {hash, arweave_util:encode(NewB#block.indep_hash)},
+                        {hash, arweave_lib_util:encode(NewB#block.indep_hash)},
                         {time_taken_us, TimeTaken}]),
             {invalid, Else}
 
@@ -167,7 +167,7 @@ scaled_diff(RawDiff, PackingDifficulty) ->
             ar_difficulty:scale_diff(SubDiff, {1, PackingDifficulty * 4},
                                      %% The minimal difficulty height. It does not change at the
                                      %% packing difficulty fork.
-                                     ar_fork:height_2_8())
+                                     arweave_lib_fork:height_2_8())
     end.
 
 update_account(Addr, Balance, LastTX, 1, true, Accounts) ->
@@ -241,7 +241,7 @@ get_miner_reward_and_endowment_pool(Args) ->
     {EndowmentPool, DebtSupply, TXs, RewardAddr, WeaveSize, Height, Timestamp, Rate,
      PricePerGiBMinute, KryderPlusRateMultiplierLatch, KryderPlusRateMultiplier,
      Denomination, BlockInterval} = Args,
-    true = Height >= ar_fork:height_2_4(),
+    true = Height >= arweave_lib_fork:height_2_4(),
     case ar_pricing_transition:is_v2_pricing_height(Height) of
         true ->
             {MinerReward, EndowmentPool2, DebtSupply2, KryderPlusRateMultiplierLatch2,
@@ -332,8 +332,8 @@ may_be_apply_double_signing_proof3(B, PrevB, Accounts) ->
                     {error, invalid_double_signing_proof_invalid_signature};
                 true ->
                     ?LOG_INFO([{event, banning_account},
-                               {address, arweave_util:encode(Addr)},
-                               {previous_block, arweave_util:encode(B#block.previous_block)},
+                               {address, arweave_lib_util:encode(Addr)},
+                               {previous_block, arweave_lib_util:encode(B#block.previous_block)},
                                {height, Height}]),
                     {ok, ban_account(Addr, Accounts, PrevB#block.denomination)}
             end
@@ -447,7 +447,7 @@ validate_block(previous_block, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
 
 validate_block(previous_solution_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap,
                                         PartitionUpperBound}) ->
-    true = NewB#block.height >= ar_fork:height_2_6(),
+    true = NewB#block.height >= arweave_lib_fork:height_2_6(),
     case NewB#block.previous_solution_hash == OldB#block.hash of
         false ->
             {invalid, invalid_previous_solution_hash};
@@ -477,7 +477,7 @@ validate_block(packing_2_5_threshold, {NewB, OldB, Wallets, BlockAnchors, Recent
 validate_block(strict_data_split_threshold,
                {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
     Height = NewB#block.height,
-    Fork_2_5 = ar_fork:height_2_5(),
+    Fork_2_5 = arweave_lib_fork:height_2_5(),
     Valid =
         case Height == Fork_2_5 of
             true ->
@@ -493,7 +493,7 @@ validate_block(strict_data_split_threshold,
         end,
     case Valid of
         true ->
-            true = NewB#block.height >= ar_fork:height_2_6(),
+            true = NewB#block.height >= arweave_lib_fork:height_2_6(),
             validate_block(usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap});
         false ->
             {error, invalid_strict_data_split_threshold}
@@ -520,7 +520,7 @@ validate_block(usd_to_ar_rate, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap})
 validate_block(denomination, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
     #block{ height = Height, denomination = Denomination,
             redenomination_height = RedenominationHeight } = NewB,
-    true = Height >= ar_fork:height_2_6(),
+    true = Height >= arweave_lib_fork:height_2_6(),
     case ar_pricing:may_be_redenominate(OldB) of
         {Denomination, RedenominationHeight} ->
             validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors,
@@ -550,7 +550,7 @@ validate_block(reward_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTX
     end;
 
 validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
-    case NewB#block.height >= ar_fork:height_2_7() of
+    case NewB#block.height >= arweave_lib_fork:height_2_7() of
         false ->
             validate_block(next_vdf_difficulty, {NewB, OldB, Wallets, BlockAnchors,
                                                  RecentTXMap});
@@ -567,7 +567,7 @@ validate_block(block_time_history_hash, {NewB, OldB, Wallets, BlockAnchors, Rece
     end;
 
 validate_block(next_vdf_difficulty, {NewB, OldB, Wallets, BlockAnchors, RecentTXMap}) ->
-    case NewB#block.height >= ar_fork:height_2_7() of
+    case NewB#block.height >= arweave_lib_fork:height_2_7() of
         false ->
             validate_block(price_per_gib_minute, {NewB, OldB, Wallets, BlockAnchors,
                                                   RecentTXMap});
@@ -611,7 +611,7 @@ validate_block(txs, {NewB = #block{ timestamp = Timestamp, height = Height, txs 
         invalid ->
             {invalid, invalid_txs};
         valid ->
-            true = Height >= ar_fork:height_2_6(),
+            true = Height >= arweave_lib_fork:height_2_6(),
             %% The field size limits in 2.6 are naturally asserted in
             %% ar_serialize:binary_to_block/1.
             validate_block(tx_root, {NewB, OldB})
@@ -659,7 +659,7 @@ validate_block(cumulative_diff, {NewB, OldB}) ->
 
 validate_block(merkle_rebase_support_threshold, {NewB, OldB}) ->
     #block{ height = Height } = NewB,
-    case Height > ar_fork:height_2_7() of
+    case Height > arweave_lib_fork:height_2_7() of
         true ->
             case NewB#block.merkle_rebase_support_threshold
                 == OldB#block.merkle_rebase_support_threshold of
@@ -669,7 +669,7 @@ validate_block(merkle_rebase_support_threshold, {NewB, OldB}) ->
                     valid
             end;
         false ->
-            case Height == ar_fork:height_2_7() of
+            case Height == arweave_lib_fork:height_2_7() of
                 true ->
                     case NewB#block.merkle_rebase_support_threshold
                         == OldB#block.weave_size of

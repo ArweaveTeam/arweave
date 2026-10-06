@@ -142,12 +142,12 @@ merge_sync_records(
   {SrcSyncRecordByID, SrcSyncRecordByIDType}, {DstSyncRecordByID, DstSyncRecordByIDType}) ->
     UnionSyncRecordByID = maps:merge_with(
                             fun(_Key, Src, Dst) ->
-                                    ar_intervals:union(Src, Dst)
+                                    arweave_lib_intervals:union(Src, Dst)
                             end,
                             SrcSyncRecordByID, DstSyncRecordByID),
     UnionRecordByIDType = maps:merge_with(
                             fun(_Key, Src, Dst) ->
-                                    ar_intervals:union(Src, Dst)
+                                    arweave_lib_intervals:union(Src, Dst)
                             end,
                             SrcSyncRecordByIDType, DstSyncRecordByIDType),
     {UnionSyncRecordByID, UnionRecordByIDType}.

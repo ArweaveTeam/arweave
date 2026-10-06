@@ -22,14 +22,14 @@ repack_in_place_test_() ->
 
 sync_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_9_6, fun() -> infinity end}],
+        [{arweave_lib_fork, height_2_9_6, fun() -> infinity end}],
         fun test_sync/0, 480).
 
 %% Entropy is prepared for the first footprint of every sector and for
 %% nothing else, and the preparation completes.
 test_entropy_preparation() ->
     Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-    P = ar_block:partition_size(),
+    P = arweave_lib_constants:partition_size(),
     start_main(Addr, [
         {0, P, unpacked},
         #{partition => 1, packing_format => replica_2_9,
@@ -50,7 +50,7 @@ test_entropy_preparation() ->
 %% reports completion.
 test_repack_in_place() ->
     Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-    P = ar_block:partition_size(),
+    P = arweave_lib_constants:partition_size(),
     start_main(Addr, [{0, P, unpacked}]),
     StoreID = ar_storage_module:id({0, P, unpacked}),
     %% The three genesis chunks end at 262144 (sector 0, first),
@@ -79,7 +79,7 @@ test_repack_in_place() ->
 test_sync() ->
     Addr = ar_test_node:generate_address(main),
     PeerAddr = ar_test_node:generate_address(peer1),
-    P = ar_block:partition_size(),
+    P = arweave_lib_constants:partition_size(),
     %% The main node mines (its packed module) and syncs the data the peer
     %% serves into its limited module. The module is partition 1, past the
     %% genesis data, so the node start does not wait for genesis chunks the

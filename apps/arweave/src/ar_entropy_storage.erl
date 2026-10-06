@@ -122,7 +122,7 @@ handle_info(Info, State) ->
 
 %% @doc Return true if the 2.9 entropy with the given offset is recorded.
 is_entropy_recorded(PaddedEndOffset, {replica_2_9, _} = Packing, StoreID) ->
-    ChunkBucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
+    ChunkBucketStart = arweave_lib_constants:get_chunk_bucket_start(PaddedEndOffset),
     IsRecorded = ar_sync_record:is_recorded(
                    ChunkBucketStart + 1, Packing, sync_record_id(), StoreID),
     case IsRecorded of
@@ -153,7 +153,7 @@ get_next_unsynced_interval(Offset, Packing, StoreID) ->
     end.
 
 update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
-    BucketEnd = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
+    BucketEnd = arweave_lib_constants:get_chunk_bucket_end(PaddedEndOffset),
     add_record_async(replica_2_9_entropy, BucketEnd, {replica_2_9, RewardAddr}, StoreID),
     arweave_metrics:counter_inc(replica_2_9_entropy_stored,
                            [ar_storage_module:label(StoreID)], ?DATA_CHUNK_SIZE),
@@ -199,7 +199,7 @@ add_record_async(Event, BucketEndOffset, {replica_2_9, _} = Packing, StoreID) ->
                              BucketEndOffset, BucketStartOffset, Packing, sync_record_id(), StoreID).
 
 delete_record(PaddedEndOffset, StoreID) ->
-    BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
+    BucketStart = arweave_lib_constants:get_chunk_bucket_start(PaddedEndOffset),
     delete_record(BucketStart + ?DATA_CHUNK_SIZE, BucketStart, StoreID).
 
 delete_record(EndOffset, StartOffset, StoreID) ->
@@ -219,18 +219,18 @@ generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
         {error, Reason} ->
             {error, Reason};
         _ ->
-            EntropyIndex = ar_replica_2_9:get_slice_index(PaddedEndOffset),
+            EntropyIndex = arweave_lib_replica_2_9:get_slice_index(PaddedEndOffset),
             take_combined_entropy_by_index(Entropies, EntropyIndex)
     end.
 
 record_chunk(
   PaddedEndOffset, Chunk, StoreID, FileIndex, {IsPrepared, RewardAddr}) ->
     %% Sanity checks
-    PaddedEndOffset = ar_block:get_chunk_padded_offset(PaddedEndOffset),
+    PaddedEndOffset = arweave_lib_constants:get_chunk_padded_offset(PaddedEndOffset),
     %% End sanity checks
 
     Packing = {replica_2_9, RewardAddr},
-    StartOffset = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
+    StartOffset = arweave_lib_constants:get_chunk_bucket_start(PaddedEndOffset),
     {_ChunkFileStart, Filepath, _Position, _ChunkOffset} =
         ar_chunk_storage:locate_chunk_on_disk(PaddedEndOffset, StoreID),
     acquire_semaphore(Filepath),
@@ -304,7 +304,7 @@ do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID) ->
     true = byte_size(ChunkEntropy) == ?DATA_CHUNK_SIZE,
     %% End sanity checks
 
-    Byte = ar_chunk_storage:get_chunk_byte_from_bucket_end(BucketEndOffset),
+    Byte = arweave_lib_constants:get_chunk_byte_from_bucket_end(BucketEndOffset),
     {ChunkFileStart, Filepath, _Position, _ChunkOffset} =
         ar_chunk_storage:locate_chunk_on_disk(BucketEndOffset, StoreID),
     acquire_semaphore(Filepath),
@@ -397,9 +397,9 @@ classify_unpacked_target(BucketEndOffset, Byte, StoreID) ->
            Byte + 1, ar_chunk_storage:sync_record_id(unpacked_padded), StoreID) of
         {_IntervalEnd, IntervalStart} ->
             EndOffset = IntervalStart
-                + arweave_util:floor_int(Byte - IntervalStart, ?DATA_CHUNK_SIZE)
+                + arweave_lib_util:floor_int(Byte - IntervalStart, ?DATA_CHUNK_SIZE)
                 + ?DATA_CHUNK_SIZE,
-            case ar_chunk_storage:get_chunk_bucket_end(EndOffset) == BucketEndOffset of
+            case arweave_lib_constants:get_chunk_bucket_end(EndOffset) == BucketEndOffset of
                 true ->
                     {unpacked_chunk_already_stored, EndOffset};
                 false ->
@@ -456,7 +456,7 @@ record_chunk_releases_semaphore_on_exception_test() ->
     end,
     ets:delete(ar_entropy_storage, {semaphore, Filepath}),
     meck:new(ar_block, [passthrough]),
-    meck:expect(ar_block, get_chunk_padded_offset, fun(X) -> X end),
+    meck:expect(arweave_lib_constants, get_chunk_padded_offset, fun(X) -> X end),
     meck:new(ar_chunk_storage, [passthrough]),
     meck:expect(ar_chunk_storage, get_chunk_bucket_start, fun(_) -> 0 end),
     meck:expect(ar_chunk_storage, locate_chunk_on_disk, fun(_, _) -> {0, Filepath, 0, 0} end),
@@ -475,7 +475,7 @@ replica_2_9_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_replica_2_9/0}.
 
 test_replica_2_9() ->
-    case ar_block:strict_data_split_threshold() of
+    case arweave_lib_constants:strict_data_split_threshold() of
         786432 ->
             ok;
         _ ->
@@ -485,8 +485,8 @@ test_replica_2_9() ->
     RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
     Packing = {replica_2_9, RewardAddr},
     StorageModules = [
-                      {0, ar_block:partition_size(), Packing},
-                      {ar_block:partition_size(), 2 * ar_block:partition_size(), Packing}
+                      {0, arweave_lib_constants:partition_size(), Packing},
+                      {arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), Packing}
                      ],
     arweave_config:with_test_config(fun() ->
                                             ar_test_node:start(#{

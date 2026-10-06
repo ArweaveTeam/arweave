@@ -180,7 +180,7 @@ handle(Peer, Req, Pid) ->
                                {event, http_request},
                                {method, Method},
                                {path, SplitPath},
-                               {peer, arweave_util:format_peer(Peer)}
+                               {peer, arweave_lib_util:format_peer(Peer)}
                               ]);
                 _ ->
                     do_nothing
@@ -270,7 +270,7 @@ handle4(<<"GET">>, [<<"tx">>, <<"ready_for_mining">>], Req, _Pid) ->
     {200, #{},
      ar_serialize:jsonify(
        lists:map(
-         fun arweave_util:encode/1,
+         fun arweave_lib_util:encode/1,
          ar_node:get_ready_for_mining_txs()
         )
       ),
@@ -295,7 +295,7 @@ handle(<<"GET">>, [<<"recent">>], Req, _Pid) ->
     {200, #{}, ar_serialize:jsonify(ar_info:get_recent()), Req};
 
 handle(<<"GET">>, [<<"is_tx_blacklisted">>, EncodedTXID], Req, _Pid) ->
-    case arweave_util:safe_decode(EncodedTXID) of
+    case arweave_lib_util:safe_decode(EncodedTXID) of
         {error, invalid} ->
             {400, #{}, jiffy:encode(#{ error => invalid_tx_id }), Req};
         {ok, TXID} ->
@@ -333,7 +333,7 @@ handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _Pid) ->
      ar_serialize:jsonify(
        %% Should encode
        lists:map(
-         fun arweave_util:encode/1,
+         fun arweave_lib_util:encode/1,
          ar_mempool:get_all_txids()
         )
       ),
@@ -378,7 +378,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
         false ->
             {421, #{}, <<"Serving HTML data is disabled on this node.">>, Req};
         true ->
-            case arweave_util:safe_decode(Hash) of
+            case arweave_lib_util:safe_decode(Hash) of
                 {error, invalid} ->
                     {400, #{}, <<"Invalid hash.">>, Req};
                 {ok, ID} ->
@@ -557,7 +557,7 @@ handle(<<"GET">>, [<<"unconfirmed_chunk">>, EncodedTXID, OffsetBinary], Req, _Pi
     handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req);
 
 handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
-    case arweave_util:safe_decode(EncodedID) of
+    case arweave_lib_util:safe_decode(EncodedID) of
         {error, invalid} ->
             {400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
         {ok, ID} ->
@@ -762,7 +762,7 @@ handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
 %%   "next_vdf_difficulty": "..."
 %% }
 handle(<<"GET">>, [<<"jobs">>, EncodedPrevOutput], Req, _Pid) ->
-    case arweave_util:safe_decode(EncodedPrevOutput) of
+    case arweave_lib_util:safe_decode(EncodedPrevOutput) of
         {ok, PrevOutput} ->
             handle_get_jobs(PrevOutput, Req);
         {error, invalid} ->
@@ -781,7 +781,7 @@ handle(<<"POST">>, [<<"pool_cm_jobs">>], Req, Pid) ->
 handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
     case check_internal_api_secret(Req) of
         pass ->
-            WalletAccessCode = arweave_util:encode(crypto:strong_rand_bytes(32)),
+            WalletAccessCode = arweave_lib_util:encode(crypto:strong_rand_bytes(32)),
             case ar_wallet:new_keyfile(?DEFAULT_KEY_TYPE, WalletAccessCode) of
                 {error, Reason} ->
                     ?LOG_ERROR([{event, failed_to_create_new_wallet},
@@ -789,7 +789,7 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
                     {500, #{}, <<>>, Req};
                 {_, Pub} ->
                     ResponseProps = [
-                        {<<"wallet_address">>, arweave_util:encode(ar_wallet:to_address(Pub))},
+                        {<<"wallet_address">>, arweave_lib_util:encode(ar_wallet:to_address(Pub))},
                         {<<"wallet_access_code">>, WalletAccessCode}
                     ],
                     {200, #{}, ar_serialize:jsonify({ResponseProps}), Req}
@@ -828,9 +828,9 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
                             FullTxProps = lists:append(
                                 proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
                                 [
-                                    {<<"id">>, arweave_util:encode(crypto:strong_rand_bytes(32))},
-                                    {<<"owner">>, arweave_util:encode(<<"owner placeholder">>)},
-                                    {<<"signature">>, arweave_util:encode(<<"signature placeholder">>)}
+                                    {<<"id">>, arweave_lib_util:encode(crypto:strong_rand_bytes(32))},
+                                    {<<"owner">>, arweave_lib_util:encode(<<"owner placeholder">>)},
+                                    {<<"signature">>, arweave_lib_util:encode(<<"signature placeholder">>)}
                                 ]
                             ),
                             KeyPair = ar_wallet:load_keyfile(
@@ -853,7 +853,7 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
                             SignedTX = ar_tx:sign(Format2TX, KeyPair),
                             Peer = ar_http_util:arweave_peer(Req),
                             Reply = ar_serialize:jsonify({[{<<"id">>,
-                                arweave_util:encode(SignedTX#tx.id)}]}),
+                                arweave_lib_util:encode(SignedTX#tx.id)}]}),
                             case handle_post_tx(Req2, Peer, SignedTX) of
                                 ok ->
                                     {200, #{}, Reply, Req2};
@@ -878,7 +878,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
     {200, #{},
      ar_serialize:jsonify(
        [
-        arweave_util:format_peer(P)
+        arweave_lib_util:format_peer(P)
         ||
            P <- ar_peers:get_peers(current),
            P /= ar_http_util:arweave_peer(Req),
@@ -976,8 +976,8 @@ handle(<<"GET">>, [<<"v2price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
 handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_reward_history),
-        {ok, BH} ?= arweave_util:safe_decode(EncodedBH),
-        Fork_2_6 = ar_fork:height_2_6(),
+        {ok, BH} ?= arweave_lib_util:safe_decode(EncodedBH),
+        Fork_2_6 = arweave_lib_fork:height_2_6(),
         case ar_block_cache:get_block_and_status(block_cache, BH) of
             {#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
               when (Status == on_chain orelse Status == validated),
@@ -997,9 +997,9 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
     end;
 
 handle(<<"GET">>, [<<"block_time_history">>, EncodedBH], Req, _Pid) ->
-    case arweave_util:safe_decode(EncodedBH) of
+    case arweave_lib_util:safe_decode(EncodedBH) of
         {ok, BH} ->
-            Fork_2_7 = ar_fork:height_2_7(),
+            Fork_2_7 = arweave_lib_fork:height_2_7(),
             case ar_block_cache:get_block_and_status(block_cache, BH) of
                 {#block{ height = Height,
                          block_time_history = BlockTimeHistory }, {Status, _}}
@@ -1022,7 +1022,7 @@ handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_block_index),
-        false ?= ar_node:get_height() >= ar_fork:height_2_6(),
+        false ?= ar_node:get_height() >= arweave_lib_fork:height_2_6(),
         BI = ar_node:get_block_index(),
         {200, #{},
          ar_serialize:jsonify(
@@ -1043,7 +1043,7 @@ handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 handle(<<"GET">>, [<<"block_index2">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_block_index),
-        false ?= ar_node:get_height() >= ar_fork:height_2_6(),
+        false ?= ar_node:get_height() >= arweave_lib_fork:height_2_6(),
         BI = ar_node:get_block_index(),
         Bin = ar_serialize:block_index_to_binary(BI),
         {200, #{}, Bin, Req}
@@ -1091,7 +1091,7 @@ handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
     end;
 
 handle(<<"GET">>, [<<"recent_hash_list">>], Req, _Pid) ->
-    Encoded = [arweave_util:encode(H) || H <- ar_node:get_block_anchors()],
+    Encoded = [arweave_lib_util:encode(H) || H <- ar_node:get_block_anchors()],
     {200, #{}, ar_serialize:jsonify(Encoded), Req};
 
 %% Accept the list of independent block hashes ordered from oldest to newest
@@ -1139,7 +1139,7 @@ handle(<<"GET">>, [<<"total_supply">>], Req, _Pid) ->
 %% GET request to endpoint /wallet_list.
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
     H = ar_node:get_current_block_hash(),
-    process_request(get_block, [<<"hash">>, arweave_util:encode(H), <<"wallet_list">>], Req);
+    process_request(get_block, [<<"hash">>, arweave_lib_util:encode(H), <<"wallet_list">>], Req);
 
 %% Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
 %% the given root hash. The wallet addresses are picked in the ascending alphabetical order.
@@ -1215,7 +1215,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
             {400, #{}, <<"Invalid address.">>, Req};
         {ok, AddrOK} ->
             {200, #{},
-             arweave_util:encode(
+             arweave_lib_util:encode(
                ?OK(ar_node:get_last_tx(AddrOK))
               ),
              Req}
@@ -1225,7 +1225,7 @@ handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
 handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
     List = ar_node:get_block_anchors(),
     SuggestedAnchor = lists:nth(min(length(List), ?SUGGESTED_TX_ANCHOR_DEPTH), List),
-    {200, #{}, arweave_util:encode(SuggestedAnchor), Req};
+    {200, #{}, arweave_lib_util:encode(SuggestedAnchor), Req};
 
 %% Return the JSON-encoded block with the given height or hash.
 %% GET request to endpoint /block/{height|hash}/{height|hash}.
@@ -1269,7 +1269,7 @@ handle(<<"GET">>, [<<"block">>, <<"current">>], Req, Pid) ->
         not_joined ->
             not_joined(Req);
         H when is_binary(H) ->
-            handle(<<"GET">>, [<<"block">>, <<"hash">>, arweave_util:encode(H)], Req, Pid)
+            handle(<<"GET">>, [<<"block">>, <<"hash">>, arweave_lib_util:encode(H)], Req, Pid)
     end;
 
 %% DEPRECATED (12/07/2018)
@@ -1282,7 +1282,7 @@ handle(<<"GET">>, [<<"current_block">>], Req, Pid) ->
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
     ReadTX =
-        case arweave_util:safe_decode(Hash) of
+        case arweave_lib_util:safe_decode(Hash) of
             {error, invalid} ->
                 {reply, {400, #{}, <<"Invalid hash.">>, Req}};
             {ok, ID} ->
@@ -1303,8 +1303,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
                 <<"tags">> ->
                     {200, #{}, ar_serialize:jsonify(lists:map(
                         fun({Name, Value}) ->
-                            {[{name, arweave_util:encode(Name)},
-                                {value, arweave_util:encode(Value)}]}
+                            {[{name, arweave_lib_util:encode(Name)},
+                                {value, arweave_lib_util:encode(Value)}]}
                         end,
                         TX#tx.tags)), Req};
                 <<"data">> ->
@@ -1426,7 +1426,7 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
                     PartitionList
                 ),
                 Val = {[
-                    {peer, arweave_util:format_peer(Peer)},
+                    {peer, arweave_lib_util:format_peer(Peer)},
                     {alive, AliveStatus},
                     {partition_table, Table}
                 ]},
@@ -1497,14 +1497,14 @@ handle_get_block_index_range(Start, _End, CurrentHeight, _RecentBI, Req, _Encodi
   when Start > CurrentHeight ->
     {400, #{}, jiffy:encode(#{ error => start_too_big }), Req};
 handle_get_block_index_range(Start, End, CurrentHeight, RecentBI, Req, Encoding) ->
-    CheckpointHeight = CurrentHeight - ar_block:get_consensus_window_size() + 1,
+    CheckpointHeight = CurrentHeight - arweave_lib_constants:get_consensus_window_size() + 1,
     RecentRange =
         case End >= CheckpointHeight of
             true ->
                 Top = min(CurrentHeight, End),
                 Range1 = lists:nthtail(CurrentHeight - Top, RecentBI),
                 lists:sublist(Range1, min(Top - Start + 1,
-                    ar_block:get_consensus_window_size() - (CurrentHeight - Top)));
+                    arweave_lib_constants:get_consensus_window_size() - (CurrentHeight - Top)));
             false ->
                 []
         end,
@@ -1540,7 +1540,7 @@ allow_before_join(<<"GET">>, [<<"inflation">>, _Height]) -> true;
 allow_before_join(_, _) -> false.
 
 handle_get_tx_status(EncodedTXID, Req) ->
-    case arweave_util:safe_decode(EncodedTXID) of
+    case arweave_lib_util:safe_decode(EncodedTXID) of
         {error, invalid} ->
             {400, #{}, <<"Invalid address.">>, Req};
         {ok, TXID} ->
@@ -1552,7 +1552,7 @@ handle_get_tx_status(EncodedTXID, Req) ->
                         {ok, {Height, BH}} ->
                             PseudoTags = [
                                 {<<"block_height">>, Height},
-                                {<<"block_indep_hash">>, arweave_util:encode(BH)}
+                                {<<"block_indep_hash">>, arweave_lib_util:encode(BH)}
                             ],
                             case ar_block_index:get_element_by_height(Height) of
                                 not_found ->
@@ -1643,7 +1643,7 @@ handle_get_tx(Hash, Req, Encoding) ->
 %% GET /unconfirmed_tx, which serves everything. The public GET /tx hides
 %% recent format-1 transactions without a denomination.
 handle_get_tx(Hash, Req, Encoding, Visibility) ->
-    case arweave_util:safe_decode(Hash) of
+    case arweave_lib_util:safe_decode(Hash) of
         {error, invalid} ->
             {400, #{}, <<"Invalid hash.">>, Req};
         {ok, ID} ->
@@ -1679,7 +1679,7 @@ serve_tx(TX, Encoding, Req) ->
     {200, #{}, Body, Req}.
 
 handle_get_unconfirmed_tx(Hash, Req, Encoding) ->
-    case arweave_util:safe_decode(Hash) of
+    case arweave_lib_util:safe_decode(Hash) of
         {error, invalid} ->
             {400, #{}, <<"Invalid hash.">>, Req};
         {ok, TXID} ->
@@ -1713,7 +1713,7 @@ maybe_tx_is_pending_response(ID, Req) ->
     end.
 
 serve_tx_data(Req, #tx{ format = 1 } = TX) ->
-    {200, #{}, arweave_util:encode(TX#tx.data), Req};
+    {200, #{}, arweave_lib_util:encode(TX#tx.data), Req};
 serve_tx_data(Req, #tx{ format = 2, id = ID, data_size = DataSize } = TX) ->
     DataFilename = ar_storage:tx_data_filepath(TX),
     case filelib:is_file(DataFilename) of
@@ -1724,7 +1724,7 @@ serve_tx_data(Req, #tx{ format = 2, id = ID, data_size = DataSize } = TX) ->
                 ok ?= acquire_http_semaphore(get_tx_data),
                 case ar_data_sync:get_tx_data(ID) of
                     {ok, Data} ->
-                        {200, #{}, arweave_util:encode(Data), Req};
+                        {200, #{}, arweave_lib_util:encode(Data), Req};
                     {error, tx_data_too_big} ->
                         {400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
                     {error, not_found} when DataSize == 0 ->
@@ -1868,7 +1868,7 @@ estimate_tx_fee(Size, Addr, Type) ->
     Size2 = ar_tx:get_weave_size_increase(Size, Height + 1),
     Args = {Size2, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height + 1},
     Denomination2 =
-        case Height >= ar_fork:height_2_6() of
+        case Height >= arweave_lib_fork:height_2_6() of
             true ->
                 Denomination;
             false ->
@@ -1908,7 +1908,7 @@ estimate_tx_fee_v2(Size, Addr) ->
 handle_get_block(Type, ID, Req, Pid, Encoding) ->
     case Type of
         <<"hash">> ->
-            case arweave_util:safe_decode(ID) of
+            case arweave_lib_util:safe_decode(ID) of
                 {error, invalid} ->
                     {404, #{}, <<"Block not found.">>, Req};
                 {ok, H} ->
@@ -1926,7 +1926,7 @@ handle_get_block(Type, ID, Req, Pid, Encoding) ->
                         not_found ->
                             {404, #{}, <<"Block not found.">>, Req};
                         {H, _, _} ->
-                            handle_get_block(<<"hash">>, arweave_util:encode(H), Req, Pid,
+                            handle_get_block(<<"hash">>, arweave_lib_util:encode(H), Req, Pid,
                                 Encoding)
                     end
             catch _:_ ->
@@ -1945,7 +1945,7 @@ handle_get_block(H, Req, Pid, Encoding) ->
                     %% include the requested transactions without doing disk lookups.
                     case read_complete_body(Req, Pid, ?MAX_SERIALIZED_MISSING_TX_INDICES) of
                         {ok, Body, Req2} ->
-                            case arweave_util:parse_list_indices(Body) of
+                            case arweave_lib_util:parse_list_indices(Body) of
                                 error ->
                                     {400, #{}, <<>>, Req2};
                                 Indices ->
@@ -2016,7 +2016,7 @@ handle_post_tx({Req, Pid, Encoding}) ->
                     %% identifier anywhere.
                     ?LOG_DEBUG([{event, dropped_deprecated_v1_tx},
                                 {source, post},
-                                {tx, arweave_util:encode(TX#tx.id)}]),
+                                {tx, arweave_lib_util:encode(TX#tx.id)}]),
                     arweave_metrics:counter_inc(deprecated_v1_transactions_total,
                                                 [post], 1),
                     Ref = erlang:get(tx_id_ref),
@@ -2128,7 +2128,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
             false ->
                 ok
         end,
-    {Start, End} = ar_replica_2_9:get_entropy_partition_range(Partition),
+    {Start, End} = arweave_lib_replica_2_9:get_entropy_partition_range(Partition),
     FindStorageModules =
         case CheckFootprintNumber of
             ok ->
@@ -2159,9 +2159,9 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
                                %% unpacked chunks before the strict data split threshold)
                                %% are for now only synced via the "normal" sync mode.
                                Intervals = ar_footprint_record:get_intervals(Partition, FootprintNumber, Packing2, StoreID2),
-                               ar_intervals:union(Acc, Intervals)
+                               arweave_lib_intervals:union(Acc, Intervals)
                        end,
-                       ar_intervals:new(),
+                       arweave_lib_intervals:new(),
                        L
                       )};
             Reply3 ->
@@ -2278,7 +2278,7 @@ get_chunk_response_headers(Proof) ->
     end.
 
 handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
-    case arweave_util:safe_decode(EncodedTXID) of
+    case arweave_lib_util:safe_decode(EncodedTXID) of
         {error, invalid} ->
             {400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
         {ok, TXID} ->
@@ -2291,8 +2291,8 @@ handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
                             case ar_disk_pool:get_unconfirmed_chunk(TXID, Offset) of
                                 {ok, {Chunk, DataPath, IsStoredLongTerm}} ->
                                     Body = jiffy:encode(#{
-                                        chunk => arweave_util:encode(Chunk),
-                                        data_path => arweave_util:encode(DataPath),
+                                        chunk => arweave_lib_util:encode(Chunk),
+                                        data_path => arweave_lib_util:encode(DataPath),
                                         packing => <<"unpacked">>,
                                         is_stored_long_term => IsStoredLongTerm
                                     }),
@@ -2384,7 +2384,7 @@ get_data_root_from_headers(Req) ->
         {EncodedDataRoot, EncodedDataSize} when byte_size(EncodedDataRoot) == 43 ->
             case catch ar_serialize:parse_integer(EncodedDataSize) of
                 DataSize when is_integer(DataSize) ->
-                    case arweave_util:safe_decode(EncodedDataRoot) of
+                    case arweave_lib_util:safe_decode(EncodedDataRoot) of
                         {ok, DataRoot} ->
                             {ok, {DataRoot, DataSize}};
                         _ ->
@@ -2649,8 +2649,8 @@ post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
     end.
 
 post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
-    ConfirmedHeight = ar_node:get_height() - ar_block:get_consensus_window_size(),
-    case {Encoding, ConfirmedHeight >= ar_fork:height_2_6()} of
+    ConfirmedHeight = ar_node:get_height() - arweave_lib_constants:get_consensus_window_size(),
+    case {Encoding, ConfirmedHeight >= arweave_lib_fork:height_2_6()} of
         {json, true} ->
             %% We gesticulate it explicitly here that POST /block is not
             %% supported after the 2.6 fork. However, this check is not strictly
@@ -2666,7 +2666,7 @@ post_block(check_block_hash_header, Peer, {Req, Pid, Encoding}, ReceiveTimestamp
         not_set ->
             post_block(read_body, Peer, {Req, Pid, Encoding}, ReceiveTimestamp);
         EncodedBH ->
-            case arweave_util:safe_decode(EncodedBH) of
+            case arweave_lib_util:safe_decode(EncodedBH) of
                 {ok, BH} when byte_size(BH) =< 48 ->
                     case ar_ignore_registry:member(BH)
                             orelse ar_ignore_registry:member({BH, Peer}) of
@@ -2712,7 +2712,7 @@ post_block(check_transactions_are_present, {BShadow, Peer}, Req, ReceiveTimestam
     end;
 post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
     B2 =
-        case B#block.height >= ar_fork:height_2_6() of
+        case B#block.height >= arweave_lib_fork:height_2_6() of
             true ->
                 B;
             false ->
@@ -2728,8 +2728,8 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
                         end
                 end
         end,
-    ?LOG_INFO([{event, received_block}, {block, arweave_util:encode(B#block.indep_hash)},
-               {peer, arweave_util:format_peer(Peer)}]),
+    ?LOG_INFO([{event, received_block}, {block, arweave_lib_util:encode(B#block.indep_hash)},
+               {peer, arweave_lib_util:format_peer(Peer)}]),
     BodyReadTime = ar_http_req:body_read_time(Req),
     case ar_block_pre_validator:pre_validate(B2, Peer, ReceiveTimestamp) of
         ok ->
@@ -2846,7 +2846,7 @@ handle_get_jobs_pool_server(PrevOutput, Req) ->
          ),
     DiffPair = proplists:get_value(diff_pair, Props),
     Info = proplists:get_value(nonce_limiter_info, Props),
-    Result = arweave_util:do_until(
+    Result = ar_util:do_until(
                fun() ->
                        S = ar_nonce_limiter:get_step_triplets(Info, PrevOutput, ?GET_JOBS_COUNT),
                        case S of
@@ -3009,10 +3009,10 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
         B ->
             maybe
                 ok ?= acquire_http_semaphore(get_block_index),
-                false ?= ar_node:get_height() >= ar_fork:height_2_6(),
+                false ?= ar_node:get_height() >= arweave_lib_fork:height_2_6(),
                 CurrentBI = ar_node:get_block_index(),
                 HL = ar_block:generate_hash_list_for_block(B#block.indep_hash, CurrentBI),
-                {200, #{}, ar_serialize:jsonify(lists:map(fun arweave_util:encode/1, HL)), Req}
+                {200, #{}, ar_serialize:jsonify(lists:map(fun arweave_lib_util:encode/1, HL)), Req}
             else
                 true ->
                     {400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
@@ -3028,7 +3028,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
         unavailable ->
             {404, #{}, <<"Not Found.">>, Req};
         B ->
-            case {B#block.height >= ar_fork:height_2_2(),
+            case {B#block.height >= arweave_lib_fork:height_2_2(),
                   arweave_config:get([features, serve_wallet_lists])} of
                 {true, false} ->
                     {400, #{},
@@ -3117,7 +3117,7 @@ handle_get_block_wallet_balance(EncodedHeight, EncodedAddr, Req) ->
                             {404, #{}, jiffy:encode(#{ error => block_not_found }),
                              Req};
                         #block{ wallet_list = RootHash } ->
-                            case arweave_util:safe_decode(EncodedAddr) of
+                            case arweave_lib_util:safe_decode(EncodedAddr) of
                                 {ok, Addr} ->
                                     handle_get_block_wallet_balance2(Addr, RootHash,
                                         Req);
@@ -3152,8 +3152,8 @@ handle_get_block_wallet_balance3(Addr, RootHash, Req) ->
     end.
 
 process_get_wallet_list_balance(EncodedRootHash, EncodedAddr, Req) ->
-    case {arweave_util:safe_decode(EncodedRootHash),
-            arweave_util:safe_decode(EncodedAddr)} of
+    case {arweave_lib_util:safe_decode(EncodedRootHash),
+            arweave_lib_util:safe_decode(EncodedAddr)} of
         {{error, invalid}, _} ->
             {400, #{}, jiffy:encode(#{ error => invalid_root_hash_encoding }), Req};
         {_, {error, invalid}} ->
@@ -3175,9 +3175,9 @@ process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
             first ->
                 {ok, first};
             _ ->
-                arweave_util:safe_decode(EncodedCursor)
+                arweave_lib_util:safe_decode(EncodedCursor)
         end,
-    case {arweave_util:safe_decode(EncodedRootHash), DecodeCursorResult} of
+    case {arweave_lib_util:safe_decode(EncodedRootHash), DecodeCursorResult} of
         {{error, invalid}, _} ->
             {400, #{}, <<"Invalid root hash.">>, Req};
         {_, {error, invalid}} ->
@@ -3210,7 +3210,7 @@ wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
             jiffy:encode(#{ wallets => SerializedWallets });
         Cursor when is_binary(Cursor) ->
             jiffy:encode(#{
-                           next_cursor => arweave_util:encode(Cursor),
+                           next_cursor => arweave_lib_util:encode(Cursor),
                            wallets => SerializedWallets
                           })
     end.
@@ -3229,7 +3229,7 @@ find_block(<<"height">>, RawHeight) ->
             end
     end;
 find_block(<<"hash">>, ID) ->
-    case arweave_util:safe_decode(ID) of
+    case arweave_lib_util:safe_decode(ID) of
         {ok, H} ->
             ar_storage:read_block(H);
         _ ->
@@ -3244,7 +3244,7 @@ post_tx_parse_id(check_header, {Req, Pid, Encoding}) ->
         not_set ->
             post_tx_parse_id(read_body, {not_set, Req, Pid, Encoding});
         EncodedTXID ->
-            case arweave_util:safe_decode(EncodedTXID) of
+            case arweave_lib_util:safe_decode(EncodedTXID) of
                 {ok, TXID} when byte_size(TXID) =< 32 ->
                     post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding});
                 _ ->
@@ -3470,14 +3470,14 @@ read_body_chunk(Req, Pid, Size, Timeout) ->
         {read_body_chunk, {'EXIT', timeout}} ->
             Peer = ar_http_util:arweave_peer(Req),
             ?LOG_DEBUG([{event, body_read_cowboy_timeout}, {method, cowboy_req:method(Req)},
-                        {path, cowboy_req:path(Req)}, {peer, arweave_util:format_peer(Peer)}]),
+                        {path, cowboy_req:path(Req)}, {peer, arweave_lib_util:format_peer(Peer)}]),
             {error, timeout};
         {read_body_chunk, Term} ->
             Term
     after Timeout ->
             Peer = ar_http_util:arweave_peer(Req),
             ?LOG_DEBUG([{event, body_read_timeout}, {method, cowboy_req:method(Req)},
-                        {path, cowboy_req:path(Req)}, {peer, arweave_util:format_peer(Peer)}]),
+                        {path, cowboy_req:path(Req)}, {peer, arweave_lib_util:format_peer(Peer)}]),
             {error, timeout}
     end.
 
@@ -3531,7 +3531,7 @@ handle_mining_h2(Req, Pid) ->
                             Candidate = Candidate0#mining_candidate{
                                 cm_lead_peer = Peer },
                             ?LOG_INFO([{event, h2_received},
-                                       {peer, arweave_util:format_peer(Peer)}]),
+                                       {peer, arweave_lib_util:format_peer(Peer)}]),
                             case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
                                 {true, true} ->
                                     PoolPeer = ar_pool:pool_peer(),
@@ -3569,11 +3569,11 @@ handle_mining_cm_publish(Req, Pid) ->
                     try ar_serialize:json_map_to_solution(JSON) of
                         #mining_solution{} = Solution ->
                             ar:console("Block candidate ~p from ~p ~n", [
-                                arweave_util:encode(Solution#mining_solution.solution_hash),
-                                arweave_util:format_peer(Peer)]),
+                                arweave_lib_util:encode(Solution#mining_solution.solution_hash),
+                                arweave_lib_util:format_peer(Peer)]),
                             ?LOG_INFO("Block candidate ~p from ~p ~n", [
-                                arweave_util:encode(Solution#mining_solution.solution_hash),
-                                arweave_util:format_peer(Peer)]),
+                                arweave_lib_util:encode(Solution#mining_solution.solution_hash),
+                                arweave_lib_util:format_peer(Peer)]),
                             ar_mining_server:prepare_and_post_solution(Solution),
                             {200, #{}, <<>>, Req}
                     catch

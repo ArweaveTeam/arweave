@@ -36,7 +36,7 @@ test_snapshot_export() ->
     {ok, ManifestJSON} = file:read_file(
             filename:join(SnapshotDir, "manifest.json")),
     ?assertEqual({ok, #{ <<"height">> => ?SNAPSHOT_HEIGHT,
-            <<"indep_hash">> => arweave_util:encode(TipH),
+            <<"indep_hash">> => arweave_lib_util:encode(TipH),
             <<"weave_size">> => TipWeaveSize }},
             ar_serialize:json_decode(ManifestJSON, [return_maps])),
     ar_test_node:start(#{ b0 => B0,

@@ -28,7 +28,7 @@ calculate2(Height) when Height =< ?FORK_15_HEIGHT ->
 calculate2(Height) when Height =< ?PRE_25_BLOCKS_PER_YEAR ->
     calculate_base(Height) + ?POST_15_Y1_EXTRA;
 calculate2(Height) ->
-    case Height >= ar_fork:height_2_5() of
+    case Height >= arweave_lib_fork:height_2_5() of
         true ->
             calculate_base(Height);
         false ->

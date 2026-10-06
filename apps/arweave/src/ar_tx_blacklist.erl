@@ -74,7 +74,7 @@ is_tx_blacklisted(TXID) ->
 
 %% @doc Check whether the byte with the given global offset is blacklisted.
 is_byte_blacklisted(Offset) ->
-    ar_ets_intervals:is_inside(ar_tx_blacklist_offsets, Offset).
+    arweave_lib_ets_intervals:is_inside(ar_tx_blacklist_offsets, Offset).
 
 %% @doc Return the smallest not blacklisted byte bigger than or equal to
 %% the byte at the given global offset.
@@ -99,7 +99,7 @@ get_next_not_blacklisted_byte(Offset) ->
 
 %% @doc Return the blacklisted intervals intersecting the given range.
 get_blacklisted_intervals(Start, End) ->
-    get_blacklisted_intervals(Start, End, ar_intervals:new()).
+    get_blacklisted_intervals(Start, End, arweave_lib_intervals:new()).
 
 get_blacklisted_intervals(Start, End, Intervals) ->
     case ets:next(ar_tx_blacklist_offsets, Start) of
@@ -110,10 +110,10 @@ get_blacklisted_intervals(Start, End, Intervals) ->
                 [{Offset, Start2}] when Start2 >= End ->
                     Intervals;
                 [{Offset, Start2}] when Offset >= End ->
-                    ar_intervals:add(Intervals, End, max(Start2, Start));
+                    arweave_lib_intervals:add(Intervals, End, max(Start2, Start));
                 [{Offset, Start2}] ->
                     get_blacklisted_intervals(Offset, End,
-                            ar_intervals:add(Intervals, Offset, max(Start2, Start)));
+                            arweave_lib_intervals:add(Intervals, Offset, max(Start2, Start)));
                 [] ->
                     %% The key should have been just removed, unlucky timing.
                     get_blacklisted_intervals(Start, End, Intervals)
@@ -219,7 +219,7 @@ handle_cast(maybe_request_takedown, State) ->
 handle_cast(maybe_restore, #ar_tx_blacklist_state{ pending_restore_cursor = Cursor,
         unblacklist_timeout = UnblacklistTimeout } = State) ->
     Now = os:system_time(second),
-    arweave_util:cast_after(200, ?MODULE, maybe_restore),
+    ar_util:cast_after(200, ?MODULE, maybe_restore),
     case UnblacklistTimeout + 30000 < Now of
         true ->
             Read =
@@ -236,7 +236,7 @@ handle_cast(maybe_restore, #ar_tx_blacklist_state{ pending_restore_cursor = Curs
                 TXID ->
                     ?LOG_DEBUG([{event, preparing_transaction_unblacklisting},
                             {tags, [tx_blacklist]},
-                            {tx, arweave_util:encode(TXID)}]),
+                            {tx, arweave_lib_util:encode(TXID)}]),
                     ar_events:send(tx, {preparing_unblacklisting, TXID}),
                     {noreply, State#ar_tx_blacklist_state{ pending_restore_cursor = TXID,
                             unblacklist_timeout = Now }}
@@ -310,7 +310,7 @@ handle_info({removed_range, Ref}, State) ->
 handle_info({event, tx, {ready_for_unblacklisting, TXID}}, State) ->
     ?LOG_DEBUG([{event, unblacklisting_transaction},
         {tags, [tx_blacklist]},
-        {tx, arweave_util:encode(TXID)}]),
+        {tx, arweave_lib_util:encode(TXID)}]),
     ets:delete(ar_tx_blacklist_pending_restore_headers, TXID),
     {noreply, State#ar_tx_blacklist_state{ unblacklist_timeout = os:system_time(second) }};
 
@@ -516,7 +516,7 @@ parse_binary(Binary) ->
                                     false
                             end;
                         _ ->
-                            case arweave_util:safe_decode(TXIDOrRange) of
+                            case arweave_lib_util:safe_decode(TXIDOrRange) of
                                 {error, invalid} ->
                                     ?LOG_WARNING([{event, failed_to_parse_line},
                                             {tags, [tx_blacklist]},
@@ -610,7 +610,7 @@ request_data_takedown(State) ->
                         {error, Reason} ->
                             ?LOG_WARNING([{event, failed_to_find_blocklisted_tx_in_the_index},
                                     {tags, [tx_blacklist]},
-                                    {tx, arweave_util:encode(TXID)},
+                                    {tx, arweave_lib_util:encode(TXID)},
                                     {reason, io_lib:format("~p", [Reason])}]),
                             ets:delete(ar_tx_blacklist_pending_data, TXID),
                             ets:delete(ar_tx_blacklist, TXID),
@@ -649,10 +649,10 @@ store_state() ->
     ]).
 
 restore_offsets(End, Start) ->
-    ar_ets_intervals:delete(ar_tx_blacklist_offsets, End, Start).
+    arweave_lib_ets_intervals:delete(ar_tx_blacklist_offsets, End, Start).
 
 blacklist_offsets(End, Start, State) ->
-    ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
+    arweave_lib_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
     Ref = make_ref(),
     erlang:put(Ref, {range, {Start, End}}),
     ?LOG_DEBUG([{event, requesting_data_removal},
@@ -665,12 +665,12 @@ blacklist_offsets(End, Start, State) ->
     }.
 
 blacklist_offsets(TXID, End, Start, State) ->
-    ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
+    arweave_lib_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
     Ref = make_ref(),
     erlang:put(Ref, {tx, {TXID, Start, End}}),
     ?LOG_DEBUG([{event, requesting_tx_data_removal},
         {tags, [tx_blacklist]},
-        {tx, arweave_util:encode(TXID)},
+        {tx, arweave_lib_util:encode(TXID)},
         {s, Start},
         {e, End}]),
     ar_data_sync:request_tx_data_removal(TXID, Ref, self()),

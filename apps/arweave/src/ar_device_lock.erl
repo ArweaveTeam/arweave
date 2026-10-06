@@ -142,7 +142,7 @@ handle_call(Request, _From, State) ->
 handle_cast(initialize_state, State) ->
     State2 = case ar_node:is_joined() of
                  false ->
-                     arweave_util:cast_after(1000, self(), initialize_state),
+                     ar_util:cast_after(1000, self(), initialize_state),
                      State;
                  true ->
                      initialize_state(State)
@@ -160,7 +160,7 @@ handle_cast({release_lock, Mode, StoreID}, State) ->
     end;
 handle_cast(log_locks, State) ->
     log_locks(State),
-    arweave_util:cast_after(?LOCK_LOG_INTERVAL_MS, ?MODULE, log_locks),
+    ar_util:cast_after(?LOCK_LOG_INTERVAL_MS, ?MODULE, log_locks),
     {noreply, State};
 handle_cast({set_entropy_workers, Value}, State) ->
     {noreply, State#state{ num_replica_2_9_workers = Value }};
@@ -202,7 +202,7 @@ initialize_state(State) ->
               },
 
     log_locks(State2),
-    arweave_util:cast_after(?LOCK_LOG_INTERVAL_MS, ?MODULE, log_locks),
+    ar_util:cast_after(?LOCK_LOG_INTERVAL_MS, ?MODULE, log_locks),
 
     State2.
 
@@ -210,7 +210,7 @@ get_system_device(StorageModule) ->
     DataDir = arweave_config:get([data_dir]),
     StoreID = ar_storage_module:id(StorageModule),
     Path = ar_chunk_storage:get_chunk_storage_path(DataDir, StoreID),
-    Device = arweave_util:get_system_device(Path),
+    Device = ar_util:get_system_device(Path),
     case Device of
         "" -> StoreID;  % If the command fails or returns an empty string, return StoreID
         _ -> Device

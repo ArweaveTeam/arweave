@@ -104,7 +104,7 @@ handle_call({get_serialized_sync_record, Args}, _From, State) ->
     #state{ sync_record = SyncRecord } = State,
     Limit = min(maps:get(limit, Args, ?MAX_SHARED_SYNCED_INTERVALS_COUNT),
                 ?MAX_SHARED_SYNCED_INTERVALS_COUNT),
-    {reply, {ok, ar_intervals:serialize(Args#{ limit => Limit }, SyncRecord)}, State};
+    {reply, {ok, arweave_lib_intervals:serialize(Args#{ limit => Limit }, SyncRecord)}, State};
 
 handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -115,7 +115,7 @@ handle_cast({update_serialized_sync_buckets, serialized_sync_buckets = Key}, Sta
     {SyncBuckets2, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets,
                                                                       ?MAX_SYNC_BUCKETS_SIZE),
     ets:insert(?MODULE, {Key, SerializedSyncBuckets}),
-    arweave_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
+    ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
                        ?MODULE, {update_serialized_sync_buckets, Key}),
     {noreply, State#state{ sync_buckets = SyncBuckets2 }};
 handle_cast({update_serialized_sync_buckets, serialized_footprint_buckets = Key}, State) ->
@@ -123,7 +123,7 @@ handle_cast({update_serialized_sync_buckets, serialized_footprint_buckets = Key}
     {FootprintBuckets2, SerializedFootprintBuckets} = ar_sync_buckets:serialize(
                                                         FootprintBuckets, ?MAX_SYNC_BUCKETS_SIZE),
     ets:insert(?MODULE, {Key, SerializedFootprintBuckets}),
-    arweave_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
+    ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
                        ?MODULE, {update_serialized_sync_buckets, Key}),
     {noreply, State#state{ footprint_buckets = FootprintBuckets2 }};
 
@@ -140,7 +140,7 @@ handle_info({event, sync_record, {add_range, Start, End, ar_data_sync,
             %% footprint by footprint (not left to right).
             {noreply, State};
         _ ->
-            SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
+            SyncRecord2 = arweave_lib_intervals:add(SyncRecord, End, Start),
             SyncBuckets2 = ar_sync_buckets:add(End, Start, SyncBuckets),
             {noreply, State#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }}
     end;
@@ -151,13 +151,13 @@ handle_info({event, sync_record, {add_range, Start, End, ar_data_sync_footprints
 
 handle_info({event, sync_record, {global_cut, Offset}}, State) ->
     #state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
-    SyncRecord2 = ar_intervals:cut(SyncRecord, Offset),
+    SyncRecord2 = arweave_lib_intervals:cut(SyncRecord, Offset),
     SyncBuckets2 = ar_sync_buckets:cut(Offset, SyncBuckets),
     {noreply, State#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }};
 
 handle_info({event, sync_record, {global_remove_range, Start, End}}, State) ->
     #state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
-    SyncRecord2 = ar_intervals:delete(SyncRecord, End, Start),
+    SyncRecord2 = arweave_lib_intervals:delete(SyncRecord, End, Start),
     SyncBuckets2 = ar_sync_buckets:delete(End, Start, SyncBuckets),
     State2 = remove_footprint_data(Start, End, State),
     {noreply, State2#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }};
@@ -179,11 +179,11 @@ terminate(Reason, _State) ->
 init_sync_record() ->
     Modules = [M || M <- [?DEFAULT_MODULE | arweave_config:storage_modules()],
                     not is_replica_2_9(M)],
-    get_records_wait(ar_data_sync, Modules, ar_intervals:new()).
+    get_records_wait(ar_data_sync, Modules, arweave_lib_intervals:new()).
 
 init_footprint_record() ->
     get_records_wait(ar_data_sync_footprints, arweave_config:storage_modules(),
-                     ar_intervals:new()).
+                     arweave_lib_intervals:new()).
 
 %% @doc Handle potential race condition when ar_global_sync_record init is called before
 %% all of the ar_sync_record modules are initialized (can happen since the init process is
@@ -208,7 +208,7 @@ get_records_wait(ID, [Module | Rest], Acc, Retries) ->
         {error, timeout} ->
             error({sync_record_timeout, ID, StoreID});
         SyncRecord ->
-            get_records_wait(ID, Rest, ar_intervals:union(SyncRecord, Acc), Retries)
+            get_records_wait(ID, Rest, arweave_lib_intervals:union(SyncRecord, Acc), Retries)
     end.
 
 is_replica_2_9({_, _, {replica_2_9, _}}) -> true;
@@ -219,7 +219,7 @@ cache_and_get_sync_buckets(SyncRecord, Key, SyncBuckets) ->
     {SyncBuckets3, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets2,
                                                                       ?MAX_SYNC_BUCKETS_SIZE),
     ets:insert(?MODULE, {Key, SerializedSyncBuckets}),
-    arweave_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
+    ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
                        ?MODULE, {update_serialized_sync_buckets, Key}),
     SyncBuckets3.
 
@@ -228,7 +228,7 @@ update_footprint_data(Start, End, State) when Start >= End ->
 update_footprint_data(Start, End, State) ->
     #state{ footprint_record = FootprintRecord,
             footprint_buckets = FootprintBuckets } = State,
-    FootprintRecord2 = ar_intervals:add(FootprintRecord, Start + 1, Start),
+    FootprintRecord2 = arweave_lib_intervals:add(FootprintRecord, Start + 1, Start),
     FootprintBuckets2 = ar_sync_buckets:add(Start + 1, Start, FootprintBuckets),
     State2 = State#state{ footprint_record = FootprintRecord2,
                           footprint_buckets = FootprintBuckets2 },
@@ -240,7 +240,7 @@ remove_footprint_data(Start, End, State) ->
     #state{ footprint_record = FootprintRecord,
             footprint_buckets = FootprintBuckets } = State,
     Offset = ar_footprint_record:get_offset(Start + ?DATA_CHUNK_SIZE),
-    FootprintRecord2 = ar_intervals:delete(FootprintRecord, Offset, Offset - 1),
+    FootprintRecord2 = arweave_lib_intervals:delete(FootprintRecord, Offset, Offset - 1),
     FootprintBuckets2 = ar_sync_buckets:delete(Offset, Offset - 1, FootprintBuckets),
     State2 = State#state{ footprint_record = FootprintRecord2,
                           footprint_buckets = FootprintBuckets2 },

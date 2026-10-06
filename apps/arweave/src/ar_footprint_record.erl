@@ -51,12 +51,12 @@ add_async(Tag, Offset, Packing, StoreID) ->
 %% @doc Get the offset of a chunk in the footprint record.
 -spec get_offset(Offset :: non_neg_integer()) -> non_neg_integer().
 get_offset(Offset) ->
-    PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
+    PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(Offset),
     FootprintSize = get_footprint_size(),
     FootprintsPerPartition = get_footprints_per_partition(),
 
     ChunksPerPartition = get_chunks_per_partition(),
-    Partition = ar_replica_2_9:get_entropy_partition(PaddedOffset),
+    Partition = arweave_lib_replica_2_9:get_entropy_partition(PaddedOffset),
     PartitionOffset = (PaddedOffset - Partition * ?PARTITION_SIZE) div ?DATA_CHUNK_SIZE - 1,
 
     %% Which footprint within the partition
@@ -76,13 +76,13 @@ get_padded_offset_from_footprint_offset(FootprintOffset) ->
     Footprint = (Start - PartitionStart) div FootprintSize,
     InFootprintOffset = (Start - PartitionStart) rem FootprintSize,
     EndOffset = Partition * ?PARTITION_SIZE + (InFootprintOffset * FootprintsPerPartition + (Footprint + 1)) * ?DATA_CHUNK_SIZE,
-    ar_block:get_chunk_padded_offset(EndOffset).
+    arweave_lib_constants:get_chunk_padded_offset(EndOffset).
 
 %% @doc Get the chunk's footprint's number, >= 0, < the maximum number of footprints
 %% in a partition.
 -spec get_footprint(Offset :: non_neg_integer()) -> non_neg_integer().
 get_footprint(Offset) ->
-    EntropyIndex = ar_replica_2_9:get_entropy_index(Offset, 0),
+    EntropyIndex = arweave_lib_replica_2_9:get_entropy_index(Offset, 0),
     EntropyIndex div ?SUB_CHUNK_COUNT.
 
 %% @doc Return the bucket end offset of the first chunk of the sector after
@@ -142,7 +142,7 @@ delete(Offset, StoreID) ->
 %% @doc Convert a list of footprint intervals to a list of intervals.
 -spec get_intervals_from_footprint_intervals(FootprintIntervals :: term()) -> term().
 get_intervals_from_footprint_intervals(FootprintIntervals) ->
-    get_intervals_from_footprint_intervals(ar_intervals:to_list(FootprintIntervals), ar_intervals:new()).
+    get_intervals_from_footprint_intervals(arweave_lib_intervals:to_list(FootprintIntervals), arweave_lib_intervals:new()).
 
 %% @doc Get the number of footprints contained in a partition.
 -spec get_footprints_per_partition() -> non_neg_integer().
@@ -175,10 +175,10 @@ get_footprint_size() ->
 
 get_chunks_per_partition() ->
     FootprintSize = get_footprint_size(),
-    arweave_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE * FootprintSize) div ?DATA_CHUNK_SIZE.
+    arweave_lib_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE * FootprintSize) div ?DATA_CHUNK_SIZE.
 
 collect_intervals(Start, End, Packing, StoreID) ->
-    collect_intervals(Start, End, Packing, StoreID, ar_intervals:new()).
+    collect_intervals(Start, End, Packing, StoreID, arweave_lib_intervals:new()).
 
 collect_intervals(Start, End, _Packing, _StoreID, Intervals) when Start >= End ->
     Intervals;
@@ -199,11 +199,11 @@ collect_intervals(Start, End, Packing, StoreID, Intervals) ->
             End3 = min(End2, End),
             Start3 = max(Start2, Start),
             collect_intervals(End3, End, Packing, StoreID,
-                              ar_intervals:add(Intervals, End3, Start3))
+                              arweave_lib_intervals:add(Intervals, End3, Start3))
     end.
 
 collect_unsynced_intervals(Start, End, StoreID) ->
-    collect_unsynced_intervals(Start, End, StoreID, ar_intervals:new()).
+    collect_unsynced_intervals(Start, End, StoreID, arweave_lib_intervals:new()).
 
 collect_unsynced_intervals(Start, End, _StoreID, Intervals) when Start >= End ->
     Intervals;
@@ -216,7 +216,7 @@ collect_unsynced_intervals(Start, End, StoreID, Intervals) ->
             End3 = min(End2, End),
             Start3 = max(Start2, Start),
             collect_unsynced_intervals(End3, End, StoreID,
-                                       ar_intervals:add(Intervals, End3, Start3))
+                                       arweave_lib_intervals:add(Intervals, End3, Start3))
     end.
 
 get_intervals_from_footprint_intervals([], Intervals) ->
@@ -229,7 +229,7 @@ get_intervals_from_footprint_intervals(Start, End, Intervals) when Start >= End 
     Intervals;
 get_intervals_from_footprint_intervals(Start, End, Intervals) ->
     Offset = get_padded_offset_from_footprint_offset(Start + 1),
-    Intervals2 = ar_intervals:add(Intervals, Offset, Offset - ?DATA_CHUNK_SIZE),
+    Intervals2 = arweave_lib_intervals:add(Intervals, Offset, Offset - ?DATA_CHUNK_SIZE),
     get_intervals_from_footprint_intervals(Start + 1, End, Intervals2).
 
 %% @doc Return the start offset of the first bucket of the sector that is
@@ -237,15 +237,15 @@ get_intervals_from_footprint_intervals(Start, End, Intervals) ->
 %% sector of a partition overhangs the next one, so a shift past it lands
 %% on the next partition's first bucket.
 get_sector_bucket_start(AbsoluteChunkEndOffset, SectorShift) ->
-    SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
-    PartitionSize = ar_block:partition_size(),
+    SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
+    PartitionSize = arweave_lib_constants:partition_size(),
     PartitionRelativeOffset =
-        ar_replica_2_9:get_partition_offset(AbsoluteChunkEndOffset),
-    Partition = ar_replica_2_9:get_entropy_partition(AbsoluteChunkEndOffset),
+        arweave_lib_replica_2_9:get_partition_offset(AbsoluteChunkEndOffset),
+    Partition = arweave_lib_replica_2_9:get_entropy_partition(AbsoluteChunkEndOffset),
     Sector = PartitionRelativeOffset div SectorSize + SectorShift,
     SectorStart = min(Partition * PartitionSize + Sector * SectorSize,
         (Partition + 1) * PartitionSize),
-    arweave_util:floor_int(
+    arweave_lib_util:floor_int(
         SectorStart + ?DATA_CHUNK_SIZE - 1, ?DATA_CHUNK_SIZE).
 
 %%%===================================================================
@@ -306,7 +306,7 @@ get_padded_offset_from_footprint_offset_test() ->
     ?assertEqual(2359296, get_padded_offset_from_footprint_offset(9)),
     ?assertEqual(2883584, get_padded_offset_from_footprint_offset(10)),
 
-    79280870522880 = ar_block:get_chunk_padded_offset(79280870522880),
+    79280870522880 = arweave_lib_constants:get_chunk_padded_offset(79280870522880),
     ?assertEqual(317123481, ar_footprint_record:get_offset(79280870522880)),
     ?assertEqual(79280870522880, ar_footprint_record:get_padded_offset_from_footprint_offset(317123481)).
 
@@ -318,9 +318,9 @@ get_offset_get_intervals_from_footprint_intervals_reversal_test() ->
 get_offset_get_intervals_from_footprint_intervals_reversal(ByteOffset) ->
     FootprintOffset = get_offset(ByteOffset),
 
-    FootprintInterval = ar_intervals:from_list([{FootprintOffset, FootprintOffset - 1}]),
+    FootprintInterval = arweave_lib_intervals:from_list([{FootprintOffset, FootprintOffset - 1}]),
     ResultingByteIntervals = get_intervals_from_footprint_intervals(FootprintInterval),
-    [{GotEnd, GotStart}] = ar_intervals:to_list(ResultingByteIntervals),
+    [{GotEnd, GotStart}] = arweave_lib_intervals:to_list(ResultingByteIntervals),
 
     ?assertEqual(ByteOffset, GotEnd),
     ?assertEqual(ByteOffset - ?DATA_CHUNK_SIZE, GotStart).
@@ -355,7 +355,7 @@ get_unsynced_intervals_test_() ->
 
               %% Get unsynced intervals before adding any data.
               UnsyncedBefore = get_unsynced_intervals(Partition, Footprint, TestStoreID),
-              UnsyncedBeforeList = ar_intervals:to_list(UnsyncedBefore),
+              UnsyncedBeforeList = arweave_lib_intervals:to_list(UnsyncedBefore),
               ?assertEqual([{4, 0}], UnsyncedBeforeList),
 
               %% Add some data to the footprint.
@@ -365,7 +365,7 @@ get_unsynced_intervals_test_() ->
               ok = add(PaddedOffset, Packing, TestStoreID),
 
               UnsyncedAfter = get_unsynced_intervals(Partition, Footprint, TestStoreID),
-              UnsyncedAfterList = ar_intervals:to_list(UnsyncedAfter),
+              UnsyncedAfterList = arweave_lib_intervals:to_list(UnsyncedAfter),
               ?assertEqual([{4, 1}], UnsyncedAfterList)
       end).
 
@@ -401,37 +401,37 @@ get_intervals_test_() ->
               Partition = 0,
               Footprint = 0,
               SyncedIntervals = get_intervals(Partition, Footprint, TestStoreID),
-              SyncedIntervalsList = ar_intervals:to_list(SyncedIntervals),
+              SyncedIntervalsList = arweave_lib_intervals:to_list(SyncedIntervals),
               ?assertEqual([{4, 0}], SyncedIntervalsList),
               Partition2 = 0,
               Footprint2 = 1,
               SyncedIntervals2 = get_intervals(Partition2, Footprint2, TestStoreID),
-              SyncedIntervalsList2 = ar_intervals:to_list(SyncedIntervals2),
+              SyncedIntervalsList2 = arweave_lib_intervals:to_list(SyncedIntervals2),
               ?assertEqual([{8, 4}], SyncedIntervalsList2),
               Partition3 = 0,
               Footprint3 = 2,
               SyncedIntervals3 = get_intervals(Partition3, Footprint3, TestStoreID),
-              SyncedIntervalsList3 = ar_intervals:to_list(SyncedIntervals3),
+              SyncedIntervalsList3 = arweave_lib_intervals:to_list(SyncedIntervals3),
               ?assertEqual([], SyncedIntervalsList3),
               Partition4 = 1,
               Footprint4 = 0,
               SyncedIntervals4 = get_intervals(Partition4, Footprint4, TestStoreID),
-              SyncedIntervalsList4 = ar_intervals:to_list(SyncedIntervals4),
+              SyncedIntervalsList4 = arweave_lib_intervals:to_list(SyncedIntervals4),
               ?assertEqual([{12, 8}], SyncedIntervalsList4),
               Partition5 = 1,
               Footprint5 = 1,
               SyncedIntervals5 = get_intervals(Partition5, Footprint5, TestStoreID),
-              SyncedIntervalsList5 = ar_intervals:to_list(SyncedIntervals5),
+              SyncedIntervalsList5 = arweave_lib_intervals:to_list(SyncedIntervals5),
               ?assertEqual([{16, 12}], SyncedIntervalsList5),
               Partition6 = 1,
               Footprint6 = 2,
               SyncedIntervals6 = get_intervals(Partition6, Footprint6, TestStoreID),
-              SyncedIntervalsList6 = ar_intervals:to_list(SyncedIntervals6),
+              SyncedIntervalsList6 = arweave_lib_intervals:to_list(SyncedIntervals6),
               ?assertEqual([], SyncedIntervalsList6),
               Partition7 = 2,
               Footprint7 = 0,
               SyncedIntervals7 = get_intervals(Partition7, Footprint7, TestStoreID),
-              SyncedIntervalsList7 = ar_intervals:to_list(SyncedIntervals7),
+              SyncedIntervalsList7 = arweave_lib_intervals:to_list(SyncedIntervals7),
               ?assertEqual([{20, 16}], SyncedIntervalsList7)
       end).
 
@@ -471,7 +471,7 @@ get_offset_get_padded_offset_from_footprint_offset_reversal_test() ->
 get_offset_get_padded_offset_from_footprint_offset_reversal(Offset) ->
     FootprintOffset = get_offset(Offset),
     PaddedEndOffset = get_padded_offset_from_footprint_offset(FootprintOffset),
-    ?assertEqual(ar_block:get_chunk_padded_offset(Offset), PaddedEndOffset).
+    ?assertEqual(arweave_lib_constants:get_chunk_padded_offset(Offset), PaddedEndOffset).
 
 get_intervals_from_footprint_intervals_test() ->
     TestCases =
@@ -513,8 +513,8 @@ get_intervals_from_footprint_intervals_test() ->
 test_get_intervals_from_footprint_intervals([]) ->
     ok;
 test_get_intervals_from_footprint_intervals([{Input, Expected, Title} | Rest]) ->
-    ?assertEqual(ar_intervals:from_list(Expected),
-                 get_intervals_from_footprint_intervals(ar_intervals:from_list(Input)), Title),
+    ?assertEqual(arweave_lib_intervals:from_list(Expected),
+                 get_intervals_from_footprint_intervals(arweave_lib_intervals:from_list(Input)), Title),
     test_get_intervals_from_footprint_intervals(Rest).
 
 -endif.
@@ -544,7 +544,7 @@ footprint_geometry_test() ->
 %% the last one must start at the next partition's first bucket.
 next_sector_start_clamps_to_partition_test_() ->
     ar_test_util:with_mocked(
-        [{ar_block, partition_size, fun() -> 1200000 end}],
+        [{arweave_lib_constants, partition_size, fun() -> 1200000 end}],
         fun() ->
             %% Bucket [1048576, 1310720) is sector 2 of partition 0; sector
             %% 3 would start at 1572864, past the partition end 1200000.

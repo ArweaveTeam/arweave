@@ -119,14 +119,14 @@ is_coordinated_miner() ->
 %% A single partition in the following format:
 %% {[
 %%   {bucket, PartitionID},
-%%   {bucketsize, ar_block:partition_size()},
+%%   {bucketsize, arweave_lib_constants:partition_size()},
 %%   {addr, EncodedMiningAddress}
 %% ]}
 %%
 %% A single partition with replica_2_9 packing is in the following format:
 %% {[
 %%   {bucket, PartitionID},
-%%   {bucketsize, ar_block:partition_size()},
+%%   {bucketsize, arweave_lib_constants:partition_size()},
 %%   {addr, EncodedMiningAddress},
 %%   {pdiff, PackingDifficulty}
 %% ]}
@@ -142,14 +142,14 @@ get_self_plus_external_partitions_list() ->
 %% A single partition in the following format:
 %% {[
 %%   {bucket, PartitionID},
-%%   {bucketsize, ar_block:partition_size()},
+%%   {bucketsize, arweave_lib_constants:partition_size()},
 %%   {addr, EncodedMiningAddress}
 %% ]}
 %%
 %% A single partition with replica_2_9 packing is in the following format:
 %% {[
 %%   {bucket, PartitionID},
-%%   {bucketsize, ar_block:partition_size()},
+%%   {bucketsize, arweave_lib_constants:partition_size()},
 %%   {addr, EncodedMiningAddress},
 %%   {pdiff, PackingDifficulty}
 %% ]}
@@ -164,7 +164,7 @@ init([]) ->
     CMEnabled = arweave_config:get([cm, enabled]),
     CMExitPeer = arweave_config:get([peers, cm_exit]),
 
-    arweave_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
+    ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
     State = #state{
                last_peer_response = #{}
               },
@@ -180,7 +180,7 @@ init([]) ->
                          _ ->
                              ok
                      end,
-                     arweave_util:cast_after(?START_DELAY, ?MODULE, refetch_peer_partitions),
+                     ar_util:cast_after(?START_DELAY, ?MODULE, refetch_peer_partitions),
                      State#state{
                        last_peer_response = #{}
                       }
@@ -216,7 +216,7 @@ handle_call(get_cluster_partitions_list, _From, State) ->
                             Acc2;
                         ({_Peer, PackingAddr, PackingDifficulty}, Acc2) ->
                             sets:add_element(ar_serialize:partition_to_json_struct(
-                                               PartitionID, ar_block:partition_size(), PackingAddr,
+                                               PartitionID, arweave_lib_constants:partition_size(), PackingAddr,
                                                PackingDifficulty), Acc2)
                     end,
                     Acc,
@@ -234,7 +234,7 @@ handle_call(Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast(check_batches, State) ->
-    arweave_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
+    ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
     OutBatches = check_out_batches(State),
     {noreply, State#state{ out_batches = OutBatches }};
 
@@ -289,7 +289,7 @@ handle_cast(refetch_peer_partitions, State) ->
             false ->
                 [CMExitPeer | Peers]
         end,
-    arweave_util:cast_after(PollInterval, ?MODULE, refetch_peer_partitions),
+    ar_util:cast_after(PollInterval, ?MODULE, refetch_peer_partitions),
     refetch_peer_partitions(Peers2),
     {noreply, State};
 
@@ -312,7 +312,7 @@ handle_cast({remove_peer, Peer}, State) ->
                      State2 = State#state{
                                 last_peer_response = maps:put(Peer, SetValue, State#state.last_peer_response)
                                },
-                     ?LOG_INFO([{event, cm_peer_removed}, {peer, arweave_util:format_peer(Peer)}]),
+                     ?LOG_INFO([{event, cm_peer_removed}, {peer, arweave_lib_util:format_peer(Peer)}]),
                      remove_mining_peer(Peer, State2)
              end,
     {noreply, State3};
@@ -440,9 +440,9 @@ add_mining_peer({Peer, StorageModules}, State) ->
                    fun({PartitionID, _PartitionSize, PackingAddr, PackingDifficulty}) ->
                            {PartitionID, PackingAddr, PackingDifficulty} end, StorageModules),
     ?LOG_INFO([{event, cm_peer_updated},
-               {peer, arweave_util:format_peer(Peer)},
+               {peer, arweave_lib_util:format_peer(Peer)},
                {partitions, io_lib:format("~p",
-                                          [[{ID, arweave_util:encode(Addr), PackingDifficulty}
+                                          [[{ID, arweave_lib_util:encode(Addr), PackingDifficulty}
                                             || {ID, Addr, PackingDifficulty} <- Partitions]])}]),
     PeersByPartition =
         lists:foldl(
@@ -476,12 +476,12 @@ refetch_peer_partitions(Peers) ->
                                            _ -> ok
                                        end
                                end,
-                      arweave_util:pmap(MapFun, Peers)
+                      arweave_lib_util:pmap(MapFun, Peers)
                   catch
                       throw:{pmap_timeout, _} -> ?LOG_WARNING([{event, pmap_timeout}, {module, ?MODULE}, {peers, Peers}]);
                       ErrT:Other -> ?LOG_ERROR([{event, pmap_error}, {module, ?MODULE}, {peers, Peers}, {ErrT, Other}])
                   end,
-                  %% arweave_util:pmap ensures we fetch all the local up-to-date CM peer partitions first,
+                  %% arweave_lib_util:pmap ensures we fetch all the local up-to-date CM peer partitions first,
                   %% then share them with the Pool to fetch the complementary pool CM peer partitions.
                   case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
                       {true, true} ->
@@ -507,7 +507,7 @@ get_unique_partitions_set([{PartitionID, MiningAddress, PackingDifficulty} | Par
                           UniquePartitions) ->
     get_unique_partitions_set(
       Partitions,
-      sets:add_element(ar_serialize:partition_to_json_struct(PartitionID, ar_block:partition_size(),
+      sets:add_element(ar_serialize:partition_to_json_struct(PartitionID, arweave_lib_constants:partition_size(),
                                                              MiningAddress, PackingDifficulty), UniquePartitions)
      );
 get_unique_partitions_set([{PartitionID, BucketSize, MiningAddress, PackingDifficulty}

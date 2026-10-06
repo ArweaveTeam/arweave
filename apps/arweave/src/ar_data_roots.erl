@@ -760,7 +760,7 @@ read_entries_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
 %%% Private: Validation
 %%%===================================================================
 get_padded_size(TXSize, BlockStart) ->
-    case BlockStart >= ar_block:strict_data_split_threshold() of
+    case BlockStart >= arweave_lib_constants:strict_data_split_threshold() of
         true ->
             ar_poa:get_padded_offset(TXSize, 0);
         false ->
@@ -902,13 +902,13 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
                           {error, Reason} ->
                               ?LOG_ERROR([{event, failed_to_update_tx_index},
                                           {reason, io_lib:format("~p", [Reason])},
-                                          {tx, arweave_util:encode(TXID)}]),
+                                          {tx, arweave_lib_util:encode(TXID)}]),
                               TXEndOffset
                       end;
                   {error, Reason} ->
                       ?LOG_ERROR([{event, failed_to_update_tx_offset_index},
                                   {reason, io_lib:format("~p", [Reason])},
-                                  {tx, arweave_util:encode(TXID)}]),
+                                  {tx, arweave_lib_util:encode(TXID)}]),
                       TXEndOffset
               end
       end,

@@ -30,7 +30,7 @@ polled_v1_denomination0_tx_is_dropped_once_test_() ->
 
 with_fork_2_9_6_disabled(TestFun) ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{ar_fork, height_2_9_6, fun() -> infinity end}],
+            [{arweave_lib_fork, height_2_9_6, fun() -> infinity end}],
             TestFun, ?TEST_NODE_TIMEOUT).
 
 test_standalone_v1_denomination0_tx_is_dropped() ->
@@ -205,13 +205,13 @@ block_txids(H) ->
     [case TX of #tx{ id = TXID } -> TXID; TXID -> TXID end || TX <- B#block.txs].
 
 tx_path(ID) ->
-    "/tx/" ++ binary_to_list(arweave_util:encode(ID)).
+    "/tx/" ++ binary_to_list(arweave_lib_util:encode(ID)).
 
 tx2_path(ID) ->
-    "/tx2/" ++ binary_to_list(arweave_util:encode(ID)).
+    "/tx2/" ++ binary_to_list(arweave_lib_util:encode(ID)).
 
 unconfirmed_tx_path(ID) ->
-    "/unconfirmed_tx/" ++ binary_to_list(arweave_util:encode(ID)).
+    "/unconfirmed_tx/" ++ binary_to_list(arweave_lib_util:encode(ID)).
 
 post_tx(Node, TX) ->
     ar_test_node:post_tx_json(Node,
