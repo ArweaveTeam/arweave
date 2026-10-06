@@ -107,7 +107,8 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer } = State) ->
                         Error ->
                             ar_ignore_registry:remove_ref({poller_worker, H}, IgnoreRef),
                             ?LOG_DEBUG([{event, failed_to_fetch_block},
-                                        {peer, arweave_lib_util:format_peer(Peer)},
+                                        {peer,
+                                            arweave_lib_util:format_peer(Peer)},
                                         {block, arweave_lib_util:encode(H)},
                                         {error, io_lib:format("~p", [Error])}]),
                             ok

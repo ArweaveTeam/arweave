@@ -11,7 +11,7 @@
 
 recovers_from_forks_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{arweave_lib_fork, height_2_9_6, fun() -> infinity end}],
+            [{arweave_lib_constants, height_2_9_6, fun() -> infinity end}],
             fun() -> recovers_from_forks(7) end, ?TEST_NODE_TIMEOUT).
 
 re_admits_orphaned_tx_after_fork_recovery_test_() ->

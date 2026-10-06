@@ -4,6 +4,7 @@
 %%% bypass default holds, and that operator-supplied values are range
 %%% checked on set and cross-checked by `validate/0'.
 -module(arweave_config_options_limiter_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

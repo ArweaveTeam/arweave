@@ -1,10 +1,11 @@
 %%% @doc Tests for `arweave_config_validate:run/0' — the fail-fast
 %%% walker that runs each option module's `validate/0' callback.
 -module(arweave_config_validate_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 
 suite() ->
     [{timetrap, {seconds, 60}}].
@@ -293,4 +294,3 @@ validator_repack_modules_footprint_limit(_Config) ->
         ?assertMatch({error, _}, arweave_config_validate:run())
     end),
     ok.
-

@@ -9,9 +9,8 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include("ar_mining.hrl").
--include("ar_vdf.hrl").
 
 -record(state, {
                 paused = true,
@@ -261,8 +260,11 @@ pick_random_storage_module(StorageModules) ->
     ModulesWithData =
         lists:filtermap(
           fun(Module) ->
-                  StoreID = arweave_storage_module:id(Module),
-                  Intervals = arweave_storage:get_sync_record(any_packing, {ar_data_sync, byte}, StoreID),
+                  #store_info{id = StoreID} =
+                      arweave_storage:store_info(Module),
+                  Intervals = arweave_storage:get_sync_record(
+                      any_packing, {ar_data_sync, byte}, StoreID
+                  ),
                   case arweave_lib_intervals:is_empty(Intervals) of
                       true ->
                           false;

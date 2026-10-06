@@ -72,9 +72,12 @@ test_get_chunk_above_strict_threshold() ->
         ar_test_data_sync:build_proofs(B, TX, Chunks),
     post_and_wait_for_chunks([{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}]),
     Threshold = arweave_lib_constants:strict_data_split_threshold(),
-    AboveThreshold = [{AbsoluteEndOffset, Proof} || {AbsoluteEndOffset, Proof}
-        <- [{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}],
-        AbsoluteEndOffset > Threshold],
+    AboveThreshold = [
+        {AbsoluteEndOffset, Proof}
+     || {AbsoluteEndOffset, Proof} <-
+            [{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}],
+        AbsoluteEndOffset > Threshold
+    ],
     ?assertMatch([_ | _], AboveThreshold),
     lists:foreach(
         fun({AbsoluteEndOffset, Proof}) ->
@@ -102,7 +105,8 @@ test_get_chunk_above_strict_threshold_small_tail() ->
     fetch_and_assert_chunk(SecondEndOffset, SecondProof).
 
 fetch_and_assert_chunk(AbsoluteEndOffset, ExpectedProof) ->
-    ChunkSize = byte_size(arweave_lib_util:decode(maps:get(chunk, ExpectedProof))),
+    ChunkSize =
+        byte_size(arweave_lib_util:decode(maps:get(chunk, ExpectedProof))),
     StartOffset = AbsoluteEndOffset - ChunkSize,
     Offsets = unique_offsets([
         AbsoluteEndOffset,

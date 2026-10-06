@@ -762,7 +762,7 @@ read_entries_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
 get_padded_size(TXSize, BlockStart) ->
     case BlockStart >= arweave_lib_constants:strict_data_split_threshold() of
         true ->
-            ar_poa:get_padded_offset(TXSize, 0);
+            arweave_lib_constants:get_padded_offset(TXSize, 0);
         false ->
             TXSize
     end.
@@ -1409,17 +1409,10 @@ put_test_tx(StoreID, DataRoot, TXSize, TXStartOffset, TXPath) ->
     ar_kv:put(index_db(StoreID), index_key(DataRoot, TXSize, TXStartOffset), TXPath).
 
 with_mocked_block_bounds(BlockStart, BlockEnd, TXRoot, Fun) ->
-    meck:new(ar_block_index, [passthrough]),
-    meck:expect(
-      ar_block_index,
-      get_block_bounds,
-      fun(_) -> {BlockStart, BlockEnd, TXRoot} end
-     ),
-    try
-        Fun()
-    after
-        ok = meck:unload(ar_block_index)
-    end.
+    ar_test_util:run_with_mocked([
+        {ar_block_index, get_block_bounds,
+            fun(_) -> {BlockStart, BlockEnd, TXRoot} end}
+    ], Fun).
 
 %% @doc Build the data root entries of a block placed after the 2.5 fork, where
 %% each transaction is followed by a padding leaf up to the next chunk

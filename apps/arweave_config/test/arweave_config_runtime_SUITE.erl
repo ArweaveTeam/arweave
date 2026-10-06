@@ -12,6 +12,7 @@
 %%% Tests run against the full app (every spec contributor loaded), so
 %%% the option_keys exercised below are real production specs.
 -module(arweave_config_runtime_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -62,7 +63,6 @@ runtime_writable_cases() ->
         {[gossip, data_roots, syncing_enabled], false},
         {[gossip, data_roots, max_duplicates], 5},
         {[sync, local_peers_only], true},
-        {[sync, max_concurrent_peer_scans], 50},
         {[disk_pool, max_buffer_size], 200},
         {[randomx, hardware_aes], false},
         {[vdf, pull], false},
@@ -79,8 +79,7 @@ runtime_writable_cases() ->
         {[gossip, tx, max_peers], 10},
         {[gossip, block, throttle_by_ip_interval], 500},
         {[gossip, header, cache_size], 100},
-        {[sync, cache_size_limit], 500},
-        {[packing, cache_size], 1000},
+        {[packing, cache_size], 1500},
         {[packing, entropy, cache_size], 2000},
         {[packing, entropy, workers], 4},
         {[mining, cache_size], 1000},

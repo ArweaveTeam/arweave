@@ -215,7 +215,9 @@ test_peers_by_partition() ->
     Peer3 = ar_test_node:peer_ip(peer3),
 
     BaseConfig = ar_test_node:base_cm_config([]),
-    Config = BaseConfig#{[peers, cm_exit] => arweave_lib_util:format_peer(Peer1)},
+    Config = BaseConfig#{
+        [peers, cm_exit] => arweave_lib_util:format_peer(Peer1)
+    },
     MiningAddr = maps:get([mining, address], Config),
 
     %% On peer1's own start, clear the cm_exit peer inherited from `Config`.

@@ -4,13 +4,14 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 syncs_data_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{arweave_lib_fork, height_2_9_6, fun() -> infinity end}],
-            fun test_syncs_data/0, 480).
+        [{arweave_lib_constants, height_2_9_6, fun() -> infinity end}],
+        fun test_syncs_data/0,
+        480
+    ).
 
 test_syncs_data() ->
     ?LOG_DEBUG([{event, test_syncs_data_start}]),

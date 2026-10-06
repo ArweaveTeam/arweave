@@ -13,8 +13,8 @@
 -export([parse_peers/3]).
 -endif.
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
+-include_lib("arweave_config/include/arweave_config_deps.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -78,7 +78,7 @@ parse(Config) ->
 %% converter so converted files preserve peer spellings and convert
 %% needs no DNS.
 parse(Config, Opts) when is_binary(Config) ->
-    case ar_serialize:json_decode(Config) of
+    case ?DEP(serialize):json_decode(Config) of
         {ok, JSONValue} ->
             case parse_options(JSONValue, Opts) of
                 ok -> {ok, ok};
@@ -285,7 +285,7 @@ parse_options([{<<"storage_modules">>, L} | Rest], Opts) when is_list(L) ->
         parse_options(Rest, Opts)
     catch Error:Reason ->
             ?LOG_ERROR([{event, parse_failure}, {option, storage_modules},
-			{error, Error}, {reason, Reason}]),
+            {error, Error}, {reason, Reason}]),
             {error, {bad_format, storage_modules, "an array of "
                      "\"{number},{address}[,repack_in_place,{to_packing}]\""}, L}
     end;
@@ -381,17 +381,20 @@ parse_options([{<<"hashing_threads">>, Threads} | _], _Opts) ->
 
 parse_options([{<<"data_cache_size_limit">>, Limit} | Rest], Opts)
   when is_integer(Limit) ->
-    _ = arweave_config:set([sync, cache_size_limit], Limit),
+    %% Legacy chunks become MiB, rounding up any partial MiB.
+    _ = arweave_config:set([packing, cache_size],
+        ?LEGACY_CHUNKS_TO_CACHE_MIB(Limit)),
     parse_options(Rest, Opts);
 parse_options([{<<"data_cache_size_limit">>, Limit} | _], _Opts) ->
     {error, {bad_type, data_cache_size_limit, number}, Limit};
 
-parse_options([{<<"packing_cache_size_limit">>, Limit} | Rest], Opts)
-  when is_integer(Limit) ->
-    _ = arweave_config:set([packing, cache_size], Limit),
+parse_options([{<<"packing_cache_size_limit">>, _Limit} | Rest], Opts) ->
+    ?LOG_WARNING([{event, deprecated_config_option},
+        {option, packing_cache_size_limit}, {action, ignored},
+        {reason, <<"Use packing.cache_size (MiB), or legacy "
+            "data_cache_size_limit (256 KiB chunks), for the shared "
+            "chunk cache.">>}]),
     parse_options(Rest, Opts);
-parse_options([{<<"packing_cache_size_limit">>, Limit} | _], _Opts) ->
-    {error, {bad_type, packing_cache_size_limit, number}, Limit};
 
 parse_options([{<<"mining_cache_size_mb">>, Limit} | Rest], Opts)
   when is_integer(Limit) ->
@@ -427,13 +430,11 @@ parse_options([{<<"max_block_propagation_peers">>, Value} | Rest], Opts)
 parse_options([{<<"max_block_propagation_peers">>, Value} | _], _Opts) ->
     {error, {bad_type, max_block_propagation_peers, number}, Value};
 
-parse_options([{<<"sync_jobs">>, Value} | Rest], Opts)
-  when is_integer(Value) ->
-    _ = arweave_config:set([sync, jobs], Value),
-    parse_options(Rest, Opts);
 parse_options([{<<"sync_jobs">>, Value} | _], _Opts) ->
-    {error, {bad_type, sync_jobs, number}, Value};
-
+    {error, {removed_option, sync_jobs,
+             "fetch concurrency is sized automatically; use "
+             "sync_max_download_rate (bytes per second, 0 to disable "
+             "syncing) to bound sync throughput"}, Value};
 parse_options([{<<"sync_max_download_rate">>, Value} | Rest], Opts)
   when is_integer(Value), Value >= 0 ->
     _ = arweave_config:set([sync, max_download_rate], Value),
@@ -781,13 +782,6 @@ parse_options([{<<"data_sync_request_packed_chunks">>, Bool} | Rest], Opts)
 parse_options([{<<"data_sync_request_packed_chunks">>, InvalidValue} | _Rest], _Opts) ->
     {error, {bad_type, data_sync_request_packed_chunks, boolean}, InvalidValue};
 
-parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, N} | Rest], Opts)
-  when is_integer(N), N >= 0 ->
-    _ = arweave_config:set([sync, max_concurrent_peer_scans], N),
-    parse_options(Rest, Opts);
-parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, InvalidValue} | _Rest], _Opts) ->
-    {error, {bad_type, data_discovery_max_concurrent_peer_scans, number}, InvalidValue};
-
 %% TCP shutdown procedure.
 parse_options([{<<"network.tcp.shutdown.connection_timeout">>, Delay} | Rest], Opts)
   when is_integer(Delay) andalso Delay > 0 ->
@@ -1078,7 +1072,7 @@ parse_peers([], ParsedPeers, _Opts) ->
     {ok, Reverse}.
 
 parse_resolved_peer(Peer, Rest, ParsedPeers, Opts) ->
-    case arweave_config:safe_parse_peer(Peer) of
+    case arweave_config_peer:safe_parse_peer(Peer) of
         {ok, ParsedPeer} -> parse_peers(Rest, ParsedPeer ++ ParsedPeers, Opts);
         {error, _} ->
             ?LOG_WARNING([{event, invalid_peer_in_config}, {peer, Peer}, {action, ignored}]),
@@ -1110,7 +1104,7 @@ parse_cm_exit_peer(Peer, Opts) ->
                     error
             end;
         false ->
-            case arweave_config:safe_parse_peer(Peer) of
+            case arweave_config_peer:safe_parse_peer(Peer) of
                 {ok, [ParsedPeer | _]} ->
                     _ = arweave_config_options_peers:write_legacy_singleton(
                           cm_exit, ParsedPeer),

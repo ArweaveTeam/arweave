@@ -9,6 +9,7 @@
 -export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2, terminate/2]).
 
 -include("ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 
 -include_lib("eunit/include/eunit.hrl").
@@ -93,7 +94,7 @@ set_device_lock_metric(StoreID, Mode, Status) ->
                      complete -> 2;
                      _ -> -2
                  end,
-    StoreIDLabel = arweave_storage_module:label(StoreID),
+    #store_info{label = StoreIDLabel} = arweave_storage:store_info(StoreID),
     arweave_metrics:gauge_set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
 
 %% @doc Update the number of replica 2.9 entropy workers at runtime.
@@ -126,10 +127,15 @@ init([]) ->
 
 handle_call(get_state, _From, State) ->
     {reply, State, State};
+handle_call({acquire_lock, sync, _StoreID}, _From,
+        #state{initialized = false} = State) ->
+    %% Local copying must wait for the joined chain's disk-pool threshold,
+    %% even when device throttling is disabled. Preparation may start earlier.
+    {reply, false, State};
 handle_call({acquire_lock, Mode, StoreID}, _From, State) ->
-    case State#state.initialized of
-        false ->
-                                                % Not yet initialized.
+    case {State#state.initialized, State#state.device_limit} of
+        {false, true} ->
+            %% Device-scoped locking needs the initialized store-to-device map.
             {reply, false, State};
         _ ->
             {Acquired, State2} = do_acquire_lock(Mode, StoreID, State),
@@ -142,16 +148,16 @@ handle_call(Request, _From, State) ->
 handle_cast(initialize_state, State) ->
     State2 = case ar_node:is_joined() of
                  false ->
-                     ar_util:cast_after(1000, self(), initialize_state),
+                     ar_util:cast_after(?NODE_JOIN_RETRY_DELAY_MS, self(), initialize_state),
                      State;
                  true ->
                      initialize_state(State)
              end,
     {noreply, State2};
 handle_cast({release_lock, Mode, StoreID}, State) ->
-    case State#state.initialized of
-        false ->
-                                                % Not yet initialized.
+    case {State#state.initialized, State#state.device_limit} of
+        {false, true} ->
+            %% Device-scoped locking needs the initialized store-to-device map.
             {noreply, State};
         _ ->
             State2 = do_release_lock(Mode, StoreID, State),
@@ -187,7 +193,8 @@ initialize_state(State) ->
     RepackInPlaceModules = arweave_config:repack_modules(module_only),
     StoreIDToDevice = lists:foldl(
                         fun(Module, Acc) ->
-                                StoreID = arweave_storage_module:id(Module),
+                                #store_info{id = StoreID} =
+                                    arweave_storage:store_info(Module),
                                 Device = get_system_device(Module),
                                 ?LOG_INFO([
                                            {event, storage_module_device}, {store_id, StoreID}, {device, Device}]),
@@ -207,10 +214,11 @@ initialize_state(State) ->
     State2.
 
 get_system_device(StorageModule) ->
-    DataDir = arweave_config:get([data_dir]),
-    StoreID = arweave_storage_module:id(StorageModule),
-    Path = arweave_storage_chunk_storage:get_chunk_storage_path(DataDir, StoreID),
-    Device = ar_util:get_system_device(Path),
+    #store_info{
+        id = StoreID,
+        chunk_storage_path = Path
+    } = arweave_storage:store_info(StorageModule),
+    Device = path_device(Path),
     case Device of
         "" -> StoreID;  % If the command fails or returns an empty string, return StoreID
         _ -> Device
@@ -391,6 +399,12 @@ do_log_locks(#state{ device_limit = false } = State) ->
       SortedStoreIDList
      ).
 
+%% @doc Return the block device that holds Path.
+path_device(Path) ->
+    Command = "df -P " ++ Path ++ " | awk 'NR==2 {print $1}'",
+    Device = os:cmd(Command),
+    string:trim(Device).
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -398,11 +412,41 @@ device_locks_test_() ->
     [
      {timeout, 30, fun test_acquire_lock/0},
      {timeout, 30, fun test_acquire_lock_without_device_limit/0},
+        {timeout, 30, fun test_locks_before_device_map_without_device_limit/0},
      {timeout, 30, fun test_release_lock/0},
      {timeout, 30, fun test_release_lock_without_device_limit/0},
      {timeout, 30, fun test_count_prepare_locks/0},
      {timeout, 30, fun test_log_locks/0}
     ].
+
+%% @doc Preparation may start before initialization with device limits off,
+%% but copying must wait until the joined chain state is available.
+test_locks_before_device_map_without_device_limit() ->
+    StoreID = "storage_module_0_unpacked",
+    %% One worker leaves one prepare-lock slot available for this store.
+    State = #state{
+        initialized = false,
+        device_limit = false,
+        num_replica_2_9_workers = 1
+    },
+    ?assertEqual(
+        {reply, false, State},
+        handle_call({acquire_lock, sync, StoreID}, self(), State)
+    ),
+    {reply, true, State2} = handle_call(
+        {acquire_lock, prepare, StoreID}, self(), State),
+    ?assertEqual(prepare, maps:get(StoreID, State2#state.store_id_locks)),
+    {noreply, State3} = handle_cast({release_lock, prepare, StoreID}, State2),
+    ?assertEqual(sync, maps:get(StoreID, State3#state.store_id_locks)),
+    ?assertEqual(
+        {reply, false, State3},
+        handle_call({acquire_lock, sync, StoreID}, self(), State3)
+    ),
+    ReadyState = State3#state{initialized = true},
+    ?assertEqual(
+        {reply, true, ReadyState},
+        handle_call({acquire_lock, sync, StoreID}, self(), ReadyState)
+    ).
 
 test_acquire_lock() ->
     State = #state{

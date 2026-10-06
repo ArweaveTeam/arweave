@@ -14,8 +14,8 @@
 
 reward_history_length(Height) ->
     min(
-        Height - arweave_lib_fork:height_2_6() + 1, %% included for compatibility with unit tests
-        case Height >= arweave_lib_fork:height_2_8() of
+        Height - arweave_lib_constants:height_2_6() + 1, %% included for compatibility with unit tests
+        case Height >= arweave_lib_constants:height_2_8() of
             true ->
                 ar_consensus:reward_history_blocks(Height) + arweave_lib_constants:get_consensus_window_size();
             false ->
@@ -24,7 +24,7 @@ reward_history_length(Height) ->
     ).
 
 expected_hashes_length(Height) ->
-    case Height >= arweave_lib_fork:height_2_8() of
+    case Height >= arweave_lib_constants:height_2_8() of
         true ->
             %% Take one more block.reward_history_hash because after 2.8 we use
             %% the previous reward history hash to compute the new one.
@@ -86,7 +86,7 @@ trim_buffered_reward_history(Height, RewardHistory) ->
 %% by any node will be shorter than the full expected length — specifically 21,600
 %% blocks plus the number of blocks elapsed since the 2.8 activation.
 interim_reward_history_bi(Height, BI) ->
-    InterimRewardHistoryLength = (Height - arweave_lib_fork:height_2_8()) + 21600,
+    InterimRewardHistoryLength = (Height - arweave_lib_constants:height_2_8()) + 21600,
     lists:sublist(trim_buffered_reward_history(Height, BI), InterimRewardHistoryLength).
 
 get_oldest_locked_address(B) ->
@@ -133,7 +133,7 @@ validate_reward_history_hashes(Height, RewardHistory, [H, PrevH | ExpectedHashes
     end;
 validate_reward_history_hashes(Height, RewardHistory, [H]) ->
     %% After 2.8 we always include one extra hash to the list so we cannot end up here.
-    true = Height < arweave_lib_fork:height_2_8(),
+    true = Height < arweave_lib_constants:height_2_8(),
     validate_reward_history_hash(Height, not_set, H, RewardHistory).
 
 validate_reward_history_hash(Height, PreviousRewardHistoryHash, H, RewardHistory) ->
@@ -144,7 +144,7 @@ validate_reward_history_hash(Height, PreviousRewardHistoryHash, H, RewardHistory
             trim_locked_rewards(Height, RewardHistory)).
 
 reward_history_hash(Height, PreviousRewardHistoryHash, History) ->
-    case Height >= arweave_lib_fork:height_2_8() of
+    case Height >= arweave_lib_constants:height_2_8() of
         true ->
             Element = encode_reward_history_element(hd(History)),
             Preimage = << Element/binary, PreviousRewardHistoryHash/binary >>,

@@ -1,5 +1,6 @@
 %%% @doc
 -module(arweave_config_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 
@@ -99,7 +100,7 @@ force_config_runtime_guard(_Config) ->
     true = arweave_config:is_runtime(),
 
     %% `[data_dir]` is a `runtime => false` spec. Without
-    %% `force_config/1` it would be rejected because the lifecycle is
+    %% `internal_force_config/1` it would be rejected because the lifecycle is
     %% in runtime mode.
     ok = arweave_config:internal_force_config(#{
         [data_dir] => <<"/tmp/test_force_config">>

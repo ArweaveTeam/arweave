@@ -90,12 +90,14 @@ lookup_tx_filename(Hash, CustomDir) when is_binary(Hash) ->
     end.
 
 write_block_shadow(B) ->
-    Name = binary_to_list(arweave_lib_util:encode(B#block.indep_hash)) ++ ".bin",
+    Name =
+        binary_to_list(arweave_lib_util:encode(B#block.indep_hash)) ++ ".bin",
     File = filename:join(get_block_path(), Name),
     Bin = ar_serialize:block_to_binary(B),
     Size = byte_size(Bin),
     ?LOG_DEBUG([{event, write_block_shadow},
-                {hash, arweave_lib_util:encode(B#block.indep_hash)}, {size, Size}]),
+                {hash, arweave_lib_util:encode(B#block.indep_hash)},
+                {size, Size}]),
     gen_server:cast(?MODULE, {record_written_data, Size}),
     case ar_storage:write_file_atomic(File, Bin) of
         ok ->
@@ -296,7 +298,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% @doc The header cache size limit in bytes, read live from config.
 header_cache_limit_max() ->
-    arweave_config:get([gossip, header, cache_size]) * 1048576.
+    arweave_config:get([gossip, header, cache_size]) * ?MiB.
 
 %% @doc The size in bytes a cleanup pass reduces the cache down to.
 header_cache_limit_min(LimitMax) ->

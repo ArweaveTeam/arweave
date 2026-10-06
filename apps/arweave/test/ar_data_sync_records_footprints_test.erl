@@ -3,7 +3,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
 records_footprints_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_records_footprints/0}.

@@ -176,8 +176,10 @@ test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
     {ok, [{H, _, _} | _]} = ar_test_await:node_height(main, LocalHeight + 1),
     ?assertMatch({ok, _}, ar_test_await:node_height(peer1, RemoteHeight + 1)),
     B = ar_test_await:block_stored(H, true),
-    ChecksumAddr = << (arweave_lib_util:encode(Address32))/binary, <<":">>/binary,
-            (arweave_lib_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>,
+    ChecksumAddr = <<
+        (arweave_lib_util:encode(Address32))/binary, <<":">>/binary,
+        (arweave_lib_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary
+    >>,
     ?assertEqual(2, length(B#block.txs)),
     Balance = get_balance(arweave_lib_util:encode(Address32)),
     ?assertEqual(Balance, get_balance(ChecksumAddr)),
@@ -226,7 +228,8 @@ get_price(EncodedAddr) ->
 
 test_price_endpoints({_B0, _Wallet1, _Wallet2, {_, StaticPub}}) ->
     Peer = ar_test_node:peer_ip(main),
-    Addr = binary_to_list(arweave_lib_util:encode(ar_wallet:to_address(StaticPub))),
+    Addr = binary_to_list(
+        arweave_lib_util:encode(ar_wallet:to_address(StaticPub))),
     ExpectedFee = ?AR(1),
     ExpectedDenomination = 1,
     assert_price_endpoint(Peer, "/price/100", [], binary,
@@ -547,7 +550,8 @@ test_get_height(_) ->
 
 %% @doc Test that last tx associated with a wallet can be fetched.
 test_get_last_tx_single({_, _, _, {_, StaticPub}}) ->
-    Addr = binary_to_list(arweave_lib_util:encode(ar_wallet:to_address(StaticPub))),
+    Addr = binary_to_list(
+        arweave_lib_util:encode(ar_wallet:to_address(StaticPub))),
     {ok, {{<<"200">>, _}, _, Body, _, _}} =
         ar_http:req(#{
             method => get,
@@ -866,7 +870,8 @@ test_get_tx_status(_) ->
     ?assertEqual(
         #{
             <<"block_height">> => length(BI) - 1,
-            <<"block_indep_hash">> => arweave_lib_util:encode(element(1, hd(BI))),
+            <<"block_indep_hash">> =>
+                arweave_lib_util:encode(element(1, hd(BI))),
             <<"number_of_confirmations">> => 1
         },
         maps:from_list(Res)

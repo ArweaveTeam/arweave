@@ -20,6 +20,7 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -64,12 +65,12 @@ start_link() ->
 %% on-disk modules for unsynced intervals and dispatch read-range workers as
 %% their source modules free up. Publishes `{chunk_copy, {complete, StoreID}}'
 %% via `ar_events' once scanning is done AND every worker has exited. Returns
-%% `ignore' when chunk-copy is disabled (sync_jobs = 0).
+%% `ignore' when the copy server is not running.
 start_copy(StoreID) ->
     case whereis(?MODULE) of
         undefined ->
             ignore;
-        _Pid ->
+        _PID ->
             gen_server:cast(?MODULE, {start_copy, StoreID}),
             ok
     end.
@@ -116,21 +117,26 @@ terminate(Reason, _State) ->
 %% data clamped by `DiskPoolThreshold'), then every other on-disk module
 %% overlapping this StoreID's range.
 do_start_copy(StoreID, State) ->
-    {RangeStart, RangeEnd} = arweave_storage_module:get_range(StoreID),
     %% Match ar_data_sync's range adjustment.
-    RangeStart2 = max(0,
-                      arweave_lib_constants:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
-    RangeEnd2 = arweave_lib_constants:get_chunk_padded_offset(RangeEnd),
-    SyncStatus = ar_data_sync:init_sync_status(StoreID),
-    OtherStorageModules = [arweave_storage_module:id(M)
-                           || M <- arweave_storage:covering_stores(RangeStart2, RangeEnd2),
-                              arweave_storage_module:id(M) /= StoreID],
+    {RangeStart2, RangeEnd2} =
+        case arweave_storage:store_info(StoreID) of
+            #store_info{padded_range = Range} -> Range;
+            not_found -> {-1, -1}
+        end,
+    ar_device_lock:set_device_lock_metric(StoreID, sync, paused),
+    StorageModules = arweave_storage:intersecting_stores(RangeStart2, RangeEnd2, any_packing),
+    StoreInfos = [arweave_storage:store_info(M) || M <- StorageModules],
+    OtherStorageModules = [
+        OtherStoreID
+     || #store_info{id = OtherStoreID} <- StoreInfos,
+        OtherStoreID /= StoreID
+    ],
     CopyState = #copy_state{
-                   range_start = RangeStart2,
-                   range_end = RangeEnd2,
-                   sync_status = SyncStatus,
-                   pending_modules = [?DEFAULT_MODULE | OtherStorageModules]
-                  },
+        range_start = RangeStart2,
+        range_end = RangeEnd2,
+        sync_status = paused,
+        pending_modules = [?DEFAULT_MODULE | OtherStorageModules]
+    },
     gen_server:cast(?MODULE, {step, StoreID}),
     save_progress(StoreID, CopyState, State).
 
@@ -207,15 +213,15 @@ read_chunk_range(StoreID, Source, Start, End, Rest, CopyState, State) ->
 enqueue_intervals_from_source(StoreID, SourceStoreID, OtherStoreIDs,
                               #copy_state{ range_start = RangeStart,
                                            range_end = RangeEnd } = CopyState) ->
-    ScanEnd = case SourceStoreID of
+    LiveEnd = case SourceStoreID of
                   ?DEFAULT_MODULE -> min(RangeEnd, ar_disk_pool:get_threshold());
                   _ -> RangeEnd
               end,
     Intervals = determine_intervals_to_copy_from_module(
-                  StoreID, SourceStoreID, RangeStart, ScanEnd),
+                  StoreID, SourceStoreID, RangeStart, LiveEnd),
     ?LOG_DEBUG([{event, sync_local}, {stage, scan},
                 {store_id, StoreID}, {source_store_id, SourceStoreID},
-                {range_start, RangeStart}, {range_end, ScanEnd},
+                {range_start, RangeStart}, {range_end, LiveEnd},
                 {found_intervals, length(Intervals)}]),
     CopyState#copy_state{
       pending_intervals = Intervals,
@@ -249,7 +255,14 @@ determine_intervals_to_copy_from_module(_StoreID, _OtherStoreID, RangeStart,
 determine_intervals_to_copy_from_module(StoreID, OtherStoreID, RangeStart,
                                         RangeEnd, Intervals) ->
     FindNextMissing =
-        case arweave_storage:get_next_interval(synced, RangeStart, RangeEnd, any_packing, {ar_data_sync, byte}, StoreID) of
+        case arweave_storage:get_next_interval(
+            synced,
+            RangeStart,
+            RangeEnd,
+            any_packing,
+            {ar_data_sync, byte},
+            StoreID
+        ) of
             not_found ->
                 {request, {RangeStart, RangeEnd}};
             {End, Start} when Start =< RangeStart ->
@@ -262,7 +275,14 @@ determine_intervals_to_copy_from_module(StoreID, OtherStoreID, RangeStart,
             determine_intervals_to_copy_from_module(StoreID, OtherStoreID, End2,
                                                     RangeEnd, Intervals);
         {request, {Cursor, RightBound}} ->
-            case arweave_storage:get_next_interval(synced, Cursor, RightBound, any_packing, {ar_data_sync, byte}, OtherStoreID) of
+            case arweave_storage:get_next_interval(
+                synced,
+                Cursor,
+                RightBound,
+                any_packing,
+                {ar_data_sync, byte},
+                OtherStoreID
+            ) of
                 not_found ->
                     determine_intervals_to_copy_from_module(StoreID, OtherStoreID,
                                                             RightBound, RangeEnd, Intervals);

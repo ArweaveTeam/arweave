@@ -18,6 +18,8 @@
     group_ids/0
 ]).
 
+-include_lib("arweave_config/include/arweave_config_deps.hrl").
+
 %% Per-group compile-time defaults. The `-ifdef(AR_TEST)` blocks raise
 %% the leaky-bucket caps for groups whose production limit is too
 %% tight for some test scenarios.
@@ -193,7 +195,7 @@ set_field(GroupID, Field, V, Runtime) ->
     end.
 
 push_to_workers(GroupID, Field, V, true) ->
-    arweave_limiter_group:set_config(GroupID, Field, V);
+    ?DEP(limiter_group):set_config(GroupID, Field, V);
 push_to_workers(_GroupID, _Field, _V, false) ->
     ok.
 

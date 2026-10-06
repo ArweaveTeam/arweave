@@ -46,7 +46,8 @@ vdf_sha_test_() ->
 test_vdf_sha() ->
     PrevState = arweave_lib_util:decode(?ENCODED_PREV_STATE),
     OutCheckpointSha3 = arweave_lib_util:decode(?ENCODED_SHA_CHECKPOINT),
-    OutCheckpointSha3Full = arweave_lib_util:decode(?ENCODED_SHA_CHECKPOINT_FULL),
+    OutCheckpointSha3Full =
+        arweave_lib_util:decode(?ENCODED_SHA_CHECKPOINT_FULL),
     RealSha3 = arweave_lib_util:decode(?ENCODED_SHA_RES),
     Salt1 = << (1):256 >>,
     Salt2 = << (2):256 >>,

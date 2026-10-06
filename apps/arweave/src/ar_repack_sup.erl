@@ -6,9 +6,6 @@
 
 -export([init/1]).
 
--include_lib("arweave/include/ar_sup.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -21,6 +18,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-
-    Workers = ar_repack:register_workers(),
-    {ok, {{one_for_one, 5, 10}, Workers}}.
+    %% The repack workers read the per-store RocksDB databases
+    %% (chunk_data_db, tx_index, ...) in their init, so this supervisor
+    %% must start after ar_data_sync_sup, whose workers open them.
+    {ok, {{one_for_one, 5, 10}, ar_repack:register_workers()}}.

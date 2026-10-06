@@ -21,8 +21,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_vdf.hrl").
--include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -371,7 +369,8 @@ request_validation(H, #nonce_limiter_info{ output = Output,
     {StartStepNumber, StartOutput, ComputedSteps} =
         skip_already_computed_steps(PrevStepNumber, StepNumber, PrevOutput,
                                     StepsToValidate, SessionSteps),
-    ?LOG_INFO([{event, vdf_validation_start}, {block, arweave_lib_util:encode(H)},
+    ?LOG_INFO([{event, vdf_validation_start},
+               {block, arweave_lib_util:encode(H)},
                {session_key, encode_session_key(SessionKey)},
                {next_session_key, encode_session_key(NextSessionKey)},
                {prev_step_number, PrevStepNumber}, {step_number, StepNumber},
@@ -485,7 +484,7 @@ get_last_step_checkpoints(Info) ->
     Info#nonce_limiter_info.last_step_checkpoints.
 
 get_or_init_nonce_limiter_info(#block{ height = Height, indep_hash = H } = B) ->
-    case Height >= arweave_lib_fork:height_2_6() of
+    case Height >= arweave_lib_constants:height_2_6() of
         true ->
             B#block.nonce_limiter_info;
         false ->
@@ -495,7 +494,7 @@ get_or_init_nonce_limiter_info(#block{ height = Height, indep_hash = H } = B) ->
     end.
 
 get_or_init_nonce_limiter_info(#block{ height = Height } = B, RecentBI) ->
-    case Height >= arweave_lib_fork:height_2_6() of
+    case Height >= arweave_lib_constants:height_2_6() of
         true ->
             B#block.nonce_limiter_info;
         false ->
@@ -788,7 +787,7 @@ handle_info({event, node_state, {checkpoint_block, _B}},
     %% applied yet.
     {noreply, State};
 handle_info({event, node_state, {checkpoint_block, B}}, State) ->
-    case B#block.height < arweave_lib_fork:height_2_6() of
+    case B#block.height < arweave_lib_constants:height_2_6() of
         true ->
             {noreply, State};
         false ->
@@ -915,7 +914,8 @@ send_output(SessionKey, Session) ->
 
 dump_error(Data) ->
     DataDir = arweave_config:get([data_dir]),
-    ErrorID = binary_to_list(arweave_lib_util:encode(crypto:strong_rand_bytes(8))),
+    ErrorID =
+        binary_to_list(arweave_lib_util:encode(crypto:strong_rand_bytes(8))),
     ErrorDumpFile = filename:join(DataDir, "error_dump_" ++ ErrorID),
     file:write_file(ErrorDumpFile, term_to_binary(Data)),
     ErrorID.
@@ -972,7 +972,7 @@ handle_initialized([B | Blocks], State) ->
     handle_initialized2(lists:reverse(Blocks2), State).
 
 take_blocks_after_fork([#block{ height = Height } = B | Blocks]) ->
-    case Height + 1 >= arweave_lib_fork:height_2_6() of
+    case Height + 1 >= arweave_lib_constants:height_2_6() of
         true ->
             [B | take_blocks_after_fork(Blocks)];
         false ->
@@ -1046,7 +1046,7 @@ assert_step_count(StepNumber, PrevStepNumber, Steps) ->
 -endif.
 
 apply_tip(#block{ height = Height } = B, PrevB, #state{ sessions = Sessions } = State) ->
-    case Height + 1 < arweave_lib_fork:height_2_6() of
+    case Height + 1 < arweave_lib_constants:height_2_6() of
         true ->
             State;
         false ->
@@ -1060,7 +1060,7 @@ apply_tip(#block{ height = Height } = B, PrevB, #state{ sessions = Sessions } = 
                 end,
             case gb_sets:is_empty(Sessions) of
                 true ->
-                    true = (Height + 1) == arweave_lib_fork:height_2_6(),
+                    true = (Height + 1) == arweave_lib_constants:height_2_6(),
                     State3 = apply_base_block(B, State2),
                     State3;
                 false ->
@@ -1217,7 +1217,7 @@ schedule_step(State) ->
 get_or_init_nonce_limiter_info(#block{ height = Height } = B, Seed, PartitionUpperBound) ->
     NextSeed = B#block.indep_hash,
     NextPartitionUpperBound = B#block.weave_size,
-    case Height + 1 == arweave_lib_fork:height_2_6() of
+    case Height + 1 == arweave_lib_constants:height_2_6() of
         true ->
             Output = crypto:hash(sha256, Seed),
             #nonce_limiter_info{ output = Output, seed = Seed, next_seed = NextSeed,
@@ -1322,7 +1322,8 @@ apply_external_update3(Update, CurrentSession, State) ->
                     %% Inform the peer we miss some steps.
                     ?LOG_DEBUG([{event, apply_external_vdf},
                                 {result, missing_steps},
-                                {vdf_server, arweave_lib_util:format_peer(Peer)},
+                                {vdf_server,
+                                    arweave_lib_util:format_peer(Peer)},
                                 {is_partial, IsPartial},
                                 {session_key, encode_session_key(SessionKey)},
                                 {client_step_number, CurrentStepNumber},

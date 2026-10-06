@@ -9,7 +9,6 @@
         switch_to_linear_diff/1, switch_to_linear_diff_pre_fork_2_5/1, switch_to_log_diff/1]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -57,13 +56,13 @@ calculate_difficulty(OldDiff, _TS, _Last, _Height, _PrevTS) ->
     OldDiff.
 -else.
 calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
-    Fork_1_7 = arweave_lib_fork:height_1_7(),
-    Fork_1_8 = arweave_lib_fork:height_1_8(),
-    Fork_1_9 = arweave_lib_fork:height_1_9(),
-    Fork_2_4 = arweave_lib_fork:height_2_4(),
-    Fork_2_5 = arweave_lib_fork:height_2_5(),
-    Fork_2_6 = arweave_lib_fork:height_2_6(),
-    Fork_2_7_2 = arweave_lib_fork:height_2_7_2(),
+    Fork_1_7 = arweave_lib_constants:height_1_7(),
+    Fork_1_8 = arweave_lib_constants:height_1_8(),
+    Fork_1_9 = arweave_lib_constants:height_1_9(),
+    Fork_2_4 = arweave_lib_constants:height_2_4(),
+    Fork_2_5 = arweave_lib_constants:height_2_5(),
+    Fork_2_6 = arweave_lib_constants:height_2_6(),
+    Fork_2_7_2 = arweave_lib_constants:height_2_7_2(),
     Fork_Testnet = ar_consensus:testnet_fork_height(),
     case Height of
         _ when Height == Fork_Testnet ->
@@ -281,7 +280,7 @@ simple_retarget_test_() ->
     end}.
 
 calculate_difficulty_linear_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{arweave_lib_fork, height_2_5, fun() -> 0 end}],
+    ar_test_node:test_with_all_nodes_mocked([{arweave_lib_constants, height_2_5, fun() -> 0 end}],
         fun test_calculate_difficulty_linear/0, 120).
 
 test_calculate_difficulty_linear() ->

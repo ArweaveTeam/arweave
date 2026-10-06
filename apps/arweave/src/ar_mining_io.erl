@@ -11,8 +11,8 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(CACHE_TTL_MS, 2000).
@@ -65,10 +65,11 @@ get_partitions(PartitionUpperBound) ->
     Max = ar_node:get_max_partition_number(PartitionUpperBound),
     AllPartitions = lists:foldl(
                       fun   (Module, Acc) ->
-                              Addr = arweave_storage_module:module_address(Module),
-                              PackingDifficulty =
-                                  arweave_storage_module:module_packing_difficulty(Module),
-                              {Start, End} = arweave_storage_module:module_range(Module, 0),
+                              #store_info{
+                                  mining_address = Addr,
+                                  packing_difficulty = PackingDifficulty,
+                                  configured_range = {Start, End}
+                              } = arweave_storage:store_info(Module),
                               Partitions = get_store_id_partitions(Start, End),
                               lists:foldl(
                                 fun(PartitionNumber, AccInner) ->
@@ -93,7 +94,9 @@ get_minable_storage_modules() ->
     MiningAddr = arweave_config:get([mining, address]),
     lists:filter(
       fun   (Module) ->
-              arweave_storage_module:module_address(Module) == MiningAddr
+              #store_info{mining_address = Addr} =
+                  arweave_storage:store_info(Module),
+              Addr == MiningAddr
       end,
       arweave_config:storage_modules()
      ).
@@ -265,13 +268,12 @@ start_io_thread(Mode, StoreIDs) ->
 map_partition_to_store_ids([], PartitionToStoreIDs) ->
     PartitionToStoreIDs;
 map_partition_to_store_ids([StoreID | StoreIDs], PartitionToStoreIDs) ->
-    case arweave_storage_module:get_by_id(StoreID) of
+    case arweave_storage:store_info(StoreID) of
         not_found ->
             %% Occasionally happens in tests.
             ?LOG_ERROR([{event, mining_storage_module_not_found}, {store_id, StoreID}]),
             map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs);
-        StorageModule ->
-            {Start, End} = arweave_storage_module:module_range(StorageModule, 0),
+        #store_info{configured_range = {Start, End}} ->
             Partitions = get_store_id_partitions(Start, End),
             PartitionToStoreIDs2 = lists:foldl(
                                      fun(Partition, Acc) ->
@@ -295,7 +297,7 @@ open_files(StoreIDs) ->
                   ?DEFAULT_MODULE ->
                       ok;
                   _ ->
-                      arweave_storage_chunk_storage:open_files(StoreID)
+                      arweave_storage:open_chunk_files(StoreID)
               end
       end,
       StoreIDs).
@@ -334,12 +336,19 @@ chunks_read(standalone, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOf
 get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, ?DEFAULT_MODULE, Intervals) ->
     ReplicaFormat = get_replica_format_from_packing_difficulty(PackingDifficulty),
     Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
-    case arweave_storage:get_next_interval(synced, Start, End, Packing, {ar_data_sync, byte}, ?DEFAULT_MODULE) of
+    case arweave_storage:get_next_interval(
+        synced,
+        Start,
+        End,
+        Packing,
+        {ar_data_sync, byte},
+        ?DEFAULT_MODULE
+    ) of
         not_found ->
             Intervals;
         {Right, Left} ->
             get_packed_intervals(Right, End, MiningAddress, PackingDifficulty, ?DEFAULT_MODULE,
-                                 arweave_lib_intervals:add(Intervals, Right, Left))
+                arweave_lib_intervals:add(Intervals, Right, Left))
     end;
 get_packed_intervals(_Start, _End, _MiningAddr, _PackingDifficulty, _StoreID, _Intervals) ->
     no_interval_check_implemented_for_non_default_store.
@@ -414,7 +423,7 @@ read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID) ->
     RecallRangeSize = arweave_lib_constants:get_recall_range_size(PackingDifficulty),
     Intervals = get_packed_intervals(RangeStart, RangeStart + RecallRangeSize,
                                      MiningAddress, PackingDifficulty, StoreID, arweave_lib_intervals:new()),
-    ChunkOffsets = arweave_storage_chunk_storage:get_range(RangeStart, RecallRangeSize, StoreID),
+    ChunkOffsets = arweave_storage:get_chunk_range(RangeStart, RecallRangeSize, StoreID),
     ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
     log_read_range(Mode, Candidate, WhichChunk, length(ChunkOffsets), StartTime),
     ChunkOffsets2.
@@ -474,7 +483,9 @@ find_thread(RangeStart, RangeEnd, State) ->
 find_largest_intersection(not_found, _RangeStart, _RangeEnd, _Max, _MaxKey) ->
     not_found;
 find_largest_intersection([StoreID | StoreIDs], RangeStart, RangeEnd, Max, MaxKey) ->
-    I = arweave_storage:get_intersection_size(RangeEnd, RangeStart, any_packing, {ar_chunk_storage, byte}, StoreID),
+    I = arweave_storage:get_intersection_size(
+        RangeEnd, RangeStart, any_packing, {ar_chunk_storage, byte}, StoreID
+    ),
     case I > Max of
         true ->
             find_largest_intersection(StoreIDs, RangeStart, RangeEnd, I, StoreID);

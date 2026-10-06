@@ -50,7 +50,7 @@ read_json(Req) ->
 %% the production interval is 10 minutes.
 webhooks_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{arweave_lib_fork, height_2_9_6, fun() -> infinity end},
+        [{arweave_lib_constants, height_2_9_6, fun() -> infinity end},
          {ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
         fun test_webhooks/0,
         ?TEST_NODE_TIMEOUT

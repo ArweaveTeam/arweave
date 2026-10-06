@@ -481,7 +481,7 @@ maybe_set_reward_history(Blocks, Peers) ->
     end.
 
 maybe_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->
-    case Height >= arweave_lib_fork:height_2_7() of
+    case Height >= arweave_lib_constants:height_2_7() of
         true ->
             case ar_http_iface_client:get_block_time_history(
                    Peers, hd(Blocks), ar_block_time_history:get_hashes(Blocks)) of

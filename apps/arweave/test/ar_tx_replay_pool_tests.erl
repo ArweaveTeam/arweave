@@ -2,7 +2,6 @@
 -test_category([fast]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -208,7 +207,7 @@ test_verify_tx_reasons() ->
 
 format_1_fork_2_9_6_test_() ->
     {setup, fun ar_tx_db:setup_ets/0, fun(Cleanup) -> Cleanup() end,
-        ar_test_util:with_mocked([{arweave_lib_fork, height_2_9_6, fun() -> 5 end}],
+        ar_test_util:with_mocked([{arweave_lib_constants, height_2_9_6, fun() -> 5 end}],
                 fun test_format_1_fork_2_9_6/0)}.
 
 %% verify_tx/2, verify_block_txs/1, and pick_txs_to_mine/1 receive the

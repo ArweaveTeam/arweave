@@ -4,13 +4,14 @@
 -behaviour(arweave_config_options).
 -export([specs/0, group_description/0, validate/0]).
 -include("arweave_config.hrl").
+-include_lib("arweave_config/include/arweave_config_deps.hrl").
 
 specs() ->
     [
         %% Internal: which configuration notation this launch used.
         %% Stamped by bootstrap from the CLI dialect sniff;
         %% never set by operators. Drives the legacy bucket-notation
-        %% directory naming (arweave_storage_module:disk_dir_name/1).
+        %% directory naming in arweave_storage:store_info/1.
         #{
             enabled => true,
             hidden => true,
@@ -83,18 +84,18 @@ specs() ->
                         {false, true} ->
                             logger:set_application_level(arweave_config, info),
                             logger:set_application_level(arweave, info),
-                            ar_logger:stop_handler(arweave_debug),
+                            ?DEP(logger):stop_handler(arweave_debug),
                             {store, V};
                         {true, false} ->
                             logger:set_application_level(arweave_config, debug),
                             logger:set_application_level(arweave, debug),
-                            ar_logger:start_handler(arweave_debug),
+                            ?DEP(logger):start_handler(arweave_debug),
                             {store, V}
                     end;
                 (_K, V, _S, _) ->
                     logger:set_application_level(arweave_config, debug),
                     logger:set_application_level(arweave, debug),
-                    ar_logger:start_handler(arweave_debug),
+                    ?DEP(logger):start_handler(arweave_debug),
                     {store, V}
             end
         },
@@ -113,7 +114,7 @@ specs() ->
                   "that limit, allowing multiple workers to be active "
                   "on a given physical disk.">>,
             handle_set => fun(_K, V, _S, _A) ->
-                ok = ar_device_lock:set_disable_device_limit(V),
+                ok = ?DEP(device_lock):set_disable_device_limit(V),
                 {store, V}
             end
         },
