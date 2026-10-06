@@ -57,17 +57,17 @@ load(_Config) ->
     true = arweave_config:get([debug]),
 
     ok = arweave_config:load(#{
-        [network, server, tcp, backlog] => 2048
+        [network, server, socket, backlog] => 2048
     }),
-    2048 = arweave_config:get([network, server, tcp, backlog]),
+    2048 = arweave_config:get([network, server, socket, backlog]),
 
     ok = arweave_config:load(#{
         [log_dir] => "/tmp/test_logs",
-        [network, server, tcp, max_connections] => 1234
+        [network, server, http, max_connections] => 1234
     }),
     "/tmp/test_logs" = arweave_config:get([log_dir]),
     1234 = arweave_config:get(
-        [network, server, tcp, max_connections]),
+        [network, server, http, max_connections]),
 
     ok = arweave_config:load(#{}),
 
