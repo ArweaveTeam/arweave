@@ -22,6 +22,7 @@
     arweave_limiter,
     arweave_storage,
     arweave_entropy,
+    arweave_tools,
     arweave_throttling,
     arweave_lib
    ]},

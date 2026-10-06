@@ -1,8 +1,11 @@
--module(ar_chunk_visualization).
+-module(arweave_tools_chunk_visualization).
+
 
 -export([get_chunk_packings/3, get_chunk_packings/4, generate_bitmap/1, bitmap_to_binary/1, print_chunk_stats/1]).
 
--include_lib("ar.hrl").
+
+-include_lib("arweave/include/ar.hrl").
+
 
 %%%===================================================================
 %%% Public interface.
@@ -12,6 +15,7 @@
 %% formats. Each sector row will form a row in the bitmap.
 get_chunk_packings(ModuleStart, ModuleEnd, StoreID) ->
     get_chunk_packings(ModuleStart, ModuleEnd, StoreID, false).
+
 get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
     Partition = ar_node:get_partition_number(ModuleStart),
     PartitionStart = arweave_lib_constants:get_chunk_bucket_start(ModuleStart),
@@ -95,6 +99,7 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
       end,
       lists:seq(0, NumSectors - 1)).
 
+
 %% @doc Convert packing formats to RGB pixels.
 generate_bitmap(PackingRows) ->
     lists:map(
@@ -102,6 +107,7 @@ generate_bitmap(PackingRows) ->
               lists:map(fun packing_color/1, Row)
       end,
       PackingRows).
+
 
 %% @doc Convert a bitmap (list of rows; each row a list of {R, G, B} tuples)
 %% into a binary PPM image.
@@ -118,6 +124,7 @@ bitmap_to_binary(BitmapRows) ->
     %% Build pixel binary data (each pixel is 3 bytes: R,G,B)
     PixelData = [<<R:8, G:8, B:8>> || Row <- BitmapRows, {R, G, B} <- Row],
     list_to_binary([Header, PixelData]).
+
 
 print_chunk_stats(ChunkPackings) ->
     Counts = chunk_statistics(ChunkPackings),
@@ -140,6 +147,7 @@ print_chunk_stats(ChunkPackings) ->
       lists:sort(
         maps:to_list(Counts))).
 
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -158,6 +166,7 @@ normalize_sync_record({true, Packing}, PaddedEndOffset, Metadata) ->
     end;
 normalize_sync_record(_, _, _) ->
     error.
+
 
 %% @doc Returns a unique color (as an {R,G,B} tuple) for each recognized packing format.
 packing_color(missing) ->
@@ -190,7 +199,8 @@ packing_color(replica_2_9) ->
 packing_color(spora_2_6) ->
     {0, 255, 0}; %% green
 packing_color(_) ->
-    {255, 0, 0}. %% red for unknown packings
+    {255, 0, 0}.
+ %% red for unknown packings
 
 chunk_statistics(ChunkPackings) ->
     lists:foldl(
@@ -204,3 +214,5 @@ chunk_statistics(ChunkPackings) ->
       end,
       #{},
       ChunkPackings).
+
+

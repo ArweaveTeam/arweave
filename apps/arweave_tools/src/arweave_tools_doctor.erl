@@ -1,15 +1,22 @@
--module(ar_data_doctor).
+-module(arweave_tools_doctor).
+
 
 -export([main/0, main/1, check_module_dir/2]).
 
+
 -include_lib("arweave/include/ar.hrl").
+
 -include_lib("arweave_config/include/arweave_config.hrl").
+
 -include_lib("arweave/include/ar_chunk_storage.hrl").
+
 -include_lib("arweave/include/ar_consensus.hrl").
+
 
 main() ->
     Args = init:get_plain_arguments(),
     main(Args).
+
 
 main([]) ->
     help(),
@@ -19,15 +26,15 @@ main(Args) ->
     Command = hd(Args),
     Success = case Command of
                   "merge" ->
-                      ar_doctor_merge:main(tl(Args));
+                      arweave_tools_doctor_merge:main(tl(Args));
                   "bench" ->
-                      ar_doctor_bench:main(tl(Args));
+                      arweave_tools_doctor_bench:main(tl(Args));
                   "dump" ->
-                      ar_doctor_dump:main(tl(Args));
+                      arweave_tools_doctor_dump:main(tl(Args));
                   "inspect" ->
-                      ar_doctor_inspect:main(tl(Args));
+                      arweave_tools_doctor_inspect:main(tl(Args));
                   "snapshot" ->
-                      ar_doctor_snapshot:main(tl(Args));
+                      arweave_tools_doctor_snapshot:main(tl(Args));
                   _ ->
                       false
               end,
@@ -40,6 +47,7 @@ main(Args) ->
             help(),
             init:stop(1)
     end.
+
 
 %% @doc Verify the given storage module's on-disk directory exists
 %% under DataDir. The doctor tools accept only current-notation
@@ -64,15 +72,18 @@ check_module_dir(DataDir, StoreID) ->
             false
     end.
 
+
 help() ->
     ar:console("~n"),
-    ar_doctor_merge:help(),
+    arweave_tools_doctor_merge:help(),
     ar:console("~n"),
-    ar_doctor_bench:help(),
+    arweave_tools_doctor_bench:help(),
     ar:console("~n"),
-    ar_doctor_dump:help(),
+    arweave_tools_doctor_dump:help(),
     ar:console("~n"),
-    ar_doctor_inspect:help(),
+    arweave_tools_doctor_inspect:help(),
     ar:console("~n"),
-    ar_doctor_snapshot:help(),
+    arweave_tools_doctor_snapshot:help(),
     ar:console("~n").
+
+
