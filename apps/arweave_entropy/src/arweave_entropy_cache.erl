@@ -1,11 +1,19 @@
--module(ar_entropy_cache).
--test_category([fast]).
+-module(arweave_entropy_cache).
+-include_lib("arweave_entropy/include/arweave_entropy_deps.hrl").
+-ifdef(AR_TEST).
+-export([total_size/1, get/2, clean_up_space/4, get_fetched_key_count/2, put/5]).
+-endif.
+
+
 
 -export([get/1, clean_up_space/2, put/3, total_size/0]).
 
--include("ar.hrl").
+
+-include_lib("arweave/include/ar.hrl").
+
 
 -include_lib("eunit/include/eunit.hrl").
+
 
 %%%===================================================================
 %%% Public interface.
@@ -13,8 +21,10 @@
 
 %% @doc Return the stored value, if any, for the given Key.
 -spec get(Key :: string()) -> {ok, term()} | not_found.
+
 get(Key) ->
     get(Key, ar_entropy_cache).
+
 
 %% @doc Make sure the cache has enough space (i.e., clean up the oldest records, if any)
 %% to store Size worth of elements such that the total size does not exceed MaxSize.
@@ -24,10 +34,12 @@ get(Key) ->
         Size :: non_neg_integer(),
         MaxSize :: non_neg_integer()
        ) -> ok.
+
 clean_up_space(Size, MaxSize) ->
     Table = ar_entropy_cache,
     OrderedKeyTable = ar_entropy_cache_ordered_keys,
     clean_up_space(Size, MaxSize, Table, OrderedKeyTable).
+
 
 %% @doc Store the given Value in the cache. Associate it with the given Size and
 %% increase the total cache size accordingly.
@@ -36,16 +48,20 @@ clean_up_space(Size, MaxSize) ->
         Value :: term(),
         Size :: non_neg_integer()
        ) -> ok.
+
 put(Key, Value, Size) ->
     Table = ar_entropy_cache,
     OrderedKeyTable = ar_entropy_cache_ordered_keys,
     put(Key, Value, Size, Table, OrderedKeyTable).
 
+
 %% @doc Return the size of the cache.
 -spec total_size() -> non_neg_integer().
+
 total_size() ->
     Table = ar_entropy_cache,
     total_size(Table).
+
 
 %%%===================================================================
 %%% Private functions.
@@ -53,6 +69,7 @@ total_size() ->
 
 total_size(Table) ->
     ets:lookup_element(Table, total_size, 2, 0).
+
 
 get(Key, Table) ->
     case ets:lookup(Table, {key, Key}) of
@@ -65,6 +82,7 @@ get(Key, Table) ->
                                {{fetched_key_count, Key}, 0}),
             {ok, Value}
     end.
+
 
 clean_up_space(Size, MaxSize, Table, OrderedKeyTable) ->
     TotalSize = total_size(Table),
@@ -81,12 +99,14 @@ clean_up_space(Size, MaxSize, Table, OrderedKeyTable) ->
                     clean_up_space(Size, MaxSize, Table, OrderedKeyTable)
             end;
         false ->
-            arweave_metrics:gauge_set(replica_2_9_entropy_cache, TotalSize + Size),
+            ?DEP(metrics):gauge_set(replica_2_9_entropy_cache, TotalSize + Size),
             ok
     end.
 
+
 get_fetched_key_count(Table, Key) ->
     ets:lookup_element(Table, {fetched_key_count, Key}, 2, 0).
+
 
 put(Key, Value, Size, Table, OrderedKeyTable) ->
     ets:insert(Table, {{key, Key}, Value}),
@@ -94,50 +114,4 @@ put(Key, Value, Size, Table, OrderedKeyTable) ->
     ets:insert(OrderedKeyTable, {{Timestamp, Key, Size}}),
     ets:update_counter(Table, total_size, Size, {total_size, 0}).
 
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
 
-cache_test() ->
-    Table = 'test_entropy_cache_table',
-    OrderedKeyTable = 'test_entropy_cache_ordered_key_table',
-    ets:new(Table, [set, public, named_table]),
-    ets:new(OrderedKeyTable, [ordered_set, public, named_table]),
-    ?assertEqual(0, get_fetched_key_count(Table, some_key)),
-    ?assertEqual(not_found, get(some_key, Table)),
-    ?assertEqual(0, get_fetched_key_count(Table, some_key)),
-    clean_up_space(64, 128, Table, OrderedKeyTable),
-    put(some_key, some_value, 64, Table, OrderedKeyTable),
-    ?assertEqual({ok, some_value}, get(some_key, Table)),
-    ?assertEqual(1, get_fetched_key_count(Table, some_key)),
-    ?assertEqual({ok, some_value}, get(some_key, Table)),
-    ?assertEqual(2, get_fetched_key_count(Table, some_key)),
-    clean_up_space(64, 128, Table, OrderedKeyTable),
-    ?assertEqual({ok, some_value}, get(some_key, Table)),
-    ?assertEqual(3, get_fetched_key_count(Table, some_key)),
-    clean_up_space(64, 128, Table, OrderedKeyTable),
-    ?assertEqual({ok, some_value}, get(some_key, Table)),
-    ?assertEqual(4, get_fetched_key_count(Table, some_key)),
-    clean_up_space(128, 128, Table, OrderedKeyTable),
-    %% We requested an allocation of > MaxSize so the old key needs to be removed.
-    ?assertEqual(not_found, get(some_key, Table)),
-    ?assertEqual(0, get_fetched_key_count(Table, some_key)),
-    %% The put itself does not clean up the cache.
-    put(some_key, some_value, 64, Table, OrderedKeyTable),
-    put(some_other_key, some_other_value, 64, Table, OrderedKeyTable),
-    put(yet_another_key, yet_another_value, 64, Table, OrderedKeyTable),
-    ?assertEqual(0, get_fetched_key_count(Table, some_key)),
-    ?assertEqual({ok, some_value}, get(some_key, Table)),
-    ?assertEqual({ok, some_other_value}, get(some_other_key, Table)),
-    ?assertEqual({ok, yet_another_value}, get(yet_another_key, Table)),
-    ?assertEqual(1, get_fetched_key_count(Table, some_key)),
-    ?assertEqual(1, get_fetched_key_count(Table, some_other_key)),
-    ?assertEqual(1, get_fetched_key_count(Table, yet_another_key)),
-    %% Basically, we are simply reducing the cache 192 -> 128.
-    clean_up_space(0, 128, Table, OrderedKeyTable),
-    ?assertEqual(not_found, get(some_key, Table)),
-    ?assertEqual({ok, some_other_value}, get(some_other_key, Table)),
-    ?assertEqual({ok, yet_another_value}, get(yet_another_key, Table)),
-    clean_up_space(64, 128, Table, OrderedKeyTable),
-    ?assertEqual(not_found, get(some_other_key, Table)),
-    ?assertEqual({ok, yet_another_value}, get(yet_another_key, Table)).

@@ -637,7 +637,7 @@ release_semaphore(Filepath) ->
 
 
 generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
-    Entropies = ar_entropy_gen:generate_entropies(RewardAddr, PaddedEndOffset),
+    Entropies = arweave_entropy_preparation:generate_entropies(RewardAddr, PaddedEndOffset),
     case Entropies of
         {error, Reason} ->
             {error, Reason};
