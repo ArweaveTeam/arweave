@@ -16,6 +16,10 @@
 
 -export([register_or_reject_call/2, reduce_for_peer/2]).
 
+-ifdef(AR_TEST).
+-export([internal_concurrency_count/1]).
+-endif.
+
 -include_lib("kernel/include/logger.hrl").
 
 %% @doc helper function to start `arweave_limiter' application.
@@ -64,3 +68,12 @@ register_or_reject_call(LimiterRef, Peer) ->
 %% @end
 reduce_for_peer(LimiterRef, Peer) ->
     arweave_limiter_group:reduce_for_peer(LimiterRef, Peer).
+
+-ifdef(AR_TEST).
+
+%% @doc Count calls still tracked by the limiter's workers.
+internal_concurrency_count(LimiterRef) ->
+    #{concurrent_monitors := Monitors} = arweave_limiter_group:info(LimiterRef),
+    map_size(Monitors).
+
+-endif.

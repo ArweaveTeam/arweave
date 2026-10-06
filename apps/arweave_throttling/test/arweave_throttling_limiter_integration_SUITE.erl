@@ -358,6 +358,11 @@ concurrency_limit_has_been_hit(_Config) ->
     Pid2 ! done,
     Pid3 ! done,
 
+    %% Completion messages do not wait for the limiter to process DOWNs.
+    ok = ar_test_await:until(limiter_concurrency_released, fun() ->
+        arweave_limiter:internal_concurrency_count(?GROUP_ID) =:= 0
+    end),
+
     %% Concurrency has reduced. However the client is not aware of it yet, and timer hasn't
     %% expired yet, so the client will throttle the request (queued)
     Pid4 = ?assertRequestRoundtripDetails(
