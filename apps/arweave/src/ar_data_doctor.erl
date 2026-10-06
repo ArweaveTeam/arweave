@@ -49,7 +49,7 @@ main(Args) ->
 %% a node whose directories still use the legacy naming. Erroring out
 %% keeps the tools from silently working in empty folders.
 check_module_dir(DataDir, StoreID) ->
-    Path = ar_chunk_storage:storage_module_path(DataDir, StoreID),
+    Path = arweave_storage_chunk_storage:storage_module_path(DataDir, StoreID),
     case filelib:is_dir(Path) of
         true ->
             true;

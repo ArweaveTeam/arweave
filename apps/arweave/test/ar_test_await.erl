@@ -105,7 +105,7 @@
 %%%===================================================================
 %%%
 %%% `chunk_recorded' reads the live process via
-%%% `ar_sync_record:is_recorded'; `http_chunks_recorded' /
+%%% `arweave_storage_sync_record:is_recorded'; `http_chunks_recorded' /
 %%% `http_chunks_not_recorded' read an outside client's view via
 %%% `GET /sync_record' (plus `GET /footprints/...' for replica_2_9).
 %%% The two can disagree during boot or while caches warm.
@@ -166,7 +166,7 @@ entropy_prepared(Node, StoreID, Start, End) ->
     do_until_true(entropy_prepared,
         fun() ->
             on(Node, ar_sync_record, get_intersection_size,
-                [End, Start, ar_entropy_storage:sync_record_id(),
+                [End, Start, arweave_storage_entropy_storage:sync_record_id(),
                     StoreID]) >= RangeSize
         end).
 
@@ -179,7 +179,7 @@ entropy_prepared(Node, StoreID, Start, End) ->
 entropy_not_prepared(Node, StoreID, Start, End) ->
     timer:sleep(?TIMEOUT_NEGATIVE_MS),
     case on(Node, ar_sync_record, get_intersection_size,
-            [End, Start, ar_entropy_storage:sync_record_id(), StoreID]) of
+            [End, Start, arweave_storage_entropy_storage:sync_record_id(), StoreID]) of
         0 -> ok;
         _ -> {error, has_entropy}
     end.
@@ -190,11 +190,11 @@ all_entropy_prepared(Node) ->
     StorageModules = on(Node, arweave_config, storage_modules, []),
     lists:foreach(
         fun({_, _, {replica_2_9, _}} = Module) ->
-                StoreID = ar_storage_module:id(Module),
+                StoreID = arweave_storage_module:id(Module),
                 %% Derive the range from `Module' directly: a registry
                 %% lookup would miss, since these modules live on `Node'
                 %% not the test runner's local BEAM.
-                {Start, End} = ar_storage_module:module_range(Module),
+                {Start, End} = arweave_storage_module:module_range(Module),
                 ok = entropy_prepared(Node, StoreID, Start, End);
            (_) ->
                 ok
@@ -730,7 +730,7 @@ on(Node, M, F, A) ->
     ar_test_node:remote_call(Node, M, F, A).
 
 
-%% Predicate for `chunk_recorded/3'. Picks `ar_sync_record:is_recorded/2'
+%% Predicate for `chunk_recorded/3'. Picks `arweave_storage_sync_record:is_recorded/2'
 %% or `/3' by whether `Opts' restricts the store, tags the lookup with
 %% the packing key when given, and treats any non-`false' reply as a hit.
 is_chunk_recorded(Node, Offset, Opts) ->
@@ -747,7 +747,7 @@ is_chunk_recorded(Node, Offset, Opts) ->
 %% Decode `Options'' serialized global sync record into an `ar_intervals'
 %% set. Raises on a fetch or decode failure (a hard fault, not poll-again).
 global_sync_record(Options) ->
-    {ok, Binary} = ar_global_sync_record:get_serialized_sync_record(Options),
+    {ok, Binary} = arweave_storage_global_sync_record:get_serialized_sync_record(Options),
     {ok, Global} = arweave_lib_intervals:safe_from_etf(Binary),
     Global.
 
@@ -788,7 +788,7 @@ has_range(Node, StartOffset, EndOffset) ->
 collect_footprint_intervals(NodeIP, StartOffset, EndOffset) ->
     StartPartition = arweave_lib_replica_2_9:get_entropy_partition(StartOffset + 1),
     LastPartition = arweave_lib_replica_2_9:get_entropy_partition(EndOffset + 1),
-    FootprintsPerPartition = ar_footprint_record:get_footprints_per_partition(),
+    FootprintsPerPartition = arweave_storage_footprint_record:get_footprints_per_partition(),
     collect_footprint_intervals(NodeIP, StartPartition, LastPartition,
         0, FootprintsPerPartition - 1, arweave_lib_intervals:new()).
 
@@ -804,7 +804,7 @@ collect_footprint_intervals(NodeIP, Partition, LastPartition,
     FootprintByteIntervals =
         case ar_http_iface_client:get_footprints(NodeIP, Partition, Footprint) of
             {ok, FootprintIntervals} ->
-                ar_footprint_record:get_intervals_from_footprint_intervals(
+                arweave_storage_footprint_record:get_intervals_from_footprint_intervals(
                     FootprintIntervals);
             not_found ->
                 ?LOG_INFO([{event, footprint_record_not_found},

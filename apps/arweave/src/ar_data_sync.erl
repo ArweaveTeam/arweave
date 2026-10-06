@@ -75,7 +75,7 @@
 name(StoreID) when is_atom(StoreID) ->
     list_to_atom("ar_data_sync_" ++ atom_to_list(StoreID));
 name(StoreID) ->
-    list_to_atom("ar_data_sync_" ++ ar_storage_module:label(StoreID)).
+    list_to_atom("ar_data_sync_" ++ arweave_storage_module:label(StoreID)).
 
 start_link(Name, Args) ->
     gen_server:start_link({local, Name}, ?MODULE, Args, []).
@@ -84,8 +84,8 @@ start_link(Name, Args) ->
 register_workers() ->
     StorageModuleWorkers = lists:map(
                              fun(StorageModule) ->
-                                     StoreID = ar_storage_module:id(StorageModule),
-                                     StoreLabel = ar_storage_module:label(StoreID),
+                                     StoreID = arweave_storage_module:id(StorageModule),
+                                     StoreLabel = arweave_storage_module:label(StoreID),
                                      Name = list_to_atom("ar_data_sync_" ++ StoreLabel),
                                      ?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, none}])
                              end,
@@ -95,7 +95,7 @@ register_workers() ->
                                                   ar_data_sync_default, [ar_data_sync_default, {?DEFAULT_MODULE, none}]),
     RepackInPlaceWorkers = lists:map(
                              fun({StorageModule, TargetPacking}) ->
-                                     StoreID = ar_storage_module:id(StorageModule),
+                                     StoreID = arweave_storage_module:id(StorageModule),
                                      Name = ar_data_sync:name(StoreID),
                                      ?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, TargetPacking}])
                              end,
@@ -252,12 +252,12 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
     IsRecorded =
         case {RequestOrigin, Pack} of
             {miner, _} ->
-                StorageModules = ar_storage_module:get_all(Offset),
-                ar_sync_record:is_recorded_any(Offset, ar_data_sync, StorageModules);
+                StorageModules = arweave_storage_module:get_all(Offset),
+                arweave_storage_sync_record:is_recorded_any(Offset, ar_data_sync, StorageModules);
             {_, false} ->
-                ar_sync_record:is_recorded(Offset, {ar_data_sync, Packing});
+                arweave_storage_sync_record:is_recorded(Offset, {ar_data_sync, Packing});
             {_, true} ->
-                ar_sync_record:is_recorded(Offset, ar_data_sync)
+                arweave_storage_sync_record:is_recorded(Offset, ar_data_sync)
         end,
     SeekOffset =
         case maps:get(bucket_based_offset, Options, true) of
@@ -271,15 +271,15 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
             get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
                       RequestOrigin);
         {true, StoreID} ->
-            UnpackedReply = ar_sync_record:is_recorded(Offset, {ar_data_sync, unpacked}),
+            UnpackedReply = arweave_storage_sync_record:is_recorded(Offset, {ar_data_sync, unpacked}),
             log_chunk_error(RequestOrigin, chunk_record_not_associated_with_packing,
                             [{store_id, StoreID}, {seek_offset, SeekOffset},
                              {is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}]),
             {error, chunk_not_found};
         Reply ->
-            UnpackedReply = ar_sync_record:is_recorded(Offset, {ar_data_sync, unpacked}),
-            Modules = ar_storage_module:get_all(Offset),
-            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+            UnpackedReply = arweave_storage_sync_record:is_recorded(Offset, {ar_data_sync, unpacked}),
+            Modules = arweave_storage_module:get_all(Offset),
+            ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
             RootRecords = [ets:lookup(sync_records, {ar_data_sync, ID})
                            || ID <- ModuleIDs],
             case RequestOrigin of
@@ -299,7 +299,7 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 %% @doc Fetch the merkle proofs for the chunk corresponding to Offset.
 get_chunk_proof(Offset, Options) ->
     RequestOrigin = maps:get(origin, Options, unknown),
-    IsRecorded = ar_sync_record:is_recorded(Offset, ar_data_sync),
+    IsRecorded = arweave_storage_sync_record:is_recorded(Offset, ar_data_sync),
     SeekOffset =
         case maps:get(bucket_based_offset, Options, true) of
             true ->
@@ -583,7 +583,7 @@ read_chunk(Offset, ChunkDataKey, StoreID) ->
                 {Chunk, DataPath} ->
                     {ok, {Chunk, DataPath}};
                 DataPath ->
-                    case ar_chunk_storage:get(Offset - 1, StoreID) of
+                    case arweave_storage_chunk_storage:get(Offset - 1, StoreID) of
                         not_found ->
                             not_found;
                         {_EndOffset, Chunk} ->
@@ -613,7 +613,7 @@ get_chunk_data_with_retry(ChunkDataKey, StoreID, Attempts) ->
             Other
     end.
 
-%% @doc Retry `ar_chunk_storage:get/2' in the same `chunks_index'-before-data
+%% @doc Retry `arweave_storage_chunk_storage:get/2' in the same `chunks_index'-before-data
 %% race as `get_chunk_data_with_retry/2', for chunks whose bytes live in
 %% chunk_storage (e.g. replica_2_9): the index entry and `stored_elsewhere'
 %% data path can land before the enciphered chunk is written, so a single read
@@ -623,9 +623,9 @@ get_chunk_storage_with_retry(Offset, StoreID) ->
     get_chunk_storage_with_retry(Offset, StoreID, ?READ_CHUNK_RETRY_ATTEMPTS).
 
 get_chunk_storage_with_retry(Offset, StoreID, 0) ->
-    ar_chunk_storage:get(Offset, StoreID);
+    arweave_storage_chunk_storage:get(Offset, StoreID);
 get_chunk_storage_with_retry(Offset, StoreID, Attempts) ->
-    case ar_chunk_storage:get(Offset, StoreID) of
+    case arweave_storage_chunk_storage:get(Offset, StoreID) of
         not_found ->
             timer:sleep(?READ_CHUNK_RETRY_DELAY_MS),
             get_chunk_storage_with_retry(Offset, StoreID, Attempts - 1);
@@ -738,7 +738,7 @@ init({StoreID, RepackInPlacePacking}) ->
     %% Trap exit to avoid corrupting any open files on quit..
     process_flag(trap_exit, true),
     [ok, ok, ok] = ar_events:subscribe([node_state, disksup, chunk_copy]),
-    {RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+    {RangeStart, RangeEnd} = arweave_storage_module:get_range(StoreID),
     RangeStart2 = max(0, arweave_lib_constants:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
     RangeEnd2 = arweave_lib_constants:get_chunk_padded_offset(RangeEnd),
     State0 = #data_sync_state{
@@ -806,7 +806,7 @@ handle_cast({join, RecentBI}, State) ->
 
 handle_cast({cut, Start}, #data_sync_state{ store_id = StoreID,
                                             range_end = End } = State) ->
-    case ar_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
+    case arweave_storage_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
         not_found ->
             ok;
         _Interval ->
@@ -822,8 +822,8 @@ handle_cast({cut, Start}, #data_sync_state{ store_id = StoreID,
                     init:stop(1);
                 true ->
                     ok = delete_chunk_metadata_range(Start, End, State),
-                    ok = ar_chunk_storage:cut(Start, StoreID),
-                    ok = ar_sync_record:cut(Start, ar_data_sync, StoreID)
+                    ok = arweave_storage_chunk_storage:cut(Start, StoreID),
+                    ok = arweave_storage_sync_record:cut(Start, ar_data_sync, StoreID)
             end
     end,
     {noreply, State};
@@ -938,11 +938,11 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
             %% The order is important - in case the VM crashes,
             %% we will not report false positives to peers,
             %% and the chunk can still be removed upon retry.
-            RemoveFromFootprint = ar_footprint_record:delete(PaddedOffset, StoreID),
+            RemoveFromFootprint = arweave_storage_footprint_record:delete(PaddedOffset, StoreID),
             RemoveFromSyncRecord =
                 case RemoveFromFootprint of
                     ok ->
-                        ar_sync_record:delete(PaddedOffset,
+                        arweave_storage_sync_record:delete(PaddedOffset,
                                               PaddedStartOffset, ar_data_sync, StoreID);
                     Error ->
                         Error
@@ -950,7 +950,7 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
             RemoveFromChunkStorage =
                 case RemoveFromSyncRecord of
                     ok ->
-                        ar_chunk_storage:delete(PaddedOffset, StoreID);
+                        arweave_storage_chunk_storage:delete(PaddedOffset, StoreID);
                     Error2 ->
                         Error2
                 end,
@@ -1234,7 +1234,7 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
             %% final chunk lands. Anywhere else a mismatch is genuine corruption, so
             %% invalidate immediately and keep the retry (and its delay) off the
             %% normal read path. Checking only on a mismatch keeps the happy path free.
-            case ar_storage_module:is_repack_in_place(StoreID) of
+            case arweave_storage_module:is_repack_in_place(StoreID) of
                 true ->
                     retry_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking,
                                     StoreID, RequestOrigin, ?READ_CHUNK_RETRY_ATTEMPTS);
@@ -1431,8 +1431,8 @@ read_chunk_with_metadata(
             %% isn't stored.
             {error, chunk_not_found};
         {error, Err} ->
-            Modules = ar_storage_module:get_all(SeekOffset),
-            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+            Modules = arweave_storage_module:get_all(SeekOffset),
+            ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
             log_chunk_error(RequestOrigin, failed_to_fetch_chunk_metadata,
                             [{seek_offset, SeekOffset},
                              {store_id, StoreID},
@@ -1461,8 +1461,8 @@ read_chunk_with_metadata(
                 end,
             case ReadFun(AbsoluteEndOffset, ChunkDataKey, StoreID) of
                 not_found ->
-                    Modules = ar_storage_module:get_all(SeekOffset),
-                    ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+                    Modules = arweave_storage_module:get_all(SeekOffset),
+                    ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
                     log_chunk_error(RequestOrigin, failed_to_read_chunk_data_path,
                                     [{seek_offset, SeekOffset},
                                      {absolute_offset, AbsoluteEndOffset},
@@ -1482,11 +1482,11 @@ read_chunk_with_metadata(
                                      {absolute_end_offset, Offset}]),
                     {error, failed_to_read_chunk};
                 {ok, {Chunk, DataPath}} ->
-                    case ar_sync_record:is_recorded(Offset, StoredPacking, ar_data_sync,
+                    case arweave_storage_sync_record:is_recorded(Offset, StoredPacking, ar_data_sync,
                                                     StoreID) of
                         false ->
-                            Modules = ar_storage_module:get_all(SeekOffset),
-                            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+                            Modules = arweave_storage_module:get_all(SeekOffset),
+                            ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
                             RootRecords = [ets:lookup(sync_records, {ar_data_sync, ID})
                                            || ID <- ModuleIDs],
                             log_chunk_error(RequestOrigin, chunk_metadata_read_sync_record_race_condition,
@@ -1548,7 +1548,7 @@ invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
                   {store_id, StoreID}]),
     case remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) of
         ok ->
-            ar_sync_record:add(PaddedEndOffset, StartOffset, invalid_chunks, StoreID),
+            arweave_storage_sync_record:add(PaddedEndOffset, StartOffset, invalid_chunks, StoreID),
             case delete_invalid_metadata(AbsoluteEndOffset, StoreID) of
                 ok ->
                     ok;
@@ -1564,11 +1564,11 @@ invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
     end.
 
 remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
-    Remove1 = ar_footprint_record:delete(PaddedEndOffset, StoreID),
+    Remove1 = arweave_storage_footprint_record:delete(PaddedEndOffset, StoreID),
     Remove2 =
         case Remove1 of
             ok ->
-                ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+                arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
             Error ->
                 Error
         end,
@@ -1576,7 +1576,7 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
     Remove3 =
         case {Remove2, IsSmallChunkBeforeThreshold} of
             {ok, false} ->
-                ar_sync_record:delete(PaddedEndOffset, StartOffset,
+                arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset,
                                       ar_chunk_storage, StoreID);
             _ ->
                 Remove2
@@ -1584,13 +1584,13 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
     Remove4 =
         case {Remove3, IsSmallChunkBeforeThreshold} of
             {ok, false} ->
-                ar_entropy_storage:delete_record(PaddedEndOffset, StartOffset, StoreID);
+                arweave_storage_entropy_storage:delete_record(PaddedEndOffset, StartOffset, StoreID);
             _ ->
                 Remove3
         end,
     case {Remove4, IsSmallChunkBeforeThreshold} of
         {ok, false} ->
-            ar_sync_record:delete(PaddedEndOffset, StartOffset,
+            arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset,
                                   ar_chunk_storage_replica_2_9_1_unpacked, StoreID);
         _ ->
             Remove4
@@ -1741,8 +1741,8 @@ remove_range(Start, End, Ref, ReplyTo) ->
                         end
                 end
         end,
-    StorageModules = ar_storage_module:get_all(Start, End),
-    StoreIDs = [?DEFAULT_MODULE | [ar_storage_module:id(M) || M <- StorageModules]],
+    StorageModules = arweave_storage_module:get_all(Start, End),
+    StoreIDs = [?DEFAULT_MODULE | [arweave_storage_module:id(M) || M <- StorageModules]],
     RefL = [make_ref() || _ <- StoreIDs],
     PID = spawn(fun() -> ReplyFun(ReplyFun, sets:from_list(RefL)) end),
     lists:foreach(
@@ -1790,7 +1790,7 @@ open_store_dbs(DataDir, StoreID) ->
             ?DEFAULT_MODULE ->
                 filename:join(DataDir, ?ROCKS_DB_DIR);
             _ ->
-                filename:join([ar_chunk_storage:storage_module_path(
+                filename:join([arweave_storage_chunk_storage:storage_module_path(
                     DataDir, StoreID), ?ROCKS_DB_DIR])
         end,
     ok = ar_kv:open(#{
@@ -1837,8 +1837,8 @@ remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
     {ok, OrphanedDataRoots} =
         ar_data_roots:remove_range(BlockStartOffset, WeaveSize, StoreID),
     ok = delete_chunk_metadata_range(BlockStartOffset, WeaveSize, State),
-    ok = ar_chunk_storage:cut(BlockStartOffset, StoreID),
-    ok = ar_sync_record:cut(BlockStartOffset, ar_data_sync, StoreID),
+    ok = arweave_storage_chunk_storage:cut(BlockStartOffset, StoreID),
+    ok = arweave_storage_sync_record:cut(BlockStartOffset, ar_data_sync, StoreID),
     ar_events:send(sync_record, {global_cut, BlockStartOffset}),
     ar_disk_pool:reset_orphaned_data_roots_timestamps(OrphanedDataRoots),
     ok.
@@ -1849,7 +1849,7 @@ cut_orphaned_storage_modules(BlockStartOffset, WeaveSize)
 cut_orphaned_storage_modules(BlockStartOffset, _WeaveSize) ->
     lists:foreach(
       fun(Module) ->
-              gen_server:cast(name(ar_storage_module:id(Module)), {cut, BlockStartOffset})
+              gen_server:cast(name(arweave_storage_module:id(Module)), {cut, BlockStartOffset})
       end,
       arweave_config:storage_modules()),
     ok.
@@ -2051,11 +2051,11 @@ write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, StoreID) 
 write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing,
                             StoreID) ->
     ShouldStoreInChunkStorage =
-        ar_chunk_storage:is_storage_supported(Offset, ChunkSize, Packing),
+        arweave_storage_chunk_storage:is_storage_supported(Offset, ChunkSize, Packing),
     case {ShouldStoreInChunkStorage, is_binary(DataPath)} of
         {true, true} ->
             PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(Offset),
-            case ar_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID) of
+            case arweave_storage_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID) of
                 {ok, NewPacking} ->
                     case put_chunk_data(ChunkDataKey, StoreID, DataPath) of
                         ok -> {ok, NewPacking};
@@ -2068,13 +2068,13 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
             %% should just update chunk storage without modifying chunk_data_db. This
             %% can happen, for example, durin grepack in place.
             PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(Offset),
-            ar_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID);
+            arweave_storage_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID);
         {false, true} ->
             case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
                 ok ->
                     arweave_metrics:counter_inc(chunks_stored, [
-                                                           ar_storage_module:packing_label(Packing),
-                                                           ar_storage_module:label(StoreID)]),
+                                                           arweave_storage_module:packing_label(Packing),
+                                                           arweave_storage_module:label(StoreID)]),
                     {ok, Packing};
                 Error -> Error
             end;
@@ -2101,11 +2101,11 @@ update_chunks_index2(Args, UpdateFootprint, StoreID) ->
         ok ->
             StartOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
             PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteEndOffset),
-            case ar_sync_record:add(PaddedOffset, StartOffset, Packing, ar_data_sync, StoreID) of
+            case arweave_storage_sync_record:add(PaddedOffset, StartOffset, Packing, ar_data_sync, StoreID) of
                 ok ->
                     case UpdateFootprint of
                         true ->
-                            case ar_footprint_record:add(PaddedOffset, Packing, StoreID) of
+                            case arweave_storage_footprint_record:add(PaddedOffset, Packing, StoreID) of
                                 ok ->
                                     ok;
                                 {error, Reason} ->
@@ -2160,7 +2160,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
             decrement_chunk_cache_size(),
             {noreply, State};
         true ->
-            case ar_sync_record:is_recorded(Byte + 1, ar_data_sync, StoreID) of
+            case arweave_storage_sync_record:is_recorded(Byte + 1, ar_data_sync, StoreID) of
                 {true, _} ->
                     Reason = chunk_already_synced,
                     arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
@@ -2327,17 +2327,17 @@ store_chunk2(ChunkArgs, Args, State) ->
     %% This will fail if DataPath is not a string - which is fine as it serves as a sanity
     %% check that store_chunk2 is called with valid arguments.
     DataPathHash = crypto:hash(sha256, DataPath),
-    ShouldStoreInChunkStorage = ar_chunk_storage:is_storage_supported(AbsoluteEndOffset,
+    ShouldStoreInChunkStorage = arweave_storage_chunk_storage:is_storage_supported(AbsoluteEndOffset,
                                                                       ChunkSize, Packing),
     CleanRecord =
-        case {ShouldStoreInChunkStorage, ar_storage_module:get_packing(StoreID)} of
+        case {ShouldStoreInChunkStorage, arweave_storage_module:get_packing(StoreID)} of
             {true, {replica_2_9, _}} ->
                 %% The 2.9 chunk storage is write-once.
                 ok;
             _ ->
-                case ar_footprint_record:delete(PaddedOffset, StoreID) of
+                case arweave_storage_footprint_record:delete(PaddedOffset, StoreID) of
                     ok ->
-                        ar_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync, StoreID);
+                        arweave_storage_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync, StoreID);
                     Error ->
                         Error
                 end
@@ -2366,16 +2366,16 @@ store_chunk2(ChunkArgs, Args, State) ->
             ProcessAlreadyStored =
                 case StoreIndex of
                     already_stored ->
-                        case ar_sync_record:is_recorded(PaddedOffset, Packing, ar_data_sync, StoreID) of
+                        case arweave_storage_sync_record:is_recorded(PaddedOffset, Packing, ar_data_sync, StoreID) of
                             false ->
                                 do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
                                                                StoreID, undefined,
                                                                chunk_already_stored_but_not_in_sync_record});
                             true ->
-                                case ar_footprint_record:is_recorded(PaddedOffset, StoreID) of
+                                case arweave_storage_footprint_record:is_recorded(PaddedOffset, StoreID) of
                                     false ->
                                         %% Repair the broken footprint record.
-                                        ar_footprint_record:add(PaddedOffset, Packing, StoreID);
+                                        arweave_storage_footprint_record:add(PaddedOffset, Packing, StoreID);
                                     true ->
                                         ok
                                 end
@@ -2438,7 +2438,7 @@ get_required_chunk_packing(Offset, ChunkSize, State) ->
         true ->
             unpacked;
         false ->
-            case ar_storage_module:get_packing(StoreID) of
+            case arweave_storage_module:get_packing(StoreID) of
                 {replica_2_9, _Addr} ->
                     unpacked_padded;
                 Packing ->
@@ -2532,7 +2532,7 @@ initialize_footprint_record(Cursor, State) ->
       } = State,
     BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
 
-    case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, ar_data_sync, StoreID) of
+    case arweave_storage_sync_record:get_next_synced_interval(Cursor, RangeEnd, ar_data_sync, StoreID) of
         not_found ->
             ok = ar_kv:put(migration_db(StoreID),
                            ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
@@ -2560,11 +2560,11 @@ initialize_footprint_record(Cursor, State) ->
 initialize_footprint_range(Start, End, _StoreID) when Start >= End ->
     ok;
 initialize_footprint_range(Start, End, StoreID) ->
-    case ar_sync_record:is_recorded(Start + 1, ar_data_sync, StoreID) of
+    case arweave_storage_sync_record:is_recorded(Start + 1, ar_data_sync, StoreID) of
         {true, unpacked_padded} ->
             ok;
         {true, Packing} ->
-            ar_footprint_record:add(Start + 1, Packing, StoreID);
+            arweave_storage_footprint_record:add(Start + 1, Packing, StoreID);
         _ ->
             %% false (the chunk was removed concurrently) or true without
             %% a packing (not expected for ar_data_sync) — nothing to register.

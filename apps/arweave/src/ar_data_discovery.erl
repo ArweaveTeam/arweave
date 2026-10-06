@@ -308,7 +308,7 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 
 handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
     WeaveSize = ar_node:get_weave_size(),
-    MaxFootprintOffset = ar_footprint_record:max_offset(WeaveSize),
+    MaxFootprintOffset = arweave_storage_footprint_record:max_offset(WeaveSize),
     ar_sync_buckets:foreach(
       fun(Bucket, Share) ->
               ets:insert(ar_data_discovery_footprint_buckets,
@@ -514,8 +514,8 @@ emit_bucket_stats() ->
     StartTime = erlang:monotonic_time(millisecond),
     lists:foreach(
       fun(Module) ->
-              StoreID = ar_storage_module:id(Module),
-              {RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+              StoreID = arweave_storage_module:id(Module),
+              {RangeStart, RangeEnd} = arweave_storage_module:get_range(StoreID),
               report_bucket_stats(StoreID, RangeStart, RangeEnd, normal),
               report_bucket_stats(StoreID, RangeStart, RangeEnd, footprint)
       end,
@@ -530,8 +530,8 @@ report_bucket_stats(StoreID, RangeStart, RangeEnd, normal) ->
     NumPeers = count_bucket_peers(StartBucket, EndBucket, ?MODULE),
     set_num_peers_metric(StoreID, normal, NumPeers);
 report_bucket_stats(StoreID, RangeStart, RangeEnd, footprint) ->
-    StartBucket = ar_footprint_record:get_footprint_bucket(RangeStart + ?DATA_CHUNK_SIZE),
-    EndBucket = ar_footprint_record:get_footprint_bucket(RangeEnd),
+    StartBucket = arweave_storage_footprint_record:get_footprint_bucket(RangeStart + ?DATA_CHUNK_SIZE),
+    EndBucket = arweave_storage_footprint_record:get_footprint_bucket(RangeEnd),
     NumPeers = count_bucket_peers(StartBucket, EndBucket,
                                   ar_data_discovery_footprint_buckets),
     set_num_peers_metric(StoreID, footprint, NumPeers).
@@ -559,7 +559,7 @@ collect_peers_for_bucket(Bucket, Table, Peers, Cursor) ->
     end.
 
 set_num_peers_metric(StoreID, Type, NumPeers) ->
-    StoreIDLabel = ar_storage_module:label(StoreID),
+    StoreIDLabel = arweave_storage_module:label(StoreID),
     arweave_metrics:gauge_set(data_discovery, [Type, StoreIDLabel, num_peers],
                          NumPeers).
 
@@ -713,8 +713,8 @@ scan_normal_for_peer(Peer, SyncBuckets, Init) ->
     Modules = arweave_lib_util:shuffle_list(arweave_config:storage_modules()),
     lists:foldl(
       fun(StorageModule, Acc) ->
-              StoreID = ar_storage_module:id(StorageModule),
-              {Start, End} = ar_storage_module:get_range(StoreID),
+              StoreID = arweave_storage_module:id(StorageModule),
+              {Start, End} = arweave_storage_module:get_range(StoreID),
               scan_normal_module(Peer, SyncBuckets, Start, End, StoreID, Acc)
       end,
       Init,
@@ -770,7 +770,7 @@ unsynced_intervals_in_window(Start, End, StoreID) ->
 unsynced_intervals_in_window(Start, End, Acc, _StoreID) when Start >= End ->
     Acc;
 unsynced_intervals_in_window(Start, End, Acc, StoreID) ->
-    case ar_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
+    case arweave_storage_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
         not_found ->
             arweave_lib_intervals:add(Acc, End, Start);
         {End2, Start2} ->
@@ -788,8 +788,8 @@ scan_footprint_for_peer(Peer, FootprintBuckets, Init) ->
     Modules = arweave_lib_util:shuffle_list(arweave_config:storage_modules()),
     lists:foldl(
       fun(StorageModule, Acc) ->
-              StoreID = ar_storage_module:id(StorageModule),
-              {Start, End} = ar_storage_module:get_range(StoreID),
+              StoreID = arweave_storage_module:id(StorageModule),
+              {Start, End} = arweave_storage_module:get_range(StoreID),
               scan_footprint_module(Peer, FootprintBuckets,
                                     Start, Start, End, StoreID, Acc)
       end,
@@ -827,13 +827,13 @@ footprint_offsets(Cursor, RangeStart, RangeEnd, Acc) ->
 
 scan_footprint_offset(Peer, FootprintBuckets, Cursor, StoreID, Acc) ->
     Partition = arweave_lib_replica_2_9:get_entropy_partition(Cursor + ?DATA_CHUNK_SIZE),
-    Footprint = ar_footprint_record:get_footprint(Cursor + ?DATA_CHUNK_SIZE),
-    FootprintBucket = ar_footprint_record:get_footprint_bucket(Cursor + ?DATA_CHUNK_SIZE),
+    Footprint = arweave_storage_footprint_record:get_footprint(Cursor + ?DATA_CHUNK_SIZE),
+    FootprintBucket = arweave_storage_footprint_record:get_footprint_bucket(Cursor + ?DATA_CHUNK_SIZE),
     case is_integer(FootprintBucket)
         andalso ar_sync_buckets:get(FootprintBucket,
                                     ?NETWORK_FOOTPRINT_BUCKET_SIZE, FootprintBuckets) > 0 of
         true ->
-            Unsynced = ar_footprint_record:get_unsynced_intervals(
+            Unsynced = arweave_storage_footprint_record:get_unsynced_intervals(
                          Partition, Footprint, StoreID),
             case arweave_lib_intervals:is_empty(Unsynced) of
                 true ->

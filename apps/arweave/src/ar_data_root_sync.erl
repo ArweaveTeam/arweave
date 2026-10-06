@@ -35,14 +35,14 @@ start_link(StoreID) ->
     gen_server:start_link({local, Name}, ?MODULE, [StoreID], []).
 
 name(StoreID) ->
-    list_to_atom("ar_data_root_sync_" ++ ar_storage_module:label(StoreID)).
+    list_to_atom("ar_data_root_sync_" ++ arweave_storage_module:label(StoreID)).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
 init([StoreID]) ->
-    {RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+    {RangeStart, RangeEnd} = arweave_storage_module:get_range(StoreID),
     gen_server:cast(self(), sync),
     {ok, #state{ store_id = StoreID,
                  range_start = RangeStart,

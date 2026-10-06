@@ -1,4 +1,4 @@
--module(ar_chunk_storage_sup).
+-module(ar_repack_sup).
 
 -behaviour(supervisor).
 
@@ -21,10 +21,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    ets:new(chunk_storage_file_index, [set, public, named_table, {read_concurrency, true}]),
 
-    Workers = ar_chunk_storage:register_workers() ++
-        ar_repack:register_workers() ++
-        ar_entropy_gen:register_workers(ar_entropy_gen) ++
-        ar_entropy_gen:register_workers(ar_entropy_storage),
+    Workers = ar_repack:register_workers() ++
+        ar_entropy_gen:register_workers(ar_entropy_gen),
     {ok, {{one_for_one, 5, 10}, Workers}}.

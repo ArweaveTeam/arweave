@@ -623,7 +623,7 @@ data_roots_sync_mocks() ->
     [
         {arweave_lib_constants, get_consensus_window_size, fun() -> 5 end},
         {arweave_lib_constants, get_max_tx_anchor_depth, fun() -> 5 end},
-        {ar_storage_module, get_overlap, fun(_Packing) -> 0 end}
+        {arweave_storage_module, get_overlap, fun(_Packing) -> 0 end}
     ].
 
 unpacked_storage_module_configs() ->

@@ -63,12 +63,12 @@ start_link(Name, {StoreID, Packing}) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-    list_to_atom("ar_repack_" ++ ar_storage_module:label(StoreID)).
+    list_to_atom("ar_repack_" ++ arweave_storage_module:label(StoreID)).
 
 register_workers() ->
     RepackInPlaceWorkers = lists:flatmap(
                              fun({StorageModule, Packing}) ->
-                                     StoreID = ar_storage_module:id(StorageModule),
+                                     StoreID = arweave_storage_module:id(StorageModule),
                                      %% Note: the config validation will prevent a StoreID from being used in both
                                      %% `storage_modules` and `repack_in_place_storage_modules`, so there's
                                      %% no risk of a `Name` clash with the workers spawned above.
@@ -102,7 +102,7 @@ recompute_sizing() ->
             lists:foreach(
               fun({StorageModule, _Packing}) ->
                       gen_server:cast(
-                        name(ar_storage_module:id(StorageModule)), recompute_sizing)
+                        name(arweave_storage_module:id(StorageModule)), recompute_sizing)
               end,
               arweave_config:repack_modules(full));
         false ->
@@ -111,7 +111,7 @@ recompute_sizing() ->
     ok.
 
 init({StoreID, ToPacking}) ->
-    FromPacking = ar_storage_module:get_packing(StoreID),
+    FromPacking = arweave_storage_module:get_packing(StoreID),
     ?LOG_INFO([{event, ar_repack_init},
                {name, name(StoreID)}, {store_id, StoreID},
                {from_packing, ar_serialize:encode_packing(FromPacking, false)},
@@ -120,8 +120,8 @@ init({StoreID, ToPacking}) ->
     %% ModuleStart to PaddedModuleEnd is the *chunk* range that will be repacked. Chunk
     %% offsets will later be converted to bucket offsets and entropy offsets - and the
     %% bucket and entropy ranges may differ from this chunk range.
-    Module = ar_storage_module:get_by_id(StoreID),
-    {ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module),
+    Module = arweave_storage_module:get_by_id(StoreID),
+    {ModuleStart, ModuleEnd} = arweave_storage_module:module_range(Module),
     PaddedModuleEnd = arweave_lib_constants:get_chunk_padded_offset(ModuleEnd),
     Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
@@ -573,7 +573,7 @@ repack_footprint(Cursor, #state{ footprint_limit = FootprintLimit } = State) ->
             %% After that the repacked sectors are skipped one lookup each
             %% until the cursor passes the module end.
             NextCursor =
-                ar_footprint_record:get_next_sector_start(BucketEndOffset),
+                arweave_storage_footprint_record:get_next_sector_start(BucketEndOffset),
             gen_server:cast(self(), repack),
             log_debug(skipping_beyond_footprint_limit, State,
                 [{cursor, Cursor}, {next_cursor, NextCursor}]),
@@ -667,8 +667,8 @@ should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
     #state{ module_start = ModuleStart, module_end = ModuleEnd,
             target_packing = TargetPacking, store_id = StoreID } = State,
     PaddedEndOffset = arweave_lib_constants:get_chunk_padded_offset(Cursor),
-    IsChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
-    IsEntropyRecorded = ar_entropy_storage:is_entropy_recorded(
+    IsChunkRecorded = arweave_storage_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
+    IsEntropyRecorded = arweave_storage_entropy_storage:is_entropy_recorded(
                           PaddedEndOffset, TargetPacking, StoreID),
     %% Only replica_2_9 writes entropy into empty buckets; for any other target an empty
     %% bucket has nothing to write.
@@ -714,7 +714,7 @@ should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
 get_next_cursor(Cursor, TargetPacking, StoreID, ModuleEnd) ->
     MinNext = Cursor + ?DATA_CHUNK_SIZE,
     %% The next offset not yet packed to the target.
-    TargetStart = interval_start(ar_sync_record:get_next_unsynced_interval(
+    TargetStart = interval_start(arweave_storage_sync_record:get_next_unsynced_interval(
                                    Cursor, infinity, TargetPacking, ar_data_sync, StoreID), MinNext),
     Candidates = case needs_entropy(TargetPacking) of
                      true ->
@@ -723,7 +723,7 @@ get_next_cursor(Cursor, TargetPacking, StoreID, ModuleEnd) ->
                          %% A bucket with no chunk data can never be repacked to a non-entropy
                          %% packing, so also jump to the next offset that holds chunk data - or past
                          %% the module end, ending the repack, when no data remains.
-                         SyncedStart = interval_start(ar_sync_record:get_next_synced_interval(
+                         SyncedStart = interval_start(arweave_storage_sync_record:get_next_synced_interval(
                                                         Cursor, infinity, ar_data_sync, StoreID), ModuleEnd + ?DATA_CHUNK_SIZE),
                          [TargetStart, SyncedStart]
                  end,
@@ -870,10 +870,10 @@ assemble_repack_chunk(
     SourcePacking = get_chunk_packing(PaddedEndOffset, ConfiguredPacking, StoreID),
 
     ShouldRepack = (
-      ar_chunk_storage:is_storage_supported(
+      arweave_storage_chunk_storage:is_storage_supported(
         PaddedEndOffset, ChunkSize, SourcePacking)
       orelse
-      ar_chunk_storage:is_storage_supported(
+      arweave_storage_chunk_storage:is_storage_supported(
         PaddedEndOffset, ChunkSize, TargetPacking)
      ),
 
@@ -902,12 +902,12 @@ assemble_repack_chunk(
     end.
 
 get_chunk_packing(PaddedEndOffset, ConfiguredPacking, StoreID) ->
-    HasConfiguredPacking = ar_sync_record:is_recorded(
+    HasConfiguredPacking = arweave_storage_sync_record:is_recorded(
                              PaddedEndOffset, ConfiguredPacking, ar_data_sync, StoreID),
     case HasConfiguredPacking of
         true -> ConfiguredPacking;
         _ ->
-            case ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID) of
+            case arweave_storage_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID) of
                 {true, Packing} -> Packing;
                 _ -> not_found
             end
@@ -1167,7 +1167,7 @@ expire_exor_request(BucketEndOffset, State) ->
     end.
 
 read_cursor(StoreID, TargetPacking, ModuleStart) ->
-    Filepath = ar_chunk_storage:get_filepath("repack_in_place_cursor2", StoreID),
+    Filepath = arweave_storage_chunk_storage:get_filepath("repack_in_place_cursor2", StoreID),
     DefaultCursor = case ModuleStart of
                         0 -> 0;
                         _ -> ModuleStart + 1
@@ -1189,7 +1189,7 @@ store_cursor(#state{} = State) ->
 store_cursor(none, _StoreID, _TargetPacking) ->
     ok;
 store_cursor(Cursor, StoreID, TargetPacking) ->
-    Filepath = ar_chunk_storage:get_filepath("repack_in_place_cursor2", StoreID),
+    Filepath = arweave_storage_chunk_storage:get_filepath("repack_in_place_cursor2", StoreID),
     file:write_file(Filepath, term_to_binary({Cursor, TargetPacking})).
 
 log_error(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) ->
@@ -1286,7 +1286,7 @@ count_states(cache, #state{} = State) ->
                                           {cache_size, maps:size(Map)},
                                           {states, maps:to_list(MapCount)}
                                          ]),
-    StoreIDLabel = ar_storage_module:label(StoreID),
+    StoreIDLabel = arweave_storage_module:label(StoreID),
     maps:fold(
       fun(ChunkState, Count, Acc) ->
               arweave_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
@@ -1311,7 +1311,7 @@ count_states(queue, #state{} = State) ->
                                                 {queue_size, gb_sets:size(WriteQueue)},
                                                 {states, maps:to_list(WriteQueueCount)}
                                                ]),
-    StoreIDLabel = ar_storage_module:label(StoreID),
+    StoreIDLabel = arweave_storage_module:label(StoreID),
     maps:fold(
       fun(ChunkState, Count, Acc) ->
               arweave_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
@@ -1369,7 +1369,7 @@ footprint_offsets_test_() ->
      ar_test_node:test_with_all_nodes_mocked([
                                               {arweave_lib_constants, partition_size, fun() -> 3_600_000_000_000 end},
                                               {arweave_lib_constants, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
-                                              {ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
+                                              {arweave_storage_module, get_overlap, fun(_) -> 104_857_600 end},
                                               {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
                                               {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
                                              ],
@@ -1377,8 +1377,8 @@ footprint_offsets_test_() ->
     ].
 
 test_footprint_offsets_small() ->
-    {Start0, End0} = ar_storage_module:module_range({0, arweave_lib_constants:partition_size(), unpacked}),
-    {Start1, End1} = ar_storage_module:module_range({arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked}),
+    {Start0, End0} = arweave_storage_module:module_range({0, arweave_lib_constants:partition_size(), unpacked}),
+    {Start1, End1} = arweave_storage_module:module_range({arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked}),
     PaddedEnd0 = arweave_lib_constants:get_chunk_padded_offset(End0),
     PaddedEnd1 = arweave_lib_constants:get_chunk_padded_offset(End1),
 
@@ -1418,9 +1418,9 @@ test_footprint_offsets_small() ->
 
 %% @doc run a series of footprint_offsets tests using the production constant values.
 test_footprint_offsets_large() ->
-    {Start0, End0} = ar_storage_module:module_range({0, arweave_lib_constants:partition_size(), unpacked}),
-    {Start1, End1} = ar_storage_module:module_range({arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked}),
-    {Start30, End30} = ar_storage_module:module_range({30 * arweave_lib_constants:partition_size(), 31 * arweave_lib_constants:partition_size(), unpacked}),
+    {Start0, End0} = arweave_storage_module:module_range({0, arweave_lib_constants:partition_size(), unpacked}),
+    {Start1, End1} = arweave_storage_module:module_range({arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked}),
+    {Start30, End30} = arweave_storage_module:module_range({30 * arweave_lib_constants:partition_size(), 31 * arweave_lib_constants:partition_size(), unpacked}),
     PaddedEnd0 = arweave_lib_constants:get_chunk_padded_offset(End0),
     PaddedEnd1 = arweave_lib_constants:get_chunk_padded_offset(End1),
     PaddedEnd30 = arweave_lib_constants:get_chunk_padded_offset(End30),
@@ -1485,8 +1485,8 @@ footprint_end_test_() ->
     ].
 
 test_footprint_end_small() ->
-    {Start0, End0} = ar_storage_module:module_range({0, arweave_lib_constants:partition_size(), unpacked}),
-    {Start1, End1} = ar_storage_module:module_range({arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked}),
+    {Start0, End0} = arweave_storage_module:module_range({0, arweave_lib_constants:partition_size(), unpacked}),
+    {Start1, End1} = arweave_storage_module:module_range({arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked}),
     PaddedEnd0 = arweave_lib_constants:get_chunk_padded_offset(End0),
     PaddedEnd1 = arweave_lib_constants:get_chunk_padded_offset(End1),
 
@@ -1510,15 +1510,15 @@ test_footprint_end_small() ->
 assemble_repack_chunk_test_() ->
     [
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
+                                              {arweave_storage_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
                                              ],
                                              fun test_assemble_repack_chunk/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
+                                              {arweave_storage_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
                                              ],
                                              fun test_assemble_repack_chunk_too_small_unpacked/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_sync_record, is_recorded, fun(_, _, _) -> {true, {spora_2_6, <<"addr">>}} end}
+                                              {arweave_storage_sync_record, is_recorded, fun(_, _, _) -> {true, {spora_2_6, <<"addr">>}} end}
                                              ],
                                              fun test_assemble_repack_chunk_too_small_packed/0, 30)
     ].
@@ -1736,32 +1736,32 @@ should_repack_test_() ->
     [
      ar_test_node:test_with_all_nodes_mocked([
                                               {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
-                                              {ar_sync_record, is_recorded, fun(_, _, _) -> false end},
-                                              {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
+                                              {arweave_storage_sync_record, is_recorded, fun(_, _, _) -> false end},
+                                              {arweave_storage_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
                                              ],
                                              fun test_should_repack_no_chunk_no_entropy/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
                                               {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
-                                              {ar_sync_record, is_recorded, fun(_, _, _) -> {true, {replica_2_9, <<"addr">>}} end},
-                                              {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
+                                              {arweave_storage_sync_record, is_recorded, fun(_, _, _) -> {true, {replica_2_9, <<"addr">>}} end},
+                                              {arweave_storage_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
                                              ],
                                              fun test_should_repack_chunk_and_entropy/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
                                               {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
-                                              {ar_sync_record, is_recorded, fun(_, _, _) -> false end},
-                                              {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
+                                              {arweave_storage_sync_record, is_recorded, fun(_, _, _) -> false end},
+                                              {arweave_storage_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
                                              ],
                                              fun test_should_repack_entropy_but_no_chunk/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
                                               {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
-                                              {ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
-                                              {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
+                                              {arweave_storage_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
+                                              {arweave_storage_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
                                              ],
                                              fun test_should_repack_unpacked_chunk_and_entropy/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
                                               {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end},
-                                              {ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
-                                              {ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
+                                              {arweave_storage_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
+                                              {arweave_storage_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
                                              ],
                                              fun test_should_repack_unpacked_chunk_no_entropy/0, 30)
     ].
@@ -1963,23 +1963,23 @@ test_should_repack_unpacked_chunk_no_entropy() ->
 get_next_cursor_test_() ->
     [
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_sync_record, get_next_unsynced_interval,
+                                              {arweave_storage_sync_record, get_next_unsynced_interval,
                                                fun(_, _, _, _, _) -> {1_500_000, 1_000_000} end},
-                                              {ar_sync_record, get_next_synced_interval,
+                                              {arweave_storage_sync_record, get_next_synced_interval,
                                                fun(_, _, _, _) -> {3_000_000, 2_000_000} end}
                                              ],
                                              fun test_get_next_cursor_data_ahead/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_sync_record, get_next_unsynced_interval,
+                                              {arweave_storage_sync_record, get_next_unsynced_interval,
                                                fun(_, _, _, _, _) -> not_found end},
-                                              {ar_sync_record, get_next_synced_interval,
+                                              {arweave_storage_sync_record, get_next_synced_interval,
                                                fun(_, _, _, _) -> not_found end}
                                              ],
                                              fun test_get_next_cursor_no_intervals/0, 30),
      ar_test_node:test_with_all_nodes_mocked([
-                                              {ar_sync_record, get_next_unsynced_interval,
+                                              {arweave_storage_sync_record, get_next_unsynced_interval,
                                                fun(_, _, _, _, _) -> {5_000_000, 600_000} end},
-                                              {ar_sync_record, get_next_synced_interval,
+                                              {arweave_storage_sync_record, get_next_synced_interval,
                                                fun(_, _, _, _) -> {5_000_000, 400_000} end}
                                              ],
                                              fun test_get_next_cursor_inside_intervals/0, 30)
@@ -2053,7 +2053,7 @@ test_init_repack_chunk_map_a() ->
                repack_chunk_map = #{},
                %% No footprint limit, so nothing is clipped.
                footprint_limit =
-                   ar_footprint_record:get_footprints_per_partition(),
+                   arweave_storage_footprint_record:get_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
 
@@ -2086,7 +2086,7 @@ test_init_repack_chunk_map_b() ->
                repack_chunk_map = #{},
                %% No footprint limit, so nothing is clipped.
                footprint_limit =
-                   ar_footprint_record:get_footprints_per_partition(),
+                   arweave_storage_footprint_record:get_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),
@@ -2122,7 +2122,7 @@ test_init_repack_chunk_map_sector_boundary() ->
                repack_chunk_map = #{},
                %% No footprint limit, so nothing is clipped.
                footprint_limit =
-                   ar_footprint_record:get_footprints_per_partition(),
+                   arweave_storage_footprint_record:get_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),

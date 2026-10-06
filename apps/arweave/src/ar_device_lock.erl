@@ -93,7 +93,7 @@ set_device_lock_metric(StoreID, Mode, Status) ->
                      complete -> 2;
                      _ -> -2
                  end,
-    StoreIDLabel = ar_storage_module:label(StoreID),
+    StoreIDLabel = arweave_storage_module:label(StoreID),
     arweave_metrics:gauge_set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
 
 %% @doc Update the number of replica 2.9 entropy workers at runtime.
@@ -187,7 +187,7 @@ initialize_state(State) ->
     RepackInPlaceModules = arweave_config:repack_modules(module_only),
     StoreIDToDevice = lists:foldl(
                         fun(Module, Acc) ->
-                                StoreID = ar_storage_module:id(Module),
+                                StoreID = arweave_storage_module:id(Module),
                                 Device = get_system_device(Module),
                                 ?LOG_INFO([
                                            {event, storage_module_device}, {store_id, StoreID}, {device, Device}]),
@@ -208,8 +208,8 @@ initialize_state(State) ->
 
 get_system_device(StorageModule) ->
     DataDir = arweave_config:get([data_dir]),
-    StoreID = ar_storage_module:id(StorageModule),
-    Path = ar_chunk_storage:get_chunk_storage_path(DataDir, StoreID),
+    StoreID = arweave_storage_module:id(StorageModule),
+    Path = arweave_storage_chunk_storage:get_chunk_storage_path(DataDir, StoreID),
     Device = ar_util:get_system_device(Path),
     case Device of
         "" -> StoreID;  % If the command fails or returns an empty string, return StoreID

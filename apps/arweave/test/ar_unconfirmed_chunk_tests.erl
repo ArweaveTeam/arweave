@@ -169,7 +169,7 @@ wait_until_tx_index_fallback(AbsoluteEndOffset) ->
     ok.
 
 wait_until_storage_module_offset(AbsoluteEndOffset, StorageModule) ->
-    StoreID = ar_storage_module:id(StorageModule),
+    StoreID = arweave_storage_module:id(StorageModule),
     ok = ar_test_await:chunk_recorded(main, AbsoluteEndOffset, #{ store_id => StoreID }),
     ok.
 

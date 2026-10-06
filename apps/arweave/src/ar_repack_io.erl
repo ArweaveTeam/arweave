@@ -30,7 +30,7 @@ start_link(Name, StoreID) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-    list_to_atom("ar_repack_io_" ++ ar_storage_module:label(StoreID)).
+    list_to_atom("ar_repack_io_" ++ arweave_storage_module:label(StoreID)).
 
 init(StoreID) ->
     State = #state{ store_id = StoreID },
@@ -46,7 +46,7 @@ init(StoreID) ->
 %%   read for each footprint offset is the ReadBatchSize derived by ar_repack and passed in.
 -spec read_footprint(
         [non_neg_integer()], non_neg_integer(), non_neg_integer(), non_neg_integer(),
-        ar_storage_module:store_id()) ->
+        arweave_storage_module:store_id()) ->
           ok.
 read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, StoreID) ->
     gen_server:cast(name(StoreID),
@@ -117,7 +117,7 @@ do_read_footprint(
                                                           BucketEndOffset, FootprintEnd, ReadBatchSize),
     ReadRangeSizeInBytes = ReadRangeEnd - ReadRangeStart,
     OffsetChunkMap =
-        case catch ar_chunk_storage:get_range(ReadRangeStart, ReadRangeSizeInBytes, StoreID) of
+        case catch arweave_storage_chunk_storage:get_range(ReadRangeStart, ReadRangeSizeInBytes, StoreID) of
             [] ->
                 #{};
             {'EXIT', _Exc} ->
@@ -138,7 +138,7 @@ do_read_footprint(
                             ),
     arweave_metrics:record_rate_metric(
       StartTime, ChunkReadSizeInBytes,
-      chunk_read_rate_bytes_per_second, [ar_storage_module:label(StoreID), repack]),
+      chunk_read_rate_bytes_per_second, [arweave_storage_module:label(StoreID), repack]),
 
     OffsetMetadataMap =
         case ar_data_sync:get_chunk_metadata_range(ReadRangeStart+1, ReadRangeEnd, StoreID) of
@@ -190,7 +190,7 @@ process_write_queue(WriteQueue, Packing, #state{} = State) ->
      ),
     arweave_metrics:record_rate_metric(
       StartTime, gb_sets:size(WriteQueue) * ?DATA_CHUNK_SIZE,
-      chunk_write_rate_bytes_per_second, [ar_storage_module:label(StoreID), repack]),
+      chunk_write_rate_bytes_per_second, [arweave_storage_module:label(StoreID), repack]),
     EndTime = erlang:monotonic_time(),
     ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
     log_debug(process_write_queue, State, [
@@ -209,7 +209,7 @@ write_repack_chunk(RepackChunk, Packing, #state{} = State) ->
             {replica_2_9, RewardAddr} = Packing,
             Entropy = RepackChunk#repack_chunk.target_entropy,
             BucketEndOffset = RepackChunk#repack_chunk.offsets#chunk_offsets.bucket_end_offset,
-            ar_entropy_storage:store_entropy(Entropy, BucketEndOffset, StoreID, RewardAddr);
+            arweave_storage_entropy_storage:store_entropy(Entropy, BucketEndOffset, StoreID, RewardAddr);
         write_chunk ->
             write_chunk(RepackChunk, Packing, State);
         _ ->
@@ -267,24 +267,24 @@ remove_from_sync_record(Offsets, StoreID) ->
 
     StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 
-    DeleteEntropyRecord = ar_entropy_storage:delete_record(PaddedEndOffset, StoreID),
+    DeleteEntropyRecord = arweave_storage_entropy_storage:delete_record(PaddedEndOffset, StoreID),
     DeleteFootprint =
         case DeleteEntropyRecord of
             ok ->
-                ar_footprint_record:delete(PaddedEndOffset, StoreID);
+                arweave_storage_footprint_record:delete(PaddedEndOffset, StoreID);
             Error ->
                 Error
         end,
     DeleteSyncRecord =
         case DeleteFootprint of
             ok ->
-                ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+                arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
             Error2 ->
                 Error2
         end,
     case DeleteSyncRecord of
         ok ->
-            ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
+            arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
         Error3 ->
             Error3
     end.
@@ -299,16 +299,16 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
       } = Metadata,
 
     StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-    ar_sync_record:add(PaddedEndOffset, StartOffset, Packing, ar_data_sync, StoreID),
+    arweave_storage_sync_record:add(PaddedEndOffset, StartOffset, Packing, ar_data_sync, StoreID),
     case ar_data_sync:is_footprint_record_supported(PaddedEndOffset, ChunkSize, Packing) of
         true ->
-            ar_footprint_record:add(PaddedEndOffset, Packing, StoreID);
+            arweave_storage_footprint_record:add(PaddedEndOffset, Packing, StoreID);
         false ->
             ok
     end,
 
     IsStorageSupported =
-        ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),
+        arweave_storage_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),
     IsReplica29 = case Packing of
                       {replica_2_9, _} -> true;
                       _ -> false
@@ -316,7 +316,7 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
 
     case IsStorageSupported andalso IsReplica29 of
         true ->
-            ar_entropy_storage:add_record(BucketEndOffset, Packing, StoreID);
+            arweave_storage_entropy_storage:add_record(BucketEndOffset, Packing, StoreID);
         _ -> ok
     end.
 

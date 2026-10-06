@@ -492,7 +492,7 @@ mainnet_packing_mocks() ->
     [
         {arweave_lib_constants, partition_size, fun() -> 3_600_000_000_000 end},
         {arweave_lib_constants, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
-        {ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
+        {arweave_storage_module, get_overlap, fun(_) -> 104_857_600 end},
         {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
         {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
     ].
@@ -1221,7 +1221,7 @@ wait_until_syncs_genesis_data() ->
     %% copy the missing data over from each other. This procedure is executed on startup
     %% but the disk pool did not have any data at the time.
     [
-        ar_chunk_copy:start_copy(ar_storage_module:id(M))
+        ar_chunk_copy:start_copy(arweave_storage_module:id(M))
         || M <- StorageModules
     ],
     [wait_until_syncs_data(Start, End, WeaveSize, Packing)

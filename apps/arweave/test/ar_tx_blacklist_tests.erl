@@ -420,7 +420,7 @@ assert_removed_chunks(StorageModules, BadOffsets) ->
     ).
 
 storage_module_covers_offset(Module, Offset) ->
-    {Start, End} = ar_storage_module:module_range(Module),
+    {Start, End} = arweave_storage_module:module_range(Module),
     Start =< Offset andalso Offset < End.
 
 remaining_stored_offsets(StorageModules, PaddedBadOffsets) ->
@@ -430,9 +430,9 @@ remaining_stored_offsets(StorageModules, PaddedBadOffsets) ->
     ])).
 
 remaining_stored_offsets_for_module(Module, PaddedBadOffsets) ->
-    {Start, End} = ar_storage_module:module_range(Module),
-    StoreID = ar_storage_module:id(Module),
-    Chunks = ar_chunk_storage:get_range(Start, End - Start, StoreID),
+    {Start, End} = arweave_storage_module:module_range(Module),
+    StoreID = arweave_storage_module:id(Module),
+    Chunks = arweave_storage_chunk_storage:get_range(Start, End - Start, StoreID),
     ChunkOffsets = [Offset || {Offset, _Chunk} <- Chunks],
     [
         Offset

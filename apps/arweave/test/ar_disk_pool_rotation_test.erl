@@ -57,6 +57,6 @@ test_disk_pool_rotation() ->
     ok = ar_test_await:global_sync_record_excludes(Options, Expected).
 
 get_global_sync_record(Options) ->
-    {ok, Binary} = ar_global_sync_record:get_serialized_sync_record(Options),
+    {ok, Binary} = arweave_storage_global_sync_record:get_serialized_sync_record(Options),
     {ok, Global} = arweave_lib_intervals:safe_from_etf(Binary),
     Global.

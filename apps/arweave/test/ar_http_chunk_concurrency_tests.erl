@@ -25,7 +25,7 @@ test_chunk_requests_are_served_concurrently() ->
     Counters = atomics:new(2, []),
     Chunk = binary:copy(<<7>>, ?DATA_CHUNK_SIZE),
     Mocks = [
-        {ar_sync_record, is_recorded, fun
+        {arweave_storage_sync_record, is_recorded, fun
             (_Offset, ar_data_sync) ->
                 {{true, unpacked}, "default"};
             (Offset, ID) ->

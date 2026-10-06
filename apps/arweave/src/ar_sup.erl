@@ -48,11 +48,8 @@ init([]) ->
     %% ar_data_discovery* tables moved to ar_data_sync_sup (the sup that
     %% owns the gen_server that uses them).
     ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
-    ets:new(ar_chunk_storage, [set, public, named_table]),
-    ets:new(ar_entropy_storage, [set, public, named_table]),
     ets:new(ar_mining_stats, [set, public, named_table]),
     ets:new(entropy_generation_stats, [ordered_set, public, named_table]),
-    ets:new(ar_global_sync_record, [set, public, named_table]),
     ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_disk_pool_chunks_cache, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_disk_pool_chunks_cache_reverse, [bag, public, named_table]),
@@ -84,17 +81,16 @@ init([]) ->
         ?CHILD(ar_tx_blacklist, worker),
         ?CHILD_SUP(ar_bridge_sup, supervisor),
         ?CHILD_SUP(ar_packing_sup, supervisor),
-        ?CHILD_SUP(ar_sync_record_sup, supervisor),
+        arweave_storage:child_spec(),
         ?CHILD(ar_header_sync, worker),
         %% `ar_data_sync_sup' must start before `ar_chunk_storage_sup' so its
         %% workers open `chunk_data_db'/`tx_index' before `ar_repack' workers
         %% read them; otherwise `ar_kv:get' returns `{error, db_not_found}'
         %% and `ar_repack' crashes.
         ?CHILD_SUP(ar_data_sync_sup, supervisor),
-        ?CHILD_SUP(ar_chunk_storage_sup, supervisor),
+        ?CHILD_SUP(ar_repack_sup, supervisor),
         ?CHILD_SUP(ar_data_root_sync_sup, supervisor),
         ?CHILD_SUP(ar_verify_chunks_sup, supervisor),
-        ?CHILD(ar_global_sync_record, worker),
         ?CHILD_SUP(ar_nonce_limiter_sup, supervisor),
         mining_sup(),
         ?CHILD(ar_coordination, worker),

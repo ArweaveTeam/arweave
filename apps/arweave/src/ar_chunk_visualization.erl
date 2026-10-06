@@ -71,7 +71,7 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
                                      BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(AbsoluteEndOffset),
                                      case maps:is_key(BucketEndOffset, Acc) of
                                          true ->
-                                             IsRecorded = ar_sync_record:is_recorded(
+                                             IsRecorded = arweave_storage_sync_record:is_recorded(
                                                             AbsoluteEndOffset, ar_data_sync, StoreID),
                                              maps:put(BucketEndOffset,
                                                       normalize_sync_record(IsRecorded, AbsoluteEndOffset, Metadata),
@@ -151,7 +151,7 @@ normalize_sync_record(_, _, not_found) ->
     error;
 normalize_sync_record({true, Packing}, PaddedEndOffset, Metadata) ->
     #chunk_metadata{ chunk_size = ChunkSize } = Metadata,
-    case ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing) of
+    case arweave_storage_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing) of
         true ->
             Packing;
         false ->

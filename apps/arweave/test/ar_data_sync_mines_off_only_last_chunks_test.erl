@@ -61,7 +61,7 @@ test_mines_off_only_last_chunks() ->
                     %% chunks.
                     lists:foreach(
                         fun(O) ->
-                            [ar_chunk_storage:delete(O, ar_storage_module:id(Module))
+                            [arweave_storage_chunk_storage:delete(O, arweave_storage_module:id(Module))
                                     || Module <- arweave_config:storage_modules()]
                         end,
                         lists:seq(?DATA_CHUNK_SIZE, arweave_lib_constants:strict_data_split_threshold(),

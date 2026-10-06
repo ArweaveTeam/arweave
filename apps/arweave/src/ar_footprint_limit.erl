@@ -16,8 +16,8 @@
 %% footprint_limit clamped to at least one and at most every footprint of
 %% a partition, or every footprint without a limit.
 get(StoreID) ->
-    All = ar_footprint_record:get_footprints_per_partition(),
-    case ar_storage_module:get_by_id(StoreID) of
+    All = arweave_storage_footprint_record:get_footprints_per_partition(),
+    case arweave_storage_module:get_by_id(StoreID) of
         {_Start, _End, _Packing} = Module ->
             clamp(arweave_config:storage_module_footprint_limit(Module), All);
         _ ->
@@ -31,12 +31,12 @@ clamp(Limit, All) ->
 
 %% @doc Whether the limit keeps every footprint of a partition.
 is_unlimited(Limit) ->
-    Limit >= ar_footprint_record:get_footprints_per_partition().
+    Limit >= arweave_storage_footprint_record:get_footprints_per_partition().
 
 %% @doc Whether the chunk with the given bucket end offset lies past the
 %% limit, in the part of its sector the module does not keep.
 is_beyond(BucketEndOffset, Limit) ->
-    ar_footprint_record:get_footprint(BucketEndOffset) >= Limit.
+    arweave_storage_footprint_record:get_footprint(BucketEndOffset) >= Limit.
 
 %% @doc The number of buckets from the given one to the end of the kept
 %% prefix of its sector, at most Count and at least one. Without a limit
@@ -46,7 +46,7 @@ clip(BucketEndOffset, Count, Limit) ->
         true ->
             Count;
         false ->
-            Footprint = ar_footprint_record:get_footprint(BucketEndOffset),
+            Footprint = arweave_storage_footprint_record:get_footprint(BucketEndOffset),
             max(1, min(Count, Limit - Footprint))
     end.
 
@@ -66,7 +66,7 @@ kept_intervals(Start, End, _Limit, Intervals) when Start >= End ->
 kept_intervals(Start, End, Limit, Intervals) ->
     ChunkEndOffset = Start + ?DATA_CHUNK_SIZE,
     SectorStart =
-        ar_footprint_record:get_sector_bucket_start(ChunkEndOffset, 0),
+        arweave_storage_footprint_record:get_sector_bucket_start(ChunkEndOffset, 0),
     AllowedEnd = min(SectorStart + Limit * ?DATA_CHUNK_SIZE, End),
     Intervals2 =
         case AllowedEnd > Start of
@@ -74,7 +74,7 @@ kept_intervals(Start, End, Limit, Intervals) ->
             false -> Intervals
         end,
     NextSectorStart =
-        ar_footprint_record:get_sector_bucket_start(ChunkEndOffset, 1),
+        arweave_storage_footprint_record:get_sector_bucket_start(ChunkEndOffset, 1),
     kept_intervals(NextSectorStart, End, Limit, Intervals2).
 
 %%%===================================================================
@@ -86,7 +86,7 @@ get_test() ->
     arweave_config:internal_with_test_config(fun() ->
         P = arweave_lib_constants:partition_size(),
         Addr = crypto:strong_rand_bytes(32),
-        All = ar_footprint_record:get_footprints_per_partition(),
+        All = arweave_storage_footprint_record:get_footprints_per_partition(),
         ok = arweave_config:internal_force_config(#{
             [storage_modules] => [
                 #{partition => 0, packing_format => replica_2_9,
@@ -95,10 +95,10 @@ get_test() ->
                 #{partition => 2, packing_format => unpacked,
                     footprint_limit => 10 * All}
             ]}),
-        ?assertEqual(1, get(ar_storage_module:id({0, P, {replica_2_9, Addr}}))),
-        ?assertEqual(All, get(ar_storage_module:id({P, 2 * P, unpacked}))),
+        ?assertEqual(1, get(arweave_storage_module:id({0, P, {replica_2_9, Addr}}))),
+        ?assertEqual(All, get(arweave_storage_module:id({P, 2 * P, unpacked}))),
         %% A limit above the partition keeps every footprint.
-        ?assertEqual(All, get(ar_storage_module:id({2 * P, 3 * P, unpacked}))),
+        ?assertEqual(All, get(arweave_storage_module:id({2 * P, 3 * P, unpacked}))),
         ?assertEqual(All, get(?DEFAULT_MODULE)),
         ?assertEqual(All, get("storage_module_9_unpacked")),
         ok = arweave_config:internal_force_config(#{
@@ -109,7 +109,7 @@ get_test() ->
                     footprint_limit => 1}
             ]}),
         %% A repack source is limited by its repack entry.
-        ?assertEqual(1, get(ar_storage_module:id({3 * P, 4 * P, unpacked})))
+        ?assertEqual(1, get(arweave_storage_module:id({3 * P, 4 * P, unpacked})))
     end).
 
 is_beyond_test() ->

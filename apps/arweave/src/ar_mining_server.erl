@@ -152,14 +152,14 @@ log_prepare_solution_failure2(Solution, FailureType, FailureReason, Source, Addi
                 {packing_difficulty, PackingDifficulty} | AdditionalLogData]),
     arweave_metrics:gauge_inc(mining_solution, [FailureReason]).
 
--spec get_packing_difficulty(Packing :: ar_storage_module:packing()) ->
+-spec get_packing_difficulty(Packing :: arweave_storage_module:packing()) ->
           PackingDifficulty :: non_neg_integer().
 get_packing_difficulty({replica_2_9, _}) ->
     ?REPLICA_2_9_PACKING_DIFFICULTY;
 get_packing_difficulty(_) ->
     0.
 
--spec get_packing_type(Packing :: ar_storage_module:packing()) ->
+-spec get_packing_type(Packing :: arweave_storage_module:packing()) ->
           PackingType :: atom().
 get_packing_type({replica_2_9, _}) ->
     replica_2_9;
@@ -817,8 +817,8 @@ prepare_solution(poa1, Candidate, Solution) ->
                     error
             end;
         {error, Error} ->
-            Modules = ar_storage_module:get_all(RecallByte1 + 1),
-            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+            Modules = arweave_storage_module:get_all(RecallByte1 + 1),
+            ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
             LogData = [{recall_byte, RecallByte1},
                        {modules_covering_recall_byte, ModuleIDs},
                        {fetch_proofs_error, io_lib:format("~p", [Error])},
@@ -831,10 +831,10 @@ prepare_solution(poa1, Candidate, Solution) ->
                     ?LOG_WARNING([{event, failed_to_find_poa1_proofs_for_h2_solution},
                                   {error, io_lib:format("~p", [Error])},
                                   {tags, [solution_proofs]} | LogData]),
-                    case ar_storage_module:get(RecallByte1 + 1, Packing) of
+                    case arweave_storage_module:get(RecallByte1 + 1, Packing) of
                         {_ModuleStart, _ModuleEnd, Packing} = StorageModule ->
-                            StoreID = ar_storage_module:id(StorageModule),
-                            case ar_chunk_storage:get(RecallByte1, StoreID) of
+                            StoreID = arweave_storage_module:id(StorageModule),
+                            case arweave_storage_chunk_storage:get(RecallByte1, StoreID) of
                                 not_found ->
                                     log_prepare_solution_failure(Solution,
                                                                  rejected, chunk1_for_h2_solution_not_found, miner,
@@ -874,8 +874,8 @@ prepare_solution(poa2, Candidate, Solution) ->
         {ok, PoA2} ->
             prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 });
         {error, _Error} ->
-            Modules = ar_storage_module:get_all(RecallByte2 + 1),
-            ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+            Modules = arweave_storage_module:get_all(RecallByte2 + 1),
+            ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
             LogData = [{recall_byte2, RecallByte2}, {modules_covering_recall_byte, ModuleIDs}],
             %% If we are a coordinated miner and not an exit node - the exit
             %% node will fetch the proofs.
@@ -913,8 +913,8 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
                 {ok, PoA} ->
                     {ok, PoA};
                 {error, Error} ->
-                    Modules = ar_storage_module:get_all(RecallByte + 1),
-                    ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
+                    Modules = arweave_storage_module:get_all(RecallByte + 1),
+                    ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
                     ?LOG_INFO([{event, failed_to_find_poa_proofs_locally},
                                {poa, PoAType},
                                {error, io_lib:format("~p", [Error])},

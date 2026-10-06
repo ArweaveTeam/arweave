@@ -357,7 +357,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_sync_record),
-        {ok, Binary} ?= ar_global_sync_record:get_serialized_sync_buckets(),
+        {ok, Binary} ?= arweave_storage_global_sync_record:get_serialized_sync_buckets(),
         {200, #{}, Binary, Req}
     else
         {error, not_initialized} ->
@@ -369,7 +369,7 @@ handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
 handle(<<"GET">>, [<<"footprint_buckets">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_sync_record),
-        {ok, Binary} ?= ar_global_sync_record:get_serialized_footprint_buckets(),
+        {ok, Binary} ?= arweave_storage_global_sync_record:get_serialized_footprint_buckets(),
         {200, #{}, Binary, Req}
     else
         {error, not_initialized} ->
@@ -382,7 +382,7 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
     Options = #{ format => content_type_format(Req), random_subset => true },
     maybe
         ok ?= acquire_http_semaphore(get_sync_record),
-        {ok, Binary} ?= ar_global_sync_record:get_serialized_sync_record(Options),
+        {ok, Binary} ?= arweave_storage_global_sync_record:get_serialized_sync_record(Options),
         {200, #{}, Binary, Req}
     else
         {error, timeout} ->
@@ -454,7 +454,7 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedEnd, EncodedLimi
 
 %% Return the information about the presence of the data from the given footprint
 %% in the given partition. The returned intervals contain global footprint record
-%% offsets, as computed by ar_footprint_record:get_offset/1, of the chunks belonging
+%% offsets, as computed by arweave_storage_footprint_record:get_offset/1, of the chunks belonging
 %% to the given footprint and present on this node. Each interval is a
 %% ["Start", "End"] pair where Start is excluded and End is included. Adjacent
 %% offsets in the record do not denote adjacent chunks in the weave: the footprint
@@ -2084,7 +2084,7 @@ handle_post_tx_invalid_data_root_response() ->
 
 handle_get_data_sync_record(Start, Limit, Req) ->
     Options = #{ start => Start, limit => Limit, format => content_type_format(Req) },
-    case ar_global_sync_record:get_serialized_sync_record(Options) of
+    case arweave_storage_global_sync_record:get_serialized_sync_record(Options) of
         {ok, Binary} ->
             {200, #{}, Binary, Req};
         {error, timeout} ->
@@ -2094,7 +2094,7 @@ handle_get_data_sync_record(Start, Limit, Req) ->
 handle_get_data_sync_record(Start, End, Limit, Req) ->
     Options = #{ start => Start, right_bound => End, limit => Limit,
                  format => content_type_format(Req) },
-    case ar_global_sync_record:get_serialized_sync_record(Options) of
+    case arweave_storage_global_sync_record:get_serialized_sync_record(Options) of
         {ok, Binary} ->
             {200, #{}, Binary, Req};
         {error, timeout} ->
@@ -2114,7 +2114,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
     FindStorageModules =
         case CheckFootprintNumber of
             ok ->
-                case ar_storage_module:get_all(Start, End) of
+                case arweave_storage_module:get_all(Start, End) of
                     [] ->
                         {404, #{}, <<>>, Req};
                     Modules ->
@@ -2126,7 +2126,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
     FindStoreIDPacking =
         case FindStorageModules of
             {ok, StorageModules} ->
-                {ok, [{ar_storage_module:id(Module), Packing}
+                {ok, [{arweave_storage_module:id(Module), Packing}
                       || {_, _, Packing} = Module <- StorageModules]};
             Reply2 ->
                 Reply2
@@ -2140,7 +2140,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
                                %% packing. Chunks held in other packings (e.g. small
                                %% unpacked chunks before the strict data split threshold)
                                %% are for now only synced via the "normal" sync mode.
-                               Intervals = ar_footprint_record:get_intervals(Partition, FootprintNumber, Packing2, StoreID2),
+                               Intervals = arweave_storage_footprint_record:get_intervals(Partition, FootprintNumber, Packing2, StoreID2),
                                arweave_lib_intervals:union(Acc, Intervals)
                        end,
                        arweave_lib_intervals:new(),
@@ -2175,7 +2175,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
                                 true
                         end,
                     {ReadPacking, CheckRecords} =
-                        case ar_sync_record:is_recorded(Offset, ar_data_sync) of
+                        case arweave_storage_sync_record:is_recorded(Offset, ar_data_sync) of
                             false ->
                                 {none, {reply, {404, #{}, <<>>, Req}}};
                             {true, _} ->
@@ -2317,7 +2317,7 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
     maybe
         ok ?= acquire_http_semaphore(get_chunk),
         CheckRecords =
-            case ar_sync_record:is_recorded(Offset, ar_data_sync) of
+            case arweave_storage_sync_record:is_recorded(Offset, ar_data_sync) of
                 false ->
                     {reply, {404, #{}, <<>>, Req}};
                 {true, _StoreID} ->

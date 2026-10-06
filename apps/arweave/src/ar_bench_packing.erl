@@ -270,8 +270,8 @@ pack_single_chunk(ChunkDir, PaddedEndOffset, UnpackEntropy) ->
     DecipherMs = (DecipherEnd - DecipherStart) / 1000,
 
     %% Step 3: Read pack entropy from disk
-    ChunkFileStart = ar_chunk_storage:get_chunk_file_start(PaddedEndOffset),
-    {Position, _ChunkOffset} = ar_chunk_storage:get_position_and_relative_chunk_offset(
+    ChunkFileStart = arweave_storage_chunk_storage:get_chunk_file_start(PaddedEndOffset),
+    {Position, _ChunkOffset} = arweave_storage_chunk_storage:get_position_and_relative_chunk_offset(
                                  ChunkFileStart, PaddedEndOffset),
     Filepath = filename:join(ChunkDir, integer_to_list(ChunkFileStart)),
     FH = get_file_handle(Filepath),
@@ -338,8 +338,8 @@ write_chunk_callback(ChunkEntropy, BucketEndOffset, _RewardAddr, ChunkDir, ok) -
     ok.
 
 write_chunk(ChunkDir, PaddedEndOffset, Chunk) ->
-    ChunkFileStart = ar_chunk_storage:get_chunk_file_start(PaddedEndOffset),
-    {Position, ChunkOffset} = ar_chunk_storage:get_position_and_relative_chunk_offset(
+    ChunkFileStart = arweave_storage_chunk_storage:get_chunk_file_start(PaddedEndOffset),
+    {Position, ChunkOffset} = arweave_storage_chunk_storage:get_position_and_relative_chunk_offset(
                                 ChunkFileStart, PaddedEndOffset),
     Filepath = filename:join(ChunkDir, integer_to_list(ChunkFileStart)),
     FH = get_file_handle(Filepath),

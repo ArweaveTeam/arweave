@@ -95,7 +95,7 @@
 name(?DEFAULT_MODULE) ->
     ar_peer_sync_default;
 name(StoreID) ->
-    list_to_atom("ar_peer_sync_" ++ ar_storage_module:label(StoreID)).
+    list_to_atom("ar_peer_sync_" ++ arweave_storage_module:label(StoreID)).
 
 register_workers() ->
     [?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- store_ids()].
@@ -129,7 +129,7 @@ reset_inflight() ->
 %% @doc The StoreIDs that have an ar_peer_sync instance (one per storage module
 %% plus the default module).
 store_ids() ->
-    [ar_storage_module:id(SM) || SM <- arweave_config:storage_modules()]
+    [arweave_storage_module:id(SM) || SM <- arweave_config:storage_modules()]
         ++ [?DEFAULT_MODULE].
 
 %% @doc Update the weave-size snapshot. Called by ar_data_sync on chain-tip
@@ -156,7 +156,7 @@ init(StoreID) ->
 init_range(?DEFAULT_MODULE) ->
     {-1, -1};
 init_range(StoreID) ->
-    case (catch ar_storage_module:get_range(StoreID)) of
+    case (catch arweave_storage_module:get_range(StoreID)) of
         {'EXIT', _} -> {-1, -1};
         {RangeStart, RangeEnd} ->
             {max(0, arweave_lib_constants:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
@@ -304,14 +304,14 @@ do_enqueue_footprint(State) ->
             sweep = #sweep{ start = Start, end_ = End, offset = Offset }
             = Sweep } = State,
     Partition = arweave_lib_replica_2_9:get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
-    Footprint = ar_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE),
+    Footprint = arweave_storage_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE),
     UnsyncedIntervals =
         case ar_footprint_limit:is_beyond(Offset + ?DATA_CHUNK_SIZE,
                                           FootprintLimit) of
             true ->
                 arweave_lib_intervals:new();
             false ->
-                ar_footprint_record:get_unsynced_intervals(
+                arweave_storage_footprint_record:get_unsynced_intervals(
                     Partition, Footprint, StoreID)
         end,
     case arweave_lib_intervals:is_empty(UnsyncedIntervals) of
@@ -505,7 +505,7 @@ claim_tasks(StoreID, PeerEntries, Queue) ->
 %% climbing-without-bound value flags a dedup-overlay leak.
 publish_queue_metrics(#state{ store_id = StoreID, queue = Queue }) ->
     arweave_metrics:gauge_set(sync_task_queue_inflight_bytes,
-                         [ar_storage_module:label(StoreID)],
+                         [arweave_storage_module:label(StoreID)],
                          ar_sync_task_queue:inflight_bytes(Queue)).
 
 %%%===================================================================
@@ -518,7 +518,7 @@ get_hot_peers(Offset, normal) ->
       fun() -> ar_data_discovery:get_bucket_peers(Bucket) end,
       ?GET_SYNC_RECORD_PATH);
 get_hot_peers(Offset, footprint) ->
-    FootprintBucket = ar_footprint_record:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE),
+    FootprintBucket = arweave_storage_footprint_record:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE),
     get_hot_peers_for_bucket(
       fun() -> ar_data_discovery:get_footprint_bucket_peers(FootprintBucket) end,
       ?GET_FOOTPRINT_RECORD_PATH).
@@ -558,7 +558,7 @@ get_unsynced_intervals(Start, End, StoreID) ->
 get_unsynced_intervals(Start, End, Intervals, _StoreID) when Start >= End ->
     Intervals;
 get_unsynced_intervals(Start, End, Intervals, StoreID) ->
-    case ar_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
+    case arweave_storage_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
         not_found ->
             arweave_lib_intervals:add(Intervals, End, Start);
         {End2, Start2} ->
@@ -582,7 +582,7 @@ get_unsynced_intervals(Start, End, Intervals, StoreID) ->
 %% intervals. Remove everything outside [Start, End].
 cut_peer_footprint_intervals(FootprintIntervals, Start, End) ->
     ByteIntervals =
-        ar_footprint_record:get_intervals_from_footprint_intervals(FootprintIntervals),
+        arweave_storage_footprint_record:get_intervals_from_footprint_intervals(FootprintIntervals),
     ByteIntervals2 = arweave_lib_intervals:cut(ByteIntervals, End),
     PaddedStart =
         case arweave_lib_constants:get_chunk_padded_offset(Start) of

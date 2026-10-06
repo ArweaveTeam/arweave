@@ -25,7 +25,7 @@ merge(Args) ->
         arweave_config:parse_storage_module_arg(StorageModuleConfig),
     ok = arweave_config:set([storage_modules], [Entry]),
     [StorageModule] = arweave_config:storage_modules(),
-    StoreID = ar_storage_module:id(StorageModule),
+    StoreID = arweave_storage_module:id(StorageModule),
 
     case ar_data_doctor:check_module_dir(DataDir, StoreID) of
         false ->
@@ -39,7 +39,7 @@ merge(_DataDir, _StorageModule, _StoreID, []) ->
     ok;
 merge(DataDir, StorageModule, StoreID, [SrcDir | SrcDirs]) ->
 
-    DstDir = ar_chunk_storage:storage_module_path(DataDir, StoreID),
+    DstDir = arweave_storage_chunk_storage:storage_module_path(DataDir, StoreID),
     ar:console("~n~nMerge data from ~p into ~p~n~n", [SrcDir, DstDir]),
 
     move_chunk_storage(SrcDir, DstDir),

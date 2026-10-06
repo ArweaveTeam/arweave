@@ -65,10 +65,10 @@ get_partitions(PartitionUpperBound) ->
     Max = ar_node:get_max_partition_number(PartitionUpperBound),
     AllPartitions = lists:foldl(
                       fun   (Module, Acc) ->
-                              Addr = ar_storage_module:module_address(Module),
+                              Addr = arweave_storage_module:module_address(Module),
                               PackingDifficulty =
-                                  ar_storage_module:module_packing_difficulty(Module),
-                              {Start, End} = ar_storage_module:module_range(Module, 0),
+                                  arweave_storage_module:module_packing_difficulty(Module),
+                              {Start, End} = arweave_storage_module:module_range(Module, 0),
                               Partitions = get_store_id_partitions(Start, End),
                               lists:foldl(
                                 fun(PartitionNumber, AccInner) ->
@@ -93,7 +93,7 @@ get_minable_storage_modules() ->
     MiningAddr = arweave_config:get([mining, address]),
     lists:filter(
       fun   (Module) ->
-              ar_storage_module:module_address(Module) == MiningAddr
+              arweave_storage_module:module_address(Module) == MiningAddr
       end,
       arweave_config:storage_modules()
      ).
@@ -265,13 +265,13 @@ start_io_thread(Mode, StoreIDs) ->
 map_partition_to_store_ids([], PartitionToStoreIDs) ->
     PartitionToStoreIDs;
 map_partition_to_store_ids([StoreID | StoreIDs], PartitionToStoreIDs) ->
-    case ar_storage_module:get_by_id(StoreID) of
+    case arweave_storage_module:get_by_id(StoreID) of
         not_found ->
             %% Occasionally happens in tests.
             ?LOG_ERROR([{event, mining_storage_module_not_found}, {store_id, StoreID}]),
             map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs);
         StorageModule ->
-            {Start, End} = ar_storage_module:module_range(StorageModule, 0),
+            {Start, End} = arweave_storage_module:module_range(StorageModule, 0),
             Partitions = get_store_id_partitions(Start, End),
             PartitionToStoreIDs2 = lists:foldl(
                                      fun(Partition, Acc) ->
@@ -295,7 +295,7 @@ open_files(StoreIDs) ->
                   ?DEFAULT_MODULE ->
                       ok;
                   _ ->
-                      ar_chunk_storage:open_files(StoreID)
+                      arweave_storage_chunk_storage:open_files(StoreID)
               end
       end,
       StoreIDs).
@@ -334,7 +334,7 @@ chunks_read(standalone, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOf
 get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, ?DEFAULT_MODULE, Intervals) ->
     ReplicaFormat = get_replica_format_from_packing_difficulty(PackingDifficulty),
     Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
-    case ar_sync_record:get_next_synced_interval(Start, End, Packing, ar_data_sync, ?DEFAULT_MODULE) of
+    case arweave_storage_sync_record:get_next_synced_interval(Start, End, Packing, ar_data_sync, ?DEFAULT_MODULE) of
         not_found ->
             Intervals;
         {Right, Left} ->
@@ -414,7 +414,7 @@ read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID) ->
     RecallRangeSize = arweave_lib_constants:get_recall_range_size(PackingDifficulty),
     Intervals = get_packed_intervals(RangeStart, RangeStart + RecallRangeSize,
                                      MiningAddress, PackingDifficulty, StoreID, arweave_lib_intervals:new()),
-    ChunkOffsets = ar_chunk_storage:get_range(RangeStart, RecallRangeSize, StoreID),
+    ChunkOffsets = arweave_storage_chunk_storage:get_range(RangeStart, RecallRangeSize, StoreID),
     ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
     log_read_range(Mode, Candidate, WhichChunk, length(ChunkOffsets), StartTime),
     ChunkOffsets2.
@@ -474,7 +474,7 @@ find_thread(RangeStart, RangeEnd, State) ->
 find_largest_intersection(not_found, _RangeStart, _RangeEnd, _Max, _MaxKey) ->
     not_found;
 find_largest_intersection([StoreID | StoreIDs], RangeStart, RangeEnd, Max, MaxKey) ->
-    I = ar_sync_record:get_intersection_size(RangeEnd, RangeStart, ar_chunk_storage, StoreID),
+    I = arweave_storage_sync_record:get_intersection_size(RangeEnd, RangeStart, ar_chunk_storage, StoreID),
     case I > Max of
         true ->
             find_largest_intersection(StoreIDs, RangeStart, RangeEnd, I, StoreID);

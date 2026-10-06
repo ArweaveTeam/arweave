@@ -28,7 +28,7 @@ init([]) ->
 register_workers() ->
     lists:map(
       fun(StorageModule) ->
-              StoreID = ar_storage_module:id(StorageModule),
+              StoreID = arweave_storage_module:id(StorageModule),
               Name = ar_data_root_sync:name(StoreID),
               ?CHILD_WITH_ARGS(ar_data_root_sync, worker, Name, [StoreID])
       end,
