@@ -303,10 +303,10 @@ handle_info({entropy, BucketEndOffset, RewardAddr, Entropies}, #state{} = State)
       {replica_2_9, RewardAddr},
       State),
 
-    EntropyKeys = arweave_entropy_preparation:generate_entropy_keys(RewardAddr, BucketEndOffset),
-    EntropyOffsets = arweave_entropy_preparation:entropy_offsets(BucketEndOffset, FootprintEnd),
+    EntropyKeys = arweave_entropy:generate_entropy_keys(RewardAddr, BucketEndOffset),
+    EntropyOffsets = arweave_entropy:entropy_offsets(BucketEndOffset, FootprintEnd),
 
-    State2 = arweave_entropy_preparation:map_entropies(
+    State2 = arweave_entropy:map_entropies(
                Entropies,
                EntropyOffsets,
                FootprintStart,
@@ -750,7 +750,7 @@ footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd) ->
     BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(BucketEndOffset),
     %% end sanity checks
 
-    EntropyOffsets = arweave_entropy_preparation:entropy_offsets(BucketEndOffset, ModuleEnd),
+    EntropyOffsets = arweave_entropy:entropy_offsets(BucketEndOffset, ModuleEnd),
 
     FilteredOffsets = lists:filter(
                         fun(Offset) -> Offset >= BucketEndOffset end,
@@ -781,7 +781,7 @@ generate_repack_entropy(BucketEndOffset, {replica_2_9, RewardAddr}, #state{} = S
        store_id = StoreID
       } = State,
 
-    arweave_entropy_preparation:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self());
+    arweave_entropy:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self());
 generate_repack_entropy(_BucketEndOffset, _Packing, #state{}) ->
     %% Only generate entropy for the replica.2.9 packing format.
     ok.

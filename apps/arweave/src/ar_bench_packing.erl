@@ -250,8 +250,8 @@ run_packing_iteration(Iteration, _Threads, RandomXState, UnpackRewardAddr, Chunk
 pack_all_chunks(_ChunkDir, [], _BaseOffset) ->
     {0, 0, 0, 0};
 pack_all_chunks(ChunkDir, [Footprint | Rest], BaseOffset) ->
-    Offsets = arweave_entropy_preparation:entropy_offsets(BaseOffset + ?DATA_CHUNK_SIZE, ?PARTITION_SIZE),
-    {D1, R1, E1, W1} = arweave_entropy_preparation:map_entropies(
+    Offsets = arweave_entropy:entropy_offsets(BaseOffset + ?DATA_CHUNK_SIZE, ?PARTITION_SIZE),
+    {D1, R1, E1, W1} = arweave_entropy:map_entropies(
                          Footprint, Offsets, 0, [], <<>>,
                          fun pack_chunk_callback/5, [ChunkDir], {0, 0, 0, 0}),
     {D2, R2, E2, W2} = pack_all_chunks(ChunkDir, Rest, BaseOffset + ?DATA_CHUNK_SIZE),
@@ -327,8 +327,8 @@ generate_footprint(RandomXState, RewardAddr, UniqueId) ->
 write_all_entropies(_ChunkDir, [], _BaseOffset) ->
     ok;
 write_all_entropies(ChunkDir, [Footprint | Rest], BaseOffset) ->
-    Offsets = arweave_entropy_preparation:entropy_offsets(BaseOffset + ?DATA_CHUNK_SIZE, ?PARTITION_SIZE),
-    arweave_entropy_preparation:map_entropies(
+    Offsets = arweave_entropy:entropy_offsets(BaseOffset + ?DATA_CHUNK_SIZE, ?PARTITION_SIZE),
+    arweave_entropy:map_entropies(
       Footprint, Offsets, 0, [], <<>>,
       fun write_chunk_callback/5, [ChunkDir], ok),
     write_all_entropies(ChunkDir, Rest, BaseOffset + ?DATA_CHUNK_SIZE).
