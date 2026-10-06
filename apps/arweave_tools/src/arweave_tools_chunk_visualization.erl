@@ -1,11 +1,11 @@
+%%% Chunk-state classification and bitmap rendering for `data-doctor inspect
+%%% bitmap'.
 -module(arweave_tools_chunk_visualization).
-
 
 -export([get_chunk_packings/3, get_chunk_packings/4, generate_bitmap/1, bitmap_to_binary/1, print_chunk_stats/1]).
 
-
 -include_lib("arweave/include/ar.hrl").
-
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -13,10 +13,15 @@
 
 %% @doc Build a list of lists where each inner list represents a sector worth of packing
 %% formats. Each sector row will form a row in the bitmap.
+%%
+%% In a replica.2.9 store a bucket without a chunk is `entropy' when its
+%% entropy is prepared, `missing' when it has neither chunk nor entropy, and
+%% `none' past the store's footprint limit.
 get_chunk_packings(ModuleStart, ModuleEnd, StoreID) ->
     get_chunk_packings(ModuleStart, ModuleEnd, StoreID, false).
-
 get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
+    #store_info{ packing = StorePacking } = arweave_storage:store_info(StoreID),
+    FootprintLimit = ar_footprint_limit:get(StoreID),
     Partition = ar_node:get_partition_number(ModuleStart),
     PartitionStart = arweave_lib_constants:get_chunk_bucket_start(ModuleStart),
     SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
@@ -75,7 +80,12 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
                                      BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(AbsoluteEndOffset),
                                      case maps:is_key(BucketEndOffset, Acc) of
                                          true ->
-                                             IsRecorded = arweave_storage:is_recorded(AbsoluteEndOffset, any_packing, {ar_data_sync, byte}, StoreID),
+                                             IsRecorded = arweave_storage:is_recorded(
+                                                 AbsoluteEndOffset,
+                                                 any_packing,
+                                                 {ar_data_sync, byte},
+                                                 StoreID
+                                             ),
                                              maps:put(BucketEndOffset,
                                                       normalize_sync_record(IsRecorded, AbsoluteEndOffset, Metadata),
                                                       Acc);
@@ -92,13 +102,20 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
                         BucketEndOffset = SectorStart + J * ?DATA_CHUNK_SIZE,
                         case BucketEndOffset < ModuleStart orelse BucketEndOffset > ModuleEnd of
                             true -> none;
-                            false -> maps:get(BucketEndOffset, UpdatedMap)
+                            false ->
+                                case maps:get(BucketEndOffset, UpdatedMap) of
+                                    missing ->
+                                        classify_missing(
+                                          BucketEndOffset, StorePacking,
+                                          FootprintLimit, StoreID);
+                                    BucketPacking ->
+                                        BucketPacking
+                                end
                         end
                 end,
                 lists:seq(1, BucketsPerSector))
       end,
       lists:seq(0, NumSectors - 1)).
-
 
 %% @doc Convert packing formats to RGB pixels.
 generate_bitmap(PackingRows) ->
@@ -107,7 +124,6 @@ generate_bitmap(PackingRows) ->
               lists:map(fun packing_color/1, Row)
       end,
       PackingRows).
-
 
 %% @doc Convert a bitmap (list of rows; each row a list of {R, G, B} tuples)
 %% into a binary PPM image.
@@ -124,7 +140,6 @@ bitmap_to_binary(BitmapRows) ->
     %% Build pixel binary data (each pixel is 3 bytes: R,G,B)
     PixelData = [<<R:8, G:8, B:8>> || Row <- BitmapRows, {R, G, B} <- Row],
     list_to_binary([Header, PixelData]).
-
 
 print_chunk_stats(ChunkPackings) ->
     Counts = chunk_statistics(ChunkPackings),
@@ -147,7 +162,6 @@ print_chunk_stats(ChunkPackings) ->
       lists:sort(
         maps:to_list(Counts))).
 
-
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -158,7 +172,7 @@ normalize_sync_record(_, _, not_found) ->
     error;
 normalize_sync_record({true, Packing}, PaddedEndOffset, Metadata) ->
     #chunk_metadata{ chunk_size = ChunkSize } = Metadata,
-    case arweave_storage_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing) of
+    case arweave_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing) of
         true ->
             Packing;
         false ->
@@ -167,10 +181,28 @@ normalize_sync_record({true, Packing}, PaddedEndOffset, Metadata) ->
 normalize_sync_record(_, _, _) ->
     error.
 
+%% @doc A replica.2.9 bucket without a chunk is prepared when its entropy is
+%% recorded; otherwise it is a hole that syncing must regenerate entropy for.
+%% A footprint past the store's limit is neither: the store does not keep it.
+classify_missing(BucketEndOffset, {replica_2_9, _} = Packing, Limit, StoreID) ->
+    case ar_footprint_limit:is_beyond(BucketEndOffset, Limit) of
+        true ->
+            none;
+        false ->
+            case arweave_storage:is_entropy_recorded(
+                    BucketEndOffset, Packing, StoreID) of
+                false -> missing;
+                _ -> entropy
+            end
+    end;
+classify_missing(_BucketEndOffset, _Packing, _Limit, _StoreID) ->
+    missing.
 
 %% @doc Returns a unique color (as an {R,G,B} tuple) for each recognized packing format.
 packing_color(missing) ->
     {0, 0, 0};
+packing_color(entropy) ->
+    {64, 64, 64};
 packing_color(error) ->
     {255, 0, 0};
 packing_color(too_small) ->
@@ -199,20 +231,15 @@ packing_color(replica_2_9) ->
 packing_color(spora_2_6) ->
     {0, 255, 0}; %% green
 packing_color(_) ->
-    {255, 0, 0}.
- %% red for unknown packings
+    {255, 0, 0}. %% red for unknown packings
 
 chunk_statistics(ChunkPackings) ->
     lists:foldl(
       fun(Row, AccCounts) ->
               lists:foldl(
-                fun(Packing, RowAccCounts) ->
-                        maps:update_with(Packing, fun(N) -> N + 1 end, 1, RowAccCounts)
-                end,
+                fun arweave_lib_util:increment_map_value/2,
                 AccCounts,
                 Row)
       end,
       #{},
       ChunkPackings).
-
-

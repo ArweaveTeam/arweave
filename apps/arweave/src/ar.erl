@@ -3,12 +3,6 @@
 -behaviour(application).
 -compile(warnings_as_errors).
 -export([
-         benchmark_hash/0,
-         benchmark_hash/1,
-         benchmark_packing/0,
-         benchmark_packing/1,
-         benchmark_vdf/0,
-         benchmark_vdf/1,
          console/1,
          console/2,
          create_ecdsa_wallet/0,
@@ -260,30 +254,6 @@ convert_config([Format, InputFile, OutputFile]) ->
 convert_config(_Args) ->
     io:format("Usage: ./bin/arweave convert_config <json|yaml> "
               "<InputFile> <OutputFile>~n"),
-    init:stop(1).
-
-benchmark_vdf() ->
-    Args = init:get_plain_arguments(),
-    benchmark_vdf(Args).
-
-benchmark_vdf(Args) ->
-    arweave_tools_bench_vdf:run_benchmark_from_cli(Args),
-    init:stop(1).
-
-benchmark_hash() ->
-    Args = init:get_plain_arguments(),
-    benchmark_hash(Args).
-
-benchmark_hash(Args) ->
-    arweave_tools_bench_hash:run_benchmark_from_cli(Args),
-    init:stop(1).
-
-benchmark_packing() ->
-    Args = init:get_plain_arguments(),
-    benchmark_packing(Args).
-
-benchmark_packing(Args) ->
-    arweave_tools_bench_packing:run_benchmark_from_cli(Args),
     init:stop(1).
 
 shutdown([NodeName]) ->

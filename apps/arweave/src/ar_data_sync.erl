@@ -16,6 +16,7 @@
 %%% The default module also owns chain-tip/header-facing state used by the rest
 %%% of the node; configured storage modules own their local data range only.
 -module(ar_data_sync).
+-export([open_store_dbs/1]).
 
 -behaviour(gen_server).
 
@@ -2651,3 +2652,6 @@ with_mocked_chunks_index(CurrentKey, TestFun) ->
         TestFun).
 
 -endif.
+
+open_store_dbs(StoreID) ->
+    open_store_dbs(arweave_config:get([data_dir]), StoreID).
