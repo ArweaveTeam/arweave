@@ -37,8 +37,8 @@ test_vdf_basic_compute_verify_() ->
     StartStepNumber2 = 3,
     StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
     StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
-    PrevOutput = arweave_util:decode(?ENCODED_PREV_OUTPUT),
-    ResetSeed = arweave_util:decode(?RESET_SEED),
+    PrevOutput = arweave_lib_util:decode(?ENCODED_PREV_OUTPUT),
+    ResetSeed = arweave_lib_util:decode(?RESET_SEED),
 
     ResetSalt = -1,
 
@@ -81,7 +81,7 @@ test_vdf_basic_compute_verify_break_(StartSalt, PrevOutput, StepBetweenHashCount
         Hashes, ResetSalt, ResetSeed, BreakPos-1).
 
 assert_verify(StartSalt, ResetSalt, Output, NumCheckpointsBetweenHashes, Checkpoints) ->
-    ResetSeed = arweave_util:decode(?RESET_SEED),
+    ResetSeed = arweave_lib_util:decode(?RESET_SEED),
     ?assertEqual(
         {true, iolist_to_binary(Checkpoints)},
         ar_vdf:verify(
@@ -103,8 +103,8 @@ test_vdf_reset_0_() ->
     StartStepNumber2 = 3,
     StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
     StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
-    PrevOutput = arweave_util:decode(?ENCODED_PREV_OUTPUT),
-    ResetSeed = arweave_util:decode(?RESET_SEED),
+    PrevOutput = arweave_lib_util:decode(?ENCODED_PREV_OUTPUT),
+    ResetSeed = arweave_lib_util:decode(?RESET_SEED),
 
     ResetSalt = StartSalt1,
 
@@ -129,8 +129,8 @@ test_vdf_reset_1_() ->
     StartStepNumber2 = 3,
     StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
     StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
-    PrevOutput = arweave_util:decode(?ENCODED_PREV_OUTPUT),
-    ResetSeed = arweave_util:decode(?RESET_SEED),
+    PrevOutput = arweave_lib_util:decode(?ENCODED_PREV_OUTPUT),
+    ResetSeed = arweave_lib_util:decode(?RESET_SEED),
 
     ResetSalt = StartSalt2,
 
@@ -158,8 +158,8 @@ test_vdf_reset_mid_checkpoint_() ->
     StartStepNumber2 = 3,
     StartSalt1 = ar_vdf:step_number_to_salt_number(StartStepNumber1-1),
     StartSalt2 = ar_vdf:step_number_to_salt_number(StartStepNumber2-1),
-    PrevOutput = arweave_util:decode(?ENCODED_PREV_OUTPUT),
-    ResetSeed = arweave_util:decode(?RESET_SEED),
+    PrevOutput = arweave_lib_util:decode(?ENCODED_PREV_OUTPUT),
+    ResetSeed = arweave_lib_util:decode(?RESET_SEED),
 
     % means inside 1 iteration
     ResetSaltFlat = 10,
@@ -238,9 +238,9 @@ compute_next_vdf_difficulty_min_test_block() ->
 
 compute_next_vdf_difficulty_2_7_test_()->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> infinity end}],
+        [{arweave_lib_fork, height_2_6, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7_1, fun() -> infinity end}],
         fun() ->
             B = compute_next_vdf_difficulty_test_block(),
             10465 = ar_block:compute_next_vdf_difficulty(B),
@@ -249,9 +249,9 @@ compute_next_vdf_difficulty_2_7_test_()->
 
 compute_next_vdf_difficulty_min_2_7_test_()->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> infinity end}],
+        [{arweave_lib_fork, height_2_6, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7_1, fun() -> infinity end}],
         fun() ->
             B = compute_next_vdf_difficulty_min_test_block(),
             ?MIN_VDF_DIFFICULTY = ar_block:compute_next_vdf_difficulty(B),
@@ -260,9 +260,9 @@ compute_next_vdf_difficulty_min_2_7_test_()->
 
 compute_next_vdf_difficulty_min_2_7_1_test_()->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> -1 end}],
+        [{arweave_lib_fork, height_2_6, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7_1, fun() -> -1 end}],
         fun() ->
             B = compute_next_vdf_difficulty_min_test_block(),
             ?MIN_VDF_DIFFICULTY = ar_block:compute_next_vdf_difficulty(B),
@@ -271,9 +271,9 @@ compute_next_vdf_difficulty_min_2_7_1_test_()->
 
 compute_next_vdf_difficulty_2_7_1_test_()->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_6, fun() -> -1 end},
-        {ar_fork, height_2_7, fun() -> -1 end},
-        {ar_fork, height_2_7_1, fun() -> -1 end}],
+        [{arweave_lib_fork, height_2_6, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7, fun() -> -1 end},
+        {arweave_lib_fork, height_2_7_1, fun() -> -1 end}],
         fun() ->
             B = compute_next_vdf_difficulty_test_block(),
             10046 = ar_block:compute_next_vdf_difficulty(B),

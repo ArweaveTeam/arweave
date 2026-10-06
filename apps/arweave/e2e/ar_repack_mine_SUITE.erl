@@ -156,7 +156,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
                                                           [mining, address] => AddrB
                                                          }),
 
-    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),
+    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*arweave_lib_constants:partition_size()),
     ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
     ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
     %% Source ends at height 6, putting the disk-pool threshold at the
@@ -174,7 +174,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
                                                           [storage_modules] => StorageModules,
                                                           [mining, address] => AddrB
                                                          }),
-    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),
+    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*arweave_lib_constants:partition_size()),
     ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
     ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
     ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking),
@@ -193,7 +193,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
             %% Partitions 0-3 are now fully below it; partition 4 holds
             %% only the two chunks below the threshold (the chunk ending
             %% at 8126464 crosses into partition 4).
-            ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),
+            ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*arweave_lib_constants:partition_size()),
             ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
             ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
             ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking),
@@ -204,7 +204,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
     ValidatorPeerName = ar_test_node:peer_name(ValidatorNode),
     ValidatorPeerName = ar_test_node:start_other_node(ValidatorNode, B0, #{
-                                                                           [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(RepackerNode))],
+                                                                           [peers, trusted] => [arweave_lib_util:format_peer(ar_test_node:peer_ip(RepackerNode))],
                                                                            [join, start_from_latest_state] => true,
                                                                            [join, auto] => true,
                                                                            [storage_modules] => []

@@ -180,7 +180,7 @@ pick_peers(Peers, N) ->
 %% per-peer; callers intersect with their own sought set. Pure ETS read -
 %% the cache is populated by the per-peer scanner loop.
 -spec get_peer_intervals(Peer, Left, Right) ->
-          {ok, ar_intervals:intervals(), non_neg_integer() | infinity}
+          {ok, arweave_lib_intervals:intervals(), non_neg_integer() | infinity}
               | {error, cache_miss} when
       Peer :: term(),
       Left :: non_neg_integer(),
@@ -202,7 +202,7 @@ get_peer_intervals(Peer, Left, _Right) ->
 %% @doc Return the peer's most recently fetched footprint intervals for
 %% the given {Partition, Footprint} coordinate.
 -spec get_peer_footprint_intervals(Peer, Partition, Footprint) ->
-          {ok, ar_intervals:intervals()} | {error, cache_miss} when
+          {ok, arweave_lib_intervals:intervals()} | {error, cache_miss} when
       Peer :: term(),
       Partition :: non_neg_integer(),
       Footprint :: non_neg_integer().
@@ -271,7 +271,7 @@ handle_cast({check_expiration, Peer}, State) ->
                                     {remove_peer, Peer, {cache_stale, Age}}),
                     {noreply, State};
                 false ->
-                    arweave_util:cast_after((?MIN_SCAN_INTERVAL_MS) * 2 - Age,
+                    ar_util:cast_after((?MIN_SCAN_INTERVAL_MS) * 2 - Age,
                                        ?MODULE, {check_expiration, Peer}),
                     {noreply, State}
             end
@@ -303,7 +303,7 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
       SyncBuckets
      ),
     ?LOG_DEBUG([{event, processed_peer_sync_buckets},
-                {peer, arweave_util:format_peer(Peer)}]),
+                {peer, arweave_lib_util:format_peer(Peer)}]),
     {noreply, State};
 
 handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
@@ -333,7 +333,7 @@ handle_cast({remove_peer, Peer, Reason}, State) ->
             %% Peer was never accepted into discovery (or already removed).
             %% No bucket or cache rows exist, and no need for cleanup.
             ?LOG_DEBUG([{event, peer_remove_skipped},
-                        {peer, arweave_util:format_peer(Peer)},
+                        {peer, arweave_lib_util:format_peer(Peer)},
                         {reason, Reason}]),
             {noreply, State};
         true ->
@@ -368,7 +368,7 @@ do_remove_peer(Peer, Reason, State) ->
     lists:foreach(fun(Pid) -> exit(Pid, kill) end, KilledScanners),
     wipe_peer_cache_rows(Peer),
     ?LOG_DEBUG([{event, peer_removed_from_discovery},
-                {peer, arweave_util:format_peer(Peer)},
+                {peer, arweave_lib_util:format_peer(Peer)},
                 {reason, Reason},
                 {had_sync_buckets, NumSync > 0},
                 {had_footprint_buckets, NumFootprint > 0},
@@ -448,11 +448,11 @@ pick_peers(Peers, PeerLen, N) ->
     {Best, Other} = lists:split(max(PeerLen div 5, 1), Peers),
     %% TakeBest: Select 80% of N worth of Best - or all of Best if Best is short.
     TakeBest = max((8 * N) div 10, 1),
-    Part1 = arweave_util:pick_random(Best, min(length(Best), TakeBest)),
+    Part1 = arweave_lib_util:pick_random(Best, min(length(Best), TakeBest)),
     %% TakeOther: rather than strictly take 20% of N, take enough to ensure we're
     %% getting the full N of picked peers.
     TakeOther = N - length(Part1),
-    Part2 = arweave_util:pick_random(Other, min(length(Other), TakeOther)),
+    Part2 = arweave_lib_util:pick_random(Other, min(length(Other), TakeOther)),
     Part1 ++ Part2.
 
 collect_peers() ->
@@ -492,7 +492,7 @@ emit_state_snapshot(#state{ scan_waiting = Waiting, scan_inflight = Inflight,
                        length(ar_peers:get_peers(current))
                    catch _:_ -> -1
                    end,
-    MailboxLen = arweave_util:message_queue_len(self()),
+    MailboxLen = ar_util:message_queue_len(self()),
     ?LOG_DEBUG([{event, data_discovery_state_snapshot},
                 {network_buckets_rows, ets:info(?MODULE, size)},
                 {footprint_buckets_rows,
@@ -588,7 +588,7 @@ maybe_schedule_expiration_check(Peer, ScanJobs) ->
         true ->
             ok;
         false ->
-            arweave_util:cast_after((?MIN_SCAN_INTERVAL_MS) * 2, ?MODULE,
+            ar_util:cast_after((?MIN_SCAN_INTERVAL_MS) * 2, ?MODULE,
                                {check_expiration, Peer}),
             ok
     end.
@@ -635,7 +635,7 @@ schedule_requeue({Peer, Mode}, State) ->
                               queue:in({Peer, Mode}, State2#state.scan_waiting) };
         false ->
             Delay = ?MIN_SCAN_INTERVAL_MS - Elapsed,
-            arweave_util:cast_after(Delay, ?MODULE, {requeue_scan, Peer, Mode}),
+            ar_util:cast_after(Delay, ?MODULE, {requeue_scan, Peer, Mode}),
             State2
     end.
 
@@ -676,7 +676,7 @@ safe_run_peer_scan(Peer, Mode) ->
         run_peer_scan(Peer, Mode)
     catch Class:Reason:Stacktrace ->
             ?LOG_WARNING([{event, data_discovery_peer_scan_failed},
-                          {peer, arweave_util:format_peer(Peer)},
+                          {peer, arweave_lib_util:format_peer(Peer)},
                           {mode, Mode},
                           {class, Class},
                           {reason, io_lib:format("~p", [Reason])},
@@ -685,7 +685,7 @@ safe_run_peer_scan(Peer, Mode) ->
 run_peer_scan(Peer, Mode) ->
     StartMs = erlang:monotonic_time(millisecond),
     ?LOG_DEBUG([{event, peer_scan}, {stage, started},
-                {peer, arweave_util:format_peer(Peer)}, {mode, Mode}]),
+                {peer, arweave_lib_util:format_peer(Peer)}, {mode, Mode}]),
     Init = #scan_stats{ peer = Peer, mode = Mode, start_ms = StartMs },
     Stats = case Mode of
                 normal ->
@@ -701,7 +701,7 @@ run_peer_scan(Peer, Mode) ->
                     end
             end,
     ?LOG_DEBUG([{event, peer_scan}, {stage, completed},
-                {peer, arweave_util:format_peer(Peer)}, {mode, Mode},
+                {peer, arweave_lib_util:format_peer(Peer)}, {mode, Mode},
                 {elapsed_ms, erlang:monotonic_time(millisecond) - StartMs},
                 {fetches, Stats#scan_stats.fetches},
                 {fetches_with_data, Stats#scan_stats.fetches_with_data},
@@ -710,7 +710,7 @@ run_peer_scan(Peer, Mode) ->
 scan_normal_for_peer(Peer, SyncBuckets, Init) ->
     %% Shuffle modules so concurrent scanners don't all hammer the same
     %% module first - spreads load across the configured range.
-    Modules = arweave_util:shuffle_list(arweave_config:storage_modules()),
+    Modules = arweave_lib_util:shuffle_list(arweave_config:storage_modules()),
     lists:foldl(
       fun(StorageModule, Acc) ->
               StoreID = ar_storage_module:id(StorageModule),
@@ -735,7 +735,7 @@ scan_normal_module(Peer, SyncBuckets, RangeStart, RangeEnd, StoreID, Acc) ->
     %% partitions are 2MB) used to write keys the discover loop never
     %% read, leaving sync stuck above the first window.
     StepStart = (RangeStart div ?QUERY_RANGE_STEP_SIZE) * ?QUERY_RANGE_STEP_SIZE,
-    Offsets = arweave_util:shuffle_list(
+    Offsets = arweave_lib_util:shuffle_list(
                 lists:seq(StepStart, RangeEnd - 1, ?QUERY_RANGE_STEP_SIZE)),
     lists:foldl(
       fun(Offset, Acc1) ->
@@ -751,7 +751,7 @@ scan_normal_window(Peer, SyncBuckets, Start, StoreID, Acc) ->
     case ar_sync_buckets:get(Bucket, ?NETWORK_DATA_BUCKET_SIZE, SyncBuckets) > 0 of
         true ->
             Unsynced = unsynced_intervals_in_window(Start, StepEnd, StoreID),
-            case ar_intervals:is_empty(Unsynced) of
+            case arweave_lib_intervals:is_empty(Unsynced) of
                 true ->
                     Acc;
                 false ->
@@ -765,27 +765,27 @@ scan_normal_window(Peer, SyncBuckets, Start, StoreID, Acc) ->
     end.
 
 unsynced_intervals_in_window(Start, End, StoreID) ->
-    unsynced_intervals_in_window(Start, End, ar_intervals:new(), StoreID).
+    unsynced_intervals_in_window(Start, End, arweave_lib_intervals:new(), StoreID).
 
 unsynced_intervals_in_window(Start, End, Acc, _StoreID) when Start >= End ->
     Acc;
 unsynced_intervals_in_window(Start, End, Acc, StoreID) ->
     case ar_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
         not_found ->
-            ar_intervals:add(Acc, End, Start);
+            arweave_lib_intervals:add(Acc, End, Start);
         {End2, Start2} ->
             case Start2 > Start of
                 true ->
                     End3 = min(Start2, End),
                     unsynced_intervals_in_window(End2, End,
-                                                 ar_intervals:add(Acc, End3, Start), StoreID);
+                                                 arweave_lib_intervals:add(Acc, End3, Start), StoreID);
                 _ ->
                     unsynced_intervals_in_window(End2, End, Acc, StoreID)
             end
     end.
 
 scan_footprint_for_peer(Peer, FootprintBuckets, Init) ->
-    Modules = arweave_util:shuffle_list(arweave_config:storage_modules()),
+    Modules = arweave_lib_util:shuffle_list(arweave_config:storage_modules()),
     lists:foldl(
       fun(StorageModule, Acc) ->
               StoreID = ar_storage_module:id(StorageModule),
@@ -802,7 +802,7 @@ scan_footprint_module(Peer, FootprintBuckets, _Cursor, RangeStart, RangeEnd, Sto
     %% scan pass visits them in a different order. ar_replica_2_9's
     %% get_next_fetch_offset/3 defines the canonical iteration: walk
     %% chunk-by-chunk inside one sector, then jump to the next partition.
-    Offsets = arweave_util:shuffle_list(
+    Offsets = arweave_lib_util:shuffle_list(
                 footprint_offsets(RangeStart, RangeEnd)),
     lists:foldl(
       fun(Cursor, Acc1) ->
@@ -819,14 +819,14 @@ footprint_offsets(Cursor, _RangeStart, RangeEnd, Acc) when Cursor >= RangeEnd ->
     lists:reverse(Acc);
 footprint_offsets(Cursor, RangeStart, RangeEnd, Acc) ->
     Acc2 = [Cursor | Acc],
-    Next = ar_replica_2_9:get_next_fetch_offset(Cursor, RangeStart, RangeEnd),
+    Next = arweave_lib_replica_2_9:get_next_fetch_offset(Cursor, RangeStart, RangeEnd),
     case Next =< Cursor of
         true -> lists:reverse(Acc2);
         false -> footprint_offsets(Next, RangeStart, RangeEnd, Acc2)
     end.
 
 scan_footprint_offset(Peer, FootprintBuckets, Cursor, StoreID, Acc) ->
-    Partition = ar_replica_2_9:get_entropy_partition(Cursor + ?DATA_CHUNK_SIZE),
+    Partition = arweave_lib_replica_2_9:get_entropy_partition(Cursor + ?DATA_CHUNK_SIZE),
     Footprint = ar_footprint_record:get_footprint(Cursor + ?DATA_CHUNK_SIZE),
     FootprintBucket = ar_footprint_record:get_footprint_bucket(Cursor + ?DATA_CHUNK_SIZE),
     case is_integer(FootprintBucket)
@@ -835,7 +835,7 @@ scan_footprint_offset(Peer, FootprintBuckets, Cursor, StoreID, Acc) ->
         true ->
             Unsynced = ar_footprint_record:get_unsynced_intervals(
                          Partition, Footprint, StoreID),
-            case ar_intervals:is_empty(Unsynced) of
+            case arweave_lib_intervals:is_empty(Unsynced) of
                 true ->
                     Acc;
                 false ->
@@ -855,14 +855,14 @@ scan_footprint_offset(Peer, FootprintBuckets, Cursor, StoreID, Acc) ->
 %%
 %% Normal mode returns byte intervals - sum directly.
 accumulate_fetch_normal({ok, Intervals, _PeerRightBound}, Acc) ->
-    bump(ar_intervals:sum(Intervals), Acc);
+    bump(arweave_lib_intervals:sum(Intervals), Acc);
 accumulate_fetch_normal(_Other, Acc) ->
     bump(0, Acc).
 
 %% Footprint mode returns intervals in footprint-offset units where one
 %% unit = one chunk = ?DATA_CHUNK_SIZE bytes.
 accumulate_fetch_footprint({ok, Intervals}, Acc) ->
-    bump(ar_intervals:sum(Intervals) * ?DATA_CHUNK_SIZE, Acc);
+    bump(arweave_lib_intervals:sum(Intervals) * ?DATA_CHUNK_SIZE, Acc);
 accumulate_fetch_footprint(_Other, Acc) ->
     bump(0, Acc).
 
@@ -881,7 +881,7 @@ bump(Bytes, Acc) ->
 maybe_log_progress(#scan_stats{ fetches = N } = Stats)
   when N rem ?PROGRESS_LOG_INTERVAL =:= 0 ->
     ?LOG_DEBUG([{event, peer_scan}, {stage, progress},
-                {peer, arweave_util:format_peer(Stats#scan_stats.peer)},
+                {peer, arweave_lib_util:format_peer(Stats#scan_stats.peer)},
                 {mode, Stats#scan_stats.mode},
                 {elapsed_ms,
                  erlang:monotonic_time(millisecond) - Stats#scan_stats.start_ms},
@@ -898,17 +898,17 @@ fetch_sync_buckets(Peer) ->
             {ok, SyncBuckets};
         {error, request_type_not_found} ->
             ?LOG_DEBUG([{event, sync_buckets_request_type_not_found},
-                        {peer, arweave_util:format_peer(Peer)}]),
+                        {peer, arweave_lib_util:format_peer(Peer)}]),
             error;
         {error, Reason} ->
             ar_http_iface_client:log_failed_request(Reason,
                                                     [{event, failed_to_fetch_sync_buckets},
-                                                     {peer, arweave_util:format_peer(Peer)},
+                                                     {peer, arweave_lib_util:format_peer(Peer)},
                                                      {reason, io_lib:format("~p", [Reason])}]),
             error;
         Other ->
             ?LOG_DEBUG([{event, failed_to_fetch_sync_buckets},
-                        {peer, arweave_util:format_peer(Peer)},
+                        {peer, arweave_lib_util:format_peer(Peer)},
                         {reason, io_lib:format("~p", [Other])}]),
             error
     end.
@@ -925,17 +925,17 @@ fetch_footprint_buckets(Peer) ->
                     {ok, FootprintBuckets};
                 {error, request_type_not_found} ->
                     ?LOG_DEBUG([{event, footprint_buckets_request_type_not_found},
-                                {peer, arweave_util:format_peer(Peer)}]),
+                                {peer, arweave_lib_util:format_peer(Peer)}]),
                     error;
                 {error, Reason} ->
                     ar_http_iface_client:log_failed_request(Reason,
                                                             [{event, failed_to_fetch_footprint_buckets},
-                                                             {peer, arweave_util:format_peer(Peer)},
+                                                             {peer, arweave_lib_util:format_peer(Peer)},
                                                              {reason, io_lib:format("~p", [Reason])}]),
                     error;
                 Other ->
                     ?LOG_DEBUG([{event, failed_to_fetch_footprint_buckets},
-                                {peer, arweave_util:format_peer(Peer)},
+                                {peer, arweave_lib_util:format_peer(Peer)},
                                 {reason, io_lib:format("~p", [Other])}]),
                     error
             end
@@ -1035,9 +1035,9 @@ fetch_peer_intervals_http(Peer, Left, Right, Key) ->
     case PeerReply of
         {ok, PeerIntervals} ->
             PeerRightBound =
-                case ar_intervals:is_empty(PeerIntervals) of
+                case arweave_lib_intervals:is_empty(PeerIntervals) of
                     true -> infinity;
-                    false -> element(1, ar_intervals:largest(PeerIntervals))
+                    false -> element(1, arweave_lib_intervals:largest(PeerIntervals))
                 end,
             cache_store(Key, PeerIntervals, PeerRightBound),
             {ok, PeerIntervals, PeerRightBound};
@@ -1061,7 +1061,7 @@ fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key) ->
             cache_store(Key, Intervals, none),
             {ok, Intervals};
         not_found ->
-            Empty = ar_intervals:new(),
+            Empty = arweave_lib_intervals:new(),
             cache_store(Key, Empty, none),
             {ok, Empty};
         Error ->

@@ -1,0 +1,8 @@
+{application, arweave_lib, [
+    {description, "Arweave protocol constants and pure helpers"},
+    {vsn, "2.9.7-alpha1"},
+    {applications, [kernel, stdlib, crypto, jiffy, b64fast]},
+    {modules, []},
+    {registered, []},
+    {env, []}
+]}.

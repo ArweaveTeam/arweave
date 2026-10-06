@@ -59,7 +59,7 @@ test_mining_reward() ->
 
 % @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
+    ar_test_node:test_with_all_nodes_mocked([{arweave_lib_fork, height_2_6, fun() -> 0 end}],
         fun test_multi_node_mining_reward/0, ?TEST_NODE_TIMEOUT).
 
 test_multi_node_mining_reward() ->
@@ -110,7 +110,7 @@ replay_attack_test_() ->
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
+    ar_test_node:test_with_all_nodes_mocked([{arweave_lib_fork, height_2_6, fun() -> 0 end}],
         fun test_wallet_transaction/0, ?TEST_NODE_TIMEOUT).
 
 test_wallet_transaction() ->
@@ -188,7 +188,7 @@ test_persisted_mempool() ->
         %% Expect the pending transactions to be picked up and distributed.
         ok = arweave_config:force_config(#{
             [join, start_from_latest_state] => false,
-            [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(peer1))]
+            [peers, trusted] => [arweave_lib_util:format_peer(ar_test_node:peer_ip(peer1))]
         }),
         %% Restart in load mode (runtime => false) so boot validators can
         %% rewrite static config.

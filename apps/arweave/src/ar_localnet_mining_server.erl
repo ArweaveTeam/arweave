@@ -126,7 +126,7 @@ mine_block3({error, Error}, _State, _MiningAddr) ->
     ?LOG_ERROR([{event, failed_to_create_localnet_block}, {step, sample_chunk_with_proof}, {reason, io_lib:format("~p", [Error])}]),
     error;
 mine_block3({RecallByte1, _Chunk1, PoA1}, State, MiningAddr) ->
-    NoncesPerChunk = ar_block:get_nonces_per_chunk(?REPLICA_2_9_PACKING_DIFFICULTY),
+    NoncesPerChunk = arweave_lib_constants:get_nonces_per_chunk(?REPLICA_2_9_PACKING_DIFFICULTY),
     Nonce = rand:uniform(NoncesPerChunk) - 1,
     SubChunk1 = get_sub_chunk(PoA1#poa.chunk, Nonce, ?REPLICA_2_9_PACKING_DIFFICULTY),
     Stage1Data = #{
@@ -263,7 +263,7 @@ pick_random_storage_module(StorageModules) ->
           fun(Module) ->
                   StoreID = ar_storage_module:id(Module),
                   Intervals = ar_sync_record:get(ar_data_sync, StoreID),
-                  case ar_intervals:is_empty(Intervals) of
+                  case arweave_lib_intervals:is_empty(Intervals) of
                       true ->
                           false;
                       false ->
@@ -280,9 +280,9 @@ pick_random_storage_module(StorageModules) ->
     end.
 
 sample_chunk_with_proof(_StoreID, Intervals, MiningAddr) ->
-    TotalSize = ar_intervals:sum(Intervals),
+    TotalSize = arweave_lib_intervals:sum(Intervals),
     RandomOffset = rand:uniform(TotalSize) - 1,
-    List = ar_intervals:to_list(Intervals),
+    List = arweave_lib_intervals:to_list(Intervals),
     AbsoluteOffset = find_offset_in_intervals(List, RandomOffset),
     RecallByte = (AbsoluteOffset div ?DATA_CHUNK_SIZE) * ?DATA_CHUNK_SIZE,
     Packing = {replica_2_9, MiningAddr},

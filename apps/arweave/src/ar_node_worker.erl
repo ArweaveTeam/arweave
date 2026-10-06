@@ -98,7 +98,7 @@ tx_id_prefix(TXID) ->
     binary:part(TXID, 0, 8).
 
 %% @doc Return true if the given transaction identifier is found in the mempool or
-%% block cache (the last ar_block:get_consensus_window_size() blocks).
+%% block cache (the last arweave_lib_constants:get_consensus_window_size() blocks).
 is_mempool_or_block_cache_tx(TXID) ->
     ets:match_object(tx_prefixes, {tx_id_prefix(TXID), TXID}) /= [].
 
@@ -247,9 +247,9 @@ block_index_not_found(BI) ->
     {Last, _, _} = hd(BI),
     {First, _, _} = lists:last(BI),
     ar:console("~n~n\tThe local state is missing the target block. Available height range: ~p to ~p.~n",
-               [arweave_util:encode(First), arweave_util:encode(Last)]),
+               [arweave_lib_util:encode(First), arweave_lib_util:encode(Last)]),
     ?LOG_INFO([{event, local_state_missing_target},
-               {first, arweave_util:encode(First)}, {last, arweave_util:encode(Last)}]),
+               {first, arweave_lib_util:encode(First)}, {last, arweave_lib_util:encode(Last)}]),
     timer:sleep(1000),
     init:stop(1).
 
@@ -275,7 +275,7 @@ validate_trusted_peers(Peers) ->
             %% wrong-network peers. Runs during sup tree boot, before
             %% `arweave_config:runtime/0' freezes static specs.
             ok = arweave_config:set([peers, trusted],
-                                    [arweave_util:format_peer(Peer) || Peer <- ValidPeers]),
+                                    [arweave_lib_util:format_peer(Peer) || Peer <- ValidPeers]),
             case arweave_config:get([features, time_syncing]) of
                 true ->
                     validate_clock_sync(ValidPeers);
@@ -291,14 +291,14 @@ filter_valid_peers(Peers) ->
               case ar_http_iface_client:get_info(Peer, network) of
                   info_unavailable ->
                       io:format("~n\tPeer ~s is not available.~n~n",
-                                [arweave_util:format_peer(Peer)]),
+                                [arweave_lib_util:format_peer(Peer)]),
                       false;
                   <<?NETWORK_NAME>> ->
                       true;
                   _ ->
                       io:format(
                         "~n\tPeer ~s does not belong to the network ~s.~n~n",
-                        [arweave_util:format_peer(Peer), ?NETWORK_NAME]
+                        [arweave_lib_util:format_peer(Peer), ?NETWORK_NAME]
                        ),
                       false
               end
@@ -332,12 +332,12 @@ validate_clock_sync(Peers) ->
                                     {error, Err} ->
                                         ar:console(
                                           "Failed to get time from peer ~s: ~p.",
-                                          [arweave_util:format_peer(Peer), Err]
+                                          [arweave_lib_util:format_peer(Peer), Err]
                                          ),
                                         false
                                 end
                         end,
-    Responses = arweave_util:pmap(ValidatePeerClock, [P || P <- Peers, not is_pid(P)]),
+    Responses = arweave_lib_util:pmap(ValidatePeerClock, [P || P <- Peers, not is_pid(P)]),
     case clock_sync_ok(Responses) of
         true ->
             ok;
@@ -363,7 +363,7 @@ clock_sync_ok(Responses) ->
 
 log_peer_clock_diff(Peer, Delta) ->
     Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
-    WarningArgs = [arweave_util:format_peer(Peer), Delta],
+    WarningArgs = [arweave_lib_util:format_peer(Peer), Delta],
     io:format(Warning, WarningArgs),
     ?LOG_WARNING(Warning, WarningArgs).
 
@@ -411,7 +411,7 @@ handle_cast(process_task_queue, #{ task_queue := TaskQueue } = State) ->
             gen_server:cast(self(), process_task_queue),
             handle_task(Task, State#{ task_queue => TaskQueue2 });
         false ->
-            arweave_util:cast_after(?PROCESS_TASK_QUEUE_FREQUENCY_MS, ?MODULE, process_task_queue),
+            ar_util:cast_after(?PROCESS_TASK_QUEUE_FREQUENCY_MS, ?MODULE, process_task_queue),
             {noreply, State}
     end;
 
@@ -466,7 +466,7 @@ handle_info({event, nonce_limiter, initialized}, State) ->
     ar_storage:store_block_index(BI),
     RecentBI = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
     Current = element(1, hd(RecentBI)),
-    RecentBlocks = lists:sublist(Blocks, ar_block:get_consensus_window_size()),
+    RecentBlocks = lists:sublist(Blocks, arweave_lib_constants:get_consensus_window_size()),
     RecentBlocks2 = set_poa_caches(RecentBlocks),
     ar_block_cache:initialize_from_list(block_cache, RecentBlocks2),
     B = hd(RecentBlocks2),
@@ -522,34 +522,34 @@ handle_info({event, nonce_limiter, initialized}, State) ->
     ar_events:send(node_state, {checkpoint_block,
                                 ar_block_cache:get_checkpoint_block(RecentBI)}),
     ar:console("Joined the Arweave network successfully at the block ~s, height ~B.~n",
-               [arweave_util:encode(Current), Height]),
-    ?LOG_INFO([{event, joined_the_network}, {block, arweave_util:encode(Current)},
+               [arweave_lib_util:encode(Current), Height]),
+    ?LOG_INFO([{event, joined_the_network}, {block, arweave_lib_util:encode(Current)},
                {height, Height}]),
     ets:delete(node_state, join_state),
     {noreply, maybe_reset_miner(State)};
 
 handle_info({event, nonce_limiter, {invalid, H, Code}}, State) ->
     ?LOG_WARNING([{event, received_block_with_invalid_nonce_limiter_chain},
-                  {block, arweave_util:encode(H)}, {code, Code}]),
+                  {block, arweave_lib_util:encode(H)}, {code, Code}]),
     ar_block_cache:remove(block_cache, H),
     ar_ignore_registry:add(H),
     gen_server:cast(?MODULE, apply_block),
     {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
 
 handle_info({event, nonce_limiter, {valid, H}}, State) ->
-    ?LOG_INFO([{event, vdf_validation_successful}, {block, arweave_util:encode(H)}]),
+    ?LOG_INFO([{event, vdf_validation_successful}, {block, arweave_lib_util:encode(H)}]),
     ar_block_cache:mark_nonce_limiter_validated(block_cache, H),
     gen_server:cast(?MODULE, apply_block),
     {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
 
 handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
-    ?LOG_WARNING([{event, vdf_validation_error}, {block, arweave_util:encode(H)}]),
+    ?LOG_WARNING([{event, vdf_validation_error}, {block, arweave_lib_util:encode(H)}]),
     ar_block_cache:remove(block_cache, H),
     gen_server:cast(?MODULE, apply_block),
     {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
 
 handle_info({event, nonce_limiter, {refuse_validation, H}}, State) ->
-    arweave_util:cast_after(500, ?MODULE, apply_block),
+    ar_util:cast_after(500, ?MODULE, apply_block),
     {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
 
 handle_info({event, nonce_limiter, _}, State) ->
@@ -563,7 +563,7 @@ handle_info({tx_ready_for_mining, TX}, State) ->
 handle_info({event, block, {new, Block, _Source}}, State)
   when length(Block#block.txs) > ?BLOCK_TX_COUNT_LIMIT ->
     ?LOG_WARNING([{event, received_block_with_too_many_txs},
-                  {block, arweave_util:encode(Block#block.indep_hash)}, {txs, length(Block#block.txs)}]),
+                  {block, arweave_lib_util:encode(Block#block.indep_hash)}, {txs, length(Block#block.txs)}]),
     {noreply, State};
 
 handle_info({event, block, {new, B, _Source}}, State) ->
@@ -576,9 +576,9 @@ handle_info({event, block, {new, B, _Source}}, State) ->
                 not_found ->
                     %% The cache should have been just pruned and this block is old.
                     ?LOG_WARNING([{event, block_cache_missing_block},
-                                  {previous_block, arweave_util:encode(B#block.previous_block)},
+                                  {previous_block, arweave_lib_util:encode(B#block.previous_block)},
                                   {previous_height, B#block.height - 1},
-                                  {block, arweave_util:encode(H)}]),
+                                  {block, arweave_lib_util:encode(H)}]),
                     ar_ignore_registry:remove(H),
                     {noreply, State};
                 _PrevB ->
@@ -705,7 +705,7 @@ record_mempool_size_metrics({HeaderSize, DataSize}) ->
     arweave_metrics:gauge_set(mempool_data_size_bytes, DataSize).
 
 may_be_initialize_nonce_limiter([#block{ height = Height } = B | Blocks], BI) ->
-    case Height + 1 == ar_fork:height_2_6() of
+    case Height + 1 == arweave_lib_fork:height_2_6() of
         true ->
             {Seed, PartitionUpperBound, _TXRoot} =
                 case ar_node:get_block_index_upper_bound(Height, BI) of
@@ -841,7 +841,7 @@ handle_task(compute_mining_difficulty, State) ->
         _ ->
             ?MINING_SERVER:set_difficulty(Diff)
     end,
-    arweave_util:cast_after((?COMPUTE_MINING_DIFFICULTY_INTERVAL) * 1000, ?MODULE,
+    ar_util:cast_after((?COMPUTE_MINING_DIFFICULTY_INTERVAL) * 1000, ?MODULE,
                        compute_mining_difficulty),
     {noreply, State};
 
@@ -867,7 +867,7 @@ get_block_anchors_and_recent_txs_map(BlockTXPairs) ->
               {[BH | Acc1], Acc3}
       end,
       {[], #{}},
-      lists:sublist(BlockTXPairs, ar_block:get_max_tx_anchor_depth())
+      lists:sublist(BlockTXPairs, arweave_lib_constants:get_max_tx_anchor_depth())
      ).
 
 get_max_block_size([_SingleElement]) ->
@@ -903,7 +903,7 @@ apply_block({B, [PrevB | _PrevBlocks], {{not_validated, awaiting_nonce_limiter_v
             {noreply, State};
         false ->
             ?LOG_DEBUG([{event, schedule_nonce_limiter_validation},
-                        {block, arweave_util:encode(B#block.indep_hash)}]),
+                        {block, arweave_lib_util:encode(B#block.indep_hash)}]),
             request_nonce_limiter_validation(B, PrevB),
             {noreply, State#{ {nonce_limiter_validation_scheduled, H} => true }}
     end;
@@ -918,20 +918,20 @@ maybe_rebase(#{ pending_rebase := {PrevH, H} } = State) ->
             case get_cached_solution(H, State) of
                 not_found ->
                     ?LOG_WARNING([{event, failed_to_find_cached_solution_for_rebasing},
-                                  {h, arweave_util:encode(H)},
-                                  {prev_h, arweave_util:encode(PrevH)}]),
+                                  {h, arweave_lib_util:encode(H)},
+                                  {prev_h, arweave_lib_util:encode(PrevH)}]),
                     {noreply, State};
                 Args ->
                     SolutionH = (element(2, Args))#mining_solution.solution_hash,
                     ?LOG_INFO([{event, rebasing_block},
-                               {h, arweave_util:encode(H)},
-                               {prev_h, arweave_util:encode(PrevH)},
-                               {solution_h, arweave_util:encode(SolutionH)},
+                               {h, arweave_lib_util:encode(H)},
+                               {prev_h, arweave_lib_util:encode(PrevH)},
+                               {solution_h, arweave_lib_util:encode(SolutionH)},
                                {expected_new_height, PrevB#block.height + 1}]),
                     ar:console("Rebasing block ~s (solution ~s, previous block ~s, height ~B).",
                                [
-                                arweave_util:encode(H), arweave_util:encode(SolutionH),
-                                arweave_util:encode(PrevH), PrevB#block.height + 1
+                                arweave_lib_util:encode(H), arweave_lib_util:encode(SolutionH),
+                                arweave_lib_util:encode(PrevH), PrevB#block.height + 1
                                ]),
                     handle_found_solution(Args, PrevB, State, true)
             end;
@@ -999,7 +999,7 @@ apply_block(B, PrevBlocks, Timestamp, State) ->
     case sets:is_element(B#block.indep_hash, BlocksMissingTXs) of
         true ->
             ?LOG_DEBUG([{event, block_is_missing_txs},
-                        {block, arweave_util:encode(B#block.indep_hash)}]),
+                        {block, arweave_lib_util:encode(B#block.indep_hash)}]),
             %% We do not have some of the transactions from this block,
             %% searching for them at the moment.
             {noreply, State};
@@ -1047,13 +1047,13 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
                                 PartitionUpperBound) of
         error ->
             ?LOG_WARNING([{event, failed_to_validate_block},
-                          {h, arweave_util:encode(B#block.indep_hash)}]),
+                          {h, arweave_lib_util:encode(B#block.indep_hash)}]),
             gen_server:cast(?MODULE, apply_block),
             {noreply, State};
         {invalid, Reason} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, Reason},
-                          {h, arweave_util:encode(B#block.indep_hash)}]),
+                          {h, arweave_lib_util:encode(B#block.indep_hash)}]),
             ar_events:send(block, {rejected, Reason, B#block.indep_hash, no_peer}),
             BH = B#block.indep_hash,
             ar_block_cache:remove(block_cache, BH),
@@ -1065,14 +1065,14 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
                 error ->
                     BH = B#block.indep_hash,
                     ?LOG_WARNING([{event, failed_to_validate_wallet_list},
-                                  {h, arweave_util:encode(BH)}]),
+                                  {h, arweave_lib_util:encode(BH)}]),
                     ar_block_cache:remove(block_cache, BH),
                     ignore_rejected_block(B),
                     gen_server:cast(?MODULE, apply_block),
                     {noreply, State};
                 ok ->
                     B2 =
-                        case B#block.height >= ar_fork:height_2_6() of
+                        case B#block.height >= arweave_lib_fork:height_2_6() of
                             true ->
                                 B#block{
                                   reward_history =
@@ -1082,11 +1082,11 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
                                 B
                         end,
                     B3 =
-                        case B#block.height >= ar_fork:height_2_7() of
+                        case B#block.height >= arweave_lib_fork:height_2_7() of
                             true ->
                                 BlockTimeHistory2 = ar_block_time_history:update_history(B, PrevB),
                                 Len2 = ar_block_time_history:history_length()
-                                    + ar_block:get_consensus_window_size(),
+                                    + arweave_lib_constants:get_consensus_window_size(),
                                 BlockTimeHistory3 = lists:sublist(BlockTimeHistory2, Len2),
                                 B2#block{ block_time_history = BlockTimeHistory3 };
                             false ->
@@ -1150,7 +1150,7 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
                        {sig2_size, byte_size(Sig2)},
                        {height, Height}]),
             CheckKeyType =
-                case {byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE, Height >= ar_fork:height_2_9()} of
+                case {byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE, Height >= arweave_lib_fork:height_2_9()} of
                     {true, false} ->
                         false;
                     {true, true} ->
@@ -1212,7 +1212,7 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
     end.
 
 get_chunk_hash(#poa{ chunk = Chunk }, Height) ->
-    case Height >= ar_fork:height_2_7() of
+    case Height >= arweave_lib_fork:height_2_7() of
         false ->
             undefined;
         true ->
@@ -1338,7 +1338,7 @@ evict_confirmed_tx_prefixes(PrunedBlocks) ->
 
 update_block_txs_pairs(B, PrevBlocks, BlockTXPairs) ->
     lists:sublist(update_block_txs_pairs2(B, PrevBlocks, BlockTXPairs),
-                  2 * ar_block:get_max_tx_anchor_depth()).
+                  2 * arweave_lib_constants:get_max_tx_anchor_depth()).
 
 update_block_txs_pairs2(B, [PrevB, PrevPrevB | PrevBlocks], BP) ->
     [block_txs_pair(B) | update_block_txs_pairs2(PrevB, [PrevPrevB | PrevBlocks], BP)];
@@ -1352,92 +1352,92 @@ validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
     case ar_account_tree:apply_block(B, PrevB) of
         {error, invalid_denomination} ->
             ?LOG_WARNING([{event, received_invalid_block},
-                          {validation_error, invalid_denomination}, {h, arweave_util:encode(H)}]),
+                          {validation_error, invalid_denomination}, {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_denomination, H, no_peer}),
             error;
         {error, mining_address_banned} ->
             ?LOG_WARNING([{event, received_invalid_block},
-                          {validation_error, mining_address_banned}, {h, arweave_util:encode(H)},
-                          {mining_address, arweave_util:encode(B#block.reward_addr)}]),
+                          {validation_error, mining_address_banned}, {h, arweave_lib_util:encode(H)},
+                          {mining_address, arweave_lib_util:encode(B#block.reward_addr)}]),
             ar_events:send(block, {rejected, mining_address_banned, H, no_peer}),
             error;
         {error, invalid_double_signing_proof_same_signature} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_double_signing_proof_same_signature},
-                          {h, arweave_util:encode(H)}]),
+                          {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_double_signing_proof_same_signature, H,
                                    no_peer}),
             error;
         {error, invalid_double_signing_proof_cdiff} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_double_signing_proof_cdiff},
-                          {h, arweave_util:encode(H)}]),
+                          {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_double_signing_proof_cdiff, H, no_peer}),
             error;
         {error, invalid_double_signing_proof_same_address} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_double_signing_proof_same_address},
-                          {h, arweave_util:encode(H)}]),
+                          {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_double_signing_proof_same_address, H,
                                    no_peer}),
             error;
         {error, invalid_double_signing_proof_not_in_reward_history} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_double_signing_proof_not_in_reward_history},
-                          {h, arweave_util:encode(H)}]),
+                          {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected,
                                    invalid_double_signing_proof_not_in_reward_history, H, no_peer}),
             error;
         {error, invalid_double_signing_proof_already_banned} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_double_signing_proof_already_banned},
-                          {h, arweave_util:encode(H)}]),
+                          {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected,
                                    invalid_double_signing_proof_already_banned, H, no_peer}),
             error;
         {error, invalid_double_signing_proof_invalid_signature} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_double_signing_proof_invalid_signature},
-                          {h, arweave_util:encode(H)}]),
+                          {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected,
                                    invalid_double_signing_proof_invalid_signature, H, no_peer}),
             error;
         {error, invalid_account_anchors} ->
             ?LOG_WARNING([{event, received_invalid_block},
-                          {validation_error, invalid_account_anchors}, {h, arweave_util:encode(H)}]),
+                          {validation_error, invalid_account_anchors}, {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_account_anchors, H, no_peer}),
             error;
         {error, invalid_reward_pool} ->
             ?LOG_WARNING([{event, received_invalid_block},
-                          {validation_error, invalid_reward_pool}, {h, arweave_util:encode(H)}]),
+                          {validation_error, invalid_reward_pool}, {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_reward_pool, H, no_peer}),
             error;
         {error, invalid_miner_reward} ->
             ?LOG_WARNING([{event, received_invalid_block},
-                          {validation_error, invalid_miner_reward}, {h, arweave_util:encode(H)}]),
+                          {validation_error, invalid_miner_reward}, {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_miner_reward, H, no_peer}),
             error;
         {error, invalid_debt_supply} ->
             ?LOG_WARNING([{event, received_invalid_block},
-                          {validation_error, invalid_debt_supply}, {h, arweave_util:encode(H)}]),
+                          {validation_error, invalid_debt_supply}, {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_debt_supply, H, no_peer}),
             error;
         {error, invalid_kryder_plus_rate_multiplier_latch} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_kryder_plus_rate_multiplier_latch},
-                          {h, arweave_util:encode(H)}]),
+                          {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_kryder_plus_rate_multiplier_latch, H,
                                    no_peer}),
             error;
         {error, invalid_kryder_plus_rate_multiplier} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_kryder_plus_rate_multiplier},
-                          {h, arweave_util:encode(H)}]),
+                          {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_kryder_plus_rate_multiplier, H, no_peer}),
             error;
         {error, invalid_wallet_list} ->
             ?LOG_WARNING([{event, received_invalid_block},
-                          {validation_error, invalid_wallet_list}, {h, arweave_util:encode(H)}]),
+                          {validation_error, invalid_wallet_list}, {h, arweave_lib_util:encode(H)}]),
             ar_events:send(block, {rejected, invalid_wallet_list, H, no_peer}),
             error;
         {ok, _RootHash2} ->
@@ -1473,7 +1473,7 @@ get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
                   failed_to_fetch_tx
           end,
           {TXs, TotalSize},
-          arweave_util:pmap(
+          arweave_lib_util:pmap(
             fun(TXID) ->
                     ar_http_iface_client:get_tx(Peers, TXID)
             end,
@@ -1489,7 +1489,7 @@ get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
     end.
 
 apply_validated_block(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
-    ?LOG_DEBUG([{event, apply_validated_block}, {block, arweave_util:encode(B#block.indep_hash)}]),
+    ?LOG_DEBUG([{event, apply_validated_block}, {block, arweave_lib_util:encode(B#block.indep_hash)}]),
     case ar_watchdog:is_mined_block(B) of
         true ->
             ar_events:send(block, {new, B, #{ source => miner }});
@@ -1516,7 +1516,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
     %% off and then back on this fork.
     ar_block_cache:add(block_cache, B),
     ar_block_cache:mark_tip(block_cache, BH),
-    PrunedBlocks = ar_block_cache:prune(block_cache, ar_block:get_consensus_window_size()),
+    PrunedBlocks = ar_block_cache:prune(block_cache, arweave_lib_constants:get_consensus_window_size()),
     evict_confirmed_tx_prefixes(PrunedBlocks),
     %% We could have missed a few blocks due to networking issues, which would then
     %% be picked by ar_poller and end up waiting for missing transactions to be fetched.
@@ -1557,7 +1557,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
               %% Use a twice bigger depth than the depth requested on join to serve
               %% the wallet trees to the joining nodes.
               ok = ar_account_tree:set_current(
-                     Wallets, CurrentB#block.height, ar_block:get_consensus_window_size() * 2),
+                     Wallets, CurrentB#block.height, arweave_lib_constants:get_consensus_window_size() * 2),
               CurrentB
       end,
       start,
@@ -1567,7 +1567,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
     {BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
     Height = B#block.height,
     {Rate, ScheduledRate} =
-        case Height >= ar_fork:height_2_5() of
+        case Height >= arweave_lib_fork:height_2_5() of
             true ->
                 {B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
             false ->
@@ -1658,15 +1658,15 @@ log_applied_block(B) ->
                 end,
     ?LOG_INFO([
                {event, applied_block},
-               {indep_hash, arweave_util:encode(B#block.indep_hash)},
+               {indep_hash, arweave_lib_util:encode(B#block.indep_hash)},
                {height, B#block.height}, {partition1, Partition1}, {partition2, Partition2},
                {num_chunks, NumChunks}
               ]).
 
 log_tip(B) ->
-    ?LOG_INFO([{event, new_tip_block}, {indep_hash, arweave_util:encode(B#block.indep_hash)},
+    ?LOG_INFO([{event, new_tip_block}, {indep_hash, arweave_lib_util:encode(B#block.indep_hash)},
                {height, B#block.height}, {weave_size, B#block.weave_size},
-               {reward_addr, arweave_util:encode(B#block.reward_addr)}]).
+               {reward_addr, arweave_lib_util:encode(B#block.reward_addr)}]).
 
 maybe_report_n_confirmations(B, BI) ->
     N = 10,
@@ -1680,7 +1680,7 @@ maybe_report_n_confirmations(B, BI) ->
     end.
 
 record_economic_metrics(B, PrevB) ->
-    case B#block.height >= ar_fork:height_2_5() of
+    case B#block.height >= arweave_lib_fork:height_2_5() of
         false ->
             ok;
         true ->
@@ -1695,14 +1695,14 @@ record_economic_metrics2(B, PrevB) ->
     arweave_metrics:gauge_set(endowment_pool, B#block.reward_pool),
     arweave_metrics:gauge_set(kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier),
     Period_200_Years = 200 * 365 * 24 * 60 * 60,
-    case B#block.height >= ar_fork:height_2_6() of
+    case B#block.height >= arweave_lib_fork:height_2_6() of
         true ->
             #block{ reward_history = RewardHistory } = B,
             RewardHistorySize = length(RewardHistory),
-            AverageHashRate = arweave_util:safe_divide(lists:sum([HR
+            AverageHashRate = arweave_lib_util:safe_divide(lists:sum([HR
                     || {_, HR, _, _} <- RewardHistory]), RewardHistorySize),
             arweave_metrics:gauge_set(average_network_hash_rate, AverageHashRate),
-            AverageBlockReward = arweave_util:safe_divide(lists:sum([R
+            AverageBlockReward = arweave_lib_util:safe_divide(lists:sum([R
                     || {_, _, R, _} <- RewardHistory]), RewardHistorySize),
             arweave_metrics:gauge_set(average_block_reward, AverageBlockReward),
             arweave_metrics:gauge_set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
@@ -1734,7 +1734,7 @@ record_economic_metrics2(B, PrevB) ->
             ?LOG_ERROR([{event, failed_to_compute_expected_min_decline_rate}]);
         {RateDivisor, RateDividend} ->
             arweave_metrics:gauge_set(expected_minimum_200_years_storage_costs_decline_rate,
-                    arweave_util:safe_divide(RateDivisor, RateDividend))
+                    arweave_lib_util:safe_divide(RateDivisor, RateDividend))
     end,
     case catch ar_pricing:get_expected_min_decline_rate(B#block.timestamp,
             Period_200_Years, B#block.reward_pool, B#block.weave_size, {1, 10},
@@ -1744,11 +1744,11 @@ record_economic_metrics2(B, PrevB) ->
         {RateDivisor2, RateDividend2} ->
             arweave_metrics:gauge_set(
               expected_minimum_200_years_storage_costs_decline_rate_10_usd_ar,
-              arweave_util:safe_divide(RateDivisor2, RateDividend2))
+              arweave_lib_util:safe_divide(RateDivisor2, RateDividend2))
     end.
 
 record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
-    case Height >= ar_fork:height_2_6() of
+    case Height >= arweave_lib_fork:height_2_6() of
         true ->
             StepNumber = ar_block:vdf_step_number(B),
             PrevBStepNumber = ar_block:vdf_step_number(PrevB),
@@ -1763,10 +1763,10 @@ record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
 ignore_rejected_block(B) ->
     BH = B#block.indep_hash,
     case carries_v1_denomination0_tx(B)
-            andalso B#block.height < ar_fork:height_2_9_6() of
+            andalso B#block.height < arweave_lib_fork:height_2_9_6() of
         true ->
             ?LOG_DEBUG([{event, rejected_block_with_deprecated_v1_tx},
-                        {block, arweave_util:encode(BH)},
+                        {block, arweave_lib_util:encode(BH)},
                         {peer, B#block.source_peer}]),
             ar_ignore_registry:remove(BH),
             ID =
@@ -1802,8 +1802,8 @@ return_orphaned_txs_to_mempool(H, BaseH, SkipTXIDs) ->
     else
         not_found ->
             ?LOG_WARNING([{event, orphaned_block_not_found_in_cache},
-                          {block, arweave_util:encode(H)},
-                          {base_block, arweave_util:encode(BaseH)}]),
+                          {block, arweave_lib_util:encode(H)},
+                          {base_block, arweave_lib_util:encode(BaseH)}]),
             ok
     end.
 
@@ -1864,7 +1864,7 @@ get_current_diff(TS) ->
     ar_retarget:maybe_retarget(Height + 1, DiffPair, TS, LastRetarget, PrevTS).
 
 get_merkle_rebase_threshold(PrevB) ->
-    case PrevB#block.height + 1 == ar_fork:height_2_7() of
+    case PrevB#block.height + 1 == arweave_lib_fork:height_2_7() of
         true ->
             PrevB#block.weave_size;
         _ ->
@@ -1905,12 +1905,12 @@ priority(_) ->
     {os:system_time(second), 1}.
 
 read_hash_list_2_0_for_1_0_blocks() ->
-    Fork_2_0 = ar_fork:height_2_0(),
+    Fork_2_0 = arweave_lib_fork:height_2_0(),
     case Fork_2_0 > 0 of
         true ->
             File = filename:join(["genesis_data", "hash_list_1_0"]),
             {ok, Binary} = file:read_file(File),
-            HL = lists:map(fun arweave_util:decode/1, jiffy:decode(Binary)),
+            HL = lists:map(fun arweave_lib_util:decode/1, jiffy:decode(Binary)),
             Fork_2_0 = length(HL),
             HL;
         false ->
@@ -1920,7 +1920,7 @@ read_hash_list_2_0_for_1_0_blocks() ->
 start_from_state([#block{} = GenesisB]) ->
     RewardHistory = GenesisB#block.reward_history,
     BlockTimeHistory = GenesisB#block.block_time_history,
-    BI = [arweave_util:block_index_entry_from_block(GenesisB)],
+    BI = [ar_util:block_index_entry_from_block(GenesisB)],
     self() ! {join_from_state, 0, BI, [GenesisB#block{
                                          reward_history = RewardHistory,
                                          block_time_history = BlockTimeHistory
@@ -1942,7 +1942,7 @@ start_from_state(BI, Height, CustomDir) ->
             RewardHistoryBI = ar_rewards:interim_reward_history_bi(Height, BI2),
 
             BlockTimeHistoryBI = lists:sublist(BI2,
-                    ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
+                    ar_block_time_history:history_length() + arweave_lib_constants:get_consensus_window_size()),
             case {ar_storage:read_reward_history(RewardHistoryBI, CustomDir),
                   ar_storage:read_block_time_history(Height2, BlockTimeHistoryBI, CustomDir)} of
                 {not_found, _} ->
@@ -2044,8 +2044,8 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
        packing_difficulty = PackingDifficulty,
        replica_format = ReplicaFormat
       } = Solution,
-    ?LOG_INFO([{event, handle_found_solution}, {solution, arweave_util:encode(SolutionH)}]),
-    MerkleRebaseThreshold = ar_block:get_merkle_rebase_support_threshold(),
+    ?LOG_INFO([{event, handle_found_solution}, {solution, arweave_lib_util:encode(SolutionH)}]),
+    MerkleRebaseThreshold = arweave_lib_constants:get_merkle_rebase_support_threshold(),
 
     #block{ indep_hash = PrevH, timestamp = PrevTimestamp,
             wallet_list = WalletList,
@@ -2053,12 +2053,12 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
             height = PrevHeight } = PrevB,
     Height = PrevHeight + 1,
     Now = os:system_time(second),
-    MaxDeviation = ar_block:get_max_timestamp_deviation(),
+    MaxDeviation = arweave_lib_constants:get_max_timestamp_deviation(),
     Timestamp =
         case Now < PrevTimestamp - MaxDeviation of
             true ->
                 ?LOG_WARNING([{event, clock_out_of_sync},
-                              {previous_block, arweave_util:encode(PrevH)},
+                              {previous_block, arweave_lib_util:encode(PrevH)},
                               {previous_block_timestamp, PrevTimestamp},
                               {our_time, Now},
                               {max_allowed_deviation, MaxDeviation}]),
@@ -2120,13 +2120,13 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                     false ->
                         ar_mining_server:log_prepare_solution_failure(Solution, stale,
                                 vdf_seed_data_does_not_match_current_block, Source, [
-                                    {output, arweave_util:encode(NonceLimiterOutput)},
+                                    {output, arweave_lib_util:encode(NonceLimiterOutput)},
                                     {interval_number, IntervalNumber},
                                     {prev_interval_number, PrevIntervalNumber},
-                                    {nonce_limiter_next_seed, arweave_util:encode(NonceLimiterNextSeed)},
-                                    {nonce_limiter_seed, arweave_util:encode(NonceLimiterSeed)},
-                                    {prev_nonce_limiter_next_seed, arweave_util:encode(PrevNextSeed)},
-                                    {prev_nonce_limiter_seed, arweave_util:encode(PrevSeed)},
+                                    {nonce_limiter_next_seed, arweave_lib_util:encode(NonceLimiterNextSeed)},
+                                    {nonce_limiter_seed, arweave_lib_util:encode(NonceLimiterSeed)},
+                                    {prev_nonce_limiter_next_seed, arweave_lib_util:encode(PrevNextSeed)},
+                                    {prev_nonce_limiter_seed, arweave_lib_util:encode(PrevSeed)},
                                     {nonce_limiter_next_vdf_difficulty, NonceLimiterNextVDFDifficulty},
                                     {prev_nonce_limiter_next_vdf_difficulty, PrevNextVDFDifficulty}
                                 ]),
@@ -2160,8 +2160,8 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
     RewardKey = case ar_wallet:load_key(MiningAddress) of
                     not_found ->
                         ?LOG_WARNING([{event, mined_block_but_no_mining_key_found}, {node, node()},
-                                      {mining_address, arweave_util:encode(MiningAddress)}]),
-                        ar:console("WARNING. Can't find key ~s~n", [arweave_util:encode(MiningAddress)]),
+                                      {mining_address, arweave_lib_util:encode(MiningAddress)}]),
+                        ar:console("WARNING. Can't find key ~s~n", [arweave_lib_util:encode(MiningAddress)]),
                         not_found;
                     Key ->
                         Key
@@ -2219,7 +2219,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
             {false, Reason6} ->
                 ?LOG_WARNING([{event, ignore_mining_solution},
                               {reason, Reason6},
-                              {solution, arweave_util:encode(SolutionH)}]),
+                              {solution, arweave_lib_util:encode(SolutionH)}]),
                 false;
             true ->
                 ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed,
@@ -2240,7 +2240,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
             {noreply, State};
         not_found ->
             ?LOG_WARNING([{event, did_not_find_steps_for_mined_block},
-                          {seed, arweave_util:encode(PrevNextSeed)}, {prev_step_number, PrevStepNumber},
+                          {seed, arweave_lib_util:encode(PrevNextSeed)}, {prev_step_number, PrevStepNumber},
                           {step_number, StepNumber}]),
             ar_mining_server:log_prepare_solution_failure(Solution, rejected,
                     vdf_steps_not_found, Source, []),
@@ -2333,7 +2333,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 
             BlockTimeHistory2 = lists:sublist(
                                   ar_block_time_history:update_history(UnsignedB, PrevB),
-                                  ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
+                                  ar_block_time_history:history_length() + arweave_lib_constants:get_consensus_window_size()),
             UnsignedB2 = UnsignedB#block{
                            block_time_history = BlockTimeHistory2,
                            block_time_history_hash = ar_block_time_history:hash(BlockTimeHistory2)
@@ -2347,8 +2347,8 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
             H = ar_block:indep_hash2(SignedH, Signature),
             B = UnsignedB2#block{ indep_hash = H, signature = Signature },
             ar_watchdog:mined_block(H, Height, PrevH),
-            ?LOG_INFO([{event, mined_block}, {indep_hash, arweave_util:encode(H)},
-                       {solution, arweave_util:encode(SolutionH)}, {height, Height},
+            ?LOG_INFO([{event, mined_block}, {indep_hash, arweave_lib_util:encode(H)},
+                       {solution, arweave_lib_util:encode(SolutionH)}, {height, Height},
                        {step_number, StepNumber}, {steps, length(Steps)},
                        {txs, length(B#block.txs)},
                        {recall_byte1, B#block.recall_byte},
@@ -2367,17 +2367,17 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
             ar_mining_server:log_prepare_solution_failure(
               Solution, rejected, bad_vdf, Source, [
                                                     {event, bad_steps},
-                                                    {prev_block, arweave_util:encode(PrevH)},
+                                                    {prev_block, arweave_lib_util:encode(PrevH)},
                                                     {step_number, StepNumber},
                                                     {prev_step_number, PrevStepNumber},
-                                                    {prev_next_seed, arweave_util:encode(PrevNextSeed)},
-                                                    {output, arweave_util:encode(NonceLimiterOutput)}
+                                                    {prev_next_seed, arweave_lib_util:encode(PrevNextSeed)},
+                                                    {output, arweave_lib_util:encode(NonceLimiterOutput)}
                                                    ]),
             {noreply, State}
     end.
 
 assert_key_type(RewardKey, Height) ->
-    case Height >= ar_fork:height_2_9() of
+    case Height >= arweave_lib_fork:height_2_9() of
         false ->
             case RewardKey of
                 {{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, Pub}} ->
@@ -2410,7 +2410,7 @@ check_no_double_signing(CDiff, PrevCDiff, MiningAddress, Height) ->
                          PrevCDiff) of
                       true ->
                           ?LOG_WARNING([{event, avoiding_double_signing},
-                                        {block, arweave_util:encode(B#block.indep_hash)},
+                                        {block, arweave_lib_util:encode(B#block.indep_hash)},
                                         {height, B#block.height},
                                         {new_height, Height},
                                         {cdiff, B#block.cumulative_diff},
@@ -2475,9 +2475,9 @@ may_be_report_double_signing(B, State) ->
                     Proof = {Key, Signature1, CDiff1, PrevCDiff1, Preimage1,
                              Signature2, CDiff2, PrevCDiff2, Preimage2},
                     ?LOG_INFO([{event, report_double_signing},
-                               {key, arweave_util:encode(Key)},
-                               {block1, arweave_util:encode(H)},
-                               {block2, arweave_util:encode(CacheB#block.indep_hash)},
+                               {key, arweave_lib_util:encode(Key)},
+                               {block1, arweave_lib_util:encode(H)},
+                               {block2, arweave_lib_util:encode(CacheB#block.indep_hash)},
                                {height1, B#block.height},
                                {height2, CacheB#block.height}]),
                     cache_double_signing_proof(Proof, State);

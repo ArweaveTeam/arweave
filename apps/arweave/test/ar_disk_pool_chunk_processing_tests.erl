@@ -150,7 +150,7 @@ test_blacklisted_byte_skipped() ->
     {ok, {TXOffset, _}} = ar_test_await:tx_offset_known(TX#tx.id),
     AbsoluteEndOffset = TXOffset,
     %% Blacklist this byte offset before the chunk matures.
-    ar_ets_intervals:add(ar_tx_blacklist_offsets, AbsoluteEndOffset,
+    arweave_lib_ets_intervals:add(ar_tx_blacklist_offsets, AbsoluteEndOffset,
         AbsoluteEndOffset - 1),
     %% Mine enough blocks to push past the disk pool threshold.
     ar_test_node:mine(main),
@@ -166,7 +166,7 @@ test_blacklisted_byte_skipped() ->
     ?assertEqual(false,
         ar_sync_record:is_recorded(AbsoluteEndOffset, ar_data_sync, StoreID)),
     %% Clean up the blacklist entry.
-    ar_ets_intervals:delete(ar_tx_blacklist_offsets, AbsoluteEndOffset,
+    arweave_lib_ets_intervals:delete(ar_tx_blacklist_offsets, AbsoluteEndOffset,
         AbsoluteEndOffset - 1).
 
 %% -------------------------------------------------------------------

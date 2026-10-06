@@ -300,7 +300,7 @@ handle_info({gun_up, PID, Protocol},
                     connections = maps:put(PID, Connection2, Connections) }};
         #connection{ status = connected, peer = Peer } ->
             ?LOG_WARNING([{event, gun_up_pid_already_exists},
-                          {peer, arweave_util:format_peer(Peer)}]),
+                          {peer, arweave_lib_util:format_peer(Peer)}]),
             ar_peers:connected_peer(Peer),
             {noreply, State}
     end;
@@ -476,7 +476,7 @@ do_is_http2_refusal(_Reason) ->
 fall_back_to_http1(Peer, Reason, State) ->
     Until = erlang:monotonic_time(millisecond) + ?HTTP1_FALLBACK_MS,
     ?LOG_DEBUG([{event, peer_refused_http2},
-        {peer, arweave_util:format_peer(Peer)}, {reason, Reason},
+        {peer, arweave_lib_util:format_peer(Peer)}, {reason, Reason},
         {http1_until, Until}]),
     Pool = pool(Peer, State),
     put_pool(Peer, Pool#pool{ http1_until = Until }, State).
@@ -697,7 +697,7 @@ log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
             ?LOG_WARNING([
                           {event, Event},
                           {http_method, Method},
-                          {peer, arweave_util:format_peer(Peer)},
+                          {peer, arweave_lib_util:format_peer(Peer)},
                           {path, Path},
                           {reason, Reason}
                          ]);
@@ -705,7 +705,7 @@ log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
             ?LOG_ERROR([
                         {event, Event},
                         {http_method, Method},
-                        {peer, arweave_util:format_peer(Peer)},
+                        {peer, arweave_lib_util:format_peer(Peer)},
                         {path, Path},
                         {reason, Reason}
                        ]);

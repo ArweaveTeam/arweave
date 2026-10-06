@@ -118,7 +118,7 @@ default_inflight_limit() ->
 
 calculate_max_footprints() ->
     EntropyCacheSizeMiB = arweave_config:get([packing, entropy, cache_size]),
-    FootprintSize = ar_block:get_replica_2_9_footprint_size(),
+    FootprintSize = arweave_lib_constants:get_replica_2_9_footprint_size(),
     max(1, (EntropyCacheSizeMiB * ?MiB) div FootprintSize).
 
 %%%===================================================================
@@ -298,7 +298,7 @@ peer_cap(#performance{ average_latency = Latency }, _Target) when Latency =< 0.0
 peer_cap(#performance{ average_latency = Latency }, Target) ->
     Floor = default_inflight_limit(),
     Ceiling = max(Floor, sync_jobs()),
-    arweave_util:between(round(Floor * (Target / Latency)), Floor, Ceiling).
+    arweave_lib_util:between(round(Floor * (Target / Latency)), Floor, Ceiling).
 
 %% Footprint admission: normal tasks need no slot; an active footprint
 %% piggybacks; a fresh footprint needs a free slot.
@@ -416,7 +416,7 @@ log_if_crash(_Peer, _Start, _End, normal) ->
     ok;
 log_if_crash(Peer, Start, End, Reason) ->
     ?LOG_WARNING([{event, sync_worker_crash}, {module, ?MODULE},
-        {peer, arweave_util:format_peer(Peer)}, {start_offset, Start},
+        {peer, arweave_lib_util:format_peer(Peer)}, {start_offset, Start},
         {end_offset, End}, {reason, io_lib:format("~p", [Reason])}]).
 
 %%%===================================================================

@@ -50,7 +50,7 @@ test_data_roots_sync_from_peer() ->
     %% The node fetches this many latest blocks after joining the network.
     %% Mine enough newer blocks so the earliest data blocks are older than
     %% that window and have to use data root syncing to fetch data roots.
-    LatestJoinedBlockCount = 2 * ar_block:get_max_tx_anchor_depth(),
+    LatestJoinedBlockCount = 2 * arweave_lib_constants:get_max_tx_anchor_depth(),
     ?assertEqual(10, LatestJoinedBlockCount),
     Blocks = BlocksBeforeJoin ++ lists:map(
             fun(_) ->
@@ -74,7 +74,7 @@ test_data_roots_sync_from_peer() ->
         %% The second 3 MB of the weave (skipping 1-2 MB).
         {3 * ?MiB, 6 * ?MiB, {replica_2_9, MainRewardAddr}}
     ],
-    ConfiguredRanges = ar_intervals:from_list([{?MiB, 0}, {6 * ?MiB, 3 * ?MiB}]),
+    ConfiguredRanges = arweave_lib_intervals:from_list([{?MiB, 0}, {6 * ?MiB, 3 * ?MiB}]),
 
     ar_test_node:join_on(#{ node => main, join_on => peer1,
         config => MainConfig,
@@ -84,7 +84,7 @@ test_data_roots_sync_from_peer() ->
 
     LastBlock = lists:last(Blocks),
     ConsensusWindowStartHeight =
-        max(0, LastBlock#block.height - ar_block:get_consensus_window_size() + 1),
+        max(0, LastBlock#block.height - arweave_lib_constants:get_consensus_window_size() + 1),
     %% The first block in the joined consensus window is the validation root for the
     %% blocks replayed during join; it is not guaranteed to be applied as a new tip.
     JoinedTipStartHeight = ConsensusWindowStartHeight + 1,
@@ -98,8 +98,8 @@ test_data_roots_sync_from_peer() ->
                         ok;
                     false ->
                         BlockEnd = B#block.weave_size,
-                        BlockRange = ar_intervals:from_list([{BlockEnd, BlockStart}]),
-                        Intersection = ar_intervals:intersection(BlockRange, ConfiguredRanges),
+                        BlockRange = arweave_lib_intervals:from_list([{BlockEnd, BlockStart}]),
+                        Intersection = arweave_lib_intervals:intersection(BlockRange, ConfiguredRanges),
                         case B#block.height >= JoinedTipStartHeight of
                             true ->
                                 ?debugFmt("Asserting data roots synced during consensus "
@@ -108,7 +108,7 @@ test_data_roots_sync_from_peer() ->
                                     [B#block.height, ConfiguredRanges, Intersection]),
                                 ok = ar_test_await:http_data_roots_available(main, B);
                             false ->
-                                case ar_intervals:is_empty(Intersection) of
+                                case arweave_lib_intervals:is_empty(Intersection) of
                                     false ->
                                         ?debugFmt("Asserting data roots synced for partitions "
                                             "we configured, range intersection: ~0p", [Intersection]),
@@ -621,13 +621,13 @@ random_tx(BaseOpts, SplitType) ->
 
 data_roots_sync_mocks() ->
     [
-        {ar_block, get_consensus_window_size, fun() -> 5 end},
-        {ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
+        {arweave_lib_constants, get_consensus_window_size, fun() -> 5 end},
+        {arweave_lib_constants, get_max_tx_anchor_depth, fun() -> 5 end},
         {ar_storage_module, get_overlap, fun(_Packing) -> 0 end}
     ].
 
 unpacked_storage_module_configs() ->
-    Size = 10 * ar_block:partition_size(),
+    Size = 10 * arweave_lib_constants:partition_size(),
     [{N * Size, (N + 1) * Size, unpacked} || N <- lists:seq(0, 8)].
 
 assert_no_data_roots(Peer, B) ->

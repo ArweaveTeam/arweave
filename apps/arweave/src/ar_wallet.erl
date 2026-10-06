@@ -65,14 +65,14 @@ new_keyfile(KeyType, WalletName, DataDir) ->
                             [
                                 {kty, <<"RSA">>},
                                 {ext, true},
-                                {e, arweave_util:encode(Expnt)},
-                                {n, arweave_util:encode(Pb)},
-                                {d, arweave_util:encode(Prv)},
-                                {p, arweave_util:encode(P1)},
-                                {q, arweave_util:encode(P2)},
-                                {dp, arweave_util:encode(E1)},
-                                {dq, arweave_util:encode(E2)},
-                                {qi, arweave_util:encode(C)}
+                                {e, arweave_lib_util:encode(Expnt)},
+                                {n, arweave_lib_util:encode(Pb)},
+                                {d, arweave_lib_util:encode(Prv)},
+                                {p, arweave_lib_util:encode(P1)},
+                                {q, arweave_lib_util:encode(P2)},
+                                {dp, arweave_lib_util:encode(E1)},
+                                {dq, arweave_lib_util:encode(E2)},
+                                {qi, arweave_lib_util:encode(C)}
                             ]
                         }
                     ),
@@ -88,9 +88,9 @@ new_keyfile(KeyType, WalletName, DataDir) ->
                             [
                                 {kty, <<"EC">>},
                                 {crv, <<"secp256k1">>},
-                                {x, arweave_util:encode(X)},
-                                {y, arweave_util:encode(Y)},
-                                {d, arweave_util:encode(Prv)}
+                                {x, arweave_lib_util:encode(X)},
+                                {y, arweave_lib_util:encode(Y)},
+                                {d, arweave_lib_util:encode(Prv)}
                             ]
                         }
                     ),
@@ -104,8 +104,8 @@ new_keyfile(KeyType, WalletName, DataDir) ->
                                 {kty, <<"OKP">>},
                                 {alg, <<"EdDSA">>},
                                 {crv, <<"Ed25519">>},
-                                {x, arweave_util:encode(Pb)},
-                                {d, arweave_util:encode(Prv)}
+                                {x, arweave_lib_util:encode(Pb)},
+                                {d, arweave_lib_util:encode(Prv)}
                             ]
                         }
                     ),
@@ -141,10 +141,10 @@ wallet_filepath2(Wallet) ->
 %% Return not_found if arweave_keyfile_[addr].json or [addr].json is not found
 %% in [data_dir]/?WALLET_DIR.
 load_key(Addr) ->
-    Path = wallet_filepath(arweave_util:encode(Addr)),
+    Path = wallet_filepath(arweave_lib_util:encode(Addr)),
     case filelib:is_file(Path) of
         false ->
-            Path2 = wallet_filepath2(arweave_util:encode(Addr)),
+            Path2 = wallet_filepath2(arweave_lib_util:encode(Addr)),
             case filelib:is_file(Path2) of
                 false ->
                     not_found;
@@ -165,24 +165,24 @@ load_keyfile(File) ->
                 {<<"x">>, XEncoded} = lists:keyfind(<<"x">>, 1, Key),
                 {<<"y">>, YEncoded} = lists:keyfind(<<"y">>, 1, Key),
                 {<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
-                OrigPub = iolist_to_binary([<<4:8>>, arweave_util:decode(XEncoded),
-                        arweave_util:decode(YEncoded)]),
+                OrigPub = iolist_to_binary([<<4:8>>, arweave_lib_util:decode(XEncoded),
+                        arweave_lib_util:decode(YEncoded)]),
                 Pb = compress_ecdsa_pubkey(OrigPub),
-                Prv = arweave_util:decode(PrivEncoded),
+                Prv = arweave_lib_util:decode(PrivEncoded),
                 KyType = {?ECDSA_SIGN_ALG, secp256k1},
                 {Pb, Prv, KyType};
             {<<"kty">>, <<"OKP">>} ->
                 {<<"x">>, PubEncoded} = lists:keyfind(<<"x">>, 1, Key),
                 {<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
-                Pb = arweave_util:decode(PubEncoded),
-                Prv = arweave_util:decode(PrivEncoded),
+                Pb = arweave_lib_util:decode(PubEncoded),
+                Prv = arweave_lib_util:decode(PrivEncoded),
                 KyType = {?EDDSA_SIGN_ALG, ed25519},
                 {Pb, Prv, KyType};
             _ ->
                 {<<"n">>, PubEncoded} = lists:keyfind(<<"n">>, 1, Key),
                 {<<"d">>, PrivEncoded} = lists:keyfind(<<"d">>, 1, Key),
-                Pb = arweave_util:decode(PubEncoded),
-                Prv = arweave_util:decode(PrivEncoded),
+                Pb = arweave_lib_util:decode(PubEncoded),
+                Prv = arweave_lib_util:decode(PrivEncoded),
                 KyType = {?RSA_SIGN_ALG, 65537},
                 {Pb, Prv, KyType}
         end,
@@ -342,11 +342,11 @@ base64_address_with_optional_checksum_to_decoded_address(AddrBase64) ->
     Size = byte_size(AddrBase64),
     case Size > 7 of
         false ->
-            arweave_util:decode(AddrBase64);
+            arweave_lib_util:decode(AddrBase64);
         true ->
             case AddrBase64 of
                 << MainBase64url:(Size - 7)/binary, ":", ChecksumBase64url:6/binary >> ->
-                    AddrDecoded = arweave_util:decode(MainBase64url),
+                    AddrDecoded = arweave_lib_util:decode(MainBase64url),
                     case byte_size(AddrDecoded) < 20 of
                         true -> throw({error, invalid_address});
                         false -> ok
@@ -355,13 +355,13 @@ base64_address_with_optional_checksum_to_decoded_address(AddrBase64) ->
                         true -> throw({error, invalid_address});
                         false -> ok
                     end,
-                    Checksum = arweave_util:decode(ChecksumBase64url),
+                    Checksum = arweave_lib_util:decode(ChecksumBase64url),
                     case decoded_address_to_checksum(AddrDecoded) =:= Checksum of
                         true -> AddrDecoded;
                         false -> throw({error, invalid_address_checksum})
                     end;
                 _ ->
-                    arweave_util:decode(AddrBase64)
+                    arweave_lib_util:decode(AddrBase64)
             end
     end.
 
@@ -424,7 +424,7 @@ wallet_filepath(WalletName, PubKey, KeyType, DataDir) ->
     wallet_filepath(wallet_name(WalletName, PubKey, KeyType), DataDir).
 
 wallet_name(wallet_address, PubKey, KeyType) ->
-    arweave_util:encode(to_address(PubKey, KeyType));
+    arweave_lib_util:encode(to_address(PubKey, KeyType));
 wallet_name(WalletName, _, _) ->
     WalletName.
 
@@ -434,8 +434,8 @@ decoded_address_to_checksum(AddrDecoded) ->
 
 decoded_address_to_base64_address_with_checksum(AddrDecoded) ->
     Checksum = decoded_address_to_checksum(AddrDecoded),
-    AddrBase64 = arweave_util:encode(AddrDecoded),
-    ChecksumBase64 = arweave_util:encode(Checksum),
+    AddrBase64 = arweave_lib_util:encode(AddrDecoded),
+    ChecksumBase64 = arweave_lib_util:encode(Checksum),
     << AddrBase64/binary, ":", ChecksumBase64/binary >>.
 
 compress_ecdsa_pubkey(<<4:8, PubPoint/binary>>) ->
@@ -473,21 +473,21 @@ generate_keyfile_test_() ->
 
 do_generate_keyfile() ->
     {Priv, Pub} = new_keyfile(),
-    FileName = wallet_filepath(arweave_util:encode(to_address(Pub))),
+    FileName = wallet_filepath(arweave_lib_util:encode(to_address(Pub))),
     {Priv, Pub} = load_keyfile(FileName).
 
 checksum_test() ->
     {_, Pub} = new({?EDDSA_SIGN_ALG, ed25519}),
     Addr = to_address(Pub),
-    AddrBase64 = arweave_util:encode(Addr),
+    AddrBase64 = arweave_lib_util:encode(Addr),
     AddrBase64Wide = decoded_address_to_base64_address_with_checksum(Addr),
     Addr = base64_address_with_optional_checksum_to_decoded_address(AddrBase64Wide),
     Addr = base64_address_with_optional_checksum_to_decoded_address(AddrBase64),
     %% 64 bytes, for future.
     CorrectLongAddress = <<"0123456789012345678901234567890123456789012345678901234567890123">>,
     CorrectCheckSum = decoded_address_to_checksum(CorrectLongAddress),
-    CorrectLongAddressBase64 = arweave_util:encode(CorrectLongAddress),
-    CorrectCheckSumBase64 = arweave_util:encode(CorrectCheckSum),
+    CorrectLongAddressBase64 = arweave_lib_util:encode(CorrectLongAddress),
+    CorrectCheckSumBase64 = arweave_lib_util:encode(CorrectCheckSum),
     CorrectLongAddressWithChecksumBase64 = <<CorrectLongAddressBase64/binary, ":", CorrectCheckSumBase64/binary>>,
     case catch base64_address_with_optional_checksum_to_decoded_address(CorrectLongAddressWithChecksumBase64) of
         {error, _} -> throw({error, correct_long_address_should_bypass});
@@ -495,23 +495,23 @@ checksum_test() ->
     end,
     %% 65 bytes.
     InvalidLongAddress = <<"01234567890123456789012345678901234567890123456789012345678901234">>,
-    InvalidLongAddressBase64 = arweave_util:encode(InvalidLongAddress),
+    InvalidLongAddressBase64 = arweave_lib_util:encode(InvalidLongAddress),
     case catch base64_address_with_optional_checksum_to_decoded_address(<<InvalidLongAddressBase64/binary, ":MDA">>) of
         {'EXIT', _} -> ok
     end,
     %% 100 bytes.
     InvalidLongAddress2 = <<"0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789">>,
-    InvalidLongAddress2Base64 = arweave_util:encode(InvalidLongAddress2),
+    InvalidLongAddress2Base64 = arweave_lib_util:encode(InvalidLongAddress2),
     case catch base64_address_with_optional_checksum_to_decoded_address(<<InvalidLongAddress2Base64/binary, ":MDA">>) of
         {'EXIT', _} -> ok
     end,
     %% 10 bytes
     InvalidShortAddress = <<"0123456789">>,
-    InvalidShortAddressBase64 = arweave_util:encode(InvalidShortAddress),
+    InvalidShortAddressBase64 = arweave_lib_util:encode(InvalidShortAddress),
     case catch base64_address_with_optional_checksum_to_decoded_address(<<InvalidShortAddressBase64/binary, ":MDA">>) of
         {'EXIT', _} -> ok
     end,
-    InvalidChecksum = arweave_util:encode(<< 0:32 >>),
+    InvalidChecksum = arweave_lib_util:encode(<< 0:32 >>),
     case catch base64_address_with_optional_checksum_to_decoded_address(
             << AddrBase64/binary, ":", InvalidChecksum/binary >>) of
         {error, invalid_address_checksum} -> ok

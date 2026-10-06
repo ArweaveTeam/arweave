@@ -230,7 +230,7 @@ get_peer_performances(Peers) ->
 resolve_peers([]) ->
     [];
 resolve_peers([RawPeer | Peers]) ->
-    case arweave_util:safe_parse_peer(RawPeer) of
+    case arweave_config:safe_parse_peer(RawPeer) of
         {ok, Peer} ->
             Peer ++ resolve_peers(Peers);
         {error, invalid} ->
@@ -390,7 +390,7 @@ discover_peers() ->
         [] ->
             ok;
         Peers ->
-            Peer = arweave_util:pick_random(Peers),
+            Peer = arweave_lib_util:pick_random(Peers),
             discover_peers(get_peer_peers(Peer))
     end.
 
@@ -483,7 +483,7 @@ resolve_and_cache_peer_refresh(_CachedPeer, State) ->
 
                                                 % the cache entry expired, in this case, raw peer needs to be
                                                 % reparsed and checked. It will return a list of peers.
-    case arweave_util:safe_parse_peer(RawPeer, Opts) of
+    case arweave_config:safe_parse_peer(RawPeer, Opts) of
         {ok, NewPeers} when is_list(NewPeers) ->
             %% The cache entry has expired.
             cache_update_peers(NewPeers, State);
@@ -499,7 +499,7 @@ resolve_and_cache_peer_refresh(_CachedPeer, State) ->
 %%--------------------------------------------------------------------
 resolve_and_cache_peer_empty(State) ->
     RawPeer = maps:get(raw_peer, State),
-    case arweave_util:safe_parse_peer(RawPeer) of
+    case arweave_config:safe_parse_peer(RawPeer) of
         {ok, Peers} when is_list(Peers) ->
             cache_insert_peers(Peers, State);
         {error, Error} ->
@@ -517,7 +517,7 @@ cache_insert_peers(Peers, State) ->
     cache_insert_peers(Peers, [], State).
 
 cache_insert_peers([], Buffer, _State) ->
-    [Peer] = arweave_util:pick_random(Buffer, 1),
+    [Peer] = arweave_lib_util:pick_random(Buffer, 1),
     {ok, Peer};
 cache_insert_peers([Peer|Rest], Buffer, State) ->
     RawPeer = maps:get(raw_peer, State),
@@ -537,7 +537,7 @@ cache_update_peers(Peers, State) ->
     cache_update_peers(Peers, [], State).
 
 cache_update_peers([], Buffer, _State) ->
-    [Peer] = arweave_util:pick_random(Buffer, 1),
+    [Peer] = arweave_lib_util:pick_random(Buffer, 1),
     {ok, Peer};
 cache_update_peers([Peer|Rest], Buffer, State) ->
     RawPeer = maps:get(raw_peer, State),
@@ -591,7 +591,7 @@ handle_cast(rank_peers, State) ->
     arweave_metrics:gauge_set(arweave_peer_count, length(LifetimePeers)),
     set_ranked_peers(lifetime, rank_peers(LifetimePeers)),
     set_ranked_peers(current, rank_peers(CurrentPeers)),
-    arweave_util:cast_after(?RANK_PEERS_FREQUENCY_MS, self(), rank_peers),
+    ar_util:cast_after(?RANK_PEERS_FREQUENCY_MS, self(), rank_peers),
     {noreply, State};
 
 handle_cast(ping_peers, State) ->
@@ -731,7 +731,7 @@ discover_peers(Peers) ->
     %% Overall, we don't have to wait the sum of all response times, we will wait
     %% for only the longest response time.
     UniquePeers = lists:usort(Peers),
-    arweave_util:pmap(
+    arweave_lib_util:pmap(
         fun probe_and_maybe_add_peer/1, UniquePeers, ?PEER_PROBE_TIMEOUT),
     ok.
 
@@ -767,13 +767,13 @@ format_stats(lifetime, Peer, Perf) ->
     KB = Perf#performance.total_bytes / 1024,
     io:format(
       "\t~s ~.2f kB/s (~.2f kB, ~.2f success, ~p transfers)~n",
-      [string:pad(arweave_util:format_peer(Peer), 21, trailing, $\s),
+      [string:pad(arweave_lib_util:format_peer(Peer), 21, trailing, $\s),
        float(Perf#performance.lifetime_rating), KB,
        Perf#performance.average_success, Perf#performance.total_transfers]);
 format_stats(current, Peer, Perf) ->
     io:format(
       "\t~s ~.2f kB/s (~.2f success)~n",
-      [string:pad(arweave_util:format_peer(Peer), 21, trailing, $\s),
+      [string:pad(arweave_lib_util:format_peer(Peer), 21, trailing, $\s),
        float(Perf#performance.current_rating),
        Perf#performance.average_success]).
 
@@ -803,7 +803,7 @@ load_peers() ->
 %% @doc Probe the saved peers in batches of 50. A peer that fails or does not
 %% answer in time is skipped, so no saved peer can stop ar_peers from starting.
 load_peers(Peers) ->
-    arweave_util:batch_pmap(fun load_peer/1, Peers, 50, ?PEER_PROBE_TIMEOUT),
+    arweave_lib_util:batch_pmap(fun load_peer/1, Peers, 50, ?PEER_PROBE_TIMEOUT),
     ok.
 
 load_peer({Peer, _Performance} = Record) ->
@@ -811,7 +811,7 @@ load_peer({Peer, _Performance} = Record) ->
         do_load_peer(Record)
     catch Class:Reason ->
         ?LOG_WARNING([{event, failed_to_load_saved_peer},
-                {peer, arweave_util:format_peer(Peer)},
+                {peer, arweave_lib_util:format_peer(Peer)},
                 {class, Class}, {reason, io_lib:format("~P", [Reason, 20])}]),
         ok
     end.
@@ -819,7 +819,7 @@ load_peer({Peer, _Performance} = Record) ->
 do_load_peer({Peer, Performance}) ->
     case ar_http_iface_client:get_info(Peer, network) of
         info_unavailable ->
-            ?LOG_DEBUG([{event, peer_unavailable}, {peer, arweave_util:format_peer(Peer)}]),
+            ?LOG_DEBUG([{event, peer_unavailable}, {peer, arweave_lib_util:format_peer(Peer)}]),
             ok;
         <<?NETWORK_NAME>> ->
             maybe_rotate_peer_ports(Peer),
@@ -857,7 +857,7 @@ do_load_peer({Peer, Performance}) ->
             ok;
         Network ->
             ?LOG_DEBUG([{event, peer_from_the_wrong_network},
-                        {peer, arweave_util:format_peer(Peer)}, {network, Network}]),
+                        {peer, arweave_lib_util:format_peer(Peer)}, {network, Network}]),
             ok
     end.
 
@@ -917,10 +917,10 @@ shift_port_map_left(PortMap, Max, N) ->
     shift_port_map_left(PortMap2, Max, N + 1).
 
 ping_peers(Peers) when length(Peers) < 100 ->
-    arweave_util:pmap(fun ar_http_iface_client:add_peer/1, Peers);
+    arweave_lib_util:pmap(fun ar_http_iface_client:add_peer/1, Peers);
 ping_peers(Peers) ->
     {Send, Rest} = lists:split(100, Peers),
-    arweave_util:pmap(fun ar_http_iface_client:add_peer/1, Send),
+    arweave_lib_util:pmap(fun ar_http_iface_client:add_peer/1, Send),
     ping_peers(Rest).
 
 -ifdef(AR_TEST).
@@ -1037,14 +1037,14 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
                   end,
     AverageLatency2 = case LatencyMilliseconds of
                           undefined -> AverageLatency;
-                          _ -> arweave_util:ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
+                          _ -> arweave_lib_util:ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
                       end,
     %% In order to approximate the impact of multiple concurrent requests we multiply
     %% DataSize by the Concurrency value. We do this *only* when updating the AverageThroughput
     %% value so that it doesn't distort the TotalThroughput.
     AverageThroughput2 = case LatencyMilliseconds of
                              undefined -> AverageThroughput;
-                             _ -> arweave_util:ema(
+                             _ -> arweave_lib_util:ema(
                                     AverageThroughput, (DataSize * Concurrency) / LatencyMilliseconds, ?THROUGHPUT_ALPHA)
                          end,
     TotalThroughput2 = case LatencyMilliseconds of
@@ -1055,7 +1055,7 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
                           undefined -> TotalTransfers;
                           _ -> TotalTransfers + 1
                       end,
-    AverageSuccess2 = arweave_util:ema(AverageSuccess, arweave_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
+    AverageSuccess2 = arweave_lib_util:ema(AverageSuccess, arweave_lib_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
     %% Rating is an estimate of the peer's effective throughput in bytes per millisecond.
     %% 'lifetime' considers all data ever received from this peer
     %% 'current' considers recently received data
@@ -1153,7 +1153,7 @@ remove_peer(Reason, RemovedPeer) ->
         _ ->
             ?LOG_DEBUG([
                         {event, remove_peer},
-                        {peer, arweave_util:format_peer(RemovedPeer)},
+                        {peer, arweave_lib_util:format_peer(RemovedPeer)},
                         {reason, Reason}
                        ])
     end,

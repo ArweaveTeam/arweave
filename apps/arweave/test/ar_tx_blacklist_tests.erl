@@ -16,7 +16,7 @@
 %% must be live before any node's arweave app starts.
 uses_blacklists_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{ar_fork, height_2_9_6, fun() -> infinity end},
+        [{arweave_lib_fork, height_2_9_6, fun() -> infinity end},
          {ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
         fun test_uses_blacklists/0,
         ?TEST_NODE_TIMEOUT
@@ -86,9 +86,9 @@ test_uses_blacklists() ->
         assert_does_not_accept_offsets(BadOffsets),
         %% Add a new transaction to the blacklist, add a blacklisted transaction to whitelist.
         ok = file:write_file(lists:nth(3, BlacklistFiles), <<>>),
-        ok = file:write_file(WhitelistFile, arweave_util:encode(lists:nth(2, BadTXIDs))),
+        ok = file:write_file(WhitelistFile, arweave_lib_util:encode(lists:nth(2, BadTXIDs))),
         ok = file:write_file(lists:nth(4, BlacklistFiles), io_lib:format("~s~n~s",
-                [arweave_util:encode(hd(GoodTXIDs)), arweave_util:encode(V1TX#tx.id)])),
+                [arweave_lib_util:encode(hd(GoodTXIDs)), arweave_lib_util:encode(V1TX#tx.id)])),
         [UnblacklistedOffsets, WhitelistOffsets | BadOffsets2] = BadOffsets,
         RestoredOffsets = [UnblacklistedOffsets, WhitelistOffsets] ++
                 [lists:nth(6, lists:reverse(BadOffsets))],
@@ -113,7 +113,7 @@ test_uses_blacklists() ->
         ar_test_node:mine(),
         {ok, [{_, WeaveSize, _} | _]} = ar_test_await:node_height(main, length(TXs) + 1),
         assert_present_offsets([[WeaveSize]]),
-        ok = file:write_file(lists:nth(3, BlacklistFiles), arweave_util:encode(TX#tx.id)),
+        ok = file:write_file(lists:nth(3, BlacklistFiles), arweave_lib_util:encode(TX#tx.id)),
         assert_removed_offsets([[WeaveSize]]),
         TX2 = sign_v1_tx(Wallet, #{ data => random_v1_data(2 * ?DATA_CHUNK_SIZE),
                 last_tx => ar_test_node:get_tx_anchor(peer1) }),
@@ -199,7 +199,7 @@ setup() ->
 
 %% @doc Routes for the stub serving the blocklist URLs main polls.
 blocklist_routes(BadTXIDs) ->
-    Encoded = lists:map(fun arweave_util:encode/1, BadTXIDs),
+    Encoded = lists:map(fun arweave_lib_util:encode/1, BadTXIDs),
     #{
         %% Serves empty body.
         {<<"GET">>, <<"/empty">>} => {200, #{}, <<>>},
@@ -260,12 +260,12 @@ create_files(BadTXIDs, [{Start1, End1}, {Start2, End2}, {Start3, End3}]) ->
     Files = [
         {random_filename(), <<>>},
         {random_filename(), <<"bad base64url ">>},
-        {random_filename(), arweave_util:encode(lists:nth(2, BadTXIDs))},
+        {random_filename(), arweave_lib_util:encode(lists:nth(2, BadTXIDs))},
         {random_filename(),
             list_to_binary(
                 io_lib:format(
                     "~s\nbad base64url \n~s\n~s\n~B,~B\n",
-                    lists:map(fun arweave_util:encode/1, BadTXIDs) ++ [Start1, End1]
+                    lists:map(fun arweave_lib_util:encode/1, BadTXIDs) ++ [Start1, End1]
                 )
             )},
         {random_filename(), list_to_binary(io_lib:format("~B,~B\n~B,~B",
@@ -286,13 +286,13 @@ random_filename() ->
     filename:join(DataDir,
         "ar-tx-blacklist-tests-transaction-blacklist-"
         ++
-        binary_to_list(arweave_util:encode(crypto:strong_rand_bytes(32)))).
+        binary_to_list(arweave_lib_util:encode(crypto:strong_rand_bytes(32)))).
 
 encode_chunk(Proof) ->
     ar_serialize:jsonify(#{
-        chunk => arweave_util:encode(maps:get(chunk, Proof)),
-        data_path => arweave_util:encode(maps:get(data_path, Proof)),
-        data_root => arweave_util:encode(maps:get(data_root, Proof)),
+        chunk => arweave_lib_util:encode(maps:get(chunk, Proof)),
+        data_path => arweave_lib_util:encode(maps:get(data_path, Proof)),
+        data_root => arweave_lib_util:encode(maps:get(data_root, Proof)),
         data_size => integer_to_binary(maps:get(data_size, Proof)),
         offset => integer_to_binary(maps:get(offset, Proof))
     }).
@@ -329,13 +329,13 @@ upload_data(TXs, DataTrees) ->
 
 assert_present_txs(GoodTXIDs) ->
     ?debugFmt("Waiting until these txids are stored: ~p.",
-            [[arweave_util:encode(TXID) || TXID <- GoodTXIDs]]),
+            [[arweave_lib_util:encode(TXID) || TXID <- GoodTXIDs]]),
     ok = ar_test_await:txs_stored(GoodTXIDs),
     ok = ar_test_await:txs_confirmation_data_stored(GoodTXIDs).
 
 assert_removed_txs(BadTXIDs) ->
     ?debugFmt("Waiting until these txids are removed: ~p.",
-            [[arweave_util:encode(TXID) || TXID <- BadTXIDs]]),
+            [[arweave_lib_util:encode(TXID) || TXID <- BadTXIDs]]),
     ok = ar_test_await:until(blacklist_removed_txs,
         fun() ->
             lists:all(
@@ -393,7 +393,7 @@ assert_removed_offsets(BadOffsets) ->
 
 assert_removed_chunks(StorageModules, BadOffsets) ->
     PaddedBadOffsets = lists:usort([
-        ar_block:get_chunk_padded_offset(BadOffset)
+        arweave_lib_constants:get_chunk_padded_offset(BadOffset)
         || BadOffset <- lists:flatten(BadOffsets)
     ]),
     CoveredOffsets = [

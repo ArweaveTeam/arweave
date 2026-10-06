@@ -433,7 +433,7 @@ process_partial_solution_packing_difficulty(Solution, Ref) ->
     end.
 
 process_partial_solution_nonce(Solution, Ref) ->
-    Max = ar_block:get_max_nonce(Solution#mining_solution.packing_difficulty),
+    Max = arweave_lib_constants:get_max_nonce(Solution#mining_solution.packing_difficulty),
     Nonce = Solution#mining_solution.nonce,
     case Nonce < 0 orelse Nonce > Max of
         false ->

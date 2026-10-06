@@ -117,7 +117,7 @@ configure_randomx(LargePages) ->
     end.
 
 calculate_mib_per_iteration() ->
-    BytesPerIteration = ?FOOTPRINTS_PER_ITERATION * ar_block:get_replica_2_9_footprint_size(),
+    BytesPerIteration = ?FOOTPRINTS_PER_ITERATION * arweave_lib_constants:get_replica_2_9_footprint_size(),
     BytesPerIteration div ?MiB.
 
 calculate_min_disk_ms(RatedSpeedMB) ->
@@ -302,7 +302,7 @@ pack_single_chunk(ChunkDir, PaddedEndOffset, UnpackEntropy) ->
 
 generate_all_footprints(Iteration, RandomXState, RewardAddr) ->
     FootprintIds = lists:seq(0, ?FOOTPRINTS_PER_ITERATION - 1),
-    arweave_util:pmap(
+    arweave_lib_util:pmap(
       fun(FootprintId) ->
               UniqueId = Iteration * ?FOOTPRINTS_PER_ITERATION + FootprintId,
               generate_footprint(RandomXState, RewardAddr, UniqueId)
@@ -311,11 +311,11 @@ generate_all_footprints(Iteration, RandomXState, RewardAddr) ->
 
 generate_footprint(RandomXState, RewardAddr, UniqueId) ->
     SubChunkIndices = lists:seq(0, ?SUB_CHUNK_COUNT - 1),
-    arweave_util:pmap(
+    arweave_lib_util:pmap(
       fun(SubChunkIndex) ->
               AbsoluteOffset = (UniqueId + 1) * ?DATA_CHUNK_SIZE,
               SubChunkOffset = SubChunkIndex * ?SUB_CHUNK_SIZE,
-              Key = ar_replica_2_9:get_entropy_key(RewardAddr, AbsoluteOffset, SubChunkOffset),
+              Key = arweave_lib_replica_2_9:get_entropy_key(RewardAddr, AbsoluteOffset, SubChunkOffset),
               ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key)
       end,
       SubChunkIndices, infinity).

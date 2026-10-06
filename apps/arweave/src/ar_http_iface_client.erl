@@ -90,7 +90,7 @@ send_tx_json(Peer, TXID, Bin, Opts) ->
                   method => post,
                   peer => Peer,
                   path => "/tx",
-                  headers => add_header(<<"arweave-tx-id">>, arweave_util:encode(TXID), p2p_headers()),
+                  headers => add_header(<<"arweave-tx-id">>, arweave_lib_util:encode(TXID), p2p_headers()),
                   body => Bin,
                   connect_timeout => ConnectTimeout * 1000,
                   timeout => Timeout * 1000
@@ -116,7 +116,7 @@ send_tx_binary(Peer, TXID, Bin, Opts) ->
                   method => post,
                   peer => Peer,
                   path => "/tx2",
-                  headers => add_header(<<"arweave-tx-id">>, arweave_util:encode(TXID), p2p_headers()),
+                  headers => add_header(<<"arweave-tx-id">>, arweave_lib_util:encode(TXID), p2p_headers()),
                   body => Bin,
                   connect_timeout => ConnectTimeout * 1000,
                   timeout => Timeout * 1000
@@ -139,7 +139,7 @@ send_block_json(Peer, H, Payload) ->
                   method => post,
                   peer => Peer,
                   path => "/block",
-                  headers => add_header(<<"arweave-block-hash">>, arweave_util:encode(H), p2p_headers()),
+                  headers => add_header(<<"arweave-block-hash">>, arweave_lib_util:encode(H), p2p_headers()),
                   body => Payload,
                   connect_timeout => 5000,
                   timeout => 120 * 1000
@@ -150,7 +150,7 @@ send_block_binary(Peer, H, Payload) ->
     send_block_binary(Peer, H, Payload, undefined).
 
 send_block_binary(Peer, H, Payload, RecallByte) ->
-    Headers = add_header(<<"arweave-block-hash">>, arweave_util:encode(H), p2p_headers()),
+    Headers = add_header(<<"arweave-block-hash">>, arweave_lib_util:encode(H), p2p_headers()),
     %% The way of informing the recipient about the recall byte used before the fork
     %% 2.6. Since the fork 2.6 blocks have a "recall_byte" field.
     Headers2 = case RecallByte of undefined -> Headers; _ ->
@@ -182,11 +182,11 @@ get_block(Peer, H, TXIndices) ->
                                ar_http:req(#{
                                              method => get,
                                              peer => Peer,
-                                             path => "/block2/hash/" ++ binary_to_list(arweave_util:encode(H)),
+                                             path => "/block2/hash/" ++ binary_to_list(arweave_lib_util:encode(H)),
                                              headers => p2p_headers(),
                                              connect_timeout => 1000,
                                              timeout => 15 * 1000,
-                                             body => arweave_util:encode_list_indices(TXIndices),
+                                             body => arweave_lib_util:encode_list_indices(TXIndices),
                                              limit => ?MAX_BODY_SIZE
                                             })) of
         not_found ->
@@ -244,9 +244,9 @@ get_block_path({ID, _, _}, Encoding) ->
 get_block_path(ID, Encoding) when is_binary(ID) ->
     case Encoding of
         binary ->
-            "/block2/hash/" ++ binary_to_list(arweave_util:encode(ID));
+            "/block2/hash/" ++ binary_to_list(arweave_lib_util:encode(ID));
         json ->
-            "/block/hash/" ++ binary_to_list(arweave_util:encode(ID))
+            "/block/hash/" ++ binary_to_list(arweave_lib_util:encode(ID))
     end;
 get_block_path(ID, Encoding) when is_integer(ID) ->
     case Encoding of
@@ -263,13 +263,13 @@ get_wallet_list_chunk(Peers, H) ->
 get_wallet_list_chunk([], _H, _Cursor) ->
     {error, not_found};
 get_wallet_list_chunk([Peer | Peers], H, Cursor) ->
-    BasePath = "/wallet_list/" ++ binary_to_list(arweave_util:encode(H)),
+    BasePath = "/wallet_list/" ++ binary_to_list(arweave_lib_util:encode(H)),
     Path =
         case Cursor of
             start ->
                 BasePath;
             _ ->
-                BasePath ++ "/" ++ binary_to_list(arweave_util:encode(Cursor))
+                BasePath ++ "/" ++ binary_to_list(arweave_lib_util:encode(Cursor))
         end,
     Response =
         ar_http:req(#{
@@ -422,7 +422,7 @@ get_chunk_binary(Peer, Offset, RequestedPacking) ->
       http_client_get_chunk_duration_seconds,
       [
        arweave_metrics:get_status_class(Response),
-       arweave_util:format_peer(Peer)
+       arweave_lib_util:format_peer(Peer)
       ],
       erlang:monotonic_time() - StartTime),
 
@@ -436,7 +436,7 @@ get_mempool([Peer | Peers]) ->
             {{ok, TXIDs}, Peer};
         {error, Error} ->
             log_failed_request(Error, [{event, failed_to_get_mempool_txids_from_peer},
-                                       {peer, arweave_util:format_peer(Peer)},
+                                       {peer, arweave_lib_util:format_peer(Peer)},
                                        {error, io_lib:format("~p", [Error])}]),
             get_mempool(Peers -- [Peer])
     end;
@@ -511,12 +511,12 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
     ExpectedLength = ar_rewards:buffered_reward_history_length(Height),
     DoubleCheckLength = ar_rewards:expected_hashes_length(Height),
     true = length(ExpectedRewardHistoryHashes) == min(
-                                                    Height - ar_fork:height_2_6() + 1,
+                                                    Height - arweave_lib_fork:height_2_6() + 1,
                                                     DoubleCheckLength),
     case ar_http:req(#{
                        peer => Peer,
                        method => get,
-                       path => "/reward_history/" ++ binary_to_list(arweave_util:encode(H)),
+                       path => "/reward_history/" ++ binary_to_list(arweave_lib_util:encode(H)),
                        timeout => 30000,
                        headers => p2p_headers()
                       }) of
@@ -528,7 +528,7 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
                         true ->
                             ?LOG_DEBUG([
                                         {event, received_valid_reward_history},
-                                        {peer, arweave_util:format_peer(Peer)},
+                                        {peer, arweave_lib_util:format_peer(Peer)},
                                         {height, Height},
                                         {expected_length, ExpectedLength},
                                         {length, length(RewardHistory)}
@@ -536,22 +536,22 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
                             {ok, RewardHistory};
                         false ->
                             ?LOG_WARNING([{event, received_invalid_reward_history},
-                                          {peer, arweave_util:format_peer(Peer)}]),
+                                          {peer, arweave_lib_util:format_peer(Peer)}]),
                             get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
                     end;
                                                 % {ok, L} ->
                                                 %   ?LOG_WARNING([{event, received_reward_history_of_unexpected_length},
                                                 %           {expected_length, ExpectedLength}, {received_length, length(L)},
-                                                %           {peer, arweave_util:format_peer(Peer)}]),
+                                                %           {peer, arweave_lib_util:format_peer(Peer)}]),
                                                 %   get_reward_history(Peers, B, ExpectedRewardHistoryHashes);
                 {error, _} ->
                     ?LOG_WARNING([{event, failed_to_parse_reward_history},
-                                  {peer, arweave_util:format_peer(Peer)}]),
+                                  {peer, arweave_lib_util:format_peer(Peer)}]),
                     get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
             end;
         Reply ->
             ?LOG_WARNING([{event, failed_to_fetch_reward_history},
-                          {peer, arweave_util:format_peer(Peer)},
+                          {peer, arweave_lib_util:format_peer(Peer)},
                           {reply, io_lib:format("~p", [Reply])}]),
             get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
     end;
@@ -560,16 +560,16 @@ get_reward_history([], _B, _RewardHistoryHashes) ->
 
 get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
     #block{ height = Height, indep_hash = H } = B,
-    Fork_2_7 = ar_fork:height_2_7(),
+    Fork_2_7 = arweave_lib_fork:height_2_7(),
     true = Height >= Fork_2_7,
     ExpectedLength = min(Height - Fork_2_7 + 1,
-                         ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
+                         ar_block_time_history:history_length() + arweave_lib_constants:get_consensus_window_size()),
     true = length(ExpectedBlockTimeHistoryHashes) == min(Height - Fork_2_7 + 1,
-                                                         ar_block:get_consensus_window_size()),
+                                                         arweave_lib_constants:get_consensus_window_size()),
     case ar_http:req(#{
                        peer => Peer,
                        method => get,
-                       path => "/block_time_history/" ++ binary_to_list(arweave_util:encode(H)),
+                       path => "/block_time_history/" ++ binary_to_list(arweave_lib_util:encode(H)),
                        timeout => 30000,
                        headers => p2p_headers()
                       }) of
@@ -582,22 +582,22 @@ get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
                             {ok, BlockTimeHistory};
                         false ->
                             ?LOG_WARNING([{event, received_invalid_block_time_history},
-                                          {peer, arweave_util:format_peer(Peer)}]),
+                                          {peer, arweave_lib_util:format_peer(Peer)}]),
                             get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes)
                     end;
                 {ok, L} ->
                     ?LOG_WARNING([{event, received_block_time_history_of_unexpected_length},
                                   {expected_length, ExpectedLength}, {received_length, length(L)},
-                                  {peer, arweave_util:format_peer(Peer)}]),
+                                  {peer, arweave_lib_util:format_peer(Peer)}]),
                     get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes);
                 {error, _} ->
                     ?LOG_WARNING([{event, failed_to_parse_block_time_history},
-                                  {peer, arweave_util:format_peer(Peer)}]),
+                                  {peer, arweave_lib_util:format_peer(Peer)}]),
                     get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes)
             end;
         Reply ->
             ?LOG_WARNING([{event, failed_to_fetch_block_time_history},
-                          {peer, arweave_util:format_peer(Peer)},
+                          {peer, arweave_lib_util:format_peer(Peer)},
                           {reply, io_lib:format("~p", [Reply])}]),
             get_block_time_history(Peers, B, ExpectedBlockTimeHistoryHashes)
     end;
@@ -704,11 +704,11 @@ cm_h2_send(Peer, Candidate) ->
     handle_cm_noop_response(ar_http:req(Req)).
 
 cm_publish_send(Peer, Solution) ->
-    ?LOG_DEBUG([{event, cm_publish_send}, {peer, arweave_util:format_peer(Peer)},
-                {solution, arweave_util:encode(Solution#mining_solution.solution_hash)},
+    ?LOG_DEBUG([{event, cm_publish_send}, {peer, arweave_lib_util:format_peer(Peer)},
+                {solution, arweave_lib_util:encode(Solution#mining_solution.solution_hash)},
                 {step_number, Solution#mining_solution.step_number},
                 {start_interval_number, Solution#mining_solution.start_interval_number},
-                {seed, arweave_util:encode(Solution#mining_solution.seed)}]),
+                {seed, arweave_lib_util:encode(Solution#mining_solution.seed)}]),
     JSON = ar_serialize:jsonify(ar_serialize:solution_to_json_struct(Solution)),
     Req = build_cm_or_pool_request(post, Peer, "/coordinated_mining/publish", JSON),
     handle_cm_noop_response(ar_http:req(Req)).
@@ -717,7 +717,7 @@ cm_publish_send(Peer, Solution) ->
 get_jobs(Peer, PrevOutput) ->
     arweave_metrics:counter_inc(pool_job_request_count),
     Req = build_cm_or_pool_request(
-            get, Peer, "/jobs/" ++ binary_to_list(arweave_util:encode(PrevOutput))),
+            get, Peer, "/jobs/" ++ binary_to_list(arweave_lib_util:encode(PrevOutput))),
     handle_get_jobs_response(ar_http:req(Req)).
 
 %% @doc Post the partial solution to the pool or coordinated mining exit peer.
@@ -864,24 +864,24 @@ handle_get_jobs_response(Reply) ->
     {error, Reply}.
 
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-    ar_intervals:safe_from_etf(Body);
+    arweave_lib_intervals:safe_from_etf(Body);
 handle_sync_record_response({ok, {{<<"429">>, _}, _, _, _, _}}) ->
     {error, too_many_requests};
 handle_sync_record_response(Reply) ->
     {error, Reply}.
 
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Start, Limit) ->
-    case ar_intervals:safe_from_etf(Body) of
+    case arweave_lib_intervals:safe_from_etf(Body) of
         {ok, Intervals} ->
-            case ar_intervals:count(Intervals) > Limit of
+            case arweave_lib_intervals:count(Intervals) > Limit of
                 true ->
                     {error, too_many_intervals};
                 false ->
-                    case ar_intervals:is_empty(Intervals) of
+                    case arweave_lib_intervals:is_empty(Intervals) of
                         true ->
                             {ok, Intervals};
                         false ->
-                            case element(1, ar_intervals:smallest(Intervals)) < Start of
+                            case element(1, arweave_lib_intervals:smallest(Intervals)) < Start of
                                 true ->
                                     {error, intervals_do_not_match_cursor};
                                 false ->
@@ -967,7 +967,7 @@ handle_chunk_response({ok, {{<<"200">>, _}, _, Body, Start, End}}, RequestedPack
                     ?LOG_WARNING([{event, peer_served_proof_with_wrong_packing},
                                   {requested_packing, ar_serialize:encode_packing(RequestedPacking, false)},
                                   {got_packing, ar_serialize:encode_packing(Packing, false)},
-                                  {peer, arweave_util:format_peer(Peer)}]),
+                                  {peer, arweave_lib_util:format_peer(Peer)}]),
                     {error, wrong_packing}
             end
     end;
@@ -987,7 +987,7 @@ handle_mempool_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Peer) ->
                 fun    (_, {error, Reason}) ->
                         {error, Reason};
                     (EncodedTXID, {ok, Acc}) ->
-                        case arweave_util:safe_decode(EncodedTXID) of
+                        case arweave_lib_util:safe_decode(EncodedTXID) of
                             {ok, TXID} when byte_size(TXID) /= 32 ->
                                 ?LOG_WARNING([{event, failed_to_parse_peer_mempool},
                                     {reason, invalid_txid},
@@ -1070,7 +1070,7 @@ decode_hash_list(HL) ->
     decode_hash_list(HL, []).
 
 decode_hash_list([H | HL], DecodedHL) ->
-    case arweave_util:safe_decode(H) of
+    case arweave_lib_util:safe_decode(H) of
         {ok, DecodedH} ->
             decode_hash_list(HL, [DecodedH | DecodedHL]);
         Error ->
@@ -1155,7 +1155,7 @@ get_txs(Peers, B) ->
 get_txs(_Height, _Peers, [], TXs, _TotalSize) ->
     {ok, lists:reverse(TXs)};
 get_txs(Height, Peers, [TXID | Rest], TXs, TotalSize) ->
-    Fork_2_0 = ar_fork:height_2_0(),
+    Fork_2_0 = arweave_lib_fork:height_2_0(),
     case get_tx(Peers, TXID) of
         #tx{ format = 2 } = TX ->
             get_txs(Height, Peers, Rest, [TX | TXs], TotalSize);
@@ -1245,8 +1245,8 @@ get_tx_from_remote_peer(Peer, TXID, RatePeer) ->
                 false ->
                     ?LOG_WARNING([
                                   {event, peer_served_invalid_tx},
-                                  {peer, arweave_util:format_peer(Peer)},
-                                  {tx, arweave_util:encode(TXID)}
+                                  {peer, arweave_lib_util:format_peer(Peer)},
+                                  {tx, arweave_lib_util:encode(TXID)}
                                  ]),
                     ar_peers:issue_warning(Peer, tx, invalid),
                     {error, invalid_tx};
@@ -1264,9 +1264,9 @@ get_tx_from_remote_peer(Peer, TXID, RatePeer) ->
     end.
 
 get_tx_path(TXID, json) ->
-    "/unconfirmed_tx/" ++ binary_to_list(arweave_util:encode(TXID));
+    "/unconfirmed_tx/" ++ binary_to_list(arweave_lib_util:encode(TXID));
 get_tx_path(TXID, binary) ->
-    "/unconfirmed_tx2/" ++ binary_to_list(arweave_util:encode(TXID)).
+    "/unconfirmed_tx2/" ++ binary_to_list(arweave_lib_util:encode(TXID)).
 
 %% @doc Retreive only the data associated with a transaction.
 %% The function must only be used when it is known that the transaction
@@ -1286,7 +1286,7 @@ get_tx_data(Peer, Hash) ->
         ar_http:req(#{
                       method => get,
                       peer => Peer,
-                      path => "/tx/" ++ binary_to_list(arweave_util:encode(Hash)) ++ "/data",
+                      path => "/tx/" ++ binary_to_list(arweave_lib_util:encode(Hash)) ++ "/data",
                       headers => p2p_headers(),
                       connect_timeout => 500,
                       timeout => 120 * 1000,
@@ -1296,7 +1296,7 @@ get_tx_data(Peer, Hash) ->
         {ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
             unavailable;
         {ok, {{<<"200">>, _}, _, EncodedData, _, _}} ->
-            case arweave_util:safe_decode(EncodedData) of
+            case arweave_lib_util:safe_decode(EncodedData) of
                 {ok, Data} ->
                     Data;
                 {error, invalid} ->
@@ -1404,7 +1404,7 @@ parse_peer_address(Peer) when is_binary(Peer), byte_size(Peer) =< ?MAX_PEER_ADDR
     parse_peer_address(binary_to_list(Peer));
 parse_peer_address(Peer)
     when is_list(Peer), length(Peer) =< ?MAX_PEER_ADDRESS_LEN ->
-    case arweave_util:parse_port_split(Peer) of
+    case arweave_lib_util:parse_port_split(Peer) of
         [Host, PortStr] ->
             case inet:parse_ipv4strict_address(Host) of
                 {ok, {A, B, C, D}} ->
@@ -1446,7 +1446,7 @@ handle_block_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}
         {'EXIT', Reason} ->
             ?LOG_INFO(
                "event: failed_to_parse_block_response, peer: ~s, reason: ~p",
-               [arweave_util:format_peer(Peer), Reason]),
+               [arweave_lib_util:format_peer(Peer), Reason]),
             ar_peers:issue_warning(Peer, block, Reason),
             not_found;
         {ok, B} ->
@@ -1456,7 +1456,7 @@ handle_block_response(Peer, Encoding, {ok, {{<<"200">>, _}, _, Body, Start, End}
         Error ->
             ?LOG_INFO(
                "event: failed_to_parse_block_response, peer: ~s, error: ~p",
-               [arweave_util:format_peer(Peer), Error]),
+               [arweave_lib_util:format_peer(Peer), Error]),
             ar_peers:issue_warning(Peer, block, Error),
             not_found
     end;
@@ -1522,7 +1522,7 @@ handle_cm_partition_table_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
                                 DecodedPartition = {
                                     Bucket,
                                     BucketSize,
-                                    arweave_util:decode(EncodedAddr),
+                                    arweave_lib_util:decode(EncodedAddr),
                                     0
                                 },
                                 {ok, [DecodedPartition | Acc]};
@@ -1535,7 +1535,7 @@ handle_cm_partition_table_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
                                 DecodedPartition = {
                                     Bucket,
                                     BucketSize,
-                                    arweave_util:decode(EncodedAddr),
+                                    arweave_lib_util:decode(EncodedAddr),
                                     PackingDifficulty
                                 },
                                 {ok, [DecodedPartition | Acc]};

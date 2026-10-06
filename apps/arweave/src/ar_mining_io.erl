@@ -126,7 +126,7 @@ handle_call(get_partitions, _From, #state{ partition_upper_bound = PartitionUppe
 handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart},
             _From, State) ->
     #mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
-    RangeEnd = RecallRangeStart + ar_block:get_recall_range_size(PackingDifficulty),
+    RangeEnd = RecallRangeStart + arweave_lib_constants:get_recall_range_size(PackingDifficulty),
     ThreadFound = case find_thread(RecallRangeStart, RangeEnd, State) of
                       not_found ->
                           false;
@@ -138,7 +138,7 @@ handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}
 
 handle_call({is_recall_range_readable, Candidate, RecallRangeStart}, _From, State) ->
     #mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
-    RangeEnd = RecallRangeStart + ar_block:get_recall_range_size(PackingDifficulty),
+    RangeEnd = RecallRangeStart + arweave_lib_constants:get_recall_range_size(PackingDifficulty),
     ThreadFound = case find_thread(RecallRangeStart, RangeEnd, State) of
                       not_found -> false;
                       {_, _} -> true
@@ -152,12 +152,12 @@ handle_call(Request, _From, State) ->
 handle_cast(initialize_state, State) ->
     State3 = case ar_device_lock:is_ready() of
                  false ->
-                     arweave_util:cast_after(1000, self(), initialize_state),
+                     ar_util:cast_after(1000, self(), initialize_state),
                      State;
                  true ->
                      case start_io_threads(State) of
                          {error, _} ->
-                             arweave_util:cast_after(1000, self(), initialize_state),
+                             ar_util:cast_after(1000, self(), initialize_state),
                              State;
                          State2 ->
                              State2
@@ -227,7 +227,7 @@ start_io_threads(State) ->
             {error, Reason};
         StoreIDToDevice ->
             ?LOG_INFO([{event, starting_mining_io_threads}, {store_id_to_device, StoreIDToDevice}]),
-            DeviceToStoreIDs = arweave_util:invert_map(StoreIDToDevice),
+            DeviceToStoreIDs = arweave_lib_util:invert_map(StoreIDToDevice),
                                                 % Step 2: Start IO threads for each device and populate map indices
             State2 = maps:fold(
                        fun(Device, StoreIDs, StateAcc) ->
@@ -308,7 +308,7 @@ handle_io_thread_down(Ref, Reason, State) ->
     Refs2 = maps:remove(Ref, Refs),
     Threads2 = maps:remove(Device, Threads),
 
-    DeviceToStoreIDs = arweave_util:invert_map(StoreIDToDevice),
+    DeviceToStoreIDs = arweave_lib_util:invert_map(StoreIDToDevice),
     StoreIDs = maps:get(Device, DeviceToStoreIDs, sets:new()),
     Thread = start_io_thread(Mode, sets:to_list(StoreIDs)),
     ThreadRef = monitor(process, Thread),
@@ -339,7 +339,7 @@ get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, ?DEFAULT_MODU
             Intervals;
         {Right, Left} ->
             get_packed_intervals(Right, End, MiningAddress, PackingDifficulty, ?DEFAULT_MODULE,
-                                 ar_intervals:add(Intervals, Right, Left))
+                                 arweave_lib_intervals:add(Intervals, Right, Left))
     end;
 get_packed_intervals(_Start, _End, _MiningAddr, _PackingDifficulty, _StoreID, _Intervals) ->
     no_interval_check_implemented_for_non_default_store.
@@ -400,7 +400,7 @@ cached_read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
                         {store_id, StoreID},
                         {partition_number, Candidate#mining_candidate.partition_number},
                         {partition_number2, Candidate#mining_candidate.partition_number2},
-                        {cm_peer, arweave_util:format_peer(Candidate#mining_candidate.cm_lead_peer)},
+                        {cm_peer, arweave_lib_util:format_peer(Candidate#mining_candidate.cm_lead_peer)},
                         {cache_ref, Candidate#mining_candidate.cache_ref},
                         {session,
                          ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)}]),
@@ -411,9 +411,9 @@ read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID) ->
     StartTime = erlang:monotonic_time(),
     #mining_candidate{ mining_address = MiningAddress,
                        packing_difficulty = PackingDifficulty } = Candidate,
-    RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty),
+    RecallRangeSize = arweave_lib_constants:get_recall_range_size(PackingDifficulty),
     Intervals = get_packed_intervals(RangeStart, RangeStart + RecallRangeSize,
-                                     MiningAddress, PackingDifficulty, StoreID, ar_intervals:new()),
+                                     MiningAddress, PackingDifficulty, StoreID, arweave_lib_intervals:new()),
     ChunkOffsets = ar_chunk_storage:get_range(RangeStart, RecallRangeSize, StoreID),
     ChunkOffsets2 = filter_by_packing(ChunkOffsets, Intervals, StoreID),
     log_read_range(Mode, Candidate, WhichChunk, length(ChunkOffsets), StartTime),
@@ -422,7 +422,7 @@ read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID) ->
 filter_by_packing([], _Intervals, _StoreID) ->
     [];
 filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, ?DEFAULT_MODULE = StoreID) ->
-    case ar_intervals:is_inside(Intervals, EndOffset) of
+    case arweave_lib_intervals:is_inside(Intervals, EndOffset) of
         false ->
             filter_by_packing(ChunkOffsets, Intervals, StoreID);
         true ->

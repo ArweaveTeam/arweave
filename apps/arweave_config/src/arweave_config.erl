@@ -49,6 +49,7 @@
 %%% contract for the rest of the node.
 %%%
 -module(arweave_config).
+-export([safe_parse_peer/1, safe_parse_peer/2]).
 -compile(warnings_as_errors).
 -vsn(1).
 -behavior(application).
@@ -406,3 +407,6 @@ force_config(Map) when is_map(Map) ->
     end.
 
 -endif.
+
+safe_parse_peer(Peer) -> arweave_config_peer:safe_parse_peer(Peer).
+safe_parse_peer(Peer, Resolve) -> arweave_config_peer:safe_parse_peer(Peer, Resolve).

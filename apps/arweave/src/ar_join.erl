@@ -37,7 +37,7 @@ filter_peers([Peer | Peers], Peers2) ->
     case get_peer_height(Peer) of
         info_unavailable ->
             ?LOG_WARNING([{event, trusted_peer_unavailable},
-                          {peer, arweave_util:format_peer(Peer)}]),
+                          {peer, arweave_lib_util:format_peer(Peer)}]),
             filter_peers(Peers, Peers2);
         Height ->
             filter_peers(Peers, [{Height, Peer} | Peers2])
@@ -62,7 +62,7 @@ filter_peers2([], _MaxHeight) ->
     [];
 filter_peers2([{Height, Peer} | Peers], MaxHeight) when MaxHeight - Height >= 5 ->
     ?LOG_WARNING([{event, trusted_peer_five_or_more_blocks_behind},
-                  {peer, arweave_util:format_peer(Peer)}]),
+                  {peer, arweave_lib_util:format_peer(Peer)}]),
     filter_peers2(Peers, MaxHeight);
 filter_peers2([{_Height, Peer} | Peers], MaxHeight) ->
     [Peer | filter_peers2(Peers, MaxHeight)].
@@ -83,7 +83,7 @@ start2(Peers) ->
             do_join(Peers, B, BI);
         _ ->
             DataDir = arweave_config:get([data_dir]),
-            ID = binary_to_list(arweave_util:encode(crypto:strong_rand_bytes(16))),
+            ID = binary_to_list(arweave_lib_util:encode(crypto:strong_rand_bytes(16))),
             File = filename:join(DataDir,
                                  "inconsistent_joining_data_dump_" ++ ID),
             file:write_file(File, term_to_binary({B, Peers, BI})),
@@ -177,7 +177,7 @@ get_block(Peers, H) ->
     end.
 
 get_block(Peers, H, Retries) ->
-    ar:console("Downloading joining block ~s.~n", [arweave_util:encode(H)]),
+    ar:console("Downloading joining block ~s.~n", [arweave_lib_util:encode(H)]),
     case ar_http_iface_client:get_block_shadow(Peers, H) of
         {_Peer, #block{} = BShadow, _Time, _Size} ->
             get_block(Peers, BShadow, BShadow#block.txs, [], Retries);
@@ -186,22 +186,22 @@ get_block(Peers, H, Retries) ->
                 true ->
                     ar:console(
                       "Failed to fetch a joining block ~s from any of the peers."
-                      " Retrying..~n", [arweave_util:encode(H)]
+                      " Retrying..~n", [arweave_lib_util:encode(H)]
                      ),
                     ?LOG_WARNING([
                                   {event, failed_to_fetch_joining_block},
-                                  {block, arweave_util:encode(H)}
+                                  {block, arweave_lib_util:encode(H)}
                                  ]),
                     timer:sleep(1000),
                     get_block(Peers, H, Retries - 1);
                 false ->
                     ar:console(
                       "Failed to fetch a joining block ~s from any of the peers. Giving up.."
-                      " Consider changing the peers.~n", [arweave_util:encode(H)]
+                      " Consider changing the peers.~n", [arweave_lib_util:encode(H)]
                      ),
                     ?LOG_ERROR([
                                 {event, failed_to_fetch_joining_block},
-                                {block, arweave_util:encode(H)}
+                                {block, arweave_lib_util:encode(H)}
                                ]),
                     timer:sleep(1000),
                     init:stop(1)
@@ -219,22 +219,22 @@ get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries) ->
                 true ->
                     ar:console(
                       "Failed to fetch a joining transaction ~s from any of the peers."
-                      " Retrying..~n", [arweave_util:encode(TXID)]
+                      " Retrying..~n", [arweave_lib_util:encode(TXID)]
                      ),
                     ?LOG_WARNING([
                                   {event, failed_to_fetch_joining_tx},
-                                  {tx, arweave_util:encode(TXID)}
+                                  {tx, arweave_lib_util:encode(TXID)}
                                  ]),
                     timer:sleep(1000),
                     get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries - 1);
                 false ->
                     ar:console(
                       "Failed to fetch a joining tx ~s from any of the peers. Giving up.."
-                      " Consider changing the peers.~n", [arweave_util:encode(TXID)]
+                      " Consider changing the peers.~n", [arweave_lib_util:encode(TXID)]
                      ),
                     ?LOG_ERROR([
                                 {event, failed_to_fetch_joining_tx},
-                                {block, arweave_util:encode(TXID)}
+                                {block, arweave_lib_util:encode(TXID)}
                                ]),
                     timer:sleep(1000),
                     init:stop(1)
@@ -248,7 +248,7 @@ do_join(Peers, B, BI) ->
     WorkerQ = queue:from_list([spawn(fun() -> worker() end)
                                || _ <- lists:seq(1, JoinWorkers)]),
     PeerQ = queue:from_list(Peers),
-    Trail = lists:sublist(tl(BI), 2 * ar_block:get_max_tx_anchor_depth()),
+    Trail = lists:sublist(tl(BI), 2 * arweave_lib_constants:get_max_tx_anchor_depth()),
     SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
     Retries = lists:foldl(fun(Peer, Acc) -> maps:put(Peer, 5, Acc) end, #{}, Peers),
     Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs }
@@ -259,12 +259,12 @@ do_join(Peers, B, BI) ->
     ar_node_worker ! {join, B#block.height, BI, Blocks3},
     join_peers(Peers).
 
-%% @doc Get the 2 * ar_block:get_max_tx_anchor_depth() blocks preceding the head block.
-%% If the block list is shorter than 2 * ar_block:get_max_tx_anchor_depth(), simply
+%% @doc Get the 2 * arweave_lib_constants:get_max_tx_anchor_depth() blocks preceding the head block.
+%% If the block list is shorter than 2 * arweave_lib_constants:get_max_tx_anchor_depth(), simply
 %% get all existing blocks.
 %%
-%% The node needs 2 * ar_block:get_max_tx_anchor_depth() block anchors so that it
-%% can validate transactions even if it enters a ar_block:get_max_tx_anchor_depth()-deep
+%% The node needs 2 * arweave_lib_constants:get_max_tx_anchor_depth() block anchors so that it
+%% can validate transactions even if it enters a arweave_lib_constants:get_max_tx_anchor_depth()-deep
 %% fork recovery (which is the deepest fork recovery possible) immediately after
 %% joining the network.
 get_block_trail(_WorkerQ, _PeerQ, [], _Retries) ->
@@ -316,11 +316,11 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
             case PeerRetries > 0 of
                 true ->
                     ar:console("Failed to fetch a joining block ~s from ~s."
-                               " Retrying..~n", [arweave_util:encode(H), arweave_util:format_peer(Peer)]),
+                               " Retrying..~n", [arweave_lib_util:encode(H), arweave_lib_util:format_peer(Peer)]),
                     ?LOG_WARNING([
                                   {event, failed_to_fetch_joining_block},
-                                  {block, arweave_util:encode(H)},
-                                  {peer, arweave_util:format_peer(Peer)},
+                                  {block, arweave_lib_util:encode(H)},
+                                  {peer, arweave_lib_util:format_peer(Peer)},
                                   {response, io_lib:format("~p", [Response])}
                                  ]),
                     timer:sleep(1000),
@@ -346,11 +346,11 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
                                     PeerQ2 = queue:delete(Peer, PeerQ),
                                     ar:console("Failed to fetch a joining block ~s from ~s. "
                                                "Removing the peer from the queue..",
-                                               [arweave_util:encode(H), arweave_util:format_peer(Peer)]),
+                                               [arweave_lib_util:encode(H), arweave_lib_util:format_peer(Peer)]),
                                     ?LOG_ERROR([
                                                 {event, failed_to_fetch_joining_block},
-                                                {block, arweave_util:encode(H)},
-                                                {peer, arweave_util:format_peer(Peer)},
+                                                {block, arweave_lib_util:encode(H)},
+                                                {peer, arweave_lib_util:format_peer(Peer)},
                                                 {response, io_lib:format("~p", [Response])}
                                                ]),
                                     {WorkerQ2, PeerQ3} = request_block(H, WorkerQ, PeerQ2),
@@ -392,11 +392,11 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
             case PeerRetries > 0 of
                 true ->
                     ar:console("Failed to fetch a joining transaction ~s from ~s. "
-                               "Retrying..~n", [arweave_util:encode(TXID), arweave_util:format_peer(Peer)]),
+                               "Retrying..~n", [arweave_lib_util:encode(TXID), arweave_lib_util:format_peer(Peer)]),
                     ?LOG_WARNING([{event, failed_to_fetch_joining_tx},
-                                  {block, arweave_util:encode(H)},
-                                  {tx, arweave_util:encode(TXID)},
-                                  {peer, arweave_util:format_peer(Peer)},
+                                  {block, arweave_lib_util:encode(H)},
+                                  {tx, arweave_lib_util:encode(TXID)},
+                                  {peer, arweave_lib_util:format_peer(Peer)},
                                   {response, io_lib:format("~p", [Response])}]),
                     timer:sleep(1000),
                     Retries2 = maps:put(Peer, PeerRetries - 1, Retries),
@@ -421,12 +421,12 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
                                     PeerQ2 = queue:delete(Peer, PeerQ),
                                     ar:console("Failed to fetch a joining tx ~s from ~s. "
                                                "Removing the peer from the queue..",
-                                               [arweave_util:encode(TXID), arweave_util:format_peer(Peer)]),
+                                               [arweave_lib_util:encode(TXID), arweave_lib_util:format_peer(Peer)]),
                                     ?LOG_ERROR([
                                                 {event, failed_to_fetch_joining_tx},
-                                                {block, arweave_util:encode(H)},
-                                                {tx, arweave_util:encode(TXID)},
-                                                {peer, arweave_util:format_peer(Peer)},
+                                                {block, arweave_lib_util:encode(H)},
+                                                {tx, arweave_lib_util:encode(TXID)},
+                                                {peer, arweave_lib_util:format_peer(Peer)},
                                                 {response, io_lib:format("~p", [Response])}
                                                ]),
                                     {WorkerQ2, PeerQ3} = request_tx(H, TXID, WorkerQ, PeerQ2),
@@ -474,14 +474,14 @@ maybe_set_reward_history(Blocks, Peers) ->
         _ ->
             ar:console("Failed to fetch the reward history for the block ~s from "
                        "any of the peers. Consider changing the peers.~n",
-                       [arweave_util:encode((hd(Blocks))#block.indep_hash)]),
+                       [arweave_lib_util:encode((hd(Blocks))#block.indep_hash)]),
             ?LOG_WARNING([{event, failed_to_fetch_reward_history}]),
             timer:sleep(1000),
             init:stop(1)
     end.
 
 maybe_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->
-    case Height >= ar_fork:height_2_7() of
+    case Height >= arweave_lib_fork:height_2_7() of
         true ->
             case ar_http_iface_client:get_block_time_history(
                    Peers, hd(Blocks), ar_block_time_history:get_hashes(Blocks)) of
@@ -490,7 +490,7 @@ maybe_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->
                 _ ->
                     ar:console("Failed to fetch the block time history for the block ~s from "
                                "any of the peers. Consider changing the peers.~n",
-                               [arweave_util:encode((hd(Blocks))#block.indep_hash)]),
+                               [arweave_lib_util:encode((hd(Blocks))#block.indep_hash)]),
                     timer:sleep(1000),
                     init:stop(1)
             end;

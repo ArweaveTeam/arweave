@@ -34,7 +34,7 @@ update(StoreID, Report) ->
 %%%===================================================================
 
 init([]) ->
-    arweave_util:cast_after(?REPORT_PROGRESS_INTERVAL, self(), report_progress),
+    ar_util:cast_after(?REPORT_PROGRESS_INTERVAL, self(), report_progress),
     {ok, #state{}}.
 
 
@@ -52,7 +52,7 @@ handle_cast(report_progress, State) ->
 
     print_sample_reports(SampleReports),
     print_verify_reports(VerifyReports),
-    arweave_util:cast_after(?REPORT_PROGRESS_INTERVAL, self(), report_progress),
+    ar_util:cast_after(?REPORT_PROGRESS_INTERVAL, self(), report_progress),
     {noreply, State};
 
 % handle_cast({sample_update, StoreID, SampleReport}, State) ->

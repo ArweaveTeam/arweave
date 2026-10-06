@@ -20,7 +20,8 @@
     runtime_tools,
     arweave_metrics,
     arweave_limiter,
-    arweave_throttling
+    arweave_throttling,
+    arweave_lib
    ]},
   {extra_applications, [recon]}
  ]}.

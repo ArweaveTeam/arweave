@@ -56,9 +56,9 @@ clip(BucketEndOffset, Count, Limit) ->
 kept_intervals(Start, End, Limit) ->
     case is_unlimited(Limit) of
         true ->
-            ar_intervals:add(ar_intervals:new(), End, Start);
+            arweave_lib_intervals:add(arweave_lib_intervals:new(), End, Start);
         false ->
-            kept_intervals(Start, End, Limit, ar_intervals:new())
+            kept_intervals(Start, End, Limit, arweave_lib_intervals:new())
     end.
 
 kept_intervals(Start, End, _Limit, Intervals) when Start >= End ->
@@ -70,7 +70,7 @@ kept_intervals(Start, End, Limit, Intervals) ->
     AllowedEnd = min(SectorStart + Limit * ?DATA_CHUNK_SIZE, End),
     Intervals2 =
         case AllowedEnd > Start of
-            true -> ar_intervals:add(Intervals, AllowedEnd, Start);
+            true -> arweave_lib_intervals:add(Intervals, AllowedEnd, Start);
             false -> Intervals
         end,
     NextSectorStart =
@@ -84,7 +84,7 @@ kept_intervals(Start, End, Limit, Intervals) ->
 
 get_test() ->
     arweave_config:with_test_config(fun() ->
-        P = ar_block:partition_size(),
+        P = arweave_lib_constants:partition_size(),
         Addr = crypto:strong_rand_bytes(32),
         All = ar_footprint_record:get_footprints_per_partition(),
         ok = arweave_config:force_config(#{
@@ -132,16 +132,16 @@ clip_test() ->
 
 kept_intervals_test() ->
     Whole = kept_intervals(0, 2097152, 5),
-    ?assertEqual([{2097152, 0}], ar_intervals:to_list(Whole)),
+    ?assertEqual([{2097152, 0}], arweave_lib_intervals:to_list(Whole)),
     One = kept_intervals(0, 2097152, 1),
     ?assertEqual([{262144, 0}, {786432, 524288}, {1310720, 1048576},
-            {1835008, 1572864}], ar_intervals:to_list(One)),
+            {1835008, 1572864}], arweave_lib_intervals:to_list(One)),
     Two = kept_intervals(0, 2097152, 2),
-    ?assertEqual([{2097152, 0}], ar_intervals:to_list(Two)),
+    ?assertEqual([{2097152, 0}], arweave_lib_intervals:to_list(Two)),
     %% A window starting inside a kept prefix keeps only its tail.
     Tail = kept_intervals(131072, 1000000, 1),
     ?assertEqual([{262144, 131072}, {786432, 524288}],
-            ar_intervals:to_list(Tail)),
+            arweave_lib_intervals:to_list(Tail)),
     %% A window starting past the prefix gets the next sector's prefix.
     Skip = kept_intervals(262144, 1048576, 1),
-    ?assertEqual([{786432, 524288}], ar_intervals:to_list(Skip)).
+    ?assertEqual([{786432, 524288}], arweave_lib_intervals:to_list(Skip)).

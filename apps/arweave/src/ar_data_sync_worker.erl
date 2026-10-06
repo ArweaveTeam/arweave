@@ -44,7 +44,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End })
 fetch_range(#sync_task{ retry_count = 0, peer = Peer,
                         start_offset = Start, end_offset = End }) ->
     ?LOG_INFO([{event, fetch_range_retries_exhausted},
-               {peer, arweave_util:format_peer(Peer)},
+               {peer, arweave_lib_util:format_peer(Peer)},
                {start_offset, Start}, {end_offset, End}]),
     {error, timeout};
 fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
@@ -64,7 +64,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
                     %% In case we fetched a packed small chunk we may skip some
                     %% chunks by continuing with Start2 + byte_size(Chunk) — the
                     %% skipped chunks are requested later.
-                    Start3 = ar_block:get_chunk_padded_offset(
+                    Start3 = arweave_lib_constants:get_chunk_padded_offset(
                                Start2 + byte_size(Chunk)) + 1,
                     ar_data_sync:store_fetched_chunk(
                       TargetStoreID, Peer, Byte, Proof),
@@ -72,7 +72,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
                     fetch_range(Task#sync_task{ start_offset = Start3 });
                 {error, timeout} ->
                     ?LOG_DEBUG([{event, timeout_fetching_chunk},
-                                {peer, arweave_util:format_peer(Peer)},
+                                {peer, arweave_lib_util:format_peer(Peer)},
                                 {start_offset, Start2}, {end_offset, End}]),
                     timer:sleep(1000),
                     fetch_range(Task#sync_task{ retry_count = RetryCount - 1 });
@@ -81,7 +81,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
                 {error, Reason} ->
                     ar_http_iface_client:log_failed_request({error, Reason}, [
                                                                               {event, failed_to_fetch_chunk},
-                                                                              {peer, arweave_util:format_peer(Peer)},
+                                                                              {peer, arweave_lib_util:format_peer(Peer)},
                                                                               {start_offset, Start2}, {end_offset, End},
                                                                               {reason, io_lib:format("~p", [Reason])}]),
                     {error, Reason}
@@ -255,7 +255,7 @@ run_with_mocks(GetChunkFun, ExtraMocks, TestFun) ->
                     (K) -> meck:passthrough([K]) end},
                 {ar_tx_blacklist, get_next_not_blacklisted_byte, fun(X) -> X end},
                 {ar_sync_record, is_recorded, fun(_, _, _) -> false end},
-                {ar_block, get_chunk_padded_offset, fun(X) -> X end},
+                {arweave_lib_constants, get_chunk_padded_offset, fun(X) -> X end},
                 {ar_http_iface_client, get_chunk_binary, GetChunkFun},
                 {ar_http_iface_client, log_failed_request, fun(_, _) -> ok end},
                 {ar_data_sync, store_fetched_chunk, fun(_, _, _, _) -> ok end},

@@ -27,7 +27,7 @@
     %% gb_set of sliced-but-not-yet-drained chunk tasks ({FK, Start, End, Peer}).
     q = gb_sets:new(),
     %% ar_intervals set of queued + currently-fetching ranges, used to dedup.
-    inflight_intervals = ar_intervals:new()
+    inflight_intervals = arweave_lib_intervals:new()
 }).
 
 %%%===================================================================
@@ -43,7 +43,7 @@ size(#sync_task_queue{ q = Q }) ->
 %% @doc Total bytes in `inflight_intervals' (queued + currently
 %% fetching). Drives `sync_task_queue_inflight_bytes'.
 inflight_bytes(#sync_task_queue{ inflight_intervals = I }) ->
-    ar_intervals:sum(I).
+    arweave_lib_intervals:sum(I).
 
 %% @doc Insert a list of {Peer, Intervals, FootprintKey} entries into the
 %% queue, capping each peer at ChunksPerPeer chunk-sized slices. Byte ranges
@@ -69,7 +69,7 @@ drain(#sync_task_queue{ q = Q } = Queue) ->
 release_task_range(Start, End,
         #sync_task_queue{ inflight_intervals = InflightIntervals } = Queue) ->
     Queue#sync_task_queue{
-        inflight_intervals = ar_intervals:delete(InflightIntervals, End, Start) }.
+        inflight_intervals = arweave_lib_intervals:delete(InflightIntervals, End, Start) }.
 
 %%%===================================================================
 %%% Private helpers.
@@ -79,8 +79,8 @@ insert_peer(Peer, Intervals, FootprintKey, ChunksToEnqueue,
         #sync_task_queue{ q = Q, inflight_intervals = InflightIntervals } = Queue) ->
     %% Drop intervals already in flight so two peers seeding the same range
     %% do not each get enqueued for it.
-    OuterJoin = ar_intervals:outerjoin(InflightIntervals, Intervals),
-    {_, {Q2, InflightIntervals2}} = ar_intervals:fold(
+    OuterJoin = arweave_lib_intervals:outerjoin(InflightIntervals, Intervals),
+    {_, {Q2, InflightIntervals2}} = arweave_lib_intervals:fold(
         fun (_, {0, Acc}) ->
                 {0, Acc};
             ({End, Start}, {Remaining, {QAcc, IFAcc}}) ->
@@ -108,7 +108,7 @@ insert_range(Peer, FootprintKey, RangeStart, RangeEnd, ChunkOffsets,
         Q,
         ChunkOffsets
     ),
-    InflightIntervals2 = ar_intervals:add(InflightIntervals, RangeEnd, RangeStart),
+    InflightIntervals2 = arweave_lib_intervals:add(InflightIntervals, RangeEnd, RangeStart),
     {Q2, InflightIntervals2}.
 
 -ifdef(AR_TEST).
@@ -121,7 +121,7 @@ enqueue_intervals_test() ->
 
     test_enqueue_intervals(
         [
-            {Peer1, ar_intervals:from_list([
+            {Peer1, arweave_lib_intervals:from_list([
                     {4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
                     {9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
                 ]), none}
@@ -143,15 +143,15 @@ enqueue_intervals_test() ->
 
     test_enqueue_intervals(
         [
-            {Peer1, ar_intervals:from_list([
+            {Peer1, arweave_lib_intervals:from_list([
                 {4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
                 {9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
             ]), none},
-            {Peer2, ar_intervals:from_list([
+            {Peer2, arweave_lib_intervals:from_list([
                 {4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
                 {7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
             ]), none},
-            {Peer3, ar_intervals:from_list([
+            {Peer3, arweave_lib_intervals:from_list([
                 {8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
             ]), none}
         ],
@@ -174,15 +174,15 @@ enqueue_intervals_test() ->
 
 test_enqueue_intervals(Intervals, ChunksPerPeer, SeedRanges, ExpectedAddedRanges,
         ExpectedChunks, Label) ->
-    SeedInflight = ar_intervals:from_list(SeedRanges),
+    SeedInflight = arweave_lib_intervals:from_list(SeedRanges),
     Seeded = #sync_task_queue{ inflight_intervals = SeedInflight },
     Result = insert_batch(Intervals, ChunksPerPeer, Seeded),
     #sync_task_queue{ q = QResult, inflight_intervals = ResultInflight } = Result,
     ExpectedInflight = lists:foldl(fun({End, Start}, Acc) ->
-            ar_intervals:add(Acc, End, Start)
+            arweave_lib_intervals:add(Acc, End, Start)
         end, SeedInflight, ExpectedAddedRanges),
-    ?assertEqual(ar_intervals:to_list(ExpectedInflight),
-        ar_intervals:to_list(ResultInflight), Label),
+    ?assertEqual(arweave_lib_intervals:to_list(ExpectedInflight),
+        arweave_lib_intervals:to_list(ResultInflight), Label),
     ?assertEqual(ExpectedChunks, gb_sets:to_list(QResult), Label).
 
 -endif.

@@ -82,7 +82,7 @@ assert_clear_error_codes(TXID) ->
 tx_db_test_() ->
     {setup, fun setup_ets/0, fun(Cleanup) -> Cleanup() end,
         fun(_) -> [ar_test_util:with_mocked(
-                [{ar_fork, height_2_9_6, fun() -> infinity end}],
+                [{arweave_lib_fork, height_2_9_6, fun() -> infinity end}],
                 fun test_tx_db/0)] end}.
 
 test_tx_db() ->

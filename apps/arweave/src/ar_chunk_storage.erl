@@ -99,13 +99,13 @@ register_workers() ->
         Packing :: term()
        ) -> true | false.
 is_storage_supported(Offset, ChunkSize, Packing) ->
-    case Offset > ar_block:strict_data_split_threshold() of
+    case Offset > arweave_lib_constants:strict_data_split_threshold() of
         true ->
-            %% All chunks above ar_block:strict_data_split_threshold() are placed in 256 KiB
+            %% All chunks above arweave_lib_constants:strict_data_split_threshold() are placed in 256 KiB
             %% buckets so technically can be stored in ar_chunk_storage. However, to avoid
             %% managing padding in ar_chunk_storage for unpacked chunks smaller than 256 KiB
             %% (we do not need fast random access to unpacked chunks after
-            %% ar_block:strict_data_split_threshold() anyways), we put them to RocksDB.
+            %% arweave_lib_constants:strict_data_split_threshold() anyways), we put them to RocksDB.
             Packing /= unpacked orelse ChunkSize == (?DATA_CHUNK_SIZE);
         false ->
             ChunkSize == (?DATA_CHUNK_SIZE)
@@ -293,8 +293,8 @@ get_chunk_storage_path(DataDir, StoreID) ->
 %% match the chunk's start offset.
 -spec get_chunk_bucket_start(Offset :: non_neg_integer()) -> non_neg_integer().
 get_chunk_bucket_start(Offset) ->
-    PaddedEndOffset = ar_block:get_chunk_padded_offset(Offset),
-    arweave_util:floor_int(max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE).
+    PaddedEndOffset = arweave_lib_constants:get_chunk_padded_offset(Offset),
+    arweave_lib_util:floor_int(max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE).
 
 -spec get_chunk_bucket_end(Offset :: non_neg_integer()) -> non_neg_integer().
 get_chunk_bucket_end(Offset) ->
@@ -318,13 +318,13 @@ get_chunk_byte_from_bucket_end(BucketEndOffset) ->
 %% identified by Offset. Offset can be any byte within the chunk - in either the unpadded
 %% part or the pad. This typically equates to the first byte of the chunk plus one.
 %%
-%% If Offset is before the ar_block:strict_data_split_threshold() we just return it because we don't
+%% If Offset is before the arweave_lib_constants:strict_data_split_threshold() we just return it because we don't
 %% have any information about where chunks start or end.
 -spec get_chunk_seek_offset(non_neg_integer()) -> non_neg_integer().
 get_chunk_seek_offset(Offset) ->
-    case Offset > ar_block:strict_data_split_threshold() of
+    case Offset > arweave_lib_constants:strict_data_split_threshold() of
         true ->
-            ar_poa:get_padded_offset(Offset, ar_block:strict_data_split_threshold())
+            ar_poa:get_padded_offset(Offset, arweave_lib_constants:strict_data_split_threshold())
                 - (?DATA_CHUNK_SIZE)
                 + 1;
         false ->
@@ -550,7 +550,7 @@ get_chunk_file_start(EndOffset) ->
     get_chunk_file_start_by_start_offset(StartOffset).
 
 get_chunk_file_start_by_start_offset(StartOffset) ->
-    arweave_util:floor_int(StartOffset, get_chunk_group_size()).
+    arweave_lib_util:floor_int(StartOffset, get_chunk_group_size()).
 
 write_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
     {_ChunkFileStart, Filepath, Position, ChunkOffset} =
@@ -609,7 +609,7 @@ get_position_and_relative_chunk_offset(ChunkFileStart, Offset) ->
     get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, BucketPickOffset).
 
 get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, BucketPickOffset) ->
-    BucketStart = arweave_util:floor_int(BucketPickOffset, ?DATA_CHUNK_SIZE),
+    BucketStart = arweave_lib_util:floor_int(BucketPickOffset, ?DATA_CHUNK_SIZE),
     ChunkOffset = case BucketPickOffset - BucketStart of
                       0 ->
                           %% Represent 0 as the largest possible offset plus one,
@@ -693,7 +693,7 @@ read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount, StoreID) ->
 read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount, StoreID) ->
     {Position, _ChunkOffset} =
         get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, Start),
-    BucketStart = arweave_util:floor_int(Start, ?DATA_CHUNK_SIZE),
+    BucketStart = arweave_lib_util:floor_int(Start, ?DATA_CHUNK_SIZE),
     read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID).
 
 read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID) ->
@@ -758,7 +758,7 @@ is_offset_valid(Byte, BucketStart, ChunkOffset) ->
 
 get_sync_record_intervals(Start, ChunkCount, StoreID) ->
     End = Start + (ChunkCount + 1) * ?DATA_CHUNK_SIZE,
-    get_sync_record_intervals(Start, End, StoreID, ar_intervals:new()).
+    get_sync_record_intervals(Start, End, StoreID, arweave_lib_intervals:new()).
 
 get_sync_record_intervals(Start, End, _StoreID, Intervals) when Start >= End ->
     Intervals;
@@ -768,7 +768,7 @@ get_sync_record_intervals(Start, End, StoreID, Intervals) ->
             Intervals;
         {End2, Start2} ->
             get_sync_record_intervals(End2, End, StoreID,
-                                      ar_intervals:add(Intervals, min(End, End2), Start2))
+                                      arweave_lib_intervals:add(Intervals, min(End, End2), Start2))
     end.
 
 filter_by_sync_record(ReadChunks, Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
@@ -786,7 +786,7 @@ filter_by_sync_record(Chunks, _Intervals, _Byte, _Start, _ChunkFileStart, _Store
 filter_by_sync_record([], _Intervals, _Byte, _Start, _ChunkFileStart, _StoreID, _ChunkCount) ->
     [];
 filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
-    case ar_intervals:is_inside(Intervals, PaddedEndOffset) of
+    case arweave_lib_intervals:is_inside(Intervals, PaddedEndOffset) of
         false ->
             %% The holes between chunks may be filled with entropy.
             filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount);
@@ -927,12 +927,12 @@ read_chunks_sizes(DataDir) ->
 
 chunk_bucket_test() ->
     ar_test_node:test_with_all_nodes_mocked([
-                                             {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+                                             {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end}
                                             ],
                                             fun test_chunk_bucket/0, 30).
 
 test_chunk_bucket() ->
-    case ar_block:strict_data_split_threshold() of
+    case arweave_lib_constants:strict_data_split_threshold() of
         700_000 ->
             ok;
         _ ->
@@ -964,15 +964,15 @@ test_chunk_bucket() ->
     ?assertEqual(524288, get_chunk_bucket_end(2 * ?DATA_CHUNK_SIZE + 1)),
     ?assertEqual(262144, get_chunk_bucket_start(2 * ?DATA_CHUNK_SIZE + 1)),
 
-    ?assertEqual(524288, get_chunk_bucket_end(ar_block:strict_data_split_threshold() - 1)),
-    ?assertEqual(262144, get_chunk_bucket_start(ar_block:strict_data_split_threshold() - 1)),
+    ?assertEqual(524288, get_chunk_bucket_end(arweave_lib_constants:strict_data_split_threshold() - 1)),
+    ?assertEqual(262144, get_chunk_bucket_start(arweave_lib_constants:strict_data_split_threshold() - 1)),
 
-    ?assertEqual(524288, get_chunk_bucket_end(ar_block:strict_data_split_threshold())),
-    ?assertEqual(262144, get_chunk_bucket_start(ar_block:strict_data_split_threshold())),
+    ?assertEqual(524288, get_chunk_bucket_end(arweave_lib_constants:strict_data_split_threshold())),
+    ?assertEqual(262144, get_chunk_bucket_start(arweave_lib_constants:strict_data_split_threshold())),
 
     %% After the STRICT_DATA_SPLIT_THRESHOLD, offsets are padded.
-    ?assertEqual(786432, get_chunk_bucket_end(ar_block:strict_data_split_threshold() + 1)),
-    ?assertEqual(524288, get_chunk_bucket_start(ar_block:strict_data_split_threshold() + 1)),
+    ?assertEqual(786432, get_chunk_bucket_end(arweave_lib_constants:strict_data_split_threshold() + 1)),
+    ?assertEqual(524288, get_chunk_bucket_start(arweave_lib_constants:strict_data_split_threshold() + 1)),
 
     ?assertEqual(786432, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE - 1)),
     ?assertEqual(524288, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE - 1)),
@@ -1003,7 +1003,7 @@ test_chunk_bucket() ->
 
 get_chunk_byte_from_bucket_end_test() ->
     ar_test_node:test_with_all_nodes_mocked([
-                                             {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+                                             {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end}
                                             ],
                                             fun test_get_chunk_byte_from_bucket_end/0, 30).
 
@@ -1264,7 +1264,7 @@ assert_get(Expected, Offset, StoreID) ->
 defrag_command_test() ->
     RandomID = crypto:strong_rand_bytes(16),
     Filepath = filename:join(".tmp",
-        "test_defrag_" ++ binary_to_list(arweave_util:encode(RandomID))),
+        "test_defrag_" ++ binary_to_list(arweave_lib_util:encode(RandomID))),
     ok = filelib:ensure_dir(Filepath),
     {ok, F} = file:open(Filepath, [binary, write]),
     {O1, C1} = {236, crypto:strong_rand_bytes(262144)},

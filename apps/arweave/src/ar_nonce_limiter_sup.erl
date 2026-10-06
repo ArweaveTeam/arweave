@@ -25,7 +25,7 @@ init([]) ->
     ServerWorkers = lists:map(
                       fun(Peer) ->
                               Name = list_to_atom("ar_nonce_limiter_server_worker_"
-                                                  ++ arweave_util:peer_to_str(Peer)),
+                                                  ++ arweave_lib_util:peer_to_str(Peer)),
                               ?CHILD_WITH_ARGS(ar_nonce_limiter_server_worker,
                                                worker, Name, [Name, Peer])
                       end,

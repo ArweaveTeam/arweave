@@ -279,11 +279,11 @@ assert_no_messages() ->
     end.
 
 generate_recall_range(RecallRangeStart, Difficulty) ->
-    RecallRangeSize = ar_block:get_recall_range_size(Difficulty),
+    RecallRangeSize = arweave_lib_constants:get_recall_range_size(Difficulty),
     [{RecallRangeStart + RecallRangeSize, <<0:RecallRangeSize/unit:8>>}].
 
 generate_hashes_for_recall_range(Prefix, Difficulty) ->
-  [<<Prefix/binary, (integer_to_binary(N))/binary>> || N <- lists:seq(1, ar_block:get_nonces_per_recall_range(Difficulty))].
+  [<<Prefix/binary, (integer_to_binary(N))/binary>> || N <- lists:seq(1, arweave_lib_constants:get_nonces_per_recall_range(Difficulty))].
 
 %% ------------------------------------------------------------------------------------------------
 %% Tests

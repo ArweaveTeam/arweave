@@ -78,7 +78,7 @@ read_block_index_from_map(Map, Height, End, PrevH, BI) ->
                 {_, _, _, PrevH2} ->
                     ar:console("The stored block index is invalid. Height: ~B, "
                             "stored previous hash: ~s, expected previous hash: ~s.~n",
-                            [Height, arweave_util:encode(PrevH2), arweave_util:encode(PrevH)]),
+                            [Height, arweave_lib_util:encode(PrevH2), arweave_lib_util:encode(PrevH)]),
                     not_found
             end
     end.
@@ -109,20 +109,20 @@ read_history_element(DB, CustomDir, H) ->
     case ar_kv:get(get_db_name(DB, CustomDir), H) of
         not_found ->
             ?LOG_DEBUG([{event, read_history_element_not_found}, {db, DB},
-                    {block, arweave_util:encode(H)}]),
+                    {block, arweave_lib_util:encode(H)}]),
             not_found;
         {ok, Bin} ->
             try
                 binary_to_term(Bin, [safe])
             catch Class:Reason ->
                 ?LOG_WARNING([{event, failed_to_decode_history_element},
-                        {db, DB}, {block, arweave_util:encode(H)},
+                        {db, DB}, {block, arweave_lib_util:encode(H)},
                         {class, Class}, {reason, io_lib:format("~p", [Reason])}]),
                 not_found
             end;
         {error, Reason} ->
             ?LOG_WARNING([{event, failed_to_read_history_element}, {db, DB},
-                    {block, arweave_util:encode(H)},
+                    {block, arweave_lib_util:encode(H)},
                     {reason, io_lib:format("~p", [Reason])}]),
             not_found
     end.
@@ -134,7 +134,7 @@ read_block_time_history(Height, BI) ->
 read_block_time_history(_Height, [], _CustomDir) ->
     [];
 read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI], CustomDir) ->
-    case Height < ar_fork:height_2_7() of
+    case Height < arweave_lib_fork:height_2_7() of
     true ->
             [];
         false ->
@@ -153,7 +153,7 @@ read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI], CustomDir) ->
 
 %% @doc Record the entire block index on disk.
 %% Return {error, block_index_no_recent_intersection} if the local state forks away
-%% at more than ar_block:get_consensus_window_size() blocks ago.
+%% at more than arweave_lib_constants:get_consensus_window_size() blocks ago.
 store_block_index(BI) ->
     %% Use a key that is bigger than any << Height:256 >> (<<"a">> > << Height:256 >>)
     %% to retrieve the largest stored Height.
@@ -164,7 +164,7 @@ store_block_index(BI) ->
         {ok, << StoredHeight:256 >>, _V} ->
             %% RootHeight should a historical height shared by both the stored BI and the
             %% new BI
-            RootHeight = max(0, min(StoredHeight, NewHeight) - ar_block:get_consensus_window_size()),
+            RootHeight = max(0, min(StoredHeight, NewHeight) - arweave_lib_constants:get_consensus_window_size()),
             {ok, V} = ar_kv:get(block_index_db, << RootHeight:256 >>),
             {H, WeaveSize, TXRoot} = lists:nth(NewHeight - RootHeight + 1, BI),
         case binary_to_term(V, [safe]) of
@@ -175,8 +175,8 @@ store_block_index(BI) ->
                     ?LOG_ERROR([{event, failed_to_store_block_index},
                             {reason, no_intersection},
                             {height, RootHeight},
-                            {stored_hash, arweave_util:encode(H2)},
-                            {expected_hash, arweave_util:encode(H)}]),
+                            {stored_hash, arweave_lib_util:encode(H2)},
+                            {expected_hash, arweave_lib_util:encode(H)}]),
                     {error, block_index_no_recent_intersection}
             end;
         Error ->
@@ -284,7 +284,7 @@ store_reward_history_part2([{H, El} | History]) ->
         Error ->
             ?LOG_ERROR([{event, failed_to_update_reward_history},
                     {reason, io_lib:format("~p", [Error])},
-                    {block, arweave_util:encode(H)}]),
+                    {block, arweave_lib_util:encode(H)}]),
             {error, not_found}
     end.
 
@@ -304,7 +304,7 @@ store_block_time_history_part2([{H, El} | History]) ->
         Error ->
             ?LOG_ERROR([{event, failed_to_update_block_time_history},
                     {reason, io_lib:format("~p", [Error])},
-                    {block, arweave_util:encode(H)}]),
+                    {block, arweave_lib_util:encode(H)}]),
             {error, not_found}
     end.
 
@@ -437,7 +437,7 @@ read_block(BH, CustomDir) ->
                     parse_block_kv_binary(V);
                 {error, Reason} ->
                     ?LOG_WARNING([{event, error_reading_block_from_kv_storage},
-                            {block, arweave_util:encode(BH)},
+                            {block, arweave_lib_util:encode(BH)},
                             {error, io_lib:format("~p", [Reason])}]),
                     unavailable
             end
@@ -537,7 +537,7 @@ wallet_list_chunk_relative_filepath(Position, RootHash) ->
     binary_to_list(iolist_to_binary([
         ?WALLET_LIST_DIR,
         "/",
-        arweave_util:encode(RootHash),
+        arweave_lib_util:encode(RootHash),
         "-",
         integer_to_binary(Position),
         "-",
@@ -591,7 +591,7 @@ lookup_block_filename(H, CustomDir) ->
             _ ->
                 CustomDir
         end,
-    Name = filename:join([Dir, ?BLOCK_DIR, binary_to_list(arweave_util:encode(H))]),
+    Name = filename:join([Dir, ?BLOCK_DIR, binary_to_list(arweave_lib_util:encode(H))]),
     NameJSON = iolist_to_binary([Name, ".json"]),
     case is_file(NameJSON) of
         true ->
@@ -740,7 +740,7 @@ write_tx(#tx{ format = Format, id = TXID } = TX) ->
                     case {DataSize == TX#tx.data_size, Format} of
                         {false, 2} ->
                             ?LOG_ERROR([{event, failed_to_store_tx_data},
-                                    {reason, size_mismatch}, {tx, arweave_util:encode(TX#tx.id)}]),
+                                    {reason, size_mismatch}, {tx, arweave_lib_util:encode(TX#tx.id)}]),
                             ok;
                         {true, 1} ->
                             case write_tx_data(no_expected_data_root, TX#tx.data, TXID) of
@@ -748,7 +748,7 @@ write_tx(#tx{ format = Format, id = TXID } = TX) ->
                                     ok;
                                 {error, Reason} ->
                                     ?LOG_WARNING([{event, failed_to_store_tx_data},
-                                            {reason, Reason}, {tx, arweave_util:encode(TX#tx.id)}]),
+                                            {reason, Reason}, {tx, arweave_lib_util:encode(TX#tx.id)}]),
                                     %% We have stored the data in the tx_db table
                                     %% so we return ok here.
                                     ok
@@ -767,7 +767,7 @@ write_tx(#tx{ format = Format, id = TXID } = TX) ->
                                             %% the attached data.
                                             ?LOG_WARNING([{event, failed_to_store_tx_data},
                                                     {reason, Reason},
-                                                    {tx, arweave_util:encode(TX#tx.id)}]),
+                                                    {tx, arweave_lib_util:encode(TX#tx.id)}]),
                                             ok
                                     end
                             end
@@ -826,7 +826,7 @@ write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks, TXID) ->
                         Acc;
                     {error, Reason} ->
                         ?LOG_WARNING([{event, failed_to_write_tx_chunk},
-                                {tx, arweave_util:encode(TXID)},
+                                {tx, arweave_lib_util:encode(TXID)},
                                 {reason, io_lib:format("~p", [Reason])}]),
                         [Reason | Acc]
                 end
@@ -877,7 +877,7 @@ read_tx2(ID, CustomDir) ->
                             TX2#tx{ data = Data };
                         Error ->
                             ?LOG_WARNING([{event, error_reading_tx_from_kv_storage},
-                                    {tx, arweave_util:encode(ID)},
+                                    {tx, arweave_lib_util:encode(ID)},
                                     {error, io_lib:format("~p", [Error])}]),
                             unavailable
                     end;
@@ -995,7 +995,7 @@ read_tx_data(TX) ->
 read_tx_data(TX, CustomDir) ->
     case read_file_raw(tx_data_filepath(TX, CustomDir)) of
         {ok, Data} ->
-            {ok, arweave_util:decode(Data)};
+            {ok, arweave_lib_util:decode(Data)};
         Error ->
             Error
     end.
@@ -1097,7 +1097,7 @@ fold_wallet_list_chunks(RootHash, Position, Fun, Acc, CustomDir) ->
             "/",
             ?WALLET_LIST_DIR,
             "/",
-            arweave_util:encode(RootHash),
+            arweave_lib_util:encode(RootHash),
             "-",
             integer_to_binary(Position),
             "-",
@@ -1326,7 +1326,7 @@ write_block(B) ->
     case arweave_config:get([features, disk_logging]) of
         true ->
             ?LOG_INFO([{event, writing_block_to_disk},
-                    {block, arweave_util:encode(B#block.indep_hash)}]);
+                    {block, arweave_lib_util:encode(B#block.indep_hash)}]);
         _ ->
             do_nothing
     end,
@@ -1422,16 +1422,16 @@ tx_data_filepath(ID, CustomDir) ->
 tx_filename(TX) when is_record(TX, tx) ->
     tx_filename(TX#tx.id);
 tx_filename(TXID) when is_binary(TXID) ->
-    iolist_to_binary([arweave_util:encode(TXID), ".json"]).
+    iolist_to_binary([arweave_lib_util:encode(TXID), ".json"]).
 
 tx_data_filename(TXID) ->
-    iolist_to_binary([arweave_util:encode(TXID), "_data.json"]).
+    iolist_to_binary([arweave_lib_util:encode(TXID), "_data.json"]).
 
 wallet_list_filepath(Hash) ->
     wallet_list_filepath(Hash, not_set).
 
 wallet_list_filepath(Hash, CustomDir) when is_binary(Hash) ->
-    filepath([?WALLET_LIST_DIR, iolist_to_binary([arweave_util:encode(Hash), ".json"])], CustomDir).
+    filepath([?WALLET_LIST_DIR, iolist_to_binary([arweave_lib_util:encode(Hash), ".json"])], CustomDir).
 
 write_file_atomic(Filename, Data) ->
     SwapFilename = Filename ++ ".swp",
@@ -1500,7 +1500,7 @@ delete_term(Name) ->
 
 store_account_tree_update(Height, RootHash, Map) ->
     ?LOG_INFO([{event, storing_account_tree_update}, {updated_key_count, map_size(Map)},
-            {height, Height}, {root_hash, arweave_util:encode(RootHash)}]),
+            {height, Height}, {root_hash, arweave_lib_util:encode(RootHash)}]),
     maps:map(
         fun({H, Prefix} = Key, Value) ->
             Prefix2 = case Prefix of root -> <<>>; _ -> Prefix end,
@@ -1515,11 +1515,11 @@ store_account_tree_update(Height, RootHash, Map) ->
                     %% be persisted yet, so attempt the (idempotent, content-addressed)
                     %% put rather than silently dropping it.
                     ?LOG_WARNING([{event, failed_to_read_account_tree_key},
-                            {key_hash, arweave_util:encode(element(1, Key))},
+                            {key_hash, arweave_lib_util:encode(element(1, Key))},
                             {key_prefix, case element(2, Key) of root -> root;
-                                    Prefix -> arweave_util:encode(Prefix) end},
+                                    Prefix -> arweave_lib_util:encode(Prefix) end},
                             {height, Height},
-                            {root_hash, arweave_util:encode(RootHash)},
+                            {root_hash, arweave_lib_util:encode(RootHash)},
                             {reason, io_lib:format("~p", [Reason])}]),
                     put_account_tree_key(DBKey, Value, Key, Height, RootHash)
             end
@@ -1544,11 +1544,11 @@ put_account_tree_key(DBKey, Value, Key, Height, RootHash, RetriesLeft) ->
                                          RetriesLeft - 1);
                 false ->
                     ?LOG_ERROR([{event, failed_to_store_account_tree_key},
-                                {key_hash, arweave_util:encode(element(1, Key))},
+                                {key_hash, arweave_lib_util:encode(element(1, Key))},
                                 {key_prefix, case element(2, Key) of root -> root;
-                                                 Prefix -> arweave_util:encode(Prefix) end},
+                                                 Prefix -> arweave_lib_util:encode(Prefix) end},
                                 {height, Height},
-                                {root_hash, arweave_util:encode(RootHash)},
+                                {root_hash, arweave_lib_util:encode(RootHash)},
                                 {reason, io_lib:format("~p", [Reason])}])
             end
     end.

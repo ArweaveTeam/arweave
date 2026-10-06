@@ -1,5 +1,8 @@
 -ifndef(AR_HRL).
+
 -define(AR_HRL, true).
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
+
 
 %%% A collection of record structures used throughout the Arweave server.
 
@@ -7,33 +10,41 @@
 %% (e.g. bin/test or bin/shell)
 -define(IS_TEST, erlang:get_cookie() == test).
 
+
 %% Default gen_server:call timeout.
 %% Is used to safely replace deprecated `infinity` timeout, that was used in
 %% multiple places, with a more reasonable value.
 %% Is a subject for future changes.
 -define(DEFAULT_CALL_TIMEOUT, 600000).
 
+
 %% The mainnet name. Does not change at the hard forks.
 -ifndef(NETWORK_NAME).
+
 -ifdef(AR_TEST).
--define(NETWORK_NAME, "arweave.localtest").
+
 -else.
--define(NETWORK_NAME, "arweave.N.1").
+
 -endif.
+
 -endif.
+
 
 %% When a request is received without specifing the X-Network header, this network name
 %% is assumed.
 -ifndef(DEFAULT_NETWORK_NAME).
--define(DEFAULT_NETWORK_NAME, "arweave.N.1").
+
 -endif.
+
 
 %% The current release number of the arweave client software.
 %% @deprecated Not used apart from being included in the /info response.
 -define(CLIENT_VERSION, 5).
 
+
 %% The current build number -- incremented for every release.
 -define(RELEASE_NUMBER, 110).
+
 
 %% Header names are lowercase, as HTTP/2 requires.
 -define(DEFAULT_REQUEST_HEADERS,
@@ -43,127 +54,88 @@
          {<<"x-block-format">>, <<"3">>}
         ]).
 
+
 -define(CORS_HEADERS,
         #{<<"access-control-allow-origin">> => <<"*">>}).
 
+
 -ifdef(FORKS_RESET).
--define(FORK_1_6, 0).
+
 -else.
-%%% FORK INDEX
-%%% @deprecated Fork heights from 1.7 on are defined in the ar_fork module.
--define(FORK_1_6, 95000).
+
 -endif.
 
-%% The hashing algorithm used to calculate wallet addresses.
--define(HASH_ALG, sha256).
-
--define(DEEP_HASH_ALG, sha384).
-
--define(MERKLE_HASH_ALG, sha384).
-
--define(RSA_SIGN_ALG, rsa).
--define(RSA_PRIV_KEY_SZ, 4096).
-
--define(ECDSA_SIGN_ALG, ecdsa).
--define(ECDSA_TYPE_BYTE, <<2>>).
-
--define(EDDSA_SIGN_ALG, eddsa).
--define(EDDSA_TYPE_BYTE, <<3>>).
-
-%% The default key type used by transactions that do not specify a signature type.
--define(DEFAULT_KEY_TYPE, {?RSA_SIGN_ALG, 65537}).
-
--define(RSA_KEY_TYPE, {?RSA_SIGN_ALG, 65537}).
--define(ECDSA_KEY_TYPE, {?ECDSA_SIGN_ALG, secp256k1}).
-
--define(RSA_BLOCK_SIG_SIZE, 512).
--define(ECDSA_PUB_KEY_SIZE, 33).
--define(ECDSA_SIG_SIZE, 65).
-
-%% The difficulty a new weave is started with.
--define(DEFAULT_DIFF, 6).
 
 -ifndef(TARGET_BLOCK_TIME).
--define(TARGET_BLOCK_TIME, 120).
+
 -endif.
+
 
 -ifndef(RETARGET_BLOCKS).
--define(RETARGET_BLOCKS, 10).
+
 -endif.
 
-%% We only do retarget if the time it took to mine ?RETARGET_BLOCKS is more than
-%% 1.1 times bigger or smaller than ?TARGET_BLOCK_TIME * ?RETARGET_BLOCKS. Was used before
-%% the fork 2.5 where we got rid of the floating point calculations.
--define(RETARGET_TOLERANCE, 0.1).
-
--define(JOIN_CLOCK_TOLERANCE, 15).
-
--define(MAX_BLOCK_PROPAGATION_TIME, 60).
-
--define(CLOCK_DRIFT_MAX, 5).
-
-%% The total supply of tokens in the Genesis block.
--define(GENESIS_TOKENS, 55000000).
-
-%% Winstons per AR.
--define(WINSTON_PER_AR, 1000000000000).
-
-%% The number of bytes in a gibibyte.
--define(KiB, (1024)).
--define(MiB, (1024 * ?KiB)).
--define(GiB, (1024 * ?MiB)).
--define(TiB, (1024 * ?GiB)).
 
 %% How far into the past or future the block can be in order to be accepted for
 %% processing.
 -ifdef(AR_TEST).
--define(STORE_BLOCKS_BEHIND_CURRENT, 10).
+
 -else.
--define(STORE_BLOCKS_BEHIND_CURRENT, 50).
+
 -endif.
+
 
 %% The maximum lag when fork recovery (chain reorganisation) is performed.
 -ifdef(AR_TEST).
--define(CHECKPOINT_DEPTH, 4).
+
 -else.
--define(CHECKPOINT_DEPTH, 18).
+
 -endif.
+
 
 %% The recommended depth of the block to use as an anchor for transactions.
 %% The corresponding block hash is returned by the GET /tx_anchor endpoint.
 -ifdef(AR_TEST).
--define(SUGGESTED_TX_ANCHOR_DEPTH, 5).
+
 -else.
--define(SUGGESTED_TX_ANCHOR_DEPTH, 6).
+
 -endif.
+
 
 %% The number of blocks returned in the /info 'recent' field
 -ifdef(AR_TEST).
--define(RECENT_BLOCKS_WITHOUT_TIMESTAMP, 2).
+
 -else.
--define(RECENT_BLOCKS_WITHOUT_TIMESTAMP, 5).
+
 -endif.
 
+
 %% How long to wait before giving up on unit test(s).
--define(TEST_SUITE_TIMEOUT, 90 * 60). %% 90 minutes
+-define(TEST_SUITE_TIMEOUT, 90 * 60).
+ %% 90 minutes
 %% How long to wait before giving up on e2e test(s).
--define(E2E_TEST_SUITE_TIMEOUT, 6 * 60 * 60). %% 6 hours
+-define(E2E_TEST_SUITE_TIMEOUT, 6 * 60 * 60).
+ %% 6 hours
 %% Default test timeout to use if a test starts a node. We keep having test failures due to
 %% the timeout elapsing, and I think it may be that sometimes on the runner it just takes a
 %% while to launch a test node.
--define(TEST_NODE_TIMEOUT, 300). %% 5 minutes
+-define(TEST_NODE_TIMEOUT, 300).
+ %% 5 minutes
 
 %% The maximum byte size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * ?MiB).
+
 
 %% Serve format-1 transactions without a denomination only once they are
 %% this deep in the chain.
 -define(V1_DENOMINATION0_TX_MIN_CONFIRMATIONS, 12).
 
+
 %% The response body POST /tx replies with to a format-1 transaction without
 %% a denomination.
 -define(V1_DENOMINATION0_TX_REJECTED, <<"Format 1 transactions are deprecated "
         "and not accepted. Sign a format 2 transaction.">>).
+
 
 %% The maximum nesting depth for JSON inputs accepted via
 %% ar_serialize:json_decode/2, passed to the jiffy NIF as {max_depth, _}.
@@ -172,31 +144,14 @@
 %% its allocator, which would crash the VM uncatchably.
 -define(MAX_JSON_DEPTH, 256).
 
-%% The maximum number of tags a transaction may carry. Mirrors the
-%% post-fork-2.5 limit enforced in ar_tx:validate_tags_length/2 and the
-%% binary parser in ar_serialize:parse_tx_tags/1. Enforced early — at
-%% JSON parse time and at tx validation entry — so we never run an
-%% O(N) decode loop on a maliciously oversized list.
--define(MAX_TX_TAGS, 2048).
-
-%% The maximum allowed size in bytes for the data field of
-%% a format=1 transaction.
--define(TX_DATA_SIZE_LIMIT, 10 * ?MiB).
-
-%% The maximum allowed size in bytes for the combined data fields of
-%% the format=1 transactions included in a block. Must be greater than
-%% or equal to ?TX_DATA_SIZE_LIMIT.
--define(BLOCK_TX_DATA_SIZE_LIMIT, ?TX_DATA_SIZE_LIMIT).
 
 %% The maximum number of transactions (both format=1 and format=2) in a block.
 -ifdef(AR_TEST).
--define(BLOCK_TX_COUNT_LIMIT, 10).
+
 -else.
--define(BLOCK_TX_COUNT_LIMIT, 1000).
+
 -endif.
 
-%% The base transaction size the transaction fee must pay for.
--define(TX_SIZE_BASE, 3210).
 
 %% Mempool Limits.
 %%
@@ -214,120 +169,166 @@
 %% The data field of a format=1 transaction is considered to belong to
 %% its headers.
 -ifdef(AR_TEST).
+
 -define(MEMPOOL_HEADER_SIZE_LIMIT, 50 * ?MiB).
+
 -else.
+
 -define(MEMPOOL_HEADER_SIZE_LIMIT, 250 * ?MiB).
+
 -endif.
+
 
 %% The maximum allowed size of transaction data stored in mempool.
 %% The format=1 transactions are not counted as their data is considered
 %% to be part of the header.
 -ifdef(AR_TEST).
+
 -define(MEMPOOL_DATA_SIZE_LIMIT, 50 * ?MiB).
+
 -else.
+
 -define(MEMPOOL_DATA_SIZE_LIMIT, 500 * ?MiB).
+
 -endif.
+
 
 %% Default timeout for establishing an HTTP connection.
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).
+
 
 %% Default timeout used when sending to and receiving from a TCP socket
 %% when making an HTTP request.
 -define(HTTP_REQUEST_SEND_TIMEOUT, 60 * 1000).
 
+
 %% The time in milliseconds to wait before retrying
 %% a failed join (block index download) attempt.
 -define(REJOIN_TIMEOUT, 10 * 1000).
+
 
 %% How many times to retry fetching the block index from each of
 %% the peers before giving up.
 -define(REJOIN_RETRIES, 3).
 
+
 %% Maximum allowed number of accepted requests per minute per IP.
 -ifdef(AR_TEST).
+
 -define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 100_000).
+
 -else.
+
 -define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 900).
+
 -endif.
+
 
 %% Number of seconds an IP address should be completely banned from doing
 %% HTTP requests after posting an invalid block.
 -define(BAD_BLOCK_BAN_TIME, 24 * 60 * 60).
 
+
 %% A part of transaction propagation delay independent from the size, in seconds.
 -ifdef(AR_TEST).
+
 -define(BASE_TX_PROPAGATION_DELAY, 0).
+
 -else.
+
 -ifndef(BASE_TX_PROPAGATION_DELAY).
+
 -define(BASE_TX_PROPAGATION_DELAY, 30).
+
 -endif.
+
 -endif.
+
 
 %% A conservative assumption of the network speed used to
 %% estimate the transaction propagation delay. It does not include
 %% the base delay, the time the transaction spends in the priority
 %% queue, and the time it takes to propagate the transaction to peers.
 -ifdef(AR_TEST).
+
 -define(TX_PROPAGATION_BITS_PER_SECOND, 1000000000).
+
 -else.
--define(TX_PROPAGATION_BITS_PER_SECOND, 3000000). % 3 mbps
+
+-define(TX_PROPAGATION_BITS_PER_SECOND, 3000000).
+ % 3 mbps
 -endif.
+
 
 %% The number of peers to send new blocks to in parallel.
 -define(BLOCK_PROPAGATION_PARALLELIZATION, 20).
 
+
 %% The maximum number of peers to propagate txs to, by default.
 -define(DEFAULT_MAX_PROPAGATION_PEERS, 16).
 
+
 %% The maximum number of peers to propagate blocks to, by default.
 -define(DEFAULT_MAX_BLOCK_PROPAGATION_PEERS, 1000).
+
 
 %% When the transaction data size is smaller than this number of bytes,
 %% the transaction is gossiped to the peer without a prior check if the peer
 %% already has this transaction.
 -define(TX_SEND_WITHOUT_ASKING_SIZE_LIMIT, 1000).
 
+
 %% Block headers directory, relative to the data dir.
 -define(BLOCK_DIR, "blocks").
+
 
 %% Transaction headers directory, relative to the data dir.
 -define(TX_DIR, "txs").
 
+
 %% Disk cache directory, relative to the data dir.
 -define(DISK_CACHE_DIR, "disk_cache").
+
 
 %% Block headers directory, relative to the disk cache directory.
 -define(DISK_CACHE_BLOCK_DIR, "blocks").
 
+
 %% Transaction headers directory, relative to the disk cache directory.
 -define(DISK_CACHE_TX_DIR, "txs").
+
 
 %% Backup block hash list storage directory, relative to the data dir.
 -define(HASH_LIST_DIR, "hash_lists").
 
+
 %% Directory for storing miner wallets, relative to the data dir.
 -define(WALLET_DIR, "wallets").
+
 
 %% Directory for storing unique wallet lists, relative to the data dir.
 -define(WALLET_LIST_DIR, "wallet_lists").
 
+
 %% Directory for storing data chunks, relative to the data dir.
 -define(DATA_CHUNK_DIR, "data_chunks").
+
 
 %% Directory for RocksDB key-value storages, relative to the data dir.
 -define(ROCKS_DB_DIR, "rocksdb").
 
+
 %% Log output directory, NOT relative to the data dir.
 -define(LOG_DIR, "logs").
+
 
 %% The directory for persisted metrics, NOT relative to the data dir.
 -define(METRICS_DIR, "metrics").
 
+
 %% The ID and module for the default storage module.
 -define(DEFAULT_MODULE, "default").
 
-%% Default TCP port.
--define(DEFAULT_HTTP_IFACE_PORT, 1984).
 
 %% Number of transaction propagation processes to spawn.
 %% Each emitter picks the most valued transaction from the queue
@@ -335,61 +336,35 @@
 %% Can be overriden by a command line argument.
 -define(NUM_EMITTER_PROCESSES, 16).
 
-%% The adjustment of difficutly going from SHA-384 to RandomX.
--define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
-
-%% Max allowed difficulty multiplication and division factors, before the fork 2.4.
--define(DIFF_ADJUSTMENT_DOWN_LIMIT, 2).
--define(DIFF_ADJUSTMENT_UP_LIMIT, 4).
-
-%% Maximum size of a single data chunk, in bytes.
--define(DATA_CHUNK_SIZE, (256 * 1024)).
-
-%% The maximum allowed packing difficulty.
-%% The number of sub-chunks in a packed chunk.
-
-
--define(SUB_CHUNK_COUNT, 32).
-
-%% The size of a unit sub-chunk in a packed chunk.
--define(SUB_CHUNK_SIZE,
-        (?DATA_CHUNK_SIZE div ?SUB_CHUNK_COUNT)).
-
-
-%% Maximum size of a `data_path`, in bytes.
--define(MAX_PATH_SIZE, (256 * 1024)).
-
-%% The size of data chunk hashes, in bytes.
--define(CHUNK_ID_HASH_SIZE, 32).
-
--define(NOTE_SIZE, 32).
 
 %% Disk cache size in MB
 -ifdef(AR_TEST).
+
 -define(DISK_CACHE_SIZE, 1).
+
 -define(DISK_CACHE_CLEAN_PERCENT_MAX, 20).
+
 -else.
+
 -define(DISK_CACHE_SIZE, 5120).
+
 -define(DISK_CACHE_CLEAN_PERCENT_MAX, 20).
+
 -endif.
+
 
 %% The speed in chunks/s of moving the fork 2.5 packing threshold.
 -ifdef(AR_TEST).
--define(PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND, 1).
+
 -else.
--define(PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND, 10).
+
 -endif.
 
-%% The data_root of the system "padding" nodes inserted in the transaction Merkle trees
-%% since the 2.5 fork block. User transactions cannot set <<>> for data_root unless
-%% data_size == 0. The motivation is to place all chunks including those
-%% smaller than 256 KiB into the 256 KiB buckets on the weave, to even out their chances to be
-%% picked as recall chunks and therefore equally incentivize the storage.
--define(PADDING_NODE_DATA_ROOT, <<>>).
 
 -ifndef(INITIAL_VDF_DIFFICULTY).
--define(INITIAL_VDF_DIFFICULTY, 600_000).
+
 -endif.
+
 
 %% @doc A chunk with the proofs of its presence in the weave at a particular offset.
 -record(poa, {
@@ -412,6 +387,7 @@
               %% ?DATA_CHUNK_SIZE-sized unpacked chunk.
               unpacked_chunk = <<>>
              }).
+
 
 %% @doc The information which simplifies validation of the nonce limiting procedures.
 -record(nonce_limiter_info, {
@@ -447,6 +423,7 @@
                              next_vdf_difficulty = ?INITIAL_VDF_DIFFICULTY
                             }).
 
+
 %% @doc A VDF session.
 -record(vdf_session, {
                       step_number,
@@ -460,12 +437,14 @@
                       next_vdf_difficulty
                      }).
 
+
 %% @doc The format of the nonce limiter update provided by the configured trusted peer.
 -record(nonce_limiter_update, {
                                session_key,
                                session,
                                is_partial = true
                               }).
+
 
 %% @doc The format of the response to nonce limiter updates by configured trusted peers.
 -record(nonce_limiter_update_response, {
@@ -474,6 +453,7 @@
                                         postpone = 0,
                                         format = 2
                                        }).
+
 
 %% @doc A compact announcement of a new block gossiped to peers. Peers
 %% who have not received this block yet and decide to receive it from us,
@@ -487,6 +467,7 @@
                              solution_hash
                             }).
 
+
 %% @doc A reply to a block announcement when we are willing to receive this
 %% block from the announcing peer.
 -record(block_announcement_response, {
@@ -494,6 +475,7 @@
                                       missing_tx_indices = [], % Missing transactions' indices, 0 =<, =< 999.
                                       missing_chunk2
                                      }).
+
 
 %% @doc A block (txs is a list of tx records) or a block shadow (txs is a list of
 %% transaction identifiers).
@@ -617,7 +599,7 @@
                 %% After 2.8 the new hash is computed from the new history element and the previous hash.
                 reward_history_hash,
                 %% The network hash rates, block rewards, and mining addresses from the latest
-                %% ?REWARD_HISTORY_BLOCKS + ar_block:get_consensus_window_size() blocks. Used internally, not gossiped.
+                %% ?REWARD_HISTORY_BLOCKS + arweave_lib_constants:get_consensus_window_size() blocks. Used internally, not gossiped.
                 reward_history = [],
                 %% The total number of Winston emitted when the endowment was not sufficient
                 %% to compensate mining.
@@ -716,6 +698,7 @@
                 source_peer
                }).
 
+
 %% @doc A transaction.
 -record(tx, {
              %% 1 or 2.
@@ -724,7 +707,7 @@
              id = <<>>,
              %% Either the identifier of the previous transaction from
              %% the same wallet or the identifier of one of the
-             %% last ar_block:get_max_tx_anchor_depth() blocks.
+             %% last arweave_lib_constants:get_max_tx_anchor_depth() blocks.
              last_tx = <<>>,
              %% The public key the transaction is signed with.
              owner = <<>>,
@@ -775,6 +758,7 @@
              signature_type = ?DEFAULT_KEY_TYPE
             }).
 
+
 %% @doc The data_path field will only be not_found if the chunk record is corrupt/invalid.
 %% This can happen if the chunk entry exists in the chunks_index but not in the chunk_data_db.
 %% In this case:
@@ -789,6 +773,7 @@
                          chunk_size = not_set :: not_set | non_neg_integer()
                         }).
 
+
 -record(chunk_offsets, {
                         absolute_offset = not_set :: not_set | non_neg_integer(),
                         bucket_end_offset = not_set :: not_set | non_neg_integer(),
@@ -796,31 +781,34 @@
                         relative_offset = not_set :: not_set | non_neg_integer()
                        }).
 
-%% A macro to convert AR into Winstons.
--define(AR(AR), (?WINSTON_PER_AR * AR)).
 
 %% A macro to return whether a term is a block record.
 -define(IS_BLOCK(X), (is_record(X, block))).
 
+
 %% Convert a v2.0 block index into an old style block hash list.
 -define(BI_TO_BHL(BI), ([BH || {BH, _, _} <- BI])).
+
 
 %% Pattern matches on ok-tuple and returns the value.
 -define(OK(Tuple), begin (case (Tuple) of {ok, SuccessValue} -> (SuccessValue) end) end).
 
-%% The messages to be stored inside the genesis block.
--define(GENESIS_BLOCK_MESSAGES, []).
 
 %% Minimum number of characters for internal API secret. Used in the optional HTTP API
 %% for signing transactions.
 -define(INTERNAL_API_SECRET_MIN_LEN, 16).
 
+
 %% The frequency of issuing a reminder to the console and the logfile
 %% about the insufficient disk space, in milliseconds.
 -define(DISK_SPACE_WARNING_FREQUENCY, 24 * 60 * 60 * 1000).
+
 
 %% Use a standard way of logging.
 %% For more details see https://erlang.org/doc/man/logger.html#macros.
 -include_lib("kernel/include/logger.hrl").
 
+
 -endif.
+
+

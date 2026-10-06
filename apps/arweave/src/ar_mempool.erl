@@ -30,7 +30,7 @@ load_from_disk() ->
                                 true ->
                                     ?LOG_DEBUG([{event, dropped_deprecated_v1_tx},
                                                 {source, mempool_load},
-                                                {tx, arweave_util:encode(
+                                                {tx, arweave_lib_util:encode(
                                                         TX2#tx.id)}]),
                                     false;
                                 false -> {true, {TX2, St}}
@@ -102,7 +102,7 @@ add_tx(TX, Status) ->
         true ->
             ?LOG_DEBUG([{event, dropped_deprecated_v1_tx},
                         {source, mempool_add},
-                        {tx, arweave_util:encode(TX#tx.id)}]),
+                        {tx, arweave_lib_util:encode(TX#tx.id)}]),
             ok;
         false ->
             prometheus_histogram:observe_duration(

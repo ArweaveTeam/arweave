@@ -15,7 +15,7 @@
 %%%===================================================================
 
 %% @doc Create a genesis block. The genesis block includes one transaction with
-%% at least one small chunk and the total data size equal to ar_block:strict_data_split_threshold(),
+%% at least one small chunk and the total data size equal to arweave_lib_constants:strict_data_split_threshold(),
 %% to test the code branches dealing with small chunks placed before the threshold.
 init() ->
     init([]).
@@ -67,7 +67,7 @@ init(WalletList, Diff, GenesisDataSize) ->
             account_tree = AccountTree
         },
     B1 =
-        case ar_fork:height_2_6() > 0 of
+        case arweave_lib_fork:height_2_6() > 0 of
             false ->
                 RewardKey = element(2, ar_wallet:new()),
                 RewardAddr = ar_wallet:to_address(RewardKey),
@@ -95,12 +95,12 @@ init(WalletList, Diff, GenesisDataSize) ->
                 B0
         end,
     B2 =
-        case ar_fork:height_2_7() > 0 of
+        case arweave_lib_fork:height_2_7() > 0 of
             false ->
                 InitialHistory = get_initial_block_time_history(),
                 B1#block{
                     merkle_rebase_support_threshold =
-                            ar_block:get_merkle_rebase_support_threshold(),
+                            arweave_lib_constants:get_merkle_rebase_support_threshold(),
                     chunk_hash = crypto:strong_rand_bytes(32),
                     block_time_history = InitialHistory,
                     block_time_history_hash = ar_block_time_history:hash(InitialHistory)
@@ -169,7 +169,7 @@ add_mainnet_v1_genesis_txs() ->
                     SourcePath = "genesis_data/genesis_txs/" ++ F,
                     TargetPath = DataDir ++ "/" ++ ?TX_DIR ++ "/" ++ F,
                     file:copy(SourcePath, TargetPath),
-                    [arweave_util:decode(hd(string:split(F, ".")))|Acc]
+                    [arweave_lib_util:decode(hd(string:split(F, ".")))|Acc]
                 end,
                 [],
                 Files
@@ -198,6 +198,6 @@ create_mainnet_genesis_txs() ->
     ),
     ar_storage:write_file_atomic(
         "genesis_wallets.csv",
-        lists:map(fun(T) -> binary_to_list(arweave_util:encode(T#tx.id)) ++ "," end, TXs)
+        lists:map(fun(T) -> binary_to_list(arweave_lib_util:encode(T#tx.id)) ++ "," end, TXs)
     ),
     [T#tx.id || T <- TXs].

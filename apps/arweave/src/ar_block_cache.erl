@@ -36,7 +36,7 @@
 %% {solution, SolutionHash} => set(BlockHash)
 %%   - all blocks with the same solution hash
 %% longest_chain => [{BlockHash, [TXIDs]}]
-%%  - the top ar_block:get_consensus_window_size() blocks of the longest chain
+%%  - the top arweave_lib_constants:get_consensus_window_size() blocks of the longest chain
 %% tip -> BlockHash
 %%   - curent block chain tip
 %% links -> gb_set({Height, BlockHash})
@@ -104,8 +104,8 @@ add(Tab,
             insert(Tab, {{block, H}, {B, CurrentStatus, CurrentTimestamp, Children}});
         _ ->
             ?LOG_WARNING([{event, attempt_to_update_already_validated_cached_block},
-                          {h, arweave_util:encode(H)}, {height, Height},
-                          {previous_block, arweave_util:encode(PrevH)}]),
+                          {h, arweave_lib_util:encode(H)}, {height, Height},
+                          {previous_block, arweave_lib_util:encode(PrevH)}]),
             ok
     end.
 
@@ -134,7 +134,7 @@ remove_expired_alternative_blocks2(Tab, [H | Hs]) ->
             case timer:now_diff(erlang:timestamp(), ExpirationTimestamp) >= 0 of
                 true ->
                     ?LOG_INFO([{event, removing_expired_alternative_block_from_cache},
-                               {block, arweave_util:encode(H)},
+                               {block, arweave_lib_util:encode(H)},
                                {status, Status}]),
                     remove(Tab, H),
                     remove_expired_alternative_blocks2(Tab, Hs);
@@ -267,7 +267,7 @@ get_earliest_not_validated_from_longest_chain(Tab) ->
     end.
 
 %% @doc Return the list of {BH, TXIDs} pairs corresponding to the top up to the
-%% ar_block:get_consensus_window_size() blocks of the longest chain and the number of blocks
+%% arweave_lib_constants:get_consensus_window_size() blocks of the longest chain and the number of blocks
 %% in this list that are not on chain yet.
 %%
 %% The cache is updated via update_longest_chain_cache/1 which calls
@@ -283,7 +283,7 @@ get_longest_chain_block_txs_pairs(Tab, H, N, PrevStatus, PrevH, Pairs, NotOnChai
         [{_, {B, {not_validated, awaiting_nonce_limiter_validation}, _Timestamp,
               _Children}}] ->
             get_longest_chain_block_txs_pairs(Tab, B#block.previous_block,
-                                              ar_block:get_consensus_window_size(), none, none, [], 0);
+                                              arweave_lib_constants:get_consensus_window_size(), none, none, [], 0);
         [{_, {B, Status, _Timestamp, _Children}}] ->
             case PrevStatus == on_chain andalso Status /= on_chain of
                 true ->
@@ -669,7 +669,7 @@ is_valid_fork(Tab, B, Status) ->
 
 is_valid_fork(_Tab, #block{ height = Height, indep_hash = H }, _Status, CheckpointHeight)
   when Height < CheckpointHeight ->
-    ?LOG_WARNING([{event, found_invalid_heavy_fork}, {hash, arweave_util:encode(H)},
+    ?LOG_WARNING([{event, found_invalid_heavy_fork}, {hash, arweave_lib_util:encode(H)},
                   {height, Height}, {checkpoint_height, CheckpointHeight}]),
     false;
 is_valid_fork(_Tab, _B, on_chain, _CheckpointHeight) ->
@@ -745,7 +745,7 @@ prune2(Tab, Depth, TipHeight, Pruned) ->
 
 update_longest_chain_cache(Tab) ->
     [{_, {_CDiff, H}}] = ets:lookup(Tab, max_cdiff),
-    Result = get_longest_chain_block_txs_pairs(Tab, H, ar_block:get_consensus_window_size(),
+    Result = get_longest_chain_block_txs_pairs(Tab, H, arweave_lib_constants:get_consensus_window_size(),
                                                none, none, [], 0),
     case ets:update_element(Tab, longest_chain, {2, Result}) of
         true -> ok;

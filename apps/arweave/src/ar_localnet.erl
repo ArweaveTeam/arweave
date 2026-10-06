@@ -85,7 +85,7 @@ start_with_snapshot(SnapshotDir) ->
             io:format("~n~nLocalnet node started~n"),
             io:format("  Snapshot: ~s~n", [SnapshotDir]),
             io:format("  Data dir: ~s~n", [DataDir]),
-            io:format("  Mining address: ~s~n", [arweave_util:encode(MiningAddr)]),
+            io:format("  Mining address: ~s~n", [arweave_lib_util:encode(MiningAddr)]),
             io:format("  Storage modules:~n"),
             lists:foreach(fun({Start, End, Packing}) ->
                                   io:format("    - range ~B-~B MB, packing ~s~n",
@@ -141,7 +141,7 @@ create_snapshot() ->
 %% @doc Poll every 100ms until the node has joined the network, or until
 %% WAIT_UNTIL_JOINED_TIMEOUT ms have elapsed.
 wait_until_joined() ->
-    arweave_util:do_until(
+    ar_util:do_until(
       fun() -> ar_node:is_joined() end,
       100,
       ?WAIT_UNTIL_JOINED_TIMEOUT
@@ -238,10 +238,10 @@ submit_snapshot_data() ->
                                               {ok, JSON} ->
                                                   Map = jiffy:decode(JSON, [return_maps]),
                                                   #tx{
-                                                     id = arweave_util:decode(TXID),
+                                                     id = arweave_lib_util:decode(TXID),
                                                      data_size = binary_to_integer(maps:get(<<"data_size">>, Map, <<"0">>)),
-                                                     data = arweave_util:decode(maps:get(<<"data">>, Map, <<>>)),
-                                                     data_root = arweave_util:decode(maps:get(<<"data_root">>, Map, <<>>)),
+                                                     data = arweave_lib_util:decode(maps:get(<<"data">>, Map, <<>>)),
+                                                     data_root = arweave_lib_util:decode(maps:get(<<"data_root">>, Map, <<>>)),
                                                      format = maps:get(<<"format">>, Map, 1)
                                                     };
                                               {error, Reason} ->
@@ -293,7 +293,7 @@ submit_block_data(BlockStart, TXs) ->
                                           ok;
                                       {error, Errors} ->
                                           io:format("  Failed to write data for tx ~s: ~p~n",
-                                                    [binary_to_list(arweave_util:encode(TXID)), Errors])
+                                                    [binary_to_list(arweave_lib_util:encode(TXID)), Errors])
                                   end;
                               false ->
                                   ok
@@ -549,16 +549,16 @@ store_snapshot_tx_headers(TxIds, SnapshotDir) ->
                                       ar_snapshot:store_tx_header(TX, tx_db);
                                   unavailable ->
                                       io:format("Startup copy: missing tx header ~s~n",
-                                                [arweave_util:encode(TXID2)]),
+                                                [arweave_lib_util:encode(TXID2)]),
                                       {error, {tx_unavailable, TXID2}};
                                   Error ->
                                       io:format("Startup copy: error reading tx ~s: ~p~n",
-                                                [arweave_util:encode(TXID2), Error]),
+                                                [arweave_lib_util:encode(TXID2), Error]),
                                       {error, {tx_unavailable, TXID2, Error}}
                               end;
                           {error, _} = Error ->
                               io:format("Startup copy: error reading tx db ~s: ~p~n",
-                                        [arweave_util:encode(TXID2), Error]),
+                                        [arweave_lib_util:encode(TXID2), Error]),
                               {error, {tx_db_read_failed, TXID2, Error}}
                       end;
                   {error, _} = Error ->
@@ -585,16 +585,16 @@ store_snapshot_history_entries(HistoryBI, SourceDb, DestDb, Label) ->
                                       ar_kv:put(DestDb, BH, Bin);
                                   not_found ->
                                       io:format("Startup copy: missing ~p entry ~s~n",
-                                                [Label, arweave_util:encode(BH)]),
+                                                [Label, arweave_lib_util:encode(BH)]),
                                       {error, {Label, not_found, BH}};
                                   {error, Reason} ->
                                       io:format("Startup copy: error ~p entry ~s: ~p~n",
-                                                [Label, arweave_util:encode(BH), Reason]),
+                                                [Label, arweave_lib_util:encode(BH), Reason]),
                                       {error, {Label, Reason, BH}}
                               end;
                           {error, _} = Error ->
                               io:format("Startup copy: error reading ~p entry ~s: ~p~n",
-                                        [Label, arweave_util:encode(BH), Error]),
+                                        [Label, arweave_lib_util:encode(BH), Error]),
                               {error, {Label, Error, BH}}
                       end;
                   {error, _} = Error ->

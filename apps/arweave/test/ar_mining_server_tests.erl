@@ -27,9 +27,9 @@ setup_all() ->
     Config = arweave_config:snapshot(),
     %% We'll use partition 0 for any unsynced ranges.
     StorageModules = [
-        {ar_block:partition_size(), 2 * ar_block:partition_size(),
+        {arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(),
             {spora_2_6, RewardAddr}},
-        {2 * ar_block:partition_size(), 3 * ar_block:partition_size(),
+        {2 * arweave_lib_constants:partition_size(), 3 * arweave_lib_constants:partition_size(),
             {spora_2_6, RewardAddr}}
     ],
     ar_test_node:start(B0, RewardAddr, #{[storage_modules] => StorageModules}),
@@ -45,15 +45,15 @@ setup_pool_client() ->
     Config = arweave_config:snapshot(),
     %% We'll use partition 0 for any unsynced ranges.
     StorageModules = [
-        {ar_block:partition_size(), 2 * ar_block:partition_size(),
+        {arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(),
             {spora_2_6, RewardAddr}},
-        {2 * ar_block:partition_size(), 3 * ar_block:partition_size(),
+        {2 * arweave_lib_constants:partition_size(), 3 * arweave_lib_constants:partition_size(),
             {spora_2_6, RewardAddr}}
     ],
     ar_test_node:start(B0, RewardAddr,
         #{
             [storage_modules] => StorageModules,
-            [peers, vdf_server] => [arweave_util:format_peer(vdf_server())],
+            [peers, vdf_server] => [arweave_lib_util:format_peer(vdf_server())],
             [pool, is_client] => true,
             [pool, server_address] => <<"http://localhost:2002">>,
             [pool, api_key] => <<"pool_secret">>,

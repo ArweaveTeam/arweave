@@ -85,7 +85,7 @@ legacy_mining_address_b64() ->
     <<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>.
 
 legacy_mining_addr() ->
-    arweave_util:decode(legacy_mining_address_b64()).
+    arweave_lib_util:decode(legacy_mining_address_b64()).
 
 %% @doc The in-memory values `legacy_config.json' must produce. Asserted
 %% both against a direct legacy load and against a load of the file the
@@ -158,13 +158,13 @@ assert_legacy_json_shaped_values() ->
 %% current notation without a directory rename - i.e. the
 %% partition-sized ones. This is the module set the converter accepts.
 partition_sized_legacy_storage_modules() ->
-    PartitionSize = ar_block:partition_size(),
+    PartitionSize = arweave_lib_constants:partition_size(),
     [Module || {Start, End, _Packing} = Module <- legacy_storage_modules(),
         End - Start =:= PartitionSize].
 
 %% The legacy fixture's storage modules, as runtime range tuples.
 legacy_storage_modules() ->
-    PartitionSize = ar_block:partition_size(),
+    PartitionSize = arweave_lib_constants:partition_size(),
     MiningAddr = legacy_mining_addr(),
     [
         {0, PartitionSize, unpacked},

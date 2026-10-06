@@ -1,5 +1,8 @@
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 -ifndef(AR_REPACK_HRL).
+
 -define(AR_REPACK_HRL, true).
+
 
 -record(repack_chunk, {
                        state = needs_chunk :: 
@@ -18,4 +21,7 @@
                        target_entropy = not_set :: not_set | binary()
                       }).
 
+
 -endif.
+
+

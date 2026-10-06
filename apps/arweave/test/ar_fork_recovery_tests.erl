@@ -111,7 +111,7 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
     ar_test_node:mine(peer1),
     {ok, [{H4, _, _} | _]} = ar_test_await:node_height(peer1, 3),
     H4TXIDs = (ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H4]))#block.txs,
-    ?debugFmt("Expecting ~s to be re-mined.~n", [arweave_util:encode(TXID)]),
+    ?debugFmt("Expecting ~s to be re-mined.~n", [arweave_lib_util:encode(TXID)]),
     ?assertEqual([TXID], H4TXIDs).
 
 orphaned_high_value_tx_is_remined_after_fork_recovery_test_() ->
@@ -363,7 +363,7 @@ test_orphaned_tx_survives_pending_tx_mined_in_new_fork() ->
     ?assertEqual([TXID1], H4B#block.txs).
 
 invalid_block_with_high_cumulative_difficulty_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
+    ar_test_node:test_with_all_nodes_mocked([{arweave_lib_fork, height_2_6, fun() -> 0 end}],
         fun() -> test_invalid_block_with_high_cumulative_difficulty() end).
 
 test_invalid_block_with_high_cumulative_difficulty() ->
@@ -372,7 +372,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
     %% ignores the invalid block and continues to build on top of the valid fork.
     RewardKey = ar_wallet:new_keyfile(),
     RewardAddr = ar_wallet:to_address(RewardKey),
-    WalletName = arweave_util:encode(RewardAddr),
+    WalletName = arweave_lib_util:encode(RewardAddr),
     Path = ar_wallet:wallet_filepath(WalletName),
     PeerPath = ar_test_node:remote_call(peer1, ar_wallet, wallet_filepath, [WalletName]),
     %% Copy the key because we mine blocks on both nodes using the same key in this test.
@@ -390,7 +390,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
     B1 = ar_test_await:block_stored(H2),
     B2 = fake_block_with_strong_cumulative_difficulty(B1, B0, 10000000000000000),
     B2H = B2#block.indep_hash,
-    ?debugFmt("Fake block: ~s.", [arweave_util:encode(B2H)]),
+    ?debugFmt("Fake block: ~s.", [arweave_lib_util:encode(B2H)]),
     ok = ar_events:subscribe(block),
     ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
             ar_http_iface_client:send_block_binary(ar_test_node:peer_ip(main), B2#block.indep_hash,
@@ -456,7 +456,7 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
                             tx_path = TXPath },
                     chunk_hash = crypto:hash(sha256, Chunk) },
             B4 =
-                case ar_fork:height_2_8() of
+                case arweave_lib_fork:height_2_8() of
                     0 ->
                         {ok, #{ chunk := UnpackedChunk } } = ar_data_sync:get_chunk(
                                 RecallByte + 1, #{ pack => true, packing => unpacked,

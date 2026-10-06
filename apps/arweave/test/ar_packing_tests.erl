@@ -79,7 +79,7 @@ test_full_chunk() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
     ChunkSize = 256*1024,
-    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_lib_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -114,7 +114,7 @@ test_partial_chunk() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.100kb"),
 
     ChunkSize = 100*1024,
-    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_lib_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -149,7 +149,7 @@ test_full_chunk_repack() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
     ChunkSize = 256*1024,
-    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_lib_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -197,7 +197,7 @@ test_partial_chunk_repack() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.100kb"),
 
     ChunkSize = 100*1024,
-    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_lib_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -247,7 +247,7 @@ test_invalid_pad() ->
 
     ShortUnpackedData = binary:part(UnpackedData, 0, ChunkSize),
 
-    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_lib_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -286,7 +286,7 @@ test_request_repack() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
     ChunkSize = 256*1024,
-    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_lib_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     %% unpacked -> unpacked
@@ -339,7 +339,7 @@ test_request_unpack() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
     ChunkSize = 256*1024,
-    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_lib_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     %% unpacked -> unpacked
@@ -377,7 +377,7 @@ test_request_unpack() ->
 %% An unpacked_padded chunk that is not a full 256 KiB is rejected instead of
 %% crashing the packing worker and, with it, the packing server.
 test_unpacked_padded_chunk_size() ->
-    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_lib_util:decode(?ENCODED_TX_ROOT),
     ChunkSize = 1000,
     Unpacked = crypto:strong_rand_bytes(ChunkSize),
     Padded = ar_packing_server:pad_chunk(Unpacked),
@@ -407,8 +407,8 @@ test_unpacked_padded_chunk_size() ->
 
 packs_chunks_depending_on_packing_threshold_test_() ->
     ar_test_node:test_with_all_nodes_mocked([
-            {ar_fork, height_2_9, fun() -> 10 end},
-            {ar_fork, height_2_9_6, fun() -> infinity end},
+            {arweave_lib_fork, height_2_9, fun() -> 10 end},
+            {arweave_lib_fork, height_2_9_6, fun() -> infinity end},
             {ar_retarget, is_retarget_height, fun(_Height) -> false end},
             {ar_retarget, is_retarget_block, fun(_Block) -> false end}],
             fun test_packs_chunks_depending_on_packing_threshold/0).
@@ -454,7 +454,7 @@ test_packs_chunks_depending_on_packing_threshold() ->
                     tx_with_chunks(Wallet, DR3, Chunks3, v1, Miner),
             ?debugFmt("miner: ~p, receiver: ~p~n", [Miner, Receiver]),
             ?debugFmt("Mining block ~B.~n", [Height]),
-            TXs = arweave_util:pick_random([TX1, TX2, TX3], 2),
+            TXs = arweave_lib_util:pick_random([TX1, TX2, TX3], 2),
             B = ar_test_node:post_and_mine(#{ miner => Miner, await_on => Receiver }, TXs),
             Acc1_2 =
                 case lists:member(TX1, TXs) of
@@ -533,8 +533,8 @@ test_packs_chunks_depending_on_packing_threshold() ->
                     "Computed search space upper bound: ~B. "
                     "Block start: ~B. Block end: ~B. TX root: ~s.",
                     [RecallByte, B#block.recall_byte, Height,
-                    arweave_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
-                    BlockStart, BlockEnd, arweave_util:encode(TXRoot)]),
+                    arweave_lib_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
+                    BlockStart, BlockEnd, arweave_lib_util:encode(TXRoot)]),
             ?assertEqual(RecallByte, B#block.recall_byte),
             SubChunkIndex = ar_block:get_sub_chunk_index(B#block.packing_difficulty,
                     B#block.nonce),
@@ -590,7 +590,7 @@ tx_with_chunks(Wallet, DataRoot, Chunks, Format, Node) ->
 assert_synced_data(Proofs) ->
     maps:map(
         fun(TXID, [{_, _, Chunks, _} | _]) ->
-            ExpectedData = arweave_util:encode(binary:list_to_bin(Chunks)),
+            ExpectedData = arweave_lib_util:encode(binary:list_to_bin(Chunks)),
             ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
             ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
         end,

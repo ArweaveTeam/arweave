@@ -62,7 +62,7 @@ bench_read(Args) ->
 
 bench_read(Duration, DataDir, StorageModules) ->
     Address = resolve_mining_address(StorageModules, undefined),
-    ar:console("Assuming mining address: ~p~n", [arweave_util:safe_encode(Address)]),
+    ar:console("Assuming mining address: ~p~n", [arweave_lib_util:safe_encode(Address)]),
     %% Skip the `[mining, address]' override when `Address' is `undefined'
     %% (no supplied packing carried one): the option's validator rejects
     %% `undefined' and would error on `load'.
@@ -84,7 +84,7 @@ bench_read(Duration, DataDir, StorageModules) ->
 
     StopTime = erlang:monotonic_time() + erlang:convert_time_unit(Duration, second, native),
 
-    Results = arweave_util:pmap(
+    Results = arweave_lib_util:pmap(
                 fun(StorageModule) ->
                         read_storage_module(DataDir, StorageModule, StopTime)
                 end,
@@ -203,7 +203,7 @@ random_dev_pread(DataDir, StoreID, Count, SumBytes, SumElapsedTime) ->
     Filepath = hd(ar_chunk_storage:list_files(DataDir, StoreID)),
     Device = get_mounted_device(Filepath),
     {ok, File} = file:open(Device, [read, raw, binary]),
-    Files = [{Device, File, ar_block:partition_size()} || _ <- lists:seq(1, ?NUM_FILES)],
+    Files = [{Device, File, arweave_lib_constants:partition_size()} || _ <- lists:seq(1, ?NUM_FILES)],
     StartTime = erlang:monotonic_time(),
     Bytes = pread(Files, ?RECALL_RANGE_SIZE, 0),
     EndTime = erlang:monotonic_time(),
@@ -260,7 +260,7 @@ dd_devs_read(_DataDir, _StoreID, 0, SumBytes, SumElapsedTime) ->
 dd_devs_read(DataDir, StoreID, Count, SumBytes, SumElapsedTime) ->
     Filepath = hd(ar_chunk_storage:list_files(DataDir, StoreID)),
     Device = get_mounted_device(Filepath),
-    Devices = [{Device, not_set, ar_block:partition_size()} || _ <- lists:seq(1, ?NUM_FILES)],
+    Devices = [{Device, not_set, arweave_lib_constants:partition_size()} || _ <- lists:seq(1, ?NUM_FILES)],
     StartTime = erlang:monotonic_time(),
     Bytes = dd_files(Devices, ?RECALL_RANGE_SIZE, 0),
     EndTime = erlang:monotonic_time(),
@@ -276,7 +276,7 @@ dd_dev_read(DataDir, StoreID, Count, SumBytes, SumElapsedTime) ->
     Filepath = hd(ar_chunk_storage:list_files(DataDir, StoreID)),
     Device = get_mounted_device(Filepath),
     StartTime = erlang:monotonic_time(),
-    dd(Device, ar_block:partition_size(), ?RECALL_RANGE_SIZE, ?NUM_FILES),
+    dd(Device, arweave_lib_constants:partition_size(), ?RECALL_RANGE_SIZE, ?NUM_FILES),
     EndTime = erlang:monotonic_time(),
     ElapsedTime = erlang:convert_time_unit(EndTime - StartTime, native, millisecond),
     Bytes = ?RECALL_RANGE_SIZE * ?NUM_FILES,
@@ -289,7 +289,7 @@ get_mounted_device(FilePath) ->
 
 open_files(DataDir, StoreID) ->
     AllFilepaths = ar_chunk_storage:list_files(DataDir, StoreID),
-    Filepaths = lists:sublist(arweave_util:shuffle_list(AllFilepaths), ?NUM_FILES),
+    Filepaths = lists:sublist(arweave_lib_util:shuffle_list(AllFilepaths), ?NUM_FILES),
     lists:foldl(
       fun(Filepath, Acc) ->
               {ok, FileInfo} = file:read_file_info(Filepath),

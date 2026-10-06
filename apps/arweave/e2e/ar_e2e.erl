@@ -54,7 +54,7 @@ load_wallet_fixture(WalletFixture) ->
     FixturePath = filename:join([FixtureDir, WalletName ++ ".json"]),
     Wallet = ar_wallet:load_keyfile(FixturePath),
     Address = ar_wallet:to_address(Wallet),
-    WalletPath = ar_wallet:wallet_filepath(arweave_util:encode(Address)),
+    WalletPath = ar_wallet:wallet_filepath(arweave_lib_util:encode(Address)),
     file:copy(FixturePath, WalletPath),
     ar_wallet:load_keyfile(WalletPath).
 
@@ -103,7 +103,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
     {_, StorageModules} = source_node_storage_modules(Node, unpacked, wallet_a, ModuleSize),
     [B0, _, {TX2, _} | _] = Blocks,
     ar_test_node:start_other_node(Node, B0, #{
-                                              [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(TempNode))],
+                                              [peers, trusted] => [arweave_lib_util:format_peer(ar_test_node:peer_ip(TempNode))],
                                               [storage_modules] => StorageModules,
                                               [join, auto] => true
                                              }, true),
@@ -143,7 +143,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
     {ok, Data} = ar_test_await:http_tx_data(Node, TX2#tx.id),
     {ok, ExpectedData} = load_chunk_fixture(
                            unpacked, ?ALIGNED_PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE)),
-    ExpectedData = arweave_util:decode(Data),
+    ExpectedData = arweave_lib_util:decode(Data),
 
     ?LOG_INFO("Source node ~p restarted.", [Node]),
 
@@ -248,7 +248,7 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
     {ok, {{<<"404">>, _}, _, _, _, _}} = ar_http:req(#{
                                                        method => get,
                                                        peer => ar_test_node:peer_ip(Node),
-                                                       path => "/tx/" ++ binary_to_list(arweave_util:encode(TX1#tx.id)) ++ "/data"
+                                                       path => "/tx/" ++ binary_to_list(arweave_lib_util:encode(TX1#tx.id)) ++ "/data"
                                                       }),
 
     ?LOG_INFO("Source node ~p assertions passed.", [Node]),
@@ -279,8 +279,8 @@ aligned_partition_size(Node, Partition, Packing) ->
     RepackInPlaceModules = [{ModuleStart, ModuleEnd, TargetPacking}
                             || {{ModuleStart, ModuleEnd, _FromPacking}, TargetPacking} <- RepackInPlaceList],
     AllStorageModules = StorageModulesList ++ RepackInPlaceModules,
-    PartitionStart = Partition * ar_block:partition_size(),
-    PartitionEnd = (Partition + 1) * ar_block:partition_size(),
+    PartitionStart = Partition * arweave_lib_constants:partition_size(),
+    PartitionEnd = (Partition + 1) * arweave_lib_constants:partition_size(),
     StorageModules = filter_storage_modules_by_partition(
                        PartitionStart, PartitionEnd, AllStorageModules),
     StorageModules2 = filter_storage_modules_by_packing(StorageModules, Packing),
@@ -304,8 +304,8 @@ aligned_partition_size2([{ModuleStart, ModuleEnd, Packing} | Modules], Partition
     Overlap = ar_storage_module:get_overlap(Packing),
     ClippedStart = max(ModuleStart, PartitionStart),
     ClippedEnd = min(ModuleEnd, PartitionEnd),
-    AlignedModuleStart = max(0, ar_block:get_chunk_padded_offset(ClippedStart) - ?DATA_CHUNK_SIZE),
-    AlignedModuleEnd = ar_block:get_chunk_padded_offset(ClippedEnd + Overlap),
+    AlignedModuleStart = max(0, arweave_lib_constants:get_chunk_padded_offset(ClippedStart) - ?DATA_CHUNK_SIZE),
+    AlignedModuleEnd = arweave_lib_constants:get_chunk_padded_offset(ClippedEnd + Overlap),
     AlignedModuleSize = AlignedModuleEnd - AlignedModuleStart,
     aligned_partition_size2(Modules, PartitionStart, PartitionEnd, Acc + AlignedModuleSize);
 aligned_partition_size2([], _PartitionStart, _PartitionEnd, Acc) ->
@@ -323,12 +323,12 @@ source_node_storage_modules(Node, PackingType, WalletFixture, ModuleSize) ->
     {Wallet, source_node_storage_modules(SourcePacking, ModuleSize)}.
 
 source_node_storage_modules(SourcePacking, default) ->
-    Size = ar_block:partition_size(),
+    Size = arweave_lib_constants:partition_size(),
     lists:map(fun(I) -> {I * Size, (I + 1) * Size, SourcePacking} end,
         lists:seq(0, 4));
 
 source_node_storage_modules(SourcePacking, small) ->
-    Size = ar_block:partition_size() div 4,
+    Size = arweave_lib_constants:partition_size() div 4,
     %% Put strict data split threshold inside the first storage module.
     [{0, Size * 2, SourcePacking}
     | lists:map(fun(I) -> {I * Size, (I + 1) * Size, SourcePacking} end,

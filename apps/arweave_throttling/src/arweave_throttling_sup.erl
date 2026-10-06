@@ -26,7 +26,7 @@ all_info() ->
 
 reset_peer_in_all_groups(Peer) ->
     Groups = running_groups(),
-    arweave_util:pmap(fun(GroupID) -> arweave_throttling_group:reset_peer(GroupID, Peer) end,
+    arweave_lib_util:pmap(fun(GroupID) -> arweave_throttling_group:reset_peer(GroupID, Peer) end,
          Groups, ?PMAP_TIMEOUT).
 
 %% @doc Number of running group processes; groups stopped after being

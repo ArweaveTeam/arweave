@@ -140,7 +140,7 @@ handle_info({event, block, {new, B, _}}, State) ->
             SpecialPeers = arweave_config:get([peers, block_gossip]),
             Peers = ((SpecialPeers ++ ar_peers:get_peers(current)) -- TrustedPeers) ++ TrustedPeers,
             JSON =
-                case B#block.height >= ar_fork:height_2_6() of
+                case B#block.height >= arweave_lib_fork:height_2_6() of
                     true ->
                         none;
                     false ->
@@ -170,7 +170,7 @@ handle_info({'DOWN', Ref, process, _Worker, Reason},
         [W] ->
             ?LOG_WARNING([{event, block_propagation_worker_down}, {worker, W},
                     {reason, io_lib:format("~P", [Reason, 20])}]),
-            arweave_util:cast_after(?WORKER_RESTART_DELAY_MS, self(),
+            ar_util:cast_after(?WORKER_RESTART_DELAY_MS, self(),
                     {may_be_send_block, W}),
             {noreply, State#state{ workers = maps:put(W, free, Workers) }};
         [] ->
@@ -236,8 +236,8 @@ send_to_worker(Peer, {JSON, B}, W) ->
     #block{ height = Height, indep_hash = H, previous_block = PrevH, txs = TXs,
             hash = SolutionH } = B,
     Release = ar_peers:get_peer_release(Peer),
-    Fork_2_6 = ar_fork:height_2_6(),
-    SolutionH2 = case Height >= ar_fork:height_2_6() of true -> SolutionH; _ -> undefined end,
+    Fork_2_6 = arweave_lib_fork:height_2_6(),
+    SolutionH2 = case Height >= arweave_lib_fork:height_2_6() of true -> SolutionH; _ -> undefined end,
     case Release >= 52 orelse Height >= Fork_2_6 of
         true ->
             SendAnnouncementFun =
@@ -263,7 +263,7 @@ send_to_worker(Peer, {JSON, B}, W) ->
                         %% in ar_node_worker.
                         case determine_included_transactions(TXs, MissingTXs) of
                             missing ->
-                                case Height >= ar_fork:height_2_6() of
+                                case Height >= arweave_lib_fork:height_2_6() of
                                     true ->
                                         %% POST /block is not supported after 2.6.
                                         %% The recipient would have to download this block
@@ -304,8 +304,8 @@ send_and_log(Peer, H, Height, Format, Bin, RecallByte) ->
             ?LOG_INFO([{event, sent_block_to_block_gossip_peer},
                        {format, Format},
                        {height, Height},
-                       {block, arweave_util:encode(H)},
-                       {peer, arweave_util:format_peer(Peer)},
+                       {block, arweave_lib_util:encode(H)},
+                       {peer, arweave_lib_util:format_peer(Peer)},
                        {reply, arweave_metrics:get_status_class(Reply)}]);
         false ->
             ok
@@ -319,7 +319,7 @@ block_to_json(B) ->
                  %% Add the P2P port field to be backwards compatible with nodes
                  %% running the old version of the P2P port feature.
                  {<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
-                 {<<"block_data_segment">>, arweave_util:encode(BDS)}
+                 {<<"block_data_segment">>, arweave_lib_util:encode(BDS)}
                 ],
     ar_serialize:jsonify({PostProps}).
 

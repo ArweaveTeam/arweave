@@ -23,7 +23,7 @@ test_rejects_invalid_chunks() ->
     ?assertMatch(
         {ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_too_big\"}">>, _, _}},
         ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
-            chunk => arweave_util:encode(crypto:strong_rand_bytes(?DATA_CHUNK_SIZE + 1)),
+            chunk => arweave_lib_util:encode(crypto:strong_rand_bytes(?DATA_CHUNK_SIZE + 1)),
             data_path => <<>>,
             offset => <<"0">>,
             data_size => <<"0">>
@@ -32,7 +32,7 @@ test_rejects_invalid_chunks() ->
     ?assertMatch(
         {ok, {{<<"400">>, _}, _, <<"{\"error\":\"data_path_too_big\"}">>, _, _}},
         ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
-            data_path => arweave_util:encode(crypto:strong_rand_bytes(?MAX_PATH_SIZE + 1)),
+            data_path => arweave_lib_util:encode(crypto:strong_rand_bytes(?MAX_PATH_SIZE + 1)),
             chunk => <<>>,
             offset => <<"0">>,
             data_size => <<"0">>
@@ -59,8 +59,8 @@ test_rejects_invalid_chunks() ->
     ?assertMatch(
         {ok, {{<<"400">>, _}, _, <<"{\"error\":\"chunk_proof_ratio_not_attractive\"}">>, _, _}},
         ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
-            chunk => arweave_util:encode(<<"a">>),
-            data_path => arweave_util:encode(<<"bb">>),
+            chunk => arweave_lib_util:encode(<<"a">>),
+            data_path => arweave_lib_util:encode(<<"bb">>),
             offset => <<"0">>,
             data_size => <<"0">>
         }))
@@ -75,9 +75,9 @@ test_rejects_invalid_chunks() ->
     ?assertMatch(
         {ok, {{<<"400">>, _}, _, <<"{\"error\":\"data_root_not_found\"}">>, _, _}},
         ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
-            data_root => arweave_util:encode(DataRoot),
-            chunk => arweave_util:encode(Chunk),
-            data_path => arweave_util:encode(DataPath),
+            data_root => arweave_lib_util:encode(DataRoot),
+            chunk => arweave_lib_util:encode(Chunk),
+            data_path => arweave_lib_util:encode(DataPath),
             offset => <<"0">>,
             data_size => <<"500">>
         }))
@@ -168,9 +168,9 @@ test_does_not_store_small_chunks_split({Title, DataSize, FirstSize, SecondSize, 
     lists:foreach(
         fun({Chunk, Offset}) ->
             DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),
-            Proof = #{ data_root => arweave_util:encode(DataRoot),
-                    data_path => arweave_util:encode(DataPath),
-                    chunk => arweave_util:encode(Chunk),
+            Proof = #{ data_root => arweave_lib_util:encode(DataRoot),
+                    data_path => arweave_lib_util:encode(DataPath),
+                    chunk => arweave_lib_util:encode(Chunk),
                     offset => integer_to_binary(Offset),
                     data_size => integer_to_binary(DataSize) },
             %% All chunks are accepted because we do not know their offsets yet -
@@ -185,7 +185,7 @@ test_does_not_store_small_chunks_split({Title, DataSize, FirstSize, SecondSize, 
     %% In practice the chunks are above the strict data split threshold so those
     %% which do not pass strict validation will not be stored.
     timer:sleep(2000),
-    GenesisOffset = ar_block:strict_data_split_threshold(),
+    GenesisOffset = arweave_lib_constants:strict_data_split_threshold(),
     lists:foreach(
         fun ({Offset, 404}) ->
                 ?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
@@ -212,9 +212,9 @@ test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
             data_root => BigDataRoot }),
     ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [BigTX]),
     BigDataPath = ar_merkle:generate_path(BigDataRoot, 0, BigDataTree),
-    BigProof = #{ data_root => arweave_util:encode(BigDataRoot),
-            data_path => arweave_util:encode(BigDataPath),
-            chunk => arweave_util:encode(BigOutOfBoundsOffsetChunk), offset => <<"0">>,
+    BigProof = #{ data_root => arweave_lib_util:encode(BigDataRoot),
+            data_path => arweave_lib_util:encode(BigDataPath),
+            chunk => arweave_lib_util:encode(BigOutOfBoundsOffsetChunk), offset => <<"0">>,
             data_size => integer_to_binary(?DATA_CHUNK_SIZE)},
     ?assertMatch({ok, {{<<"400">>, _}, _, <<"{\"error\":\"invalid_proof\"}">>, _, _}},
             ar_test_node:post_chunk(main, ar_serialize:jsonify(BigProof))).
@@ -362,7 +362,7 @@ test_accepts_chunks(Split) ->
     ?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
     [{Offset, FirstProof}, {_, SecondProof}, {_, ThirdProof}] =
             ar_test_data_sync:build_proofs(TX, Chunks, [TX], 0, 0),
-    EndOffset = Offset + ar_block:strict_data_split_threshold(),
+    EndOffset = Offset + arweave_lib_constants:strict_data_split_threshold(),
     %% Post the third proof to the disk pool.
     ?assertMatch(
         {ok, {{<<"200">>, _}, _, _, _, _}},
@@ -381,12 +381,12 @@ test_accepts_chunks(Split) ->
     ),
     %% Expect the chunk to be retrieved by any offset within
     %% (EndOffset - ChunkSize, EndOffset], but not outside of it.
-    FirstChunk = arweave_util:decode(maps:get(chunk, FirstProof)),
+    FirstChunk = arweave_lib_util:decode(maps:get(chunk, FirstProof)),
     FirstChunkSize = byte_size(FirstChunk),
     ExpectedProof = #{
         data_path => maps:get(data_path, FirstProof),
         tx_path => maps:get(tx_path, FirstProof),
-        chunk => arweave_util:encode(FirstChunk)
+        chunk => arweave_lib_util:encode(FirstChunk)
     },
     ar_test_data_sync:wait_until_syncs_chunk(EndOffset, ExpectedProof),
     ar_test_data_sync:wait_until_syncs_chunk(
@@ -396,7 +396,7 @@ test_accepts_chunks(Split) ->
     ?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, ar_test_node:get_chunk(main, EndOffset + 1)),
     TXSize = byte_size(binary:list_to_bin(Chunks)),
     ExpectedOffsetInfo = ar_serialize:jsonify(#{
-        offset => integer_to_binary(TXSize + ar_block:strict_data_split_threshold()),
+        offset => integer_to_binary(TXSize + arweave_lib_constants:strict_data_split_threshold()),
         size => integer_to_binary(TXSize)
     }),
     ?assertMatch({ok, {{<<"200">>, _}, _, ExpectedOffsetInfo, _, _}},
@@ -411,11 +411,11 @@ test_accepts_chunks(Split) ->
         tx_path => maps:get(tx_path, SecondProof),
         chunk => maps:get(chunk, SecondProof)
     },
-    SecondChunk = arweave_util:decode(maps:get(chunk, SecondProof)),
-    SecondChunkOffset = ar_block:strict_data_split_threshold() + FirstChunkSize + byte_size(SecondChunk),
+    SecondChunk = arweave_lib_util:decode(maps:get(chunk, SecondProof)),
+    SecondChunkOffset = arweave_lib_constants:strict_data_split_threshold() + FirstChunkSize + byte_size(SecondChunk),
     ar_test_data_sync:wait_until_syncs_chunk(SecondChunkOffset, ExpectedSecondProof),
     ok = ar_test_await:http_tx_data_matches(main, TX#tx.id,
-        arweave_util:encode(binary:list_to_bin(Chunks))),
+        arweave_lib_util:encode(binary:list_to_bin(Chunks))),
     ExpectedThirdProof = #{
         data_path => maps:get(data_path, ThirdProof),
         tx_path => maps:get(tx_path, ThirdProof),

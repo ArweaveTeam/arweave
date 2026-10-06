@@ -65,7 +65,7 @@ init(StoreID) ->
     }}.
 
 handle_cast(sample, #state{ready = false, end_offset = EndOffset} = State) ->
-    arweave_util:cast_after(1000, self(), sample),
+    ar_util:cast_after(1000, self(), sample),
     {noreply, State#state{ready = is_ready(EndOffset)}};
 handle_cast(sample,
         #state{cursor = Cursor, end_offset = EndOffset} = State) when Cursor >= EndOffset ->
@@ -89,7 +89,7 @@ handle_cast(sample, State) ->
     {noreply, State};
 
 handle_cast(verify, #state{ready = false, end_offset = EndOffset} = State) ->
-    arweave_util:cast_after(1000, self(), verify),
+    ar_util:cast_after(1000, self(), verify),
     {noreply, State#state{ready = is_ready(EndOffset)}};
 handle_cast(verify,
         #state{cursor = Cursor, end_offset = EndOffset} = State) when Cursor >= EndOffset ->
@@ -179,7 +179,7 @@ verify_chunk({ok, Metadata, Offsets}, Intervals, State) ->
     #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
     {ChunkStorageInterval, _DataSyncInterval} = Intervals,
 
-    PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
+    PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteOffset),
 
     State2 = verify_chunk_storage(PaddedOffset, Metadata, Offsets, ChunkStorageInterval, State),
 
@@ -220,7 +220,7 @@ verify_packing(Metadata, Offsets, State) ->
     #state{packing = Packing, store_id = StoreID} = State,
     #chunk_metadata{ chunk_size = ChunkSize, chunk_data_key = ChunkDataKey } = Metadata,
     #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
-    PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
+    PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteOffset),
     StoredPackingCheck = ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID),
     ExpectedPacking =
         case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
@@ -464,7 +464,7 @@ report_progress(State) ->
 generate_sample_offset(Start, End, SampledOffsets, Retry) when Retry > 0 ->
     Range = End - Start,
     Offset = Start + rand:uniform(Range),
-    BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Offset),
+    BucketStartOffset = arweave_lib_constants:get_chunk_bucket_start(Offset),
     SampleOffset = BucketStartOffset + 1,
     case sets:is_element(SampleOffset, SampledOffsets) of
         true ->
@@ -477,7 +477,7 @@ sample_chunks(0, _SampledOffsets, SampleReport, _State) ->
     SampleReport;
 sample_chunks(all, _SampledOffsets, SampleReport, State) ->
     #state{ store_id = StoreID, start_offset = Start, end_offset = End } = State,
-    SampleOffset =  ar_chunk_storage:get_chunk_bucket_start(Start) + 1,
+    SampleOffset =  arweave_lib_constants:get_chunk_bucket_start(Start) + 1,
 
     lists:foldl(
         fun(Offset, Report) ->
@@ -735,9 +735,9 @@ test_verify_chunk_storage_should_store() ->
     ?assertEqual(
         ExpectedState,
         verify_chunk_storage(
-            ar_block:strict_data_split_threshold() + 1,
+            arweave_lib_constants:strict_data_split_threshold() + 1,
             #chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE },
-            #chunk_offsets{ absolute_offset = ar_block:strict_data_split_threshold() + 1 },
+            #chunk_offsets{ absolute_offset = arweave_lib_constants:strict_data_split_threshold() + 1 },
             {20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
             #state{ packing = unpacked })),
     ?assertEqual(
@@ -751,9 +751,9 @@ test_verify_chunk_storage_should_store() ->
             } 
         },
         verify_chunk_storage(
-            ar_block:strict_data_split_threshold() + 1,
+            arweave_lib_constants:strict_data_split_threshold() + 1,
             #chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE div 2 },
-            #chunk_offsets{ absolute_offset = ar_block:strict_data_split_threshold() + 1 },
+            #chunk_offsets{ absolute_offset = arweave_lib_constants:strict_data_split_threshold() + 1 },
             {20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
             #state{ packing = {spora_2_6, Addr} })),
     ok.
@@ -773,9 +773,9 @@ test_verify_chunk_storage_should_not_store() ->
     ?assertEqual(
         ExpectedState,
         verify_chunk_storage(
-            ar_block:strict_data_split_threshold() + 1,
+            arweave_lib_constants:strict_data_split_threshold() + 1,
             #chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE div 2 },
-            #chunk_offsets{ absolute_offset = ar_block:strict_data_split_threshold() + 1 },
+            #chunk_offsets{ absolute_offset = arweave_lib_constants:strict_data_split_threshold() + 1 },
             {20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
             #state{ packing = unpacked })),
     ok.
@@ -861,10 +861,10 @@ test_verify_proof_invalid_paths() ->
     ok.
 
 test_verify_chunk() ->
-    PreSplitOffset = ar_block:strict_data_split_threshold() - (?DATA_CHUNK_SIZE div 2),
-    PostSplitOffset = ar_block:strict_data_split_threshold() + (?DATA_CHUNK_SIZE div 2),
-    IntervalStart = ar_block:strict_data_split_threshold() - ?DATA_CHUNK_SIZE,
-    IntervalEnd = ar_block:strict_data_split_threshold() + ?DATA_CHUNK_SIZE,
+    PreSplitOffset = arweave_lib_constants:strict_data_split_threshold() - (?DATA_CHUNK_SIZE div 2),
+    PostSplitOffset = arweave_lib_constants:strict_data_split_threshold() + (?DATA_CHUNK_SIZE div 2),
+    IntervalStart = arweave_lib_constants:strict_data_split_threshold() - ?DATA_CHUNK_SIZE,
+    IntervalEnd = arweave_lib_constants:strict_data_split_threshold() + ?DATA_CHUNK_SIZE,
     Interval = {IntervalEnd, IntervalStart},
     ?assertEqual(
         #state{ 
@@ -884,7 +884,7 @@ test_verify_chunk() ->
             #state{packing=unpacked})),
     ?assertEqual(
         #state{ 
-            cursor = ar_block:strict_data_split_threshold() + ?DATA_CHUNK_SIZE + 1,
+            cursor = arweave_lib_constants:strict_data_split_threshold() + ?DATA_CHUNK_SIZE + 1,
             packing = unpacked,
             verify_report = #verify_report{
                 total_error_bytes = ?DATA_CHUNK_SIZE div 2,

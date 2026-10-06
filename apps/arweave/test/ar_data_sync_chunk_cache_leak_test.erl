@@ -28,13 +28,13 @@ test_chunk_cache_leak_on_unpack_error() ->
         config => #{
             [sync, cache_size_limit] => 1,
             [storage_modules] =>
-                [{0, 10 * ar_block:partition_size(), unpacked}]
+                [{0, 10 * arweave_lib_constants:partition_size(), unpacked}]
         },
         peer_config => ar_test_node:storage_module_config(PeerAddr, [0])
     }),
     %% Fill the weave up to the strict data split threshold so both target
     %% chunks land bucket-padded in peer1's ar_chunk_storage.
-    StrictThreshold = ar_block:strict_data_split_threshold(),
+    StrictThreshold = arweave_lib_constants:strict_data_split_threshold(),
     ?assertEqual(0, StrictThreshold rem ?DATA_CHUNK_SIZE),
     FillerChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)
             || _ <- lists:seq(1, StrictThreshold div ?DATA_CHUNK_SIZE)],
@@ -122,7 +122,7 @@ post_chunk_to_peer1(Proof) ->
 %% @doc Overwrite the packed chunk bytes in peer1's chunk storage. Metadata
 %% and sync records stay intact, so peer1 keeps serving the chunk.
 corrupt_stored_chunk(EndOffset) ->
-    PaddedEndOffset = ar_block:get_chunk_padded_offset(EndOffset),
+    PaddedEndOffset = arweave_lib_constants:get_chunk_padded_offset(EndOffset),
     [StorageModule | _] = ar_test_node:remote_call(peer1, ar_storage_module,
             get_all, [PaddedEndOffset]),
     StoreID = ar_storage_module:id(StorageModule),
