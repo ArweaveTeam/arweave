@@ -49,7 +49,6 @@ init([]) ->
     %% owns the gen_server that uses them).
     ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_mining_stats, [set, public, named_table]),
-    ets:new(entropy_generation_stats, [ordered_set, public, named_table]),
     ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_disk_pool_chunks_cache, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_disk_pool_chunks_cache_reverse, [bag, public, named_table]),
@@ -82,6 +81,7 @@ init([]) ->
         ?CHILD_SUP(ar_bridge_sup, supervisor),
         ?CHILD_SUP(ar_packing_sup, supervisor),
         arweave_storage:child_spec(),
+        arweave_entropy:child_spec(),
         ?CHILD(ar_header_sync, worker),
         %% `ar_data_sync_sup' must start before `ar_chunk_storage_sup' so its
         %% workers open `chunk_data_db'/`tx_index' before `ar_repack' workers

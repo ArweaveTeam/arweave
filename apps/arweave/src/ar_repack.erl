@@ -303,10 +303,10 @@ handle_info({entropy, BucketEndOffset, RewardAddr, Entropies}, #state{} = State)
       {replica_2_9, RewardAddr},
       State),
 
-    EntropyKeys = ar_entropy_gen:generate_entropy_keys(RewardAddr, BucketEndOffset),
-    EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset, FootprintEnd),
+    EntropyKeys = arweave_entropy_preparation:generate_entropy_keys(RewardAddr, BucketEndOffset),
+    EntropyOffsets = arweave_entropy_preparation:entropy_offsets(BucketEndOffset, FootprintEnd),
 
-    State2 = ar_entropy_gen:map_entropies(
+    State2 = arweave_entropy_preparation:map_entropies(
                Entropies,
                EntropyOffsets,
                FootprintStart,
@@ -750,7 +750,7 @@ footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd) ->
     BucketEndOffset = arweave_lib_constants:get_chunk_bucket_end(BucketEndOffset),
     %% end sanity checks
 
-    EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset, ModuleEnd),
+    EntropyOffsets = arweave_entropy_preparation:entropy_offsets(BucketEndOffset, ModuleEnd),
 
     FilteredOffsets = lists:filter(
                         fun(Offset) -> Offset >= BucketEndOffset end,
@@ -781,7 +781,7 @@ generate_repack_entropy(BucketEndOffset, {replica_2_9, RewardAddr}, #state{} = S
        store_id = StoreID
       } = State,
 
-    ar_entropy_gen:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self());
+    arweave_entropy_preparation:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self());
 generate_repack_entropy(_BucketEndOffset, _Packing, #state{}) ->
     %% Only generate entropy for the replica.2.9 packing format.
     ok.
@@ -2024,8 +2024,8 @@ init_repack_chunk_map_test_() ->
     ].
 
 %% @doc This tests a specific off-by-one error that occurred in the footprint_end calculation.
-%% Previously there was an ar_entropy_gen:footprint_end function which was incorrect. The
-%% fix removes the ar_entropy_gen:footprint_end function and has everyone use
+%% Previously there was an arweave_entropy_preparation:footprint_end function which was incorrect. The
+%% fix removes the arweave_entropy_preparation:footprint_end function and has everyone use
 %% arweave_lib_replica_2_9:get_entropy_partition_range instead, as that one does the correct end of
 %% range calculation.
 %%

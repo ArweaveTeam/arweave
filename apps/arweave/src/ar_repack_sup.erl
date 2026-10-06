@@ -22,6 +22,5 @@ start_link() ->
 
 init([]) ->
 
-    Workers = ar_repack:register_workers() ++
-        ar_entropy_gen:register_workers(ar_entropy_gen),
+    Workers = ar_repack:register_workers(),
     {ok, {{one_for_one, 5, 10}, Workers}}.
