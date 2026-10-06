@@ -416,8 +416,8 @@ get_storage_modules_paths() ->
     DataDir = arweave_config:get([data_dir]),
     SMDirs = lists:map(
                fun(StorageModule) ->
-                       StoreID = ar_storage_module:id(StorageModule),
-                       {StoreID, ar_chunk_storage:storage_module_path(
+                       StoreID = arweave_storage_module:id(StorageModule),
+                       {StoreID, arweave_storage_chunk_storage:storage_module_path(
                                    DataDir, StoreID)}
                end,
                arweave_config:storage_modules()

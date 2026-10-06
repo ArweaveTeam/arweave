@@ -261,8 +261,8 @@ pick_random_storage_module(StorageModules) ->
     ModulesWithData =
         lists:filtermap(
           fun(Module) ->
-                  StoreID = ar_storage_module:id(Module),
-                  Intervals = ar_sync_record:get(ar_data_sync, StoreID),
+                  StoreID = arweave_storage_module:id(Module),
+                  Intervals = arweave_storage_sync_record:get(ar_data_sync, StoreID),
                   case arweave_lib_intervals:is_empty(Intervals) of
                       true ->
                           false;

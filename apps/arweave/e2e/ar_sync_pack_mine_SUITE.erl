@@ -242,7 +242,7 @@ do_sync_pack_mine({Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
     SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
 
     RangeStart = arweave_lib_constants:partition_size(),
-    RangeEnd = 2*arweave_lib_constants:partition_size() + ar_storage_module:get_overlap(SinkPacking),
+    RangeEnd = 2*arweave_lib_constants:partition_size() + arweave_storage_module:get_overlap(SinkPacking),
 
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
     ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
@@ -268,7 +268,7 @@ do_unpacked_and_packed_sync_pack_mine(
                                      SinkNode, SourceNode, B0, PackingType1, PackingType2),
 
     RangeStart1 = arweave_lib_constants:partition_size(),
-    RangeEnd1 = 2*arweave_lib_constants:partition_size() + ar_storage_module:get_overlap(SinkPacking1),
+    RangeEnd1 = 2*arweave_lib_constants:partition_size() + arweave_storage_module:get_overlap(SinkPacking1),
 
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart1, RangeEnd1),
     ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking1),
@@ -293,7 +293,7 @@ do_entropy_first_sync_pack_mine(
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
     Module = {arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    StoreID = arweave_storage_module:id(Module),
     StorageModules = [ Module ],
 
     BaseOverrides = #{
@@ -310,7 +310,7 @@ do_entropy_first_sync_pack_mine(
                      SinkNode, arweave_config, snapshot, []),
 
     RangeStart = arweave_lib_constants:partition_size(),
-    RangeEnd = 2*arweave_lib_constants:partition_size() + ar_storage_module:get_overlap(SinkPacking),
+    RangeEnd = 2*arweave_lib_constants:partition_size() + arweave_storage_module:get_overlap(SinkPacking),
 
     ok = ar_test_await:entropy_prepared(SinkNode, StoreID, RangeStart, RangeEnd),
     ok = ar_test_await:partition_empty(SinkNode, 1, unpacked),
@@ -347,7 +347,7 @@ do_entropy_last_sync_pack_mine(
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
     Module = {arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    StoreID = arweave_storage_module:id(Module),
     StorageModules = [ Module ],
 
     BaseOverrides = #{
@@ -364,7 +364,7 @@ do_entropy_last_sync_pack_mine(
                      SinkNode, arweave_config, snapshot, []),
 
     RangeStart = arweave_lib_constants:partition_size(),
-    RangeEnd = 2*arweave_lib_constants:partition_size() + ar_storage_module:get_overlap(SinkPacking),
+    RangeEnd = 2*arweave_lib_constants:partition_size() + arweave_storage_module:get_overlap(SinkPacking),
 
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
     ar_e2e:assert_partition_size(SinkNode, 1, unpacked_padded),
@@ -396,7 +396,7 @@ do_small_module_aligned_sync_pack_mine(
 
     Module = {arweave_lib_constants:partition_size(),
         floor(1.5 * arweave_lib_constants:partition_size()), SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    StoreID = arweave_storage_module:id(Module),
     StorageModules = [ Module ],
 
     %% Sync the second half of partition 1
@@ -442,7 +442,7 @@ do_small_module_unaligned_sync_pack_mine(
 
     Module = {floor(1.5 * arweave_lib_constants:partition_size()),
         2 * arweave_lib_constants:partition_size(), SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    StoreID = arweave_storage_module:id(Module),
     StorageModules = [ Module ],
 
     Overrides = #{
@@ -487,7 +487,7 @@ do_large_module_aligned_sync_pack_mine(
 
     ModuleSize = 2 * arweave_lib_constants:partition_size(),
     Module = {0, ModuleSize, SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    StoreID = arweave_storage_module:id(Module),
     StorageModules = [ Module ],
 
     Overrides = #{
@@ -550,7 +550,7 @@ do_large_module_unaligned_sync_pack_mine(
 
     ModuleSize = floor(1.5 * arweave_lib_constants:partition_size()),
     Module = {ModuleSize, 2 * ModuleSize, SinkPacking},
-    StoreID = ar_storage_module:id(Module),
+    StoreID = arweave_storage_module:id(Module),
     StorageModules = [ Module ],
 
     Overrides = #{

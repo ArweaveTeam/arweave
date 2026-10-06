@@ -36,7 +36,7 @@ start_link(Name, StorageModule) ->
 
 -spec name(binary()) -> atom().
 name(StoreID) ->
-    list_to_atom("ar_verify_chunks_" ++ ar_storage_module:label(StoreID)).
+    list_to_atom("ar_verify_chunks_" ++ arweave_storage_module:label(StoreID)).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -48,12 +48,12 @@ init(StoreID) ->
     ?LOG_INFO([{event, verify_chunk_storage_started},
         {store_id, StoreID}, {mode, VerifyMode},
         {chunk_samples, ChunkSamples}]),
-    {StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),
+    {StartOffset, EndOffset} = arweave_storage_module:get_range(StoreID),
     gen_server:cast(self(), sample),
     {ok, #state{
         mode = VerifyMode,
         store_id = StoreID,
-        packing = ar_storage_module:get_packing(StoreID),
+        packing = arweave_storage_module:get_packing(StoreID),
         start_offset = StartOffset,
         end_offset = EndOffset,
         cursor = StartOffset,
@@ -221,9 +221,9 @@ verify_packing(Metadata, Offsets, State) ->
     #chunk_metadata{ chunk_size = ChunkSize, chunk_data_key = ChunkDataKey } = Metadata,
     #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
     PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteOffset),
-    StoredPackingCheck = ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID),
+    StoredPackingCheck = arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID),
     ExpectedPacking =
-        case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
+        case arweave_storage_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
             true ->
                 Packing;
             false ->
@@ -256,8 +256,8 @@ verify_chunk_storage(PaddedOffset, Metadata, Offsets, {End, Start}, State)
     #chunk_metadata{ chunk_data_key = ChunkDataKey, chunk_size = ChunkSize } = Metadata,
     #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
     {_ChunkFileStart, _Filepath, _Position, ExpectedChunkOffset} =
-                ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
-    case ar_chunk_storage:read_offset(PaddedOffset, StoreID) of
+                arweave_storage_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
+    case arweave_storage_chunk_storage:read_offset(PaddedOffset, StoreID) of
         {ok, << ExpectedChunkOffset:?OFFSET_BIT_SIZE >>} ->
             State;
         {ok, << ActualChunkOffset:?OFFSET_BIT_SIZE >>} ->
@@ -291,18 +291,18 @@ verify_chunk_storage(PaddedOffset, Metadata, Offsets, Interval, State) ->
     #state{ packing = Packing, store_id = StoreID } = State,
     #chunk_metadata{ chunk_size = ChunkSize, chunk_data_key = ChunkDataKey } = Metadata,
     #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
-    case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
+    case arweave_storage_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
         true ->
             Logs = [
                 {ar_data_sync,
-                    ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID)},
+                    arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID)},
                 {ar_chunk_storage,
-                    ar_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage, StoreID)},
+                    arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage, StoreID)},
                 {ar_chunk_storage_replica_2_9_1_unpacked,
-                    ar_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage_replica_2_9_1_unpacked, StoreID)},
+                    arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage_replica_2_9_1_unpacked, StoreID)},
                 {unpacked_padded,
-                    ar_sync_record:is_recorded(AbsoluteOffset, unpacked_padded, StoreID)},
-                {is_entropy_recorded, ar_entropy_storage:is_entropy_recorded(
+                    arweave_storage_sync_record:is_recorded(AbsoluteOffset, unpacked_padded, StoreID)},
+                {is_entropy_recorded, arweave_storage_entropy_storage:is_entropy_recorded(
                     AbsoluteOffset, Packing, StoreID)},
                 {is_blacklisted, ar_tx_blacklist:is_byte_blacklisted(AbsoluteOffset)},
                 {interval, Interval},
@@ -354,9 +354,9 @@ invalidate_sync_record(Type, Cursor, NextCursor, Logs, State) ->
     #state{ mode = Mode, store_id = StoreID } = State,
     case Mode of
         purge ->
-            ar_footprint_record:delete(NextCursor, StoreID),
-            ar_sync_record:delete(NextCursor, Cursor, ar_data_sync, StoreID),
-            ar_sync_record:delete(NextCursor, Cursor, ar_chunk_storage, StoreID);
+            arweave_storage_footprint_record:delete(NextCursor, StoreID),
+            arweave_storage_sync_record:delete(NextCursor, Cursor, ar_data_sync, StoreID),
+            arweave_storage_sync_record:delete(NextCursor, Cursor, ar_chunk_storage, StoreID);
         log ->
             ok
     end,
@@ -386,7 +386,7 @@ log_error(Type, AbsoluteOffset, ChunkSize, Logs, State) ->
     State#state{ verify_report = Report2 }.
 
 %% @doc Returns 3 sets of intervals:
-%% 1. ar_chunk_storage: should cover all chunks that have been stored on disk.
+%% 1. arweave_storage_chunk_storage: should cover all chunks that have been stored on disk.
 %% 2. ar_data_sync, Packing: should cover all chunks of the specified packing that have been
 %%                           synced
 %% 3. The union of the above two intervals.
@@ -395,9 +395,9 @@ log_error(Type, AbsoluteOffset, ChunkSize, Logs, State) ->
 %% exists in ar_chunk_storage but not ar_data_sync - or vice versa).
 query_intervals(State) ->
     #state{cursor = Cursor, store_id = StoreID} = State,
-    ChunkStorageInterval = ar_sync_record:get_next_synced_interval(
+    ChunkStorageInterval = arweave_storage_sync_record:get_next_synced_interval(
         Cursor, infinity, ar_chunk_storage, StoreID),
-    DataSyncInterval = ar_sync_record:get_next_synced_interval(
+    DataSyncInterval = arweave_storage_sync_record:get_next_synced_interval(
         Cursor, infinity, ar_data_sync, StoreID),
     {ChunkStorageInterval2, DataSyncInterval2} = align_intervals(
         Cursor, ChunkStorageInterval, DataSyncInterval),
@@ -504,7 +504,7 @@ sample_chunks(Count, SampledOffsets, SampleReport, State) ->
     end.
 
 sample_offset(Offset, StoreID, SampleReport) ->
-    IsRecorded = case ar_sync_record:is_recorded(Offset, ar_data_sync, StoreID) of
+    IsRecorded = case arweave_storage_sync_record:is_recorded(Offset, ar_data_sync, StoreID) of
         {true, _} ->
             true;
         true ->
@@ -547,21 +547,21 @@ intervals_test_() ->
 verify_chunk_storage_test_() ->
     [
         ar_test_util:with_mocked(
-            [{ar_chunk_storage, read_offset,
+            [{arweave_storage_chunk_storage, read_offset,
                 fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end}],
             fun test_verify_chunk_storage_in_interval/0),
         ar_test_util:with_mocked(
-            [{ar_chunk_storage, read_offset,
+            [{arweave_storage_chunk_storage, read_offset,
                 fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
-            {ar_sync_record, is_recorded,
+            {arweave_storage_sync_record, is_recorded,
                 fun(_, _, _) -> false end},
-            {ar_entropy_storage, is_entropy_recorded,
+            {arweave_storage_entropy_storage, is_entropy_recorded,
                 fun(_, _, _) -> false end},
             {ar_tx_blacklist, is_byte_blacklisted,
                 fun(_) -> false end}],
             fun test_verify_chunk_storage_should_store/0),
         ar_test_util:with_mocked(
-            [{ar_chunk_storage, read_offset,
+            [{arweave_storage_chunk_storage, read_offset,
                 fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
             {ar_data_sync, get_chunk_data,
                 fun(_, _) -> {ok, term_to_binary({<<>>, <<>>})} end}],
@@ -596,11 +596,11 @@ verify_chunk_test_() ->
             {ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
             {ar_poa, validate_paths, fun(_) -> {true, <<>>} end},
             {ar_poa, chunk_proof, fun(_, _) -> #chunk_proof{} end},
-            {ar_chunk_storage, read_offset,
+            {arweave_storage_chunk_storage, read_offset,
                 fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
             {ar_data_sync, get_chunk_data,
                 fun(_, _) -> {ok, term_to_binary({<<>>, <<>>})} end},
-            {ar_sync_record, is_recorded,
+            {arweave_storage_sync_record, is_recorded,
                 fun(_, _, _) -> false end}
         ],
             fun test_verify_chunk/0
@@ -974,7 +974,7 @@ sample_random_chunks_test_() ->
                     2 -> {error, invalid_chunk}
                 end
             end},
-            {ar_sync_record, is_recorded,
+            {arweave_storage_sync_record, is_recorded,
                 fun(_, _, _) -> true end}
             ],
             fun test_sample_random_chunks/0)

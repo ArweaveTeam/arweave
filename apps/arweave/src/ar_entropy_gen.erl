@@ -44,13 +44,13 @@ start_link(Name, {StoreID, Packing}) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-    list_to_atom("ar_entropy_gen_" ++ ar_storage_module:label(StoreID)).
+    list_to_atom("ar_entropy_gen_" ++ arweave_storage_module:label(StoreID)).
 
 register_workers(Module) ->
     ConfiguredWorkers = lists:filtermap(
                           fun(StorageModule) ->
-                                  StoreID = ar_storage_module:id(StorageModule),
-                                  Packing = ar_storage_module:get_packing(StoreID),
+                                  StoreID = arweave_storage_module:id(StorageModule),
+                                  Packing = arweave_storage_module:get_packing(StoreID),
 
                                   case is_entropy_packing(Packing) of
                                       true ->
@@ -67,8 +67,8 @@ register_workers(Module) ->
 
     RepackInPlaceWorkers = lists:filtermap(
                              fun({StorageModule, ToPacking}) ->
-                                     StoreID = ar_storage_module:id(StorageModule),
-                                     ConfiguredPacking = ar_storage_module:get_packing(StorageModule),
+                                     StoreID = arweave_storage_module:id(StorageModule),
+                                     ConfiguredPacking = arweave_storage_module:get_packing(StorageModule),
                                      %% Note: the config validation will prevent a StoreID from being used in both
                                      %% `storage_modules` and `repack_in_place_storage_modules`, so there's
                                      %% no risk of a `Name` clash with the workers spawned above.
@@ -90,12 +90,12 @@ register_workers(Module) ->
 
     ConfiguredWorkers ++ RepackInPlaceWorkers.
 
--spec initialize_context(ar_storage_module:store_id(), ar_chunk_storage:packing()) ->
+-spec initialize_context(arweave_storage_module:store_id(), arweave_storage_chunk_storage:packing()) ->
           {IsPrepared :: boolean(), RewardAddr :: none | ar_wallet:address()}.
 initialize_context(StoreID, Packing) ->
     case Packing of
         {replica_2_9, Addr} ->
-            {ModuleStart, ModuleEnd} = ar_storage_module:get_range(StoreID),
+            {ModuleStart, ModuleEnd} = arweave_storage_module:get_range(StoreID),
             Cursor = read_cursor(StoreID, ModuleStart),
             case Cursor =< ModuleEnd of
                 true ->
@@ -107,7 +107,7 @@ initialize_context(StoreID, Packing) ->
             {true, none}
     end.
 
--spec is_entropy_packing(ar_chunk_storage:packing()) -> boolean().
+-spec is_entropy_packing(arweave_storage_chunk_storage:packing()) -> boolean().
 is_entropy_packing(unpacked_padded) ->
     true;
 is_entropy_packing({replica_2_9, _}) ->
@@ -152,7 +152,7 @@ shift_entropy_offset(Offset, SectorCount) ->
 %% and recombined before they can be used. When properly recombined they contain enough
 %% entropy to cover 1024 chunks. The chunks covered (aka the "footprint") are distributed
 %% throughout the partition
--spec generate_entropies(StoreID :: ar_storage_module:store_id(),
+-spec generate_entropies(StoreID :: arweave_storage_module:store_id(),
                          RewardAddr :: ar_wallet:address(),
                          BucketEndOffset :: non_neg_integer(),
                          ReplyTo :: pid()) ->
@@ -231,12 +231,12 @@ init({StoreID, Packing}) ->
                {name, name(StoreID)}, {store_id, StoreID},
                {packing, ar_serialize:encode_packing(Packing, true)}]),
 
-    ConfiguredPacking = ar_storage_module:get_packing(StoreID),
+    ConfiguredPacking = arweave_storage_module:get_packing(StoreID),
     %% Sanity checks
     true = is_entropy_packing(ConfiguredPacking) orelse is_entropy_packing(Packing),
     %% End sanity checks
 
-    {ModuleStart, ModuleEnd} = ar_storage_module:get_range(StoreID),
+    {ModuleStart, ModuleEnd} = arweave_storage_module:get_range(StoreID),
     PaddedRangeEnd = arweave_lib_constants:get_chunk_bucket_end(ModuleEnd),
 
     %% Provided Packing will only differ from the StoreID packing when this
@@ -350,7 +350,7 @@ do_prepare_entropy(State) ->
     %% End of sanity checks.
 
     %% Make sure all prior entropy writes are complete.
-    ar_entropy_storage:is_ready(StoreID),
+    arweave_storage_entropy_storage:is_ready(StoreID),
 
     %% A bucket that is not to be prepared, or a failed entropy generation,
     %% is the outcome itself.
@@ -362,7 +362,7 @@ do_prepare_entropy(State) ->
                 generate_entropies(RewardAddr, BucketEndOffset, false),
             EntropyKeys = generate_entropy_keys(RewardAddr, BucketEndOffset),
             EntropyOffsets = entropy_offsets(BucketEndOffset, ModuleEnd),
-            ar_entropy_storage:store_entropy_footprint(
+            arweave_storage_entropy_storage:store_entropy_footprint(
               StoreID, Entropies, EntropyOffsets,
               ModuleStart, EntropyKeys, RewardAddr)
         end,
@@ -373,7 +373,7 @@ do_prepare_entropy(State) ->
                        {store_id, StoreID}]),
             ar:console("The storage module ~s is prepared for 2.9 "
                        "replication.~n", [StoreID]),
-            ar_chunk_storage:set_entropy_complete(StoreID),
+            arweave_storage_chunk_storage:set_entropy_complete(StoreID),
             ar_device_lock:set_device_lock_metric(StoreID, prepare, complete),
             State#state{ prepare_status = complete };
         recorded ->
@@ -391,7 +391,7 @@ do_prepare_entropy(State) ->
             %% loop crosses them one lookup each until it passes the module
             %% end.
             NextCursor =
-                ar_footprint_record:get_next_sector_start(BucketEndOffset),
+                arweave_storage_footprint_record:get_next_sector_start(BucketEndOffset),
             gen_server:cast(self(), prepare_entropy),
             store_prepare_cursor(NextCursor, StoreID),
             State#state{ cursor = NextCursor };
@@ -423,7 +423,7 @@ classify_bucket(BucketEndOffset, State) ->
         true ->
             beyond_limit;
         false ->
-            case ar_entropy_storage:is_entropy_recorded(BucketEndOffset,
+            case arweave_storage_entropy_storage:is_entropy_recorded(BucketEndOffset,
                                                         Packing, StoreID) of
                 true -> recorded;
                 false -> prepare
@@ -500,7 +500,7 @@ sanity_check_replica_2_9_entropy_keys(
                                           Keys).
 
 advance_entropy_offset(BucketEndOffset, Packing, StoreID) ->
-    case ar_entropy_storage:get_next_unsynced_interval(BucketEndOffset, Packing, StoreID) of
+    case arweave_storage_entropy_storage:get_next_unsynced_interval(BucketEndOffset, Packing, StoreID) of
         not_found ->
             BucketEndOffset + ?DATA_CHUNK_SIZE;
         {_, Start} ->
@@ -539,7 +539,7 @@ flush_entropy_messages() ->
     end.
 
 read_cursor(StoreID, ModuleStart) ->
-    Filepath = ar_chunk_storage:get_filepath("prepare_replica_2_9_cursor", StoreID),
+    Filepath = arweave_storage_chunk_storage:get_filepath("prepare_replica_2_9_cursor", StoreID),
     Default = ModuleStart + 1,
     case file:read_file(Filepath) of
         {ok, Bin} ->
@@ -554,7 +554,7 @@ read_cursor(StoreID, ModuleStart) ->
     end.
 
 store_cursor(Cursor, StoreID) ->
-    Filepath = ar_chunk_storage:get_filepath("prepare_replica_2_9_cursor", StoreID),
+    Filepath = arweave_storage_chunk_storage:get_filepath("prepare_replica_2_9_cursor", StoreID),
     file:write_file(Filepath, term_to_binary(Cursor)).
 
 %%%===================================================================
@@ -574,8 +574,8 @@ test_entropy_offsets() ->
     Module0 = {0, arweave_lib_constants:partition_size(), unpacked},
     Module1 = {arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), unpacked},
 
-    {_ModuleStart0, ModuleEnd0} = ar_storage_module:module_range(Module0),
-    {_ModuleStart1, ModuleEnd1} = ar_storage_module:module_range(Module1),
+    {_ModuleStart0, ModuleEnd0} = arweave_storage_module:module_range(Module0),
+    {_ModuleStart1, ModuleEnd1} = arweave_storage_module:module_range(Module1),
 
     PaddedModuleEnd0 = arweave_lib_constants:get_chunk_bucket_end(ModuleEnd0),
     PaddedModuleEnd1 = arweave_lib_constants:get_chunk_bucket_end(ModuleEnd1),

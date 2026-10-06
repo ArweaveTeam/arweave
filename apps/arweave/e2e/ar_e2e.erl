@@ -301,7 +301,7 @@ filter_storage_modules_by_packing([], _Packing) ->
     [].
 
 aligned_partition_size2([{ModuleStart, ModuleEnd, Packing} | Modules], PartitionStart, PartitionEnd, Acc) ->
-    Overlap = ar_storage_module:get_overlap(Packing),
+    Overlap = arweave_storage_module:get_overlap(Packing),
     ClippedStart = max(ModuleStart, PartitionStart),
     ClippedEnd = min(ModuleEnd, PartitionEnd),
     AlignedModuleStart = max(0, arweave_lib_constants:get_chunk_padded_offset(ClippedStart) - ?DATA_CHUNK_SIZE),
@@ -473,7 +473,7 @@ assert_no_chunks(Node, Chunks) ->
 
 %% @doc Probe offset for each ?DATA_CHUNK_SIZE slot in a `WeaveSize'-byte
 %% genesis weave, as `ChunkEnd - ?DATA_CHUNK_SIZE + 1' (the smallest
-%% offset `ar_sync_record:is_recorded' resolves to that chunk).
+%% offset `arweave_storage_sync_record:is_recorded' resolves to that chunk).
 genesis_chunk_offsets(WeaveSize) ->
     [N * ?DATA_CHUNK_SIZE - ?DATA_CHUNK_SIZE + 1
      || N <- lists:seq(1, WeaveSize div ?DATA_CHUNK_SIZE)].

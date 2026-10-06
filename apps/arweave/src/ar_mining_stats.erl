@@ -210,7 +210,7 @@ update_tip_partition_data_size() ->
             %%    just be a single packing)
             PackingSums = lists:foldl(
                             fun([Packing, Size], Acc) ->
-                                    PackingLabel = ar_storage_module:packing_label(Packing),
+                                    PackingLabel = arweave_storage_module:packing_label(Packing),
                                     maps:update_with(PackingLabel, fun(S) -> S + Size end, Size, Acc)
                             end,
                             #{},
@@ -247,14 +247,14 @@ update_tip_partition_data_size() ->
 %% default store); `Packing' is the packing of the recorded data, which
 %% for a module in transition differs from the module's target packing.
 set_storage_module_data_size(StorageModule, Packing, PartitionNumber, DataSize) ->
-    StoreID = ar_storage_module:id(StorageModule),
+    StoreID = arweave_storage_module:id(StorageModule),
     {RangeStart, RangeEnd} =
         case StorageModule of
             {Start, End, _ModulePacking} -> {Start, End};
             ?DEFAULT_MODULE -> {undefined, undefined}
         end,
-    StoreIDLabel = ar_storage_module:label(StoreID),
-    PackingLabel = ar_storage_module:packing_label(Packing),
+    StoreIDLabel = arweave_storage_module:label(StoreID),
+    PackingLabel = arweave_storage_module:packing_label(Packing),
     PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
     metric_set(v2_index_data_size_by_packing,
                [StoreIDLabel, PackingLabel, PartitionNumber, RangeStart, RangeEnd,

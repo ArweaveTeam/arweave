@@ -151,12 +151,12 @@ do_repack_in_place_mine(FromPackingType, ToPackingType, ModuleSize) ->
                 RepackerNode, arweave_config, get, [[data_dir]]),
     lists:foreach(fun({SourceModule, Packing}) ->
                           {ModuleStart, ModuleEnd, _Packing} = SourceModule,
-                          SourceID = ar_storage_module:id(SourceModule),
-                          SourcePath = ar_chunk_storage:storage_module_path(DataDir, SourceID),
+                          SourceID = arweave_storage_module:id(SourceModule),
+                          SourcePath = arweave_storage_chunk_storage:storage_module_path(DataDir, SourceID),
 
                           TargetModule = {ModuleStart, ModuleEnd, Packing},
-                          TargetID = ar_storage_module:id(TargetModule),
-                          TargetPath = ar_chunk_storage:storage_module_path(DataDir, TargetID),
+                          TargetID = arweave_storage_module:id(TargetModule),
+                          TargetPath = arweave_storage_chunk_storage:storage_module_path(DataDir, TargetID),
                           ok = file:rename(SourcePath, TargetPath)
                   end, RepackInPlaceStorageModules),
 
@@ -188,7 +188,7 @@ start_validator_node(ValidatorNode, RepackerNode, B0) ->
     ok.
 
 %% @doc Map each `{Block, EndOffset, ChunkSize}' chunk to a probe offset
-%% `ar_sync_record:is_recorded/2' resolves to its slot. The chunk's
+%% `arweave_storage_sync_record:is_recorded/2' resolves to its slot. The chunk's
 %% first byte lands inside the padded slot for both full and partial
 %% chunks.
 chunk_probe_offsets(Chunks) ->

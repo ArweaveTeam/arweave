@@ -51,7 +51,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
                         store_id = TargetStoreID, retry_count = RetryCount } = Task) ->
     Start2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Start + 1),
     Byte = Start2 - 1,
-    IsRecorded = ar_sync_record:is_recorded(Byte + 1, ar_data_sync, TargetStoreID),
+    IsRecorded = arweave_storage_sync_record:is_recorded(Byte + 1, ar_data_sync, TargetStoreID),
     case {Byte >= End, IsRecorded} of
         {true, _} ->
             ok;
@@ -92,7 +92,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
 %% [sync, request_packed_chunks] config (a cheap ETS read).
 get_target_packing(StoreID) ->
     case arweave_config:get([sync, request_packed_chunks]) of
-        true -> ar_storage_module:get_packing(StoreID);
+        true -> arweave_storage_module:get_packing(StoreID);
         false -> any
     end.
 
@@ -140,7 +140,7 @@ test_blacklist_past_end_skips_fetch() ->
 
 test_already_recorded_skips_fetch() ->
     run_with_mocks(fun(_, _, _) -> error(should_not_fetch) end,
-                   [{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}],
+                   [{arweave_storage_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}],
                    fun() ->
                            ?assertEqual(ok, run(task(0, 100), 5)),
                            ?assertEqual(0,
@@ -223,7 +223,7 @@ test_packed_request_selects_store_packing() ->
                    [{arweave_config, get,
                      fun([sync, request_packed_chunks]) -> true;
                         (K) -> meck:passthrough([K]) end},
-                    {ar_storage_module, get_packing, fun(_) -> Packing end}],
+                    {arweave_storage_module, get_packing, fun(_) -> Packing end}],
                    fun() ->
                            ?assertEqual(ok, run(task(0, 100), 5)),
                            ?assert(meck:called(ar_http_iface_client, get_chunk_binary,
@@ -254,7 +254,7 @@ run_with_mocks(GetChunkFun, ExtraMocks, TestFun) ->
                  fun([sync, request_packed_chunks]) -> false;
                     (K) -> meck:passthrough([K]) end},
                 {ar_tx_blacklist, get_next_not_blacklisted_byte, fun(X) -> X end},
-                {ar_sync_record, is_recorded, fun(_, _, _) -> false end},
+                {arweave_storage_sync_record, is_recorded, fun(_, _, _) -> false end},
                 {arweave_lib_constants, get_chunk_padded_offset, fun(X) -> X end},
                 {ar_http_iface_client, get_chunk_binary, GetChunkFun},
                 {ar_http_iface_client, log_failed_request, fun(_, _) -> ok end},

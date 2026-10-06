@@ -68,10 +68,10 @@ read_range(_MessagesRemaining, {Start, End, _, _}) when Start >= End ->
     ok;
 read_range(MessagesRemaining,
            {Start, End, OriginStoreID, TargetStoreID} = Args) ->
-    case ar_sync_record:is_recorded(Start + 1, ar_data_sync, TargetStoreID) of
+    case arweave_storage_sync_record:is_recorded(Start + 1, ar_data_sync, TargetStoreID) of
         {true, _} ->
             %% Chunk already synced at the target — skip to next gap.
-            case ar_sync_record:get_next_unsynced_interval(
+            case arweave_storage_sync_record:get_next_unsynced_interval(
                    Start, End, ar_data_sync, TargetStoreID) of
                 not_found ->
                     ok;
@@ -80,7 +80,7 @@ read_range(MessagesRemaining,
                                {Start2, End, OriginStoreID, TargetStoreID})
             end;
         _ ->
-            case ar_sync_record:is_recorded(Start + 1, ar_data_sync,
+            case arweave_storage_sync_record:is_recorded(Start + 1, ar_data_sync,
                                             OriginStoreID) of
                 {true, Packing} ->
                     read_and_post_chunk(MessagesRemaining, Packing, Args);
@@ -166,7 +166,7 @@ post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
        absolute_offset = AbsoluteOffset,
        relative_offset = RelativeOffset
       } = Offsets,
-    case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
+    case arweave_storage_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
                                     OriginStoreID) of
         {true, Packing} ->
             ar_data_sync:increment_chunk_cache_size(),
@@ -292,7 +292,7 @@ past_range_reply() ->
 read_range_mocks(ReadFun) ->
     [
      {arweave_lib_constants, get_chunk_padded_offset, fun(Offset) -> Offset end},
-     {ar_sync_record, is_recorded, fun(_Offset, ar_data_sync, StoreID) ->
+     {arweave_storage_sync_record, is_recorded, fun(_Offset, ar_data_sync, StoreID) ->
                                            case StoreID of
                                                target_store -> false;
                                                origin_store -> {true, unpacked}

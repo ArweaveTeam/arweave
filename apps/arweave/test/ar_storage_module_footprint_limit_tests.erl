@@ -35,7 +35,7 @@ test_entropy_preparation() ->
         #{partition => 1, packing_format => replica_2_9,
             packing_address => Addr, footprint_limit => 1}
     ]),
-    StoreID = ar_storage_module:id({P, 2 * P, {replica_2_9, Addr}}),
+    StoreID = arweave_storage_module:id({P, 2 * P, {replica_2_9, Addr}}),
     %% Partition 1 starts at 2,000,000, so its buckets sit 97,152 bytes into
     %% each sector: the first bucket of sector N ends at 2359296 + N * 524288
     %% and the second at 2621440 + N * 524288.
@@ -52,7 +52,7 @@ test_repack_in_place() ->
     Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
     P = arweave_lib_constants:partition_size(),
     start_main(Addr, [{0, P, unpacked}]),
-    StoreID = ar_storage_module:id({0, P, unpacked}),
+    StoreID = arweave_storage_module:id({0, P, unpacked}),
     %% The three genesis chunks end at 262144 (sector 0, first),
     %% 524288 (sector 0, second) and 786432 (sector 1, first).
     ok = ar_test_await:chunk_recorded(main, 524288, #{store_id => StoreID}),
@@ -93,7 +93,7 @@ test_sync() ->
             [Limited | ar_test_node:wide_storage_modules(Addr, [0])]},
         peer_config => #{[storage_modules] => [{0, 3 * P, unpacked}]}
     }),
-    StoreID = ar_storage_module:id({P, 2 * P, unpacked}),
+    StoreID = arweave_storage_module:id({P, 2 * P, unpacked}),
     %% Five filler chunks move the weave from 786432 past the start of
     %% partition 1 (2,000,000) to 2097152.
     post_chunks(Wallet, 5, 1),

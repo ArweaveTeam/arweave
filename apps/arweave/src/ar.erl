@@ -114,7 +114,7 @@ start(normal, _Args) ->
 
     %% Start other apps which we depend on.
     set_mining_address(),
-    ar_chunk_storage:run_defragmentation(),
+    arweave_storage_chunk_storage:run_defragmentation(),
 
     %% Start Arweave. Supervisor children may run boot-time validators
     %% in their init/1 callbacks that mutate static config (e.g.,

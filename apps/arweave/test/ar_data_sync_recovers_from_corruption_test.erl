@@ -14,9 +14,9 @@ recovers_from_corruption_test_() ->
 test_recovers_from_corruption() ->
     ?LOG_DEBUG([{event, test_recovers_from_corruption_start}]),
     ar_test_data_sync:setup_nodes(),
-    StoreID = ar_storage_module:id(hd(ar_storage_module:get_all(262144 * 3))),
+    StoreID = arweave_storage_module:id(hd(arweave_storage_module:get_all(262144 * 3))),
     ?debugFmt("Corrupting ~s...", [StoreID]),
-    [ar_chunk_storage:write_chunk(PaddedEndOffset, << 0:(262144*8) >>, #{}, StoreID)
+    [arweave_storage_chunk_storage:write_chunk(PaddedEndOffset, << 0:(262144*8) >>, #{}, StoreID)
             || PaddedEndOffset <- lists:seq(262144, 262144 * 3, 262144)],
     ar_test_node:mine(),
     ?assertMatch({ok, _}, ar_test_await:node_height(main, 1)).

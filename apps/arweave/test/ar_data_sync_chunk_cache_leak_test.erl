@@ -74,7 +74,7 @@ test_chunk_cache_leak_on_unpack_error() ->
             #{ packing => PeerPacking }),
     ok = ar_test_await:until(valid_chunk_synced,
             fun() ->
-                ar_sync_record:is_recorded(ValidEndOffset, ar_data_sync) =/= false
+                arweave_storage_sync_record:is_recorded(ValidEndOffset, ar_data_sync) =/= false
             end, 60_000),
     %% At most the corrupted chunk retry stays in flight.
     ok = ar_test_await:until(chunk_cache_drained,
@@ -125,7 +125,7 @@ corrupt_stored_chunk(EndOffset) ->
     PaddedEndOffset = arweave_lib_constants:get_chunk_padded_offset(EndOffset),
     [StorageModule | _] = ar_test_node:remote_call(peer1, ar_storage_module,
             get_all, [PaddedEndOffset]),
-    StoreID = ar_storage_module:id(StorageModule),
+    StoreID = arweave_storage_module:id(StorageModule),
     Garbage = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
     ?assertMatch({ok, _}, ar_test_node:remote_call(peer1, ar_chunk_storage,
             write_chunk, [PaddedEndOffset, Garbage, #{}, StoreID])).

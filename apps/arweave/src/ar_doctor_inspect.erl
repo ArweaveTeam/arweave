@@ -59,10 +59,10 @@ inspect_range(Dir, Start, End, Addresses) ->
 inspect_chunk(Dir, PaddedEndOffset, Addresses) ->
     ar:console("~n~n--- Inspecting padded offset: ~p ---~n", [PaddedEndOffset]),
 
-    ChunkFileStart = ar_chunk_storage:get_chunk_file_start(PaddedEndOffset),
+    ChunkFileStart = arweave_storage_chunk_storage:get_chunk_file_start(PaddedEndOffset),
     Filepath = filename:join([Dir, integer_to_binary(ChunkFileStart)]),
     {Position, ChunkOffset} =
-        ar_chunk_storage:get_position_and_relative_chunk_offset(
+        arweave_storage_chunk_storage:get_position_and_relative_chunk_offset(
           ChunkFileStart, PaddedEndOffset),
 
     ar:console("File path: ~p~n", [Filepath]),
@@ -189,7 +189,7 @@ check_all(ExpectedChunkID, LocalChunk, PaddedEndOffset, Addresses, TXRoot, Chunk
         true ->
             {match, "Raw chunk"};
         false ->
-            Entropy = ar_entropy_storage:generate_missing_entropy(
+            Entropy = arweave_storage_entropy_storage:generate_missing_entropy(
                         PaddedEndOffset, hd(Addresses)),
             EntropyID = ar_tx:generate_chunk_id(Entropy),
             case EntropyID =:= ExpectedChunkID of
@@ -224,7 +224,7 @@ bitmap(DataDir, StorageModuleConfig) ->
     ok = arweave_config:load(#{ [data_dir] => DataDir }),
 
     [StorageModule] = arweave_config:storage_modules(),
-    StoreID = ar_storage_module:id(StorageModule),
+    StoreID = arweave_storage_module:id(StorageModule),
 
     case ar_data_doctor:check_module_dir(DataDir, StoreID) of
         false ->
@@ -236,10 +236,10 @@ bitmap(DataDir, StorageModuleConfig) ->
 bitmap(DataDir, StorageModule, StoreID) ->
     ar_kv_sup:start_link(),
     ar_storage_sup:start_link(),
-    ar_sync_record_sup:start_link(),
+    arweave_storage_sync_record_sup:start_link(),
     ar_data_sync:open_store_dbs(DataDir, StoreID),
 
-    {ModuleStart, ModuleEnd} = ar_storage_module:module_range(StorageModule),
+    {ModuleStart, ModuleEnd} = arweave_storage_module:module_range(StorageModule),
 
     ChunkPackings = ar_chunk_visualization:get_chunk_packings(
                       ModuleStart, ModuleEnd, StoreID, true),

@@ -116,15 +116,15 @@ terminate(Reason, _State) ->
 %% data clamped by `DiskPoolThreshold'), then every other on-disk module
 %% overlapping this StoreID's range.
 do_start_copy(StoreID, State) ->
-    {RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+    {RangeStart, RangeEnd} = arweave_storage_module:get_range(StoreID),
     %% Match ar_data_sync's range adjustment.
     RangeStart2 = max(0,
                       arweave_lib_constants:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
     RangeEnd2 = arweave_lib_constants:get_chunk_padded_offset(RangeEnd),
     SyncStatus = ar_data_sync:init_sync_status(StoreID),
-    OtherStorageModules = [ar_storage_module:id(M)
-                           || M <- ar_storage_module:get_all(RangeStart2, RangeEnd2),
-                              ar_storage_module:id(M) /= StoreID],
+    OtherStorageModules = [arweave_storage_module:id(M)
+                           || M <- arweave_storage_module:get_all(RangeStart2, RangeEnd2),
+                              arweave_storage_module:id(M) /= StoreID],
     CopyState = #copy_state{
                    range_start = RangeStart2,
                    range_end = RangeEnd2,
@@ -249,7 +249,7 @@ determine_intervals_to_copy_from_module(_StoreID, _OtherStoreID, RangeStart,
 determine_intervals_to_copy_from_module(StoreID, OtherStoreID, RangeStart,
                                         RangeEnd, Intervals) ->
     FindNextMissing =
-        case ar_sync_record:get_next_synced_interval(RangeStart, RangeEnd, ar_data_sync,
+        case arweave_storage_sync_record:get_next_synced_interval(RangeStart, RangeEnd, ar_data_sync,
                                                      StoreID) of
             not_found ->
                 {request, {RangeStart, RangeEnd}};
@@ -263,7 +263,7 @@ determine_intervals_to_copy_from_module(StoreID, OtherStoreID, RangeStart,
             determine_intervals_to_copy_from_module(StoreID, OtherStoreID, End2,
                                                     RangeEnd, Intervals);
         {request, {Cursor, RightBound}} ->
-            case ar_sync_record:get_next_synced_interval(Cursor, RightBound, ar_data_sync,
+            case arweave_storage_sync_record:get_next_synced_interval(Cursor, RightBound, ar_data_sync,
                                                          OtherStoreID) of
                 not_found ->
                     determine_intervals_to_copy_from_module(StoreID, OtherStoreID,

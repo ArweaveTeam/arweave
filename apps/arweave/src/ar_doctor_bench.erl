@@ -52,7 +52,7 @@ bench_read(Args) ->
     StorageModules = arweave_config:storage_modules(),
     Missing = [Module || Module <- StorageModules,
         not ar_data_doctor:check_module_dir(
-            DataDir, ar_storage_module:id(Module))],
+            DataDir, arweave_storage_module:id(Module))],
     case Missing of
         [_ | _] ->
             false;
@@ -74,7 +74,7 @@ bench_read(Duration, DataDir, StorageModules) ->
 
     ar_kv_sup:start_link(),
     ar_storage_sup:start_link(),
-    ar_sync_record_sup:start_link(),
+    arweave_storage_sync_record_sup:start_link(),
     ar_chunk_storage_sup:start_link(),
     ar_mining_io:start_link(standalone),
 
@@ -105,7 +105,7 @@ bench_read(Duration, DataDir, StorageModules) ->
 resolve_mining_address([], Address) ->
     Address;
 resolve_mining_address([StorageModule | StorageModules], Address) ->
-    Address2 = ar_storage_module:module_address(StorageModule),
+    Address2 = arweave_storage_module:module_address(StorageModule),
     case Address2 == Address orelse Address == undefined of
         true ->
             ok;
@@ -115,9 +115,9 @@ resolve_mining_address([StorageModule | StorageModules], Address) ->
     resolve_mining_address(StorageModules, Address2).
 
 read_storage_module(_DataDir, StorageModule, StopTime) ->
-    StoreID = ar_storage_module:id(StorageModule),
-    ar_chunk_storage:open_files(StoreID),
-    {StartOffset, EndOffset} = ar_storage_module:module_range(StorageModule),
+    StoreID = arweave_storage_module:id(StorageModule),
+    arweave_storage_chunk_storage:open_files(StoreID),
+    {StartOffset, EndOffset} = arweave_storage_module:module_range(StorageModule),
 
     OutputFileName = string:replace(?OUTPUT_FILENAME, "<storage_module>", StoreID),
 
@@ -149,7 +149,7 @@ random_read(StorageModule, StartOffset, EndOffset, StopTime, OutputFileName, Sum
             random_read(StorageModule, StartOffset, EndOffset, StopTime, OutputFileName,
                         SumChunks + Chunks, SumElapsedTime + ElapsedTime);
         false ->
-            StoreID = ar_storage_module:id(StorageModule),
+            StoreID = arweave_storage_module:id(StorageModule),
             {StoreID, SumChunks, SumElapsedTime}
     end.
 
@@ -161,8 +161,8 @@ read(_StorageModule, _StartOffset, _EndOffset, _Size, NumChunks, 0) ->
 read(StorageModule, StartOffset, EndOffset, Size, NumChunks, NumReads) ->
     Offset = rand:uniform(EndOffset - Size - StartOffset + 1) + StartOffset,
     Candidate = #mining_candidate{
-                   mining_address = ar_storage_module:module_address(StorageModule),
-                   packing_difficulty = ar_storage_module:module_packing_difficulty(StorageModule)
+                   mining_address = arweave_storage_module:module_address(StorageModule),
+                   packing_difficulty = arweave_storage_module:module_packing_difficulty(StorageModule)
                   },
     RangeExists = ar_mining_io:read_recall_range(chunk1, self(), Candidate, Offset),
     case RangeExists of
@@ -200,7 +200,7 @@ random_dev_pread(_DataDir, _StoreID, 0, SumBytes, SumElapsedTime) ->
     ReadRate = (SumBytes * 1000 div ?MiB) div SumElapsedTime,
     ar:console("*Random* device pread ~B MiB in ~B ms (~B MiB/s)~n", [SumBytes div ?MiB, SumElapsedTime, ReadRate]);
 random_dev_pread(DataDir, StoreID, Count, SumBytes, SumElapsedTime) ->
-    Filepath = hd(ar_chunk_storage:list_files(DataDir, StoreID)),
+    Filepath = hd(arweave_storage_chunk_storage:list_files(DataDir, StoreID)),
     Device = get_mounted_device(Filepath),
     {ok, File} = file:open(Device, [read, raw, binary]),
     Files = [{Device, File, arweave_lib_constants:partition_size()} || _ <- lists:seq(1, ?NUM_FILES)],
@@ -258,7 +258,7 @@ dd_devs_read(_DataDir, _StoreID, 0, SumBytes, SumElapsedTime) ->
     ReadRate = (SumBytes * 1000 div ?MiB) div SumElapsedTime,
     ar:console("*dd* multi devs read ~B MiB in ~B ms (~B MiB/s)~n", [SumBytes div ?MiB, SumElapsedTime, ReadRate]);
 dd_devs_read(DataDir, StoreID, Count, SumBytes, SumElapsedTime) ->
-    Filepath = hd(ar_chunk_storage:list_files(DataDir, StoreID)),
+    Filepath = hd(arweave_storage_chunk_storage:list_files(DataDir, StoreID)),
     Device = get_mounted_device(Filepath),
     Devices = [{Device, not_set, arweave_lib_constants:partition_size()} || _ <- lists:seq(1, ?NUM_FILES)],
     StartTime = erlang:monotonic_time(),
@@ -273,7 +273,7 @@ dd_dev_read(_DataDir, _StoreID, 0, SumBytes, SumElapsedTime) ->
     ReadRate = (SumBytes * 1000 div ?MiB) div SumElapsedTime,
     ar:console("*dd* single dev read ~B MiB in ~B ms (~B MiB/s)~n", [SumBytes div ?MiB, SumElapsedTime, ReadRate]);
 dd_dev_read(DataDir, StoreID, Count, SumBytes, SumElapsedTime) ->
-    Filepath = hd(ar_chunk_storage:list_files(DataDir, StoreID)),
+    Filepath = hd(arweave_storage_chunk_storage:list_files(DataDir, StoreID)),
     Device = get_mounted_device(Filepath),
     StartTime = erlang:monotonic_time(),
     dd(Device, arweave_lib_constants:partition_size(), ?RECALL_RANGE_SIZE, ?NUM_FILES),
@@ -288,7 +288,7 @@ get_mounted_device(FilePath) ->
     string:trim(Device, both, "\n").
 
 open_files(DataDir, StoreID) ->
-    AllFilepaths = ar_chunk_storage:list_files(DataDir, StoreID),
+    AllFilepaths = arweave_storage_chunk_storage:list_files(DataDir, StoreID),
     Filepaths = lists:sublist(arweave_lib_util:shuffle_list(AllFilepaths), ?NUM_FILES),
     lists:foldl(
       fun(Filepath, Acc) ->
