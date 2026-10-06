@@ -25,11 +25,11 @@ test_chunk_requests_are_served_concurrently() ->
     Counters = atomics:new(2, []),
     Chunk = binary:copy(<<7>>, ?DATA_CHUNK_SIZE),
     Mocks = [
-        {arweave_storage_sync_record, is_recorded, fun
-            (_Offset, ar_data_sync) ->
+        {arweave_storage, is_recorded, fun
+            (_Offset, any_packing, {ar_data_sync, byte}, any_store) ->
                 {{true, unpacked}, "default"};
-            (Offset, ID) ->
-                meck:passthrough([Offset, ID])
+            (Offset, Packing, ID, StoreID) ->
+                meck:passthrough([Offset, Packing, ID, StoreID])
         end},
         {ar_data_sync, get_chunk, fun
             (Offset, #{origin := http}) ->

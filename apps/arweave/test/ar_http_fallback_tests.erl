@@ -50,19 +50,19 @@ overload_recovery_keeps_http2_test() ->
 %% @doc The HTTP/1 retry succeeds before Gun reports the failed HTTP/2 connection.
 request_error_before_owner_notification_test() ->
     Parent = self(),
-    meck:new(gun, [passthrough]),
-    meck:expect(gun, reply, fun
-        (To, {gun_error, PID, {protocol_error, _}} = Message) ->
-            Result = meck:passthrough([To, Message]),
-            Parent ! {refusal_sent, PID},
-            receive
-                release_gun -> Result
-            after ?TIMEOUT -> error(gun_not_released)
-            end;
-        (To, Message) ->
-            meck:passthrough([To, Message])
-    end),
-    try
+    ar_test_util:run_with_mocked([
+        {gun, reply, fun
+            (To, {gun_error, PID, {protocol_error, _}} = Message) ->
+                Result = meck:passthrough([To, Message]),
+                Parent ! {refusal_sent, PID},
+                receive
+                    release_gun -> Result
+                after ?TIMEOUT -> error(gun_not_released)
+                end;
+            (To, Message) ->
+                meck:passthrough([To, Message])
+        end}
+    ], fun() ->
         with_server(http1_response, fun(Peer, Counts) ->
             Caller = spawn_link(fun() ->
                 Parent ! {result, self(), request(Peer)}
@@ -82,9 +82,7 @@ request_error_before_owner_notification_test() ->
                 PID ! release_gun
             end
         end)
-    after
-        meck:unload(gun)
-    end.
+    end).
 
 %% @doc Count connections that sent an HTTP/1 request.
 http1_connection_count(Counts) ->

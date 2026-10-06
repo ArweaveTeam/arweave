@@ -25,10 +25,9 @@
 -define(POOL_EVAL_INTERVAL_MS, 10_000).
 %% Wait six hours before retrying HTTP/2 after a peer refuses it.
 -define(HTTP1_FALLBACK_MS, (6 * 60 * 60 * 1000)).
-%% Per-peer count of requests currently inside req/2 (throttle -> get_connection ->
-%% gun request/await). evaluate_pools only shrinks a peer whose count is 0, so a
-%% connection carrying a long-running stream - which can span several 10s ticks
-%% while req_by_peer for that tick reads 0 - is never shut down mid-request.
+%% Each request owns a {Ref, Peer, CallerPID} entry until it returns. Pool
+%% evaluation discards entries whose callers died, since kill skips an after
+%% clause. The supervisor owns the table so live requests survive a restart.
 -define(HTTP_INFLIGHT_TABLE, ar_http_inflight).
 
 %% A connection in a peer's pool.
@@ -139,10 +138,7 @@ req(Args, ReestablishedConnection) ->
     %% call the endpoint.
     arweave_throttling:throttle(Peer, Path),
 
-    %% Count this request as in-flight for the whole call so evaluate_pools never
-    %% shrinks a connection out from under an active (possibly long) stream.
-    ets:update_counter(?HTTP_INFLIGHT_TABLE, Peer, 1, {Peer, 0}),
-    Response =
+    Response = with_inflight_request(Peer, fun() ->
         try gen_server:call(?MODULE, {get_connection, Args}, 15000) of
             {ok, PID, Protocol} ->
                 request_with_retry(PID, Protocol, Args, ReestablishedConnection);
@@ -151,9 +147,8 @@ req(Args, ReestablishedConnection) ->
         catch
             exit:_ ->
                 {error, client_error}
-        after
-            ets:update_counter(?HTTP_INFLIGHT_TABLE, Peer, -1, {Peer, 0})
-        end,
+        end
+    end),
     EndTime = erlang:monotonic_time(),
     %% Only log the metric for the top-level call to req/2 - not the recursive call
     %% that happens when the connection is reestablished.
@@ -363,10 +358,11 @@ handle_info({'DOWN', _Ref, process, PID, Reason}, State) ->
 handle_info(evaluate_pools, #state{ pools = Pools } = State) ->
     erlang:send_after(?POOL_EVAL_INTERVAL_MS, self(), evaluate_pools),
     Max = connections_per_peer(),
+    InFlightPeers = live_request_peers(),
     Now = erlang:monotonic_time(millisecond),
     Pools2 = maps:filtermap(
         fun(Peer, Pool) ->
-            reset_or_delete_pool(shrink_pool(Peer, Pool, Max), Now)
+            reset_or_delete_pool(shrink_pool(Peer, Pool, Max, InFlightPeers), Now)
         end, Pools),
     {noreply, State#state{ pools = Pools2 }};
 
@@ -383,6 +379,31 @@ terminate(Reason, #state{ connections = Connections }) ->
 %%% Private functions.
 %%% ==================================================================
 
+%% @doc Account for one request independently of overlapping calls and retries.
+with_inflight_request(Peer, Fun) ->
+    Request = {make_ref(), Peer, self()},
+    ets:insert(?HTTP_INFLIGHT_TABLE, Request),
+    try
+        Fun()
+    after
+        ets:delete_object(?HTTP_INFLIGHT_TABLE, Request)
+    end.
+
+%% @doc Remove abandoned requests and return the peers with live callers.
+live_request_peers() ->
+    ets:foldl(
+        fun({_Ref, Peer, PID} = Request, Peers) ->
+            case is_process_alive(PID) of
+                true -> maps:put(Peer, true, Peers);
+                false ->
+                    ets:delete_object(?HTTP_INFLIGHT_TABLE, Request),
+                    Peers
+            end
+        end,
+        #{},
+        ?HTTP_INFLIGHT_TABLE
+    ).
+
 open_connection(#{ peer := Peer } = Args, Protocol) ->
     {IPOrHost, Port} = get_ip_port(Peer),
     ConnectTimeout = maps:get(connect_timeout, Args,
@@ -392,19 +413,19 @@ open_connection(#{ peer := Peer } = Args, Protocol) ->
     HTTPKeepalive = arweave_config:get(
                       [network, client, http, keepalive]),
     TCPDelaySend = arweave_config:get(
-                     [network, client, socket, delay_send]),
+        [network, client, socket, delay_send]),
     TCPKeepalive = arweave_config:get(
-                     [network, client, socket, keepalive]),
+        [network, client, socket, keepalive]),
     TCPLinger = arweave_config:get(
-                  [network, client, socket, linger]),
+        [network, client, socket, linger]),
     TCPLingerTimeout = arweave_config:get(
-                         [network, client, socket, linger_timeout]),
+        [network, client, socket, linger_timeout]),
     TCPNodelay = arweave_config:get(
-                   [network, client, socket, nodelay]),
+        [network, client, socket, nodelay]),
     TCPSendTimeoutClose = arweave_config:get(
-                            [network, client, socket, send_timeout_close]),
+        [network, client, socket, send_timeout_close]),
     TCPSendTimeout = arweave_config:get(
-                       [network, client, socket, send_timeout]),
+        [network, client, socket, send_timeout]),
     GunOpts = #{
                 retry => 0,
                 connect_timeout => ConnectTimeout,
@@ -501,9 +522,9 @@ put_pool(Peer, Pool, #state{ pools = Pools } = State) ->
 %% @doc Close the least recently used connection of a pool that saw no requests
 %% this tick or is above the ceiling, unless a request to the peer is in flight.
 shrink_pool(Peer, #pool{ pids = [PID | Rest] = PIDs,
-        requests = Requests } = Pool, Max) when Rest /= [] ->
-    InFlight = ets:lookup_element(?HTTP_INFLIGHT_TABLE, Peer, 2, 0),
-    case InFlight == 0 andalso (Requests == 0 orelse length(PIDs) > Max) of
+        requests = Requests } = Pool, Max, InFlightPeers) when Rest /= [] ->
+    NoInFlight = not maps:is_key(Peer, InFlightPeers),
+    case NoInFlight andalso (Requests == 0 orelse length(PIDs) > Max) of
         true ->
             %% Leave the pool now so get_connection can't pick the closing
             %% connection; its 'DOWN' still cleans up the rest.
@@ -512,7 +533,7 @@ shrink_pool(Peer, #pool{ pids = [PID | Rest] = PIDs,
         false ->
             Pool
     end;
-shrink_pool(_Peer, Pool, _Max) ->
+shrink_pool(_Peer, Pool, _Max, _InFlightPeers) ->
     Pool.
 
 %% @doc Reset a pool's request count for the next evaluate_pools tick, or
@@ -839,67 +860,133 @@ rotate_test() ->
 %% On gun_up, a connection's protocol becomes the one the message reports,
 %% replacing the one it asked for.
 gun_up_records_protocol_test() ->
-    meck:new(ar_peers, [passthrough]),
-    meck:expect(ar_peers, connected_peer, fun(_) -> ok end),
-    Connection = #connection{ peer = {127, 0, 0, 1, 1984},
-        protocol = default, status = {connecting, []} },
-    State = #state{ connections = #{ pid1 => Connection } },
-    {noreply, State2} = handle_info({gun_up, pid1, http2}, State),
-    ?assertMatch(#connection{ protocol = http2, status = connected },
-        maps:get(pid1, State2#state.connections)),
-    meck:unload(ar_peers).
+    ar_test_util:run_with_mocked([
+        {ar_peers, connected_peer, fun(_) -> ok end}
+    ], fun() ->
+        Connection = #connection{peer = {127, 0, 0, 1, 1984},
+            protocol = default, status = {connecting, []}},
+        State = #state{connections = #{pid1 => Connection}},
+        {noreply, State2} = handle_info({gun_up, pid1, http2}, State),
+        ?assertMatch(#connection{protocol = http2, status = connected},
+            maps:get(pid1, State2#state.connections))
+    end).
 
 %% A connection that goes down leaves its peer's pool, and the peer is marked
 %% disconnected only when its last connection is gone.
 remove_connection_test() ->
-    meck:new(ar_peers, [passthrough]),
-    meck:expect(ar_peers, disconnected_peer, fun(_) -> ok end),
-    Connected = #connection{ protocol = http, status = connected },
-    State = #state{
-        connections = #{
-            a => Connected#connection{ peer = peer1 },
-            b => Connected#connection{ peer = peer1 },
-            x => Connected#connection{ peer = peer2 } },
-        pools = #{
-            peer1 => #pool{ pids = [a, b] },
-            peer2 => #pool{ pids = [x] } } },
-    {_, State2} = remove_connection(a, closed, State),
-    ?assertEqual([b], (pool(peer1, State2))#pool.pids),
-    ?assertNot(maps:is_key(a, State2#state.connections)),
-    ?assertEqual(0, meck:num_calls(ar_peers, disconnected_peer, '_')),
-    {_, State3} = remove_connection(x, closed, State2),
-    ?assertEqual([], (pool(peer2, State3))#pool.pids),
-    ?assertEqual(1, meck:num_calls(ar_peers, disconnected_peer, [peer2])),
-    ?assertEqual(not_found, remove_connection(z, closed, State3)),
-    meck:unload(ar_peers).
+    ar_test_util:run_with_mocked([
+        {ar_peers, disconnected_peer, fun(_) -> ok end}
+    ], fun() ->
+        Connected = #connection{protocol = http, status = connected},
+        State = #state{
+            connections = #{
+                a => Connected#connection{peer = peer1},
+                b => Connected#connection{peer = peer1},
+                x => Connected#connection{peer = peer2}},
+            pools = #{
+                peer1 => #pool{pids = [a, b]},
+                peer2 => #pool{pids = [x]}}},
+        {_, State2} = remove_connection(a, closed, State),
+        ?assertEqual([b], (pool(peer1, State2))#pool.pids),
+        ?assertNot(maps:is_key(a, State2#state.connections)),
+        ?assertEqual(0, meck:num_calls(ar_peers, disconnected_peer, '_')),
+        {_, State3} = remove_connection(x, closed, State2),
+        ?assertEqual([], (pool(peer2, State3))#pool.pids),
+        ?assertEqual(1, meck:num_calls(ar_peers, disconnected_peer, [peer2])),
+        ?assertEqual(not_found, remove_connection(z, closed, State3))
+    end).
 
 %% Review point 1: evaluate_pools must not shut down a connection while the peer
 %% has a request in flight (a long stream can span several idle 10s ticks).
 evaluate_pools_inflight_test() ->
     catch ets:new(?HTTP_INFLIGHT_TABLE, [named_table, public, set]),
-    meck:new(gun, [passthrough]),
-    meck:expect(gun, shutdown, fun(_) -> ok end),
-    State = #state{ pools = #{ peer1 => #pool{ pids = [pidA, pidB] } } },
-    %% Idle this tick but a request in flight -> must NOT shrink.
-    ets:insert(?HTTP_INFLIGHT_TABLE, {peer1, 1}),
-    {noreply, State2} = handle_info(evaluate_pools, State),
-    ?assertEqual(0, meck:num_calls(gun, shutdown, ['_'])),
-    ?assertEqual([pidA, pidB], (pool(peer1, State2))#pool.pids),
-    %% Nothing in flight -> the idle peer closes its least recently used
-    %% connection and drops it from the pool.
-    ets:insert(?HTTP_INFLIGHT_TABLE, {peer1, 0}),
-    {noreply, State3} = handle_info(evaluate_pools, State),
-    ?assertEqual(1, meck:num_calls(gun, shutdown, ['_'])),
-    ?assertEqual(1, meck:num_calls(gun, shutdown, [pidA])),
-    ?assertEqual([pidB], (pool(peer1, State3))#pool.pids),
-    %% An active peer keeps a full pool but sheds connections above the
-    %% ceiling; a single connection is never closed.
-    Active = #pool{ pids = [pidA, pidB, pidC], requests = 5 },
-    ?assertEqual(Active, shrink_pool(peer1, Active, 3)),
-    ?assertEqual([pidB, pidC], (shrink_pool(peer1, Active, 2))#pool.pids),
-    Single = #pool{ pids = [pidA] },
-    ?assertEqual(Single, shrink_pool(peer1, Single, 1)),
-    meck:unload(gun).
+    ar_test_util:run_with_mocked([
+        {gun, shutdown, fun(_) -> ok end}
+    ], fun() ->
+        State = #state{ pools = #{ peer1 => #pool{ pids = [pidA, pidB] } } },
+        %% Idle this tick but a request in flight -> must NOT shrink.
+        Request = {make_ref(), peer1, self()},
+        ets:insert(?HTTP_INFLIGHT_TABLE, Request),
+        {noreply, State2} = handle_info(evaluate_pools, State),
+        ?assertEqual(0, meck:num_calls(gun, shutdown, ['_'])),
+        ?assertEqual([pidA, pidB], (pool(peer1, State2))#pool.pids),
+        %% Nothing in flight -> the idle peer closes its least recently used
+        %% connection and drops it from the pool.
+        ets:delete_object(?HTTP_INFLIGHT_TABLE, Request),
+        {noreply, State3} = handle_info(evaluate_pools, State),
+        ?assertEqual(1, meck:num_calls(gun, shutdown, ['_'])),
+        ?assertEqual(1, meck:num_calls(gun, shutdown, [pidA])),
+        ?assertEqual([pidB], (pool(peer1, State3))#pool.pids),
+        %% An active peer keeps a full pool but sheds connections above the
+        %% ceiling; a single connection is never closed.
+        Active = #pool{ pids = [pidA, pidB, pidC], requests = 5 },
+        ?assertEqual(Active, shrink_pool(peer1, Active, 3, #{})),
+        ?assertEqual([pidB, pidC], (shrink_pool(peer1, Active, 2, #{}))#pool.pids),
+        Single = #pool{ pids = [pidA] },
+        ?assertEqual(Single, shrink_pool(peer1, Single, 1, #{}))
+    end).
+
+cancelled_request_allows_pool_shrink_test_() ->
+    ar_test_util:with_mocked([
+        {gun, shutdown, fun(_) -> ok end}
+    ], fun cancelled_request_allows_pool_shrink/0).
+
+cancelled_request_allows_pool_shrink() ->
+    Parent = self(),
+    Peer = cancelled_request_peer,
+    Worker = spawn(fun() ->
+        with_inflight_request(Peer, fun() ->
+            Parent ! {request_started, self()},
+            receive finish_request -> ok end
+        end)
+    end),
+    Monitor = monitor(process, Worker),
+    %% Two connections allow an idle pool to shrink back to one.
+    State = #state{pools = #{Peer => #pool{pids = [pidA, pidB]}}},
+    try
+        receive {request_started, Worker} -> ok end,
+        handle_info(evaluate_pools, State),
+        ?assertEqual(0, meck:num_calls(gun, shutdown, [pidA])),
+        exit(Worker, kill),
+        receive {'DOWN', Monitor, process, Worker, killed} -> ok end,
+        handle_info(evaluate_pools, State),
+        ?assertEqual(1, meck:num_calls(gun, shutdown, [pidA])),
+        ?assertEqual([], ets:match_object(
+            ?HTTP_INFLIGHT_TABLE, {'_', Peer, '_'}
+        ))
+    after
+        exit(Worker, kill),
+        demonitor(Monitor, [flush]),
+        ets:match_delete(?HTTP_INFLIGHT_TABLE, {'_', Peer, '_'})
+    end.
+
+overlapping_requests_keep_pool_active_test() ->
+    Peer = overlapping_request_peer,
+    try
+        with_inflight_request(Peer, fun() ->
+            with_inflight_request(Peer, fun() ->
+                %% A nested retry has its own hold on the same peer.
+                ?assertEqual(2, length(ets:match_object(
+                    ?HTTP_INFLIGHT_TABLE, {'_', Peer, '_'}
+                )))
+            end),
+            ?assertEqual(1, length(ets:match_object(
+                ?HTTP_INFLIGHT_TABLE, {'_', Peer, '_'}
+            ))),
+            ?assert(maps:is_key(Peer, live_request_peers()))
+        end),
+        ?assertEqual([], ets:match_object(
+            ?HTTP_INFLIGHT_TABLE, {'_', Peer, '_'}
+        )),
+        ?assertError(request_failed, with_inflight_request(Peer, fun() ->
+            error(request_failed)
+        end)),
+        ?assertEqual([], ets:match_object(
+            ?HTTP_INFLIGHT_TABLE, {'_', Peer, '_'}
+        ))
+    after
+        ets:match_delete(?HTTP_INFLIGHT_TABLE, {'_', Peer, '_'})
+    end.
 
 %% A pool's request count starts over each tick; a pool with no connections is
 %% deleted unless its HTTP/1.1 fallback is still in force.

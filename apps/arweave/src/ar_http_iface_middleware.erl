@@ -1,5 +1,10 @@
 -module(ar_http_iface_middleware).
 
+%% A chunk request that cannot start within five seconds gets a 503, so clients
+%% syncing from a saturated node see the overload and lower their concurrency
+%% instead of queueing deeper.
+-define(GET_CHUNK_SEMAPHORE_TIMEOUT, 5 * 1000).
+
 -behaviour(cowboy_middleware).
 
 -export([execute/2, read_body_chunk/4]).
@@ -207,19 +212,6 @@ add_cors_headers(Req, Response) ->
 
 acquire_get_data_roots_semaphore() ->
     acquire_http_semaphore(get_data_roots, ?GET_DATA_ROOTS_SEMAPHORE_TIMEOUT).
-
-acquire_http_semaphore(Name) ->
-    acquire_http_semaphore(Name, ?DEFAULT_HTTP_SEMAPHORE_TIMEOUT_MS).
-
-acquire_http_semaphore(Name, Timeout) ->
-    case ar_semaphore:acquire(Name, Timeout) of
-        ok ->
-            ok;
-        {error, timeout} ->
-            {error, timeout};
-        _ ->
-            {error, timeout}
-    end.
 
 timeout_response(Req) ->
     {503, #{}, jiffy:encode(#{ error => timeout }), Req}.
@@ -3546,4 +3538,22 @@ handle_mining_cm_publish(Req, Pid) ->
             {413, #{}, <<"Payload too large">>, Req};
         {error, timeout} ->
             {503, #{}, jiffy:encode(#{ error => timeout }), Req}
+    end.
+
+
+
+acquire_http_semaphore(get_chunk) ->
+    acquire_http_semaphore(get_chunk, ?GET_CHUNK_SEMAPHORE_TIMEOUT);
+acquire_http_semaphore(Name) ->
+    acquire_http_semaphore(Name, ?DEFAULT_HTTP_SEMAPHORE_TIMEOUT_MS).
+
+
+acquire_http_semaphore(Name, Timeout) ->
+    case ar_semaphore:acquire(Name, Timeout) of
+        ok ->
+            ok;
+        {error, timeout} ->
+            {error, timeout};
+        _ ->
+            {error, timeout}
     end.
