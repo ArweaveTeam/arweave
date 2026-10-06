@@ -1,5 +1,4 @@
 -module(arweave_storage_entropy_storage).
--export([generate_missing_entropy/2, take_combined_entropy_by_index/2, take_combined_entropy_by_index/3]).
 
 -behaviour(gen_server).
 
@@ -631,33 +630,3 @@ acquire_semaphore(Filepath) ->
 
 release_semaphore(Filepath) ->
     ets:delete(ar_entropy_storage, {semaphore, Filepath}).
-
-
-
-
-
-generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
-    Entropies = arweave_entropy_preparation:generate_entropies(RewardAddr, PaddedEndOffset),
-    case Entropies of
-        {error, Reason} ->
-            {error, Reason};
-        _ ->
-            EntropyIndex = arweave_lib_replica_2_9:get_slice_index(PaddedEndOffset),
-            take_combined_entropy_by_index(Entropies, EntropyIndex)
-    end.
-
-
-
-take_combined_entropy_by_index(Entropies, Index) ->
-    take_combined_entropy_by_index(Entropies, Index, []).
-
-
-
-take_combined_entropy_by_index([], _Index, Acc) ->
-    iolist_to_binary(Acc);
-take_combined_entropy_by_index([Entropy | Entropies], Index, Acc) ->
-    SubChunkSize = ?SUB_CHUNK_SIZE,
-    take_combined_entropy_by_index(
-      Entropies,
-      Index,
-      [Acc, binary:part(Entropy, Index * SubChunkSize, SubChunkSize)]).
