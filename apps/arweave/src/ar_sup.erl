@@ -67,8 +67,14 @@ init([]) ->
     ets:new(node_state, [set, public, named_table]),
     ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_total_supply_cache, [set, public, named_table, {read_concurrency, true}]),
+    Debug = arweave_config:get([debug]),
+    DebugChildren = case Debug of
+        true -> [?CHILD(ar_process_sampler, worker)];
+        false -> []
+    end,
     Children = [
-        ?CHILD(ar_shutdown_manager, worker),
+        ?CHILD(ar_shutdown_manager, worker)
+    ] ++ DebugChildren ++ [
         ?CHILD(ar_disksup, worker),
         ?CHILD_SUP(ar_events_sup, supervisor),
         ?CHILD_SUP(ar_http_sup, supervisor),
@@ -105,12 +111,7 @@ init([]) ->
         ?CHILD(ar_chain_stats, worker),
         ?CHILD_SUP(ar_node_sup, supervisor)
     ],
-    Debug = arweave_config:get([debug]),
-    DebugChildren = case Debug of
-        true -> [?CHILD(ar_process_sampler, worker)];
-        false -> []
-    end,
-    {ok, {{one_for_one, 5, 10}, Children ++ DebugChildren}}.
+    {ok, {{one_for_one, 5, 10}, Children}}.
 
 -ifdef(LOCALNET).
 mining_sup() ->
