@@ -440,7 +440,7 @@ label_test() ->
     ets:match_delete(?MODULE, {{address_label, '_'}, '_'}),
     ets:delete(?MODULE, last_address_label),
     try
-        arweave_config:with_test_config(fun() ->
+        arweave_config:internal_with_test_config(fun() ->
             P0 = arweave_lib_constants:partition_size(),
             StorageModules = [
                 {0, P0, {spora_2_6, ?LABEL_TEST_ADDR_A}},
@@ -451,7 +451,7 @@ label_test() ->
                 {2 * P0, 3 * P0, {spora_2_6, ?LABEL_TEST_ADDR_C}},
                 {2 * 524288, 3 * 524288, {spora_2_6, ?LABEL_TEST_ADDR_C}}
             ],
-            ok = arweave_config:force_config(#{
+            ok = arweave_config:internal_force_config(#{
                 [storage_modules] => StorageModules
             }),
             P = arweave_lib_constants:partition_size(),
@@ -481,11 +481,11 @@ label_test() ->
     end.
 
 disk_dir_name_test() ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         P = arweave_lib_constants:partition_size(),
         BucketModule = {2 * 524288, 3 * 524288, unpacked},
         PartitionModule = {0, P, unpacked},
-        ok = arweave_config:force_config(
+        ok = arweave_config:internal_force_config(
             #{[storage_modules] => [BucketModule, PartitionModule]}),
         BucketStoreID = id(BucketModule),
         PartitionStoreID = id(PartitionModule),
@@ -497,7 +497,7 @@ disk_dir_name_test() ->
         %% legacy bucket-notation directory name... (force_config: the
         %% eunit node is in runtime mode, where the load-only
         %% config_dialect option rejects plain sets.)
-        ok = arweave_config:force_config(#{[config_dialect] => legacy}),
+        ok = arweave_config:internal_force_config(#{[config_dialect] => legacy}),
         ?assertEqual("storage_module_524288_2_unpacked",
             disk_dir_name(BucketStoreID)),
         %% ...and whole partitions keep their (identical) name.

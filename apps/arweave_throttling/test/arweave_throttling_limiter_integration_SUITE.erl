@@ -8,6 +8,7 @@
 %%%
 %%% @end
 -module(arweave_throttling_limiter_integration_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -233,7 +234,7 @@ init_per_testcase(TestCase, Config) ->
 
     %% Set config and start both limiter and throttling
     application:ensure_all_started(arweave_config),
-    ConfigSnapshot = arweave_config:snapshot(),
+    ConfigSnapshot = arweave_config:internal_snapshot(),
     LimiterConfig = limiter_config(TestCase),
     set_limiter_config(?GROUP_ID, LimiterConfig),
 
@@ -245,7 +246,7 @@ init_per_testcase(TestCase, Config) ->
      {limiter_config, LimiterConfig} | Config].
 
 end_per_testcase(_TestCase, Config) ->
-    ok = arweave_config:restore(?config(config_snapshot, Config)),
+    ok = arweave_config:internal_restore(?config(config_snapshot, Config)),
 
     AppsBefore = ?config(apps_before, Config),
     AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],

@@ -114,7 +114,7 @@ empty_local_peers_becomes_empty_array(Config) ->
     Out = out_path(Config, "empty_local_peers_out.json"),
     ok = arweave_config_convert:convert(json, Input, Out),
     {ok, Raw} = file:read_file(Out),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, LeafMap} = arweave_config_format_json:parse(Raw),
         ok = arweave_config:load(LeafMap),
         ?assertEqual([], arweave_config:get([peers, local]))
@@ -258,12 +258,12 @@ convert_raw(Config, Name, LegacyJSON) ->
 %% change how the node behaves.
 assert_round_trip(Format, Parse, Config) ->
     {ok, Sanitized} = file:read_file(sanitized_legacy_path(Config)),
-    FromLegacy = arweave_config:with_test_config(fun() ->
+    FromLegacy = arweave_config:internal_with_test_config(fun() ->
         {ok, ok} = arweave_config_format_legacy_json:parse(Sanitized),
         option_values()
     end),
     Raw = convert(Format, Config),
-    FromConverted = arweave_config:with_test_config(fun() ->
+    FromConverted = arweave_config:internal_with_test_config(fun() ->
         {ok, LeafMap} = Parse(Raw),
         ok = arweave_config:load(LeafMap),
         %% Anchor the converted side to concrete expected values. The

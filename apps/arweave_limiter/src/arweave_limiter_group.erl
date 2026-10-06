@@ -39,6 +39,7 @@
 -endif.
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_limiter/include/arweave_limiter_deps.hrl").
 
 -define(UNEXPECTED_ERROR_STR, "unexpected").
 
@@ -55,7 +56,7 @@ start_link(LimiterRef, GroupID) when is_atom(GroupID) ->
     gen_server:start_link({local, LimiterRef}, ?MODULE, [GroupID], []).
 
 info(LimiterRef) ->
-    WorkersNum = arweave_config:get([limiter, LimiterRef, number_of_workers]),
+    WorkersNum = ?DEP(config):get([limiter, LimiterRef, number_of_workers]),
     lists:foldl(fun(N, Acc) -> merge_info_maps(LimiterRef, N, Acc) end,
                 #{sliding_timestamps => #{},
                   leaky_tokens => #{},
@@ -116,7 +117,7 @@ reset_all(LimiterRef) ->
 %% timer-interval / no_limit fields (which would need a timer re-arm) never
 %% reach here. A no-op for workers not yet started (boot/load phase).
 set_config(GroupID, Field, V) when is_atom(GroupID) ->
-    WorkersNum = arweave_config:get([limiter, GroupID, number_of_workers]),
+    WorkersNum = ?DEP(config):get([limiter, GroupID, number_of_workers]),
     lists:foreach(
         fun(N) ->
             WorkerName = arweave_limiter_util:worker_name(GroupID, N),
@@ -139,15 +140,15 @@ init([GroupID]) when is_atom(GroupID) ->
 
     ID = atom_to_list(GroupID),
 
-    IsDisabled = arweave_config:get([limiter, GroupID, no_limit]),
-    IsExternalReductionEnabled = arweave_config:get([limiter, GroupID, is_external_reduction_enabled]),
-    LeakyTickMs = arweave_config:get([limiter, GroupID, leaky_tick_ms]),
-    TimestampCleanupTickMs = arweave_config:get([limiter, GroupID, timestamp_cleanup_tick_ms]),
-    LeakyRateLimit = arweave_config:get([limiter, GroupID, leaky_rate_limit]),
-    ConcurrencyLimit = arweave_config:get([limiter, GroupID, concurrency_limit]),
-    TickReduction = arweave_config:get([limiter, GroupID, tick_reduction]),
-    SlidingWindowDuration = arweave_config:get([limiter, GroupID, sliding_window_duration]),
-    SlidingWindowLimit = arweave_config:get([limiter, GroupID, sliding_window_limit]),
+    IsDisabled = ?DEP(config):get([limiter, GroupID, no_limit]),
+    IsExternalReductionEnabled = ?DEP(config):get([limiter, GroupID, is_external_reduction_enabled]),
+    LeakyTickMs = ?DEP(config):get([limiter, GroupID, leaky_tick_ms]),
+    TimestampCleanupTickMs = ?DEP(config):get([limiter, GroupID, timestamp_cleanup_tick_ms]),
+    LeakyRateLimit = ?DEP(config):get([limiter, GroupID, leaky_rate_limit]),
+    ConcurrencyLimit = ?DEP(config):get([limiter, GroupID, concurrency_limit]),
+    TickReduction = ?DEP(config):get([limiter, GroupID, tick_reduction]),
+    SlidingWindowDuration = ?DEP(config):get([limiter, GroupID, sliding_window_duration]),
+    SlidingWindowLimit = ?DEP(config):get([limiter, GroupID, sliding_window_limit]),
 
     Now = arweave_limiter_time:ts_now(),
     %% Bypass groups (`no_limit => true') carry `infinity' for every
@@ -477,7 +478,7 @@ merge_info_maps(LimiterRef, N, #{concurrent_monitors := AccMon,
     end.
 
 ref_to_worker_ref(LimiterRef, Peer) ->
-    WorkersNum = arweave_config:get([limiter, LimiterRef, number_of_workers]),
+    WorkersNum = ?DEP(config):get([limiter, LimiterRef, number_of_workers]),
     arweave_limiter_util:worker_ref(LimiterRef, Peer, WorkersNum).
 
 build_headers_info(SlidingRemaining, LeakyRemaining,

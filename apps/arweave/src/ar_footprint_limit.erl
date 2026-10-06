@@ -83,11 +83,11 @@ kept_intervals(Start, End, Limit, Intervals) ->
 %%%===================================================================
 
 get_test() ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         P = arweave_lib_constants:partition_size(),
         Addr = crypto:strong_rand_bytes(32),
         All = ar_footprint_record:get_footprints_per_partition(),
-        ok = arweave_config:force_config(#{
+        ok = arweave_config:internal_force_config(#{
             [storage_modules] => [
                 #{partition => 0, packing_format => replica_2_9,
                     packing_address => Addr, footprint_limit => 1},
@@ -101,7 +101,7 @@ get_test() ->
         ?assertEqual(All, get(ar_storage_module:id({2 * P, 3 * P, unpacked}))),
         ?assertEqual(All, get(?DEFAULT_MODULE)),
         ?assertEqual(All, get("storage_module_9_unpacked")),
-        ok = arweave_config:force_config(#{
+        ok = arweave_config:internal_force_config(#{
             [storage_modules] => [],
             [repack_modules] => [
                 #{partition => 3, from_format => unpacked,

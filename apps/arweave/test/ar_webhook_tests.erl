@@ -59,7 +59,7 @@ webhooks_test_() ->
 test_webhooks() ->
     {_, Pub} = Wallet = ar_wallet:new(),
     [B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         test_webhooks_body(Wallet, B0)
     end).
 

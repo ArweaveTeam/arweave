@@ -80,7 +80,7 @@ override_only_touches_target_field(_Config) ->
 
 %% @doc Every timer-driven field must be between 1 ms and one day.
 interval_fields_reject_out_of_range(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         lists:foreach(
             fun(Field) ->
                 Key = [limiter, chunk, Field],
@@ -99,7 +99,7 @@ interval_fields_reject_out_of_range(_Config) ->
 %% @doc `infinity' is a code-only sentinel: an operator can never set
 %% it, not even on the bypass group whose default it is.
 infinity_is_rejected_from_set(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         lists:foreach(
             fun(Field) ->
                 Key = [limiter, chunk, Field],
@@ -122,7 +122,7 @@ infinity_is_rejected_from_set(_Config) ->
 %% @doc A bypass group keeps its `infinity' sentinels; switching
 %% limiting on for it without supplying integers is caught post-load.
 validate_bypass_group_sentinels(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ?assertEqual(ok, arweave_config_validate:run()),
         ok = arweave_config:set([limiter, local_peers, no_limit], false),
         ?assertEqual(

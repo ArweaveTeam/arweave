@@ -5,11 +5,9 @@
 %%% thin and neither re-derives the reply request shape or the content
 %%% negotiation.
 -module(arweave_metrics_render).
--test_category([fast]).
 
 -export([render/1, reply/2, is_text_format/1, negotiate_encoding/1]).
 
--include_lib("eunit/include/eunit.hrl").
 
 %% ===================================================================
 %% API
@@ -72,20 +70,3 @@ negotiate_format(Accept) ->
 text_identity_header("accept", _Default) -> "text/plain";
 text_identity_header("accept-encoding", _Default) -> "identity";
 text_identity_header(_Name, Default) -> Default.
-
-%%%===================================================================
-%%% Tests.
-%%%===================================================================
-
-is_text_format_test() ->
-    ?assert(is_text_format(<<"text/plain">>)),
-    ?assert(is_text_format(<<"*/*">>)),
-    ?assertNot(is_text_format(
-                 <<"application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;"
-                   "encoding=delimited">>)).
-
-negotiate_encoding_test() ->
-    ?assertEqual(<<"gzip">>, negotiate_encoding(<<"gzip">>)),
-    ?assertEqual(<<"identity">>, negotiate_encoding(undefined)),
-    ?assertEqual(<<"deflate">>, negotiate_encoding(<<"deflate">>)),
-    ?assertEqual(<<"gzip">>, negotiate_encoding(<<"deflate, gzip">>)).

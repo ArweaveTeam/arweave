@@ -59,7 +59,7 @@ loaded_option_values(ExcludedKeys) ->
             not lists:member(Key, ExcludedKeys)]).
 
 expected_loaded_values(ConfigLeafMap, Keys) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:load(ConfigLeafMap),
         maps:from_list([{Key, arweave_config:get(Key)} || Key <- Keys])
     end).

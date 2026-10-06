@@ -135,7 +135,7 @@ test_partitions() ->
 
 get_minable_storge_modules_test() ->
     Addr = arweave_config:get([mining, address]),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Input = [
             {0, 100, {spora_2_6, Addr}},
             {0, 200, unpacked},
@@ -145,7 +145,7 @@ get_minable_storge_modules_test() ->
             {0, 100, {spora_2_6, Addr}},
             {0, 300, {replica_2_9, Addr}}
         ],
-        ok = arweave_config:force_config(#{
+        ok = arweave_config:internal_force_config(#{
             [storage_modules] => Input
         }),
         ?assertEqual(Expected, ar_mining_io:get_minable_storage_modules())
@@ -153,14 +153,14 @@ get_minable_storge_modules_test() ->
 
 get_packing_test() ->
     Addr = arweave_config:get([mining, address]),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Input = [
             {0, 100, unpacked},
             {0, 200, {spora_2_6, Addr}},
             {0, 300, {replica_2_9, Addr}}
         ],
         Expected = {spora_2_6, Addr},
-        ok = arweave_config:force_config(#{
+        ok = arweave_config:internal_force_config(#{
             [storage_modules] => Input
         }),
         ?assertEqual(Expected, ar_mining_io:get_packing())

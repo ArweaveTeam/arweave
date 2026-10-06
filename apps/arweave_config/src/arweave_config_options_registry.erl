@@ -91,42 +91,42 @@ resolve(Option) ->
 %% @doc The spec's declared default for the option at `Option', or
 %% `error' when the option has no spec or its spec declares no default.
 -spec default(Option) -> Return when
-	Option :: list(),
-	Return :: {ok, term()} | error.
+    Option :: list(),
+    Return :: {ok, term()} | error.
 default(Option) ->
-	find_in_spec(Option, default).
+    find_in_spec(Option, default).
 
 %% @doc Whether `Value' equals the spec's declared default for the
 %% option at `Option'. `false' when the option has no spec or its spec
 %% declares no default.
 -spec is_default(Option, Value) -> boolean() when
-	Option :: list(),
-	Value :: term().
+    Option :: list(),
+    Value :: term().
 is_default(Option, Value) ->
-	default(Option) =:= {ok, Value}.
+    default(Option) =:= {ok, Value}.
 
 %% @doc The canonical spec key for `Field' inside `Root''s list items
 %% (a `list_map' option such as `[storage_modules]' or `[webhooks]').
 -spec list_item_key(Root, Field) -> Key when
-	Root :: list(),
-	Field :: atom(),
-	Key :: list().
+    Root :: list(),
+    Field :: atom(),
+    Key :: list().
 list_item_key(Root, Field) when is_list(Root), is_atom(Field) ->
-	Root ++ [{list_item}, Field].
+    Root ++ [{list_item}, Field].
 
 %% @doc The spec's registered type for the option at `Option', or
 %% `error' when the option has no spec or its spec declares no type.
 -spec type(Option) -> Return when
-	Option :: list(),
-	Return :: {ok, atom()} | error.
+    Option :: list(),
+    Return :: {ok, atom()} | error.
 type(Option) ->
-	find_in_spec(Option, type).
+    find_in_spec(Option, type).
 
 find_in_spec(Option, SpecKey) ->
-	case resolve(Option) of
-		{ok, _Option, Spec, _Bindings} -> maps:find(SpecKey, Spec);
-		_ -> error
-	end.
+    case resolve(Option) of
+        {ok, _Option, Spec, _Bindings} -> maps:find(SpecKey, Spec);
+        _ -> error
+    end.
 
 %% @doc List of supported environment variables.
 get_environments() ->

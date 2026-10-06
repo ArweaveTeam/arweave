@@ -1408,8 +1408,8 @@ calculate_cache_limits_test_() ->
     ].
 
 test_calculate_cache_limits_default() ->
-    arweave_config:with_test_config(fun() ->
-                                            ok = arweave_config:force_config(#{[mining, cache_size] => undefined}),
+    arweave_config:internal_with_test_config(fun() ->
+                                            ok = arweave_config:internal_force_config(#{[mining, cache_size] => undefined}),
                                             ?assertEqual(
                                                {
                                                 ?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
@@ -1521,8 +1521,8 @@ test_calculate_cache_limits_default() ->
                                     end).
 
 test_calculate_cache_limits_custom_low() ->
-    arweave_config:with_test_config(fun() ->
-                                            ok = arweave_config:force_config(#{[mining, cache_size] => 1}),
+    arweave_config:internal_with_test_config(fun() ->
+                                            ok = arweave_config:internal_force_config(#{[mining, cache_size] => 1}),
                                             ?assertEqual(
                                                {?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 1, 4_000},
                                                calculate_cache_limits(1, 0)
@@ -1574,8 +1574,8 @@ test_calculate_cache_limits_custom_low() ->
                                     end).
 
 test_calculate_cache_limits_custom_high() ->
-    arweave_config:with_test_config(fun() ->
-                                            ok = arweave_config:force_config(#{[mining, cache_size] => 500_000}),
+    arweave_config:internal_with_test_config(fun() ->
+                                            ok = arweave_config:internal_force_config(#{[mining, cache_size] => 500_000}),
                                             ?assertEqual(
                                                {?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 500_000, 2_000_000_000},
                                                calculate_cache_limits(1, 0)

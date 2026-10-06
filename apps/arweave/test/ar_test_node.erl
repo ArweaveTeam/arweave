@@ -314,7 +314,7 @@ update_config(Overrides) when is_map(Overrides) ->
         [disable_device_limit]                  => true,
         [network, client, http, keepalive]      => ?TEST_HTTP_CLIENT_KEEPALIVE
     }),
-    case arweave_config:force_config(Final) of
+    case arweave_config:internal_force_config(Final) of
         ok ->
             ?LOG_INFO("Updated Config:"),
             arweave_config:log(),
@@ -533,7 +533,7 @@ clean_up_and_stop() ->
     %% (main) or `try_boot_peer/3' (peers), so per-VM scaffolding
     %% (`[data_dir]', `[port]', ...) survives reset via the same path
     %% the node uses at first boot. No test-only env handling.
-    ok = arweave_config:restore(#{store => [], runtime => false}),
+    ok = arweave_config:internal_restore(#{store => [], runtime => false}),
     ok = arweave_config:bootstrap([]),
     ok.
 
@@ -1096,8 +1096,8 @@ join(JoinOnNode, Rejoin, Overrides) when is_map(Overrides) ->
             %% mode, which the boot validators (e.g.
             %% `ar_node_worker:validate_trusted_peers/1') expect during
             %% ar_sup init.
-            Snapshot = arweave_config:snapshot(),
-            ok = arweave_config:restore(Snapshot#{runtime => false});
+            Snapshot = arweave_config:internal_snapshot(),
+            ok = arweave_config:internal_restore(Snapshot#{runtime => false});
         false ->
             clean_up_and_stop()
     end,

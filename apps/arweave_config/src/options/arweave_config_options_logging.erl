@@ -85,15 +85,18 @@ specs() ->
             enabled => true,
             %% see: https://www.erlang.org/doc/apps/kernel/logger.html
             %% Stored as a string (list of integer); the `path` type
-            %% always returns a binary, so the handler coerces it back
-            %% to a list for the logger handler API.
+            %% returns a binary, except that defaults bypass conversion.
+            %% Keep both paths as lists for the logger handler API.
             option_key => [logging,path],
             default => "./logs",
             type => path,
             runtime => false,
             short_description => <<"Set the directory used for Arweave logs.">>,
-            handle_set => fun(_K, Path, _S, _) when is_binary(Path) ->
-                {store, binary_to_list(Path)}
+            handle_set => fun
+                (_K, Path, _S, _) when is_binary(Path) ->
+                    {store, binary_to_list(Path)};
+                (_K, Path, _S, _) when is_list(Path) ->
+                    {store, Path}
             end
         },
         #{

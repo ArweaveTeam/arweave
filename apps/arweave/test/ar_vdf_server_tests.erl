@@ -31,12 +31,12 @@
 
 setup() ->
     ets:new(computed_output, [named_table, set, public]),
-    Config = arweave_config:snapshot(),
+    Config = arweave_config:internal_snapshot(),
     PeerConfig = ar_test_node:remote_call(peer1, arweave_config, snapshot, []),
     {Config, PeerConfig}.
 
 cleanup({Config, PeerConfig}) ->
-    arweave_config:restore(Config),
+    arweave_config:internal_restore(Config),
     ar_test_node:remote_call(peer1, arweave_config, restore, [PeerConfig]),
     ets:delete(computed_output).
 

@@ -141,7 +141,7 @@ accepts_gossips_and_mines(B0, TXFuns) ->
 polls_for_transactions_and_gossips_and_mines(B0, TXFuns) ->
     %% Like accepts_gossips_and_mines, but gossip is disabled so main must
     %% poll peer1 for the TXs before they are mined and the block accepted.
-    MainConfig = arweave_config:snapshot(),
+    MainConfig = arweave_config:internal_snapshot(),
     PeerConfig = ar_test_node:remote_call(peer1, arweave_config, snapshot, []),
     try
         _ = ar_test_node:start(#{ b0 => B0,
@@ -184,7 +184,7 @@ polls_for_transactions_and_gossips_and_mines(B0, TXFuns) ->
             TXs
         )
     after
-        arweave_config:restore(MainConfig),
+        arweave_config:internal_restore(MainConfig),
         ar_test_node:remote_call(peer1, arweave_config, restore, [PeerConfig])
     end.
 
@@ -192,7 +192,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
     %% main holds the first set (ungossiped) plus the second set; peer1 mines the
     %% second set into a block. After main accepts that block, the set difference
     %% stays in main's mempool and is mined into main's next block.
-    MainConfig = arweave_config:snapshot(),
+    MainConfig = arweave_config:internal_snapshot(),
     PeerConfig = ar_test_node:remote_call(peer1, arweave_config, snapshot, []),
 
     try
@@ -236,6 +236,6 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
             lists:sort((ar_test_await:block_stored(hd(BI2)))#block.txs)
         )
     after
-        arweave_config:restore(MainConfig),
+        arweave_config:internal_restore(MainConfig),
         ar_test_node:remote_call(peer1, arweave_config, restore, [PeerConfig])
     end.
