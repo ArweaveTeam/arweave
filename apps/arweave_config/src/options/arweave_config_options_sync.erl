@@ -65,6 +65,33 @@ specs() ->
             long_description =>
                 <<"Each job periodically picks a byte range and "
                   "downloads it from peers.">>
+        },
+        #{
+            enabled => true,
+            option_key => [sync, max_download_rate],
+            runtime => true,
+            default => infinity,
+            type => non_neg_integer,
+            legacy => sync_max_download_rate,
+            short_description =>
+                <<"Maximum sync download rate in bytes per second.">>,
+            long_description =>
+                <<
+                    "Aggregate budget for chunk fetching. `infinity` (the "
+                    "default) syncs as fast as peers, disks, and the link "
+                    "allow; 0 pauses new network chunk fetches and sweeps. "
+                    "Local copies, disk-pool processing, header sync, and "
+                    "entropy preparation are controlled separately. "
+                    "Fetch concurrency is sized automatically from per-peer "
+                    "behavior, so this rate is the only sync-throughput "
+                    "dial. The rate may be changed at runtime: raising it "
+                    "above 0 resumes syncing without restarting the node, "
+                    "even if it started at 0. In-flight requests may finish "
+                    "after pausing. "
+                    "Replaces the removed sync_jobs / sync.jobs / "
+                    "sync.workers options; old worker counts cannot be "
+                    "converted to a download rate."
+                >>
         }
     ].
 
