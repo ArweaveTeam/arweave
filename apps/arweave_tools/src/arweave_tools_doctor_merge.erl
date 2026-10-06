@@ -1,28 +1,21 @@
+%%% Offline storage-module merge command.
 -module(arweave_tools_doctor_merge).
-
 
 -export([main/1, help/0]).
 
-
 -include_lib("arweave/include/ar.hrl").
-
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
-
 -include_lib("arweave/include/ar_chunk_storage.hrl").
-
--include_lib("arweave/include/ar_consensus.hrl").
-
 
 main(Args) ->
     merge(Args).
-
 
 help() ->
     ar:console("data-doctor merge data_dir storage_module src_directories~n"),
     ar:console("  storage_module: a JSON storage_modules entry~n"),
     ar:console("                  (e.g. '{\"partition\": 0, \"packing_format\": \"replica_2_9\",~n"),
     ar:console("                  \"packing_address\": \"<addr>\"}' or with range_start/range_end).~n").
-
 
 merge(Args) when length(Args) < 3 ->
     false;
@@ -31,24 +24,24 @@ merge(Args) ->
 
     {ok, Entry} =
         arweave_config:parse_storage_module_arg(StorageModuleConfig),
-    ok = arweave_config:set([storage_modules], [Entry]),
+    ok = arweave_config:load(#{
+        [data_dir] => DataDir,
+        [storage_modules] => [Entry]
+    }),
     [StorageModule] = arweave_config:storage_modules(),
-    StoreID = arweave_storage_module:id(StorageModule),
+    #store_info{path = DstDir} = arweave_storage:store_info(StorageModule),
 
-    case arweave_tools_doctor:check_module_dir(DataDir, StoreID) of
+    case arweave_tools_doctor:check_module_dir(StorageModule) of
         false ->
             false;
         true ->
-            ok = merge(DataDir, StorageModule, StoreID, SrcDirs),
+            ok = merge(DstDir, SrcDirs),
             true
     end.
 
-
-merge(_DataDir, _StorageModule, _StoreID, []) ->
+merge(_DstDir, []) ->
     ok;
-merge(DataDir, StorageModule, StoreID, [SrcDir | SrcDirs]) ->
-
-    DstDir = arweave_storage_chunk_storage:storage_module_path(DataDir, StoreID),
+merge(DstDir, [SrcDir | SrcDirs]) ->
     ar:console("~n~nMerge data from ~p into ~p~n~n", [SrcDir, DstDir]),
 
     move_chunk_storage(SrcDir, DstDir),
@@ -59,8 +52,7 @@ merge(DataDir, StorageModule, StoreID, [SrcDir | SrcDirs]) ->
     copy_db("ar_data_sync_data_root_index_db", SrcDir, DstDir),
     copy_sync_records(SrcDir, DstDir),
 
-    merge(DataDir, StorageModule, StoreID, SrcDirs).
-
+    merge(DstDir, SrcDirs).
 
 move_chunk_storage(SrcDir, DstDir) ->
     MkDir = io_lib:format("mkdir -p ~s/chunk_storage ~s/rocksdb~n", [DstDir, DstDir]),
@@ -69,7 +61,6 @@ move_chunk_storage(SrcDir, DstDir) ->
     os:cmd(MkDir),
     ar:console(Mv),
     os:cmd(Mv).
-
 
                                                 % Function to copy all key/value pairs from one DB to another
 copy_db(DB, SrcDir, DstDir) ->
@@ -106,14 +97,12 @@ copy_db(DB, SrcDir, DstDir) ->
     rocksdb:close(SrcDB),
     rocksdb:close(DstDB).
 
-
                                                 % Function to copy a specific column family
 copy_column_family(SrcDB, DstDB, SrcCF, DstCF) ->
                                                 % Create an Iterator for this column family in Source Database
     {ok, Itr} = rocksdb:iterator(SrcDB, SrcCF, []),
     copy_from_iterator(Itr, rocksdb:iterator_move(Itr, first), DstDB, DstCF),
     rocksdb:iterator_close(Itr).
-
 
                                                 % Helper function to copy key/value pairs from iterator to destination DB
 copy_from_iterator(Itr, Res, DstDB, DstCF) ->
@@ -125,7 +114,6 @@ copy_from_iterator(Itr, Res, DstDB, DstCF) ->
                                                 % End of iteration
             ok
     end.
-
 
 copy_sync_records(SrcDir, DstDir) ->
     ar:console("Copying sync records~n", []),
@@ -140,7 +128,6 @@ copy_sync_records(SrcDir, DstDir) ->
     rocksdb:close(SrcDB),
     rocksdb:close(DstDB).
 
-
 get_sync_records(DB) ->
     Record = rocksdb:get(DB, <<"sync_records">>, []),
     case Record of
@@ -150,10 +137,8 @@ get_sync_records(DB) ->
             {#{}, #{}}
     end.
 
-
 put_sync_records(DB, Intervals) ->
     rocksdb:put(DB, <<"sync_records">>, term_to_binary(Intervals), []).
-
 
 merge_sync_records(
   {SrcSyncRecordByID, SrcSyncRecordByIDType}, {DstSyncRecordByID, DstSyncRecordByIDType}) ->
@@ -168,5 +153,3 @@ merge_sync_records(
                             end,
                             SrcSyncRecordByIDType, DstSyncRecordByIDType),
     {UnionSyncRecordByID, UnionRecordByIDType}.
-
-

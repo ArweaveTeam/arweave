@@ -1,8 +1,6 @@
 -module(arweave_tools_doctor_snapshot).
 
-
 -export([main/1, help/0]).
-
 
 %%% data-doctor snapshot: export a join.start_from_state snapshot directory
 %%% from the data directory of a stopped node.
@@ -19,7 +17,6 @@ main([DataDir, OutputDir, "height", HeightArg]) ->
 main(_) ->
     false.
 
-
 help() ->
     ar:console("data-doctor snapshot <data_dir> <output_dir> [height <N>]~n"),
     ar:console("  Export a snapshot a node can start from via "
@@ -34,8 +31,8 @@ help() ->
     ar:console("data-doctor snapshot /mnt/arweave-data /mnt/snapshot_1999999 "
             "height 1999999~n").
 
-
 snapshot(DataDir, OutputDir, Height) ->
+    ok = arweave_config:start(),
     ar_kv_sup:start_link(),
     case ar_snapshot:export(DataDir, OutputDir, Height) of
         {ok, #{ height := TipHeight, hash := H, weave_size := WeaveSize }} ->
@@ -50,7 +47,6 @@ snapshot(DataDir, OutputDir, Height) ->
             error
     end.
 
-
 %% @doc When forking off a snapshot, tip height + 1 must be a multiple of
 %% the retarget interval (10): the first block of the new network is then a
 %% retarget, which lets the difficulty adjust when the new network has less
@@ -63,7 +59,6 @@ warn_fork_height(TipHeight) ->
             ar:console("Warning: the fork height ~B (tip height + 1) is not a "
                     "multiple of 10.~n", [TipHeight + 1])
     end.
-
 
 format_error({data_dir_not_found, DataDir}) ->
     io_lib:format("~s has no rocksdb directory; is it a node data_dir?",
@@ -86,5 +81,3 @@ format_error({manifest_not_written, Reason}) ->
     io_lib:format("manifest.json could not be written: ~p", [Reason]);
 format_error(Reason) ->
     io_lib:format("~p", [Reason]).
-
-

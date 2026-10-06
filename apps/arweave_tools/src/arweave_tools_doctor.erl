@@ -1,26 +1,16 @@
+%%% Dispatch offline doctor commands and report their exit status.
 -module(arweave_tools_doctor).
 
-
--export([main/0, main/1, check_module_dir/2]).
-
+-export([main/1, check_module_dir/1]).
 
 -include_lib("arweave/include/ar.hrl").
-
 -include_lib("arweave_config/include/arweave_config.hrl").
-
 -include_lib("arweave/include/ar_chunk_storage.hrl").
-
--include_lib("arweave/include/ar_consensus.hrl").
-
-
-main() ->
-    Args = init:get_plain_arguments(),
-    main(Args).
-
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 main([]) ->
     help(),
-    init:stop(1);
+    1;
 main(Args) ->
     logger:set_handler_config(default, level, error),
     Command = hd(Args),
@@ -40,28 +30,23 @@ main(Args) ->
               end,
     case Success of
         true ->
-            init:stop(0);
+            0;
         error ->
-            init:stop(1);
+            1;
         _ ->
             help(),
-            init:stop(1)
+            1
     end.
 
-
-%% @doc Verify the given storage module's on-disk directory exists
-%% under DataDir. The doctor tools accept only current-notation
-%% storage module arguments and resolve directories in the current
-%% naming (they never run the config bootstrap that detects a legacy
-%% launch), so a missing directory usually means a mistyped module or
-%% a node whose directories still use the legacy naming. Erroring out
-%% keeps the tools from silently working in empty folders.
-check_module_dir(DataDir, StoreID) ->
-    Path = arweave_storage_chunk_storage:storage_module_path(DataDir, StoreID),
+%% @doc Verify the module's directory exists under the configured data_dir.
+check_module_dir(ModuleOrID) ->
+    #store_info{path = Path} = arweave_storage:store_info(ModuleOrID),
     case filelib:is_dir(Path) of
         true ->
             true;
         false ->
+            %% Doctor arguments use current notation without legacy bootstrap.
+            %% Refuse missing directories rather than working in empty folders.
             ar:console("Storage module directory not found: ~s~n", [Path]),
             ar:console(
                 "The data doctor resolves directories in the current "
@@ -71,7 +56,6 @@ check_module_dir(DataDir, StoreID) ->
                 "guide at docs.arweave.org.~n"),
             false
     end.
-
 
 help() ->
     ar:console("~n"),
@@ -85,5 +69,3 @@ help() ->
     ar:console("~n"),
     arweave_tools_doctor_snapshot:help(),
     ar:console("~n").
-
-
