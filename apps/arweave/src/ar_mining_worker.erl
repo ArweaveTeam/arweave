@@ -508,8 +508,10 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 
 process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
     PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
-    NoncesPerRecallRange = arweave_lib_constants:get_max_nonce(PackingDifficulty),
-    NoncesPerChunk = arweave_lib_constants:get_nonces_per_chunk(PackingDifficulty),
+    NoncesPerRecallRange =
+        arweave_lib_constants:get_max_nonce(PackingDifficulty),
+    NoncesPerChunk =
+        arweave_lib_constants:get_nonces_per_chunk(PackingDifficulty),
     SubChunkSize = arweave_lib_constants:get_sub_chunk_size(PackingDifficulty),
     process_chunks(
       WhichChunk, Candidate, RangeStart, 0, NoncesPerChunk,
@@ -1054,12 +1056,12 @@ hash_computed(WhichHash, Candidate, State) ->
     case WhichHash of
         h1 ->
             PartitionNumber = Candidate#mining_candidate.partition_number,
-            Hashes = maps:get(PartitionNumber, State#state.h1_hashes, 0),
-            State#state{ h1_hashes = maps:put(PartitionNumber, Hashes+1, State#state.h1_hashes) };
+            State#state{ h1_hashes = arweave_lib_util:increment_map_value(
+                PartitionNumber, State#state.h1_hashes) };
         h2 ->
             PartitionNumber = Candidate#mining_candidate.partition_number2,
-            Hashes = maps:get(PartitionNumber, State#state.h2_hashes, 0),
-            State#state{ h2_hashes = maps:put(PartitionNumber, Hashes+1, State#state.h2_hashes) }
+            State#state{ h2_hashes = arweave_lib_util:increment_map_value(
+                PartitionNumber, State#state.h2_hashes) }
     end.
 
 report_and_reset_hashes(State) ->

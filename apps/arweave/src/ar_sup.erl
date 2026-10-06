@@ -45,9 +45,8 @@ init([]) ->
     ets:new(ar_nonce_limiter, [set, public, named_table]),
     ets:new(ar_nonce_limiter_server, [set, public, named_table]),
     ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
-    %% ar_data_discovery* tables moved to ar_data_sync_sup (the sup that
-    %% owns the gen_server that uses them).
     ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
+    ar_chunk_cache:create_ets(),
     ets:new(ar_mining_stats, [set, public, named_table]),
     ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_disk_pool_chunks_cache, [set, public, named_table, {read_concurrency, true}]),
@@ -67,6 +66,10 @@ init([]) ->
     ets:new(node_state, [set, public, named_table]),
     ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_total_supply_cache, [set, public, named_table, {read_concurrency, true}]),
+    %% `ar_process_sampler' sits right after `ar_shutdown_manager' so it is
+    %% one of the last processes terminated on shutdown:. It keeps
+    %% recording process metrics (e.g. long message queues) while the rest
+    %% of the tree shuts down.
     Debug = arweave_config:get([debug]),
     DebugChildren = case Debug of
         true -> [?CHILD(ar_process_sampler, worker)];
@@ -85,14 +88,13 @@ init([]) ->
         ?CHILD(ar_watchdog, worker),
         ?CHILD(ar_tx_blacklist, worker),
         ?CHILD_SUP(ar_bridge_sup, supervisor),
+        ?CHILD(ar_chunk_cache, worker),
         ?CHILD_SUP(ar_packing_sup, supervisor),
         arweave_storage:child_spec(),
-        arweave_entropy:child_spec(),
         ?CHILD(ar_header_sync, worker),
-        %% `ar_data_sync_sup' must start before `ar_chunk_storage_sup' so its
-        %% workers open `chunk_data_db'/`tx_index' before `ar_repack' workers
-        %% read them; otherwise `ar_kv:get' returns `{error, db_not_found}'
-        %% and `ar_repack' crashes.
+        %% Storage must outlive entropy generation, data-sync and repacking.
+        %% Data-sync opens databases used by repacking, so retain that order.
+        arweave_entropy:child_spec(),
         ?CHILD_SUP(ar_data_sync_sup, supervisor),
         ?CHILD_SUP(ar_repack_sup, supervisor),
         ?CHILD_SUP(ar_data_root_sync_sup, supervisor),

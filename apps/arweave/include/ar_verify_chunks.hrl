@@ -1,11 +1,5 @@
--include_lib("arweave_lib/include/arweave_lib_constants.hrl").
-
 -ifndef(AR_VERIFY_CHUNKS_HRL).
-
-
 -define(AR_VERIFY_CHUNKS_HRL, true).
-
-
 
 -record(verify_report, {
                         start_time :: non_neg_integer(),
@@ -18,8 +12,6 @@
                         status = not_ready :: not_ready | running| done
                        }).
 
-
-
 -record(sample_report, {
                         samples = 0 :: non_neg_integer(),
                         total = 0 :: non_neg_integer(),
@@ -27,14 +19,6 @@
                         failure = 0 :: non_neg_integer()
                        }).
 
-
-
 -define(SAMPLE_CHUNK_COUNT, 1000).
 
-
-
 -endif.
-
-
-
-

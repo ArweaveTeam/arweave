@@ -4,9 +4,7 @@
         add_mainnet_v1_genesis_txs/0]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -67,7 +65,7 @@ init(WalletList, Diff, GenesisDataSize) ->
             account_tree = AccountTree
         },
     B1 =
-        case arweave_lib_fork:height_2_6() > 0 of
+        case arweave_lib_constants:height_2_6() > 0 of
             false ->
                 RewardKey = element(2, ar_wallet:new()),
                 RewardAddr = ar_wallet:to_address(RewardKey),
@@ -95,7 +93,7 @@ init(WalletList, Diff, GenesisDataSize) ->
                 B0
         end,
     B2 =
-        case arweave_lib_fork:height_2_7() > 0 of
+        case arweave_lib_constants:height_2_7() > 0 of
             false ->
                 InitialHistory = get_initial_block_time_history(),
                 B1#block{

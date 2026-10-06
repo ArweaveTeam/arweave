@@ -1,5 +1,6 @@
 %%% @doc Tracks the availability and performance of the network peers.
 -module(ar_peers).
+-export([pick_peers/2]).
 -behaviour(gen_server).
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
@@ -1285,3 +1286,21 @@ is_connected_peer(Peer) ->
         {ok, V} -> V;
         {error, _} -> false
     end.
+
+
+
+%% @doc Uniformly sample up to N peers from the given peer list.
+pick_peers(Peers, N) ->
+    pick_peers(Peers, length(Peers), N).
+
+
+
+pick_peers(Peers, PeerLen, N) when N >= PeerLen ->
+    Peers;
+pick_peers([], _PeerLen, _N) ->
+    [];
+pick_peers(_Peers, _PeerLen, N) when N =< 0 ->
+    [];
+pick_peers(Peers, _PeerLen, N) ->
+    %% Sample N candidates uniformly so callers keep exploring the whole peer list.
+    arweave_lib_util:pick_random(Peers, N).

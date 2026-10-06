@@ -1,5 +1,6 @@
 %%% @doc
 -module(arweave_config_type_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -21,12 +22,12 @@ init_per_testcase(TestCase, Config)
                 fun(Peer) ->
                         case iolist_to_binary([Peer]) of
                             <<"multi:", PortBin/binary>> ->
-				Port = binary_to_integer(PortBin),
-				{ok, [{1, 1, 1, 1, Port}, {2, 2, 2, 2, Port}]};
+                Port = binary_to_integer(PortBin),
+                {ok, [{1, 1, 1, 1, Port}, {2, 2, 2, 2, Port}]};
                             <<"dead.example", _/binary>> ->
-				{error, {invalid_peer, Peer}};
+                {error, {invalid_peer, Peer}};
                             _ ->
-				meck:passthrough([Peer])
+                meck:passthrough([Peer])
                         end
                 end),
     Config;
@@ -51,6 +52,7 @@ all() ->
      boolean,
      non_neg_integer,
      pos_integer,
+        finite_pos_integer,
      ipv4,
      path,
      tcp_port,
@@ -113,6 +115,18 @@ pos_integer(_Config) ->
     {error, <<"0">>} = arweave_config_type:pos_integer(<<"0">>),
     {error, -1} = arweave_config_type:pos_integer(-1),
     {error, a} = arweave_config_type:pos_integer(a).
+
+finite_pos_integer(_Config) ->
+    {ok, 1} = arweave_config_type:finite_pos_integer(1),
+    {ok, 7} = arweave_config_type:finite_pos_integer(<<"7">>),
+    {error, -1} = arweave_config_type:finite_pos_integer(-1),
+    %% The finite type exists to reject every spelling of infinity that
+    %% pos_integer accepts (setters do arithmetic on the value).
+    {error, infinity} = arweave_config_type:finite_pos_integer(infinity),
+    {error, <<"infinity">>} =
+        arweave_config_type:finite_pos_integer(<<"infinity">>),
+    {error, "infinity"} =
+        arweave_config_type:finite_pos_integer("infinity").
 
 ipv4(_Config) ->
     {ok, <<"127.0.0.1">>} = arweave_config_type:ipv4("127.0.0.1"),
@@ -248,9 +262,9 @@ resolved_peers_list_expands_multi_record(_Config) ->
 %% warning, never fatal for the list — a stale DNS name must not stop
 %% a node from booting.
 resolved_peers_list_skips_unresolvable(_Config) ->
-	?assertEqual({ok, [{1,2,3,4,1984}]},
-		arweave_config_type:resolved_peers_list(
-			[<<"dead.example:1984">>, <<"1.2.3.4:1984">>])).
+    ?assertEqual({ok, [{1,2,3,4,1984}]},
+        arweave_config_type:resolved_peers_list(
+            [<<"dead.example:1984">>, <<"1.2.3.4:1984">>])).
 
 %% The singleton (cm_exit) keeps the first resolved address.
 resolved_peer_id_takes_first_record(_Config) ->

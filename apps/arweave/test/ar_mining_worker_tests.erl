@@ -3,7 +3,7 @@
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(PARTITION, 0).
@@ -46,11 +46,9 @@ end).
 %% Fixtures
 %% ------------------------------------------------------------------------------------------------
 
-%% This function is called for all tests.
-%% It mocks the necessary modules and functions.
-%% Mocked functions are sending messages to the ?TESTER_REGISTER_NAME process (the test).
-setup_all() ->
-    Mocks = [
+%% @doc Mock mining dependencies to exchange messages with the test process.
+mocks() ->
+    [
         {ar_mining_cache, session_exists, fun(_, _) -> true end},
         {ar_mining_hash, compute_h0, fun ar_mining_hash__compute_h0/2},
         {ar_mining_hash, compute_h1, fun ar_mining_hash__compute_h1/2},
@@ -60,11 +58,7 @@ setup_all() ->
         {ar_mining_io, read_recall_range, fun ar_mining_io__read_recall_range/4},
         {ar_node_utils, passes_diff_check, fun ar_node_utils__passes_diff_check/4},
         {ar_mining_server, prepare_and_post_solution, fun ar_mining_server__prepare_and_post_solution/1}
-    ],
-    MockedModules = lists:usort([Module || {Module, _, _} <- Mocks]),
-    meck:new(MockedModules, [passthrough]),
-    [meck:expect(M, F, Fun) || {M, F, Fun} <- Mocks],
-    MockedModules.
+    ].
 
 %% This function is called for each test.
 %% It creates a new worker and registers itself as a tester.
@@ -106,11 +100,6 @@ cleanup_each_dump_messages() ->
     after 0 ->
         ok
     end.
-
-%% This function is called after all tests.
-%% It unloads the mocked modules.
-cleanup_all(MockedModules) ->
-    meck:unload(MockedModules).
 
 ar_mining_hash__compute_h0(WorkerPid, Candidate) ->
     ?TESTER_REGISTER_NAME ! ?compute_h0(WorkerPid, Candidate).
@@ -290,7 +279,7 @@ generate_hashes_for_recall_range(Prefix, Difficulty) ->
 %% ------------------------------------------------------------------------------------------------
 
 mining_worker_test_() ->
-    {setup, fun setup_all/0, fun cleanup_all/1,
+    ar_test_util:with_mocked(mocks(),
         [
             ?with_setup_each(fun test_no_available_ranges/1),
             ?with_setup_each(fun test_only_second_range_available/1),
@@ -300,7 +289,7 @@ mining_worker_test_() ->
             ?with_setup_each(fun test_both_ranges_available_h1_solution/1),
             ?with_setup_each(fun test_both_ranges_available_h2_solution/1)
         ]
-    }.
+    ).
 
 %% This test checks the worker behavior when it does not have any available
 %% recall ranges for a VDF step.

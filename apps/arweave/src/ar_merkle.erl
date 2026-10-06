@@ -11,7 +11,6 @@
 -export([get/2, get_branch_id/3, get_leaf_id/2, hash/1, note_to_binary/1]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% @doc Generates annotated merkle trees, paths inside those trees, as well
@@ -387,7 +386,8 @@ generate_leaf({Data, EndOffset}) ->
 
 %% Note: This implementation leaves some duplicates in the tree structure.
 %% The produced trees could be a little smaller if these duplicates were
-%% not present, but removing them with arweave_lib_util:unique takes far too long.
+%% not present, but removing them with arweave_lib_util:unique takes far
+%% too long.
 generate_all_rows([RootN], Tree) ->
     RootID = RootN#node.id,
     {RootID, Tree};

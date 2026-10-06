@@ -40,6 +40,7 @@
 -endif.
 
 -include("ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -227,11 +228,13 @@ check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
                     end
             end;
         {error, Reason} ->
-            ?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
-                          {reason, io_lib:format("~p", [Reason])},
-                          {data_path_hash, arweave_lib_util:encode(DataPathHash)},
-                          {data_root, arweave_lib_util:encode(DataRoot)},
-                          {relative_offset, EndOffset}]),
+            ?LOG_WARNING([
+                {event, failed_to_read_chunk_from_disk_pool},
+                {reason, io_lib:format("~p", [Reason])},
+                {data_path_hash, arweave_lib_util:encode(DataPathHash)},
+                {data_root, arweave_lib_util:encode(DataRoot)},
+                {relative_offset, EndOffset}
+            ]),
             {error, failed_to_store_chunk}
     end.
 
@@ -246,11 +249,13 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset, Validation, DataPa
     ChunkDataKey = get_chunk_data_key(DataPathHash),
     case ar_data_sync:put_chunk_data(ChunkDataKey, ?DEFAULT_MODULE, {Chunk, DataPath}) of
         {error, Reason} ->
-            ?LOG_WARNING([{event, failed_to_store_chunk_in_disk_pool},
-                          {reason, io_lib:format("~p", [Reason])},
-                          {data_path_hash, arweave_lib_util:encode(DataPathHash)},
-                          {data_root, arweave_lib_util:encode(DataRoot)},
-                          {relative_offset, EndOffset}]),
+            ?LOG_WARNING([
+                {event, failed_to_store_chunk_in_disk_pool},
+                {reason, io_lib:format("~p", [Reason])},
+                {data_path_hash, arweave_lib_util:encode(DataPathHash)},
+                {data_root, arweave_lib_util:encode(DataRoot)},
+                {relative_offset, EndOffset}
+            ]),
             {error, failed_to_store_chunk};
         ok ->
             DiskPoolChunkValue = term_to_binary({EndOffset, ChunkSize, DataRoot, TXSize,
@@ -434,10 +439,17 @@ is_estimated_long_term_chunk(TXStartOffset, RelativeEndOffset, WeaveSize) ->
 is_offset_vicinity_covered(Offset) ->
     Size = max(?MIN_CHUNK_PERSISTENCE_ESTIMATION_VICINITY,
                ar_node:get_recent_max_block_size()),
-    arweave_storage:covers_range(max(0, Offset - Size * 2), Offset + Size * 2, any_packing, any_store).
+    arweave_storage:covers_range(
+        max(0, Offset - Size * 2), Offset + Size * 2, any_packing, any_store
+    ).
 
 chunk_offsets_synced(DataRootID, ChunkOffset, TXStartOffset) ->
-    case arweave_storage:is_recorded(TXStartOffset + ChunkOffset, any_packing, {ar_data_sync, byte}, any_store) of
+    case arweave_storage:is_recorded(
+        TXStartOffset + ChunkOffset,
+        any_packing,
+        {ar_data_sync, byte},
+        any_store
+    ) of
         {{true, _}, _StoreID} ->
             Iterator = ar_data_roots:iterator(DataRootID, TXStartOffset, ?DEFAULT_MODULE),
             chunk_offsets_synced2(ChunkOffset, Iterator);
@@ -448,7 +460,12 @@ chunk_offsets_synced(DataRootID, ChunkOffset, TXStartOffset) ->
 chunk_offsets_synced2(ChunkOffset, Iterator) ->
     case ar_data_roots:next(Iterator) of
         {ok, {_, _, TXStartOffset, _}, Iterator2} ->
-            case arweave_storage:is_recorded(TXStartOffset + ChunkOffset, any_packing, {ar_data_sync, byte}, any_store) of
+            case arweave_storage:is_recorded(
+                TXStartOffset + ChunkOffset,
+                any_packing,
+                {ar_data_sync, byte},
+                any_store
+            ) of
                 {{true, _}, _StoreID} ->
                     chunk_offsets_synced2(ChunkOffset, Iterator2);
                 false ->
@@ -796,16 +813,21 @@ validation_logs(AbsoluteEndOffset, ValidationTuple) ->
     [{merkle_rebase_threshold, ar_data_sync:get_merkle_rebase_threshold()},
      {strict_data_split_threshold, arweave_lib_constants:strict_data_split_threshold()},
      {validation_ruleset, ar_poa:get_data_path_validation_ruleset(
-                            AbsoluteEndOffset,
-                            ar_data_sync:get_merkle_rebase_threshold(),
-                            arweave_lib_constants:strict_data_split_threshold())},
+         AbsoluteEndOffset,
+         ar_data_sync:get_merkle_rebase_threshold(),
+         arweave_lib_constants:strict_data_split_threshold())},
      {passed_base, PassedBase},
      {passed_strict, PassedStrictValidation},
      {passed_rebase, PassedRebaseValidation}].
 
 process_immature_chunk(Iterator, AbsoluteEndOffset, Args,
                        StoreID, DiskPool) ->
-    case arweave_storage:is_recorded(AbsoluteEndOffset, any_packing, {ar_data_sync, byte}, StoreID) of
+    case arweave_storage:is_recorded(
+        AbsoluteEndOffset,
+        any_packing,
+        {ar_data_sync, byte},
+        StoreID
+    ) of
         {true, unpacked} ->
             %% Set CanRemoveFromDiskPool to false because we have encountered an
             %% offset above the disk pool threshold => we need to keep the chunk
@@ -838,92 +860,167 @@ process_immature_chunk(Iterator, AbsoluteEndOffset, Args,
             end
     end.
 
-process_mature_chunk(Iterator, AbsoluteEndOffset, CanRemoveFromDiskPool, Args,
-                     DefaultStoreID, DiskPool) ->
+process_mature_chunk(
+    Iterator,
+    AbsoluteEndOffset,
+    CanRemoveFromDiskPool,
+    ChunkArgs,
+    DefaultStoreID,
+    DiskPool
+) ->
     %% The chunk has received a decent number of confirmations so we put it in storage
     %% module(s). If we have no storage modules configured covering this offset, proceed to
     %% the next offset. If there are several suitable storage modules, send the chunk
     %% to those modules who have not have it synced yet.
-    {Offset, DiskPoolKey, Metadata, _} = Args,
+    {_, _, Metadata, _} = ChunkArgs,
     #chunk_metadata{
-       chunk_data_key = ChunkDataKey,
-       data_root = DataRoot,
-       chunk_size = ChunkSize,
-       tx_root = TXRoot,
-       tx_path = TXPath
-      } = Metadata,
-    << _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
+        chunk_data_key = ChunkDataKey,
+        chunk_size = ChunkSize
+    } = Metadata,
     MaybeStoreIDs =
         maybe
             {store_ids, StoreIDs1} ?=
-                case arweave_storage:covering_stores(AbsoluteEndOffset - ChunkSize, AbsoluteEndOffset) of
+                case
+                    arweave_storage:intersecting_stores(
+                        AbsoluteEndOffset - ChunkSize, AbsoluteEndOffset, any_packing
+                    )
+                of
                     [] ->
-                        {next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool};
+                        {next_offset, Iterator, CanRemoveFromDiskPool, ChunkArgs, DiskPool};
                     Modules ->
-                        {store_ids, [arweave_storage_module:id(Module) || Module <- Modules]}
+                        {store_ids, [(arweave_storage:store_info(Module))#store_info.id || Module <- Modules]}
                 end,
             {store_ids, StoreIDs2} ?=
                 case ar_tx_blacklist:is_byte_blacklisted(AbsoluteEndOffset) of
                     true ->
-                        {next_offset, Iterator, CanRemoveFromDiskPool, Args,
-                         remove_recently_processed_offset(
-                           AbsoluteEndOffset, ChunkDataKey, DiskPool)};
+                        {next_offset, Iterator, CanRemoveFromDiskPool, ChunkArgs,
+                            remove_recently_processed_offset(
+                                AbsoluteEndOffset, ChunkDataKey, DiskPool
+                            )};
                     false ->
                         {store_ids, StoreIDs1}
                 end,
             {store_ids, StoreIDs3} ?=
                 case filter_storage_modules_by_synced_offset(AbsoluteEndOffset, StoreIDs2) of
                     [] ->
-                        {next_offset, Iterator, CanRemoveFromDiskPool, Args,
-                         remove_recently_processed_offset(
-                           AbsoluteEndOffset, ChunkDataKey, DiskPool)};
+                        {next_offset, Iterator, CanRemoveFromDiskPool, ChunkArgs,
+                            remove_recently_processed_offset(
+                                AbsoluteEndOffset, ChunkDataKey, DiskPool
+                            )};
                     FilteredStoreIDs ->
                         {store_ids, FilteredStoreIDs}
                 end,
-            case is_recently_processed_offset(AbsoluteEndOffset, ChunkDataKey, DiskPool)
-                orelse ar_data_sync:is_chunk_cache_full() of
+            case
+                is_recently_processed_offset(AbsoluteEndOffset, ChunkDataKey, DiskPool) orelse
+                    ar_chunk_cache:is_full()
+            of
                 true ->
                     %% This chunk/offset was recently processed, or the data_sync cache is full, so
                     %% skip storing it for now and advance to the next offset.
-                    {next_offset, Iterator, false, Args, DiskPool};
+                    {next_offset, Iterator, false, ChunkArgs, DiskPool};
                 false ->
                     {store_ids, StoreIDs3}
             end
         end,
     case MaybeStoreIDs of
         {store_ids, StoreIDs6} ->
-            case ar_data_sync:read_chunk_with_datapath(ChunkDataKey, DefaultStoreID) of
-                {ok, Chunk, DataPath} ->
-                    Args2 = {DataRoot, AbsoluteEndOffset, TXPath, TXRoot, DataPath, unpacked,
-                             Offset, ChunkSize, Chunk, Chunk, none, none},
-                    {DiskPool7, CacheHint} =
-                        cache_recently_processed_offset(AbsoluteEndOffset, ChunkDataKey, DiskPool),
-                    {store_chunk, StoreIDs6, Args2, Iterator, Args, CacheHint, DiskPool7};
-                {error, Reason2} ->
-                    ?LOG_ERROR([{event, failed_to_read_disk_pool_chunk},
-                                {reason, io_lib:format("~p", [Reason2])},
-                                {data_path_hash, arweave_lib_util:encode(DataPathHash)},
-                                {data_root, arweave_lib_util:encode(DataRoot)},
-                                {absolute_end_offset, AbsoluteEndOffset},
-                                {relative_offset, Offset},
-                                {chunk_data_key, arweave_lib_util:encode(ChunkDataKey)}]),
-                    {next_chunk, unmark_key_in_process(DiskPoolKey, DiskPool)};
+            CacheRefs = reserve_stores(StoreIDs6),
+            case CacheRefs of
+                [] ->
+                    {next_offset, Iterator, false, ChunkArgs, DiskPool};
                 _ ->
-                    %% not_found, or no inline chunk for this key.
-                    ?LOG_ERROR([{event, disk_pool_chunk_not_found},
-                                {data_path_hash, arweave_lib_util:encode(DataPathHash)},
-                                {data_root, arweave_lib_util:encode(DataRoot)},
-                                {absolute_end_offset, AbsoluteEndOffset},
-                                {relative_offset, Offset},
-                                {chunk_data_key, arweave_lib_util:encode(ChunkDataKey)}]),
-                    {next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool}
+                    read_for_storage(
+                        CacheRefs,
+                        StoreIDs6,
+                        Iterator,
+                        AbsoluteEndOffset,
+                        CanRemoveFromDiskPool,
+                        ChunkArgs,
+                        DefaultStoreID,
+                        DiskPool
+                    )
             end;
         Else ->
             Else
     end.
 
+read_for_storage(
+    CacheRefs,
+    StoreIDs,
+    Iterator,
+    AbsoluteEndOffset,
+    CanRemoveFromDiskPool,
+    {Offset, DiskPoolKey, Metadata, _} = ChunkArgs,
+    DefaultStoreID,
+    DiskPool
+) ->
+    #chunk_metadata{
+        chunk_data_key = ChunkDataKey,
+        data_root = DataRoot,
+        chunk_size = ChunkSize,
+        tx_root = TXRoot,
+        tx_path = TXPath
+    } = Metadata,
+    <<_Timestamp:256, DataPathHash/binary>> = DiskPoolKey,
+    case ar_data_sync:read_chunk_with_datapath(ChunkDataKey, DefaultStoreID) of
+        {ok, Chunk, DataPath} ->
+            StorageArgs =
+                {DataRoot, AbsoluteEndOffset, TXPath, TXRoot, DataPath, unpacked, Offset, ChunkSize,
+                    Chunk, Chunk, none, none},
+            {DiskPool7, CacheHint} =
+                case length(CacheRefs) =:= length(StoreIDs) of
+                    true ->
+                        cache_recently_processed_offset(
+                            AbsoluteEndOffset, ChunkDataKey, DiskPool
+                        );
+                    false ->
+                        {DiskPool, no_cache_update}
+                end,
+            {store_chunk, CacheRefs, StorageArgs, Iterator, ChunkArgs, CacheHint, DiskPool7};
+        {error, Reason2} ->
+            release_cache_refs(CacheRefs),
+            ?LOG_ERROR([
+                {event, failed_to_read_disk_pool_chunk},
+                {reason, io_lib:format("~p", [Reason2])},
+                {data_path_hash, arweave_lib_util:encode(DataPathHash)},
+                {data_root, arweave_lib_util:encode(DataRoot)},
+                {absolute_end_offset, AbsoluteEndOffset},
+                {relative_offset, Offset},
+                {chunk_data_key, arweave_lib_util:encode(ChunkDataKey)}
+            ]),
+            {next_chunk, unmark_key_in_process(DiskPoolKey, DiskPool)};
+        _ ->
+            release_cache_refs(CacheRefs),
+            %% not_found, or no inline chunk for this key.
+            ?LOG_ERROR([
+                {event, disk_pool_chunk_not_found},
+                {data_path_hash, arweave_lib_util:encode(DataPathHash)},
+                {data_root, arweave_lib_util:encode(DataRoot)},
+                {absolute_end_offset, AbsoluteEndOffset},
+                {relative_offset, Offset},
+                {chunk_data_key, arweave_lib_util:encode(ChunkDataKey)}
+            ]),
+            {next_offset, Iterator, CanRemoveFromDiskPool, ChunkArgs, DiskPool}
+    end.
+
+reserve_stores([]) -> [];
+reserve_stores([StoreID | Rest]) ->
+    case ar_chunk_cache:reserve(StoreID) of
+        full -> [];
+        {ok, CacheRef} -> [{StoreID, CacheRef} | reserve_stores(Rest)]
+    end.
+
+release_cache_refs(CacheRefs) ->
+    lists:foreach(fun({_, CacheRef}) -> ar_chunk_cache:release(CacheRef) end,
+        CacheRefs).
+
 filter_storage_modules_by_synced_offset(AbsoluteEndOffset, [StoreID | StoreIDs]) ->
-    case arweave_storage:is_recorded(AbsoluteEndOffset, any_packing, {ar_data_sync, byte}, StoreID) of
+    case arweave_storage:is_recorded(
+        AbsoluteEndOffset,
+        any_packing,
+        {ar_data_sync, byte},
+        StoreID
+    ) of
         {true, _Packing} ->
             filter_storage_modules_by_synced_offset(AbsoluteEndOffset, StoreIDs);
         false ->
@@ -948,9 +1045,15 @@ delete_chunk(Iterator, Args, StoreID, DiskPool) ->
                             PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteEndOffset),
                             StartOffset = arweave_lib_constants:get_chunk_padded_offset(
                                             AbsoluteEndOffset - ChunkSize),
-                            ok = arweave_storage_footprint_record:delete(PaddedOffset, StoreID),
-                            ok = arweave_storage:delete_sync_record(PaddedOffset, StartOffset, {ar_data_sync, byte}, StoreID),
-                            case arweave_storage:is_recorded(PaddedOffset, any_packing, {ar_data_sync, byte}, any_store) of
+                            ok = arweave_storage:delete_footprint(PaddedOffset, StoreID),
+                            ok = arweave_storage:delete_sync_record(PaddedOffset, StartOffset, {ar_data_sync, byte},
+                                                       StoreID),
+                            case arweave_storage:is_recorded(
+                                PaddedOffset,
+                                any_packing,
+                                {ar_data_sync, byte},
+                                any_store
+                            ) of
                                 false ->
                                     ar_events:send(sync_record,
                                                    {global_remove_range, StartOffset, PaddedOffset});
@@ -1284,14 +1387,16 @@ handle_disk_pool_actions(
   {store_chunk, StoreIDs, PackArgs, Iterator, ContinueArgs, CacheHint, DiskPool},
   _OldState) ->
     lists:foreach(
-      fun(StoreID) ->
-              %% Increment once per cast because each worker later decrements the counter.
-              ar_data_sync:increment_chunk_cache_size(),
-              gen_server:cast(ar_data_sync:name(StoreID),
-                              {pack_and_store_chunk, PackArgs})
-      end,
-      StoreIDs
-     ),
+        fun({StoreID, CacheRef}) ->
+            try
+                ar_data_sync:store_chunk(ar_data_sync:name(StoreID),
+                    PackArgs, {none, make_ref()}, CacheRef)
+            after
+                ar_chunk_cache:release(CacheRef)
+            end
+        end,
+        StoreIDs
+    ),
     gen_server:cast(?MODULE,
                     {process_disk_pool_chunk_offsets, Iterator, false, ContinueArgs}),
     case CacheHint of

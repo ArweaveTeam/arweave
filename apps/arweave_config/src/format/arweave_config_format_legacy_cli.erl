@@ -7,7 +7,6 @@
     find_config_file/1
 ]).
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_verify_chunks.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -79,7 +78,7 @@ parse(["vdf", Mode | Rest]) ->
     _ = arweave_config:set([vdf, algorithm], ParsedMode),
     parse(Rest);
 parse(["peer", Peer | Rest]) ->
-    case arweave_config:safe_parse_peer(Peer) of
+    case arweave_config_peer:safe_parse_peer(Peer) of
         {ok, ValidPeers} when is_list(ValidPeers) ->
             Ps = arweave_config_options_peers:by_role(trusted),
             NewPeers = ValidPeers ++ Ps,
@@ -90,7 +89,7 @@ parse(["peer", Peer | Rest]) ->
             parse(Rest)
     end;
 parse(["block_gossip_peer", Peer | Rest]) ->
-    case arweave_config:safe_parse_peer(Peer) of
+    case arweave_config_peer:safe_parse_peer(Peer) of
         {ok, ValidPeer} when is_list(ValidPeer) ->
             Peers = arweave_config_options_peers:by_role(block_gossip),
             NewPeers = ValidPeer ++ Peers,
@@ -101,7 +100,7 @@ parse(["block_gossip_peer", Peer | Rest]) ->
             parse(Rest)
     end;
 parse(["local_peer", Peer | Rest]) ->
-    case arweave_config:safe_parse_peer(Peer) of
+    case arweave_config_peer:safe_parse_peer(Peer) of
         {ok, ValidPeer} when is_list(ValidPeer) ->
             Peers = arweave_config_options_peers:by_role(local),
             NewPeers = ValidPeer ++ Peers,
@@ -220,11 +219,16 @@ parse(["hashing_threads", Num | Rest]) ->
     parse(Rest);
 parse(["data_cache_size_limit", Num | Rest]) ->
     V = list_to_integer(Num),
-    _ = arweave_config:set([sync, cache_size_limit], V),
+    %% Legacy chunks become MiB, rounding up any partial MiB.
+    _ = arweave_config:set([packing, cache_size],
+        ?LEGACY_CHUNKS_TO_CACHE_MIB(V)),
     parse(Rest);
-parse(["packing_cache_size_limit", Num | Rest]) ->
-    V = list_to_integer(Num),
-    _ = arweave_config:set([packing, cache_size], V),
+parse(["packing_cache_size_limit", _Num | Rest]) ->
+    ?LOG_WARNING([{event, deprecated_config_option},
+        {option, packing_cache_size_limit}, {action, ignored},
+        {reason, <<"Use packing.cache_size (MiB), or legacy "
+            "data_cache_size_limit (256 KiB chunks), for the shared "
+            "chunk cache.">>}]),
     parse(Rest);
 parse(["mining_cache_size_mb", Num | Rest]) ->
     V = list_to_integer(Num),
@@ -287,10 +291,13 @@ parse(["max_block_propagation_peers", Num | Rest]) ->
     V = list_to_integer(Num),
     _ = arweave_config:set([gossip, block, max_peers], V),
     parse(Rest);
-parse(["sync_jobs", Num | Rest]) ->
-    V = list_to_integer(Num),
-    _ = arweave_config:set([sync, jobs], V),
-    parse(Rest);
+parse(["sync_jobs", _Num | _Rest]) ->
+    io:format("~nsync_jobs has been removed. Fetch concurrency is sized "
+        "automatically; use sync_max_download_rate (bytes per second, 0 "
+        "to disable syncing) to bound sync throughput.~n"),
+    {error, [
+        {arweave_config_help, print, []}
+    ]};
 parse(["sync_max_download_rate", "infinity" | Rest]) ->
     _ = arweave_config:set([sync, max_download_rate], infinity),
     parse(Rest);
@@ -439,7 +446,7 @@ parse(["cm_poll_interval", Num | Rest]) ->
     _ = arweave_config:set([cm, poll_interval], V),
     parse(Rest);
 parse(["cm_peer", Peer | Rest]) ->
-    case arweave_config:safe_parse_peer(Peer) of
+    case arweave_config_peer:safe_parse_peer(Peer) of
         {ok, ValidPeer} when is_list(ValidPeer) ->
             Ps = arweave_config_options_peers:by_role(cm_peer),
             NewPeers = ValidPeer ++ Ps,
@@ -450,7 +457,7 @@ parse(["cm_peer", Peer | Rest]) ->
             parse(Rest)
     end;
 parse(["cm_exit_peer", Peer | Rest]) ->
-    case arweave_config:safe_parse_peer(Peer) of
+    case arweave_config_peer:safe_parse_peer(Peer) of
         {ok, [ValidPeer|_]} ->
             _ = arweave_config_options_peers:write_legacy_singleton(cm_exit, ValidPeer),
             parse(Rest);
@@ -826,4 +833,3 @@ get_list(Key) ->
         L when is_list(L) -> L;
         _ -> []
     end.
-

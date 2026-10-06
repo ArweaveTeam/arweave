@@ -328,7 +328,8 @@ get_tx_offset(Node, TXID) ->
     ar_http:req(#{
         method => get,
         peer => Peer,
-        path => "/tx/" ++ binary_to_list(arweave_lib_util:encode(TXID)) ++ "/offset"
+        path => "/tx/" ++ binary_to_list(arweave_lib_util:encode(TXID))
+            ++ "/offset"
     }).
 
 get_tx_data(TXID) ->
@@ -336,7 +337,8 @@ get_tx_data(TXID) ->
     ar_http:req(#{
         method => get,
         peer => {127, 0, 0, 1, Port},
-        path => "/tx/" ++ binary_to_list(arweave_lib_util:encode(TXID)) ++ "/data"
+        path => "/tx/" ++ binary_to_list(arweave_lib_util:encode(TXID))
+            ++ "/data"
     }).
 
 post_random_blocks(Wallet) ->

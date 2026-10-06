@@ -1,6 +1,5 @@
 %%% Public replica.2.9 entropy-mapping API in the arweave_lib library app.
 -module(arweave_lib_replica_2_9).
--export([get_next_fetch_offset/3]).
 
 -export([get_entropy_partition/1, get_entropy_partition_range/1, get_entropy_key/3,
     get_slice_index/1, get_partition_offset/1, get_entropy_index/2]).
@@ -214,20 +213,3 @@ get_entropy_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
     %% falls)
     SubChunkBucket = SubChunkStartOffset div ?SUB_CHUNK_SIZE,
     ChunkBucket * ?SUB_CHUNK_COUNT + SubChunkBucket.
-
-
-
-get_next_fetch_offset(Offset, Start, End) ->
-    SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
-    Partition = get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
-    {PartitionStart, PartitionEnd} = get_entropy_partition_range(Partition),
-    SectorStart = max(Start, PartitionStart),
-    SectorEnd = min(PartitionEnd, SectorStart + SectorSize),
-    Offset2 =
-        case Offset + 2 * ?DATA_CHUNK_SIZE > SectorEnd of
-            true ->
-                PartitionEnd;
-            false ->
-                Offset + ?DATA_CHUNK_SIZE
-        end,
-    min(Offset2, End).

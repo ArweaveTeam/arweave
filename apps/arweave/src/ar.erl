@@ -30,7 +30,6 @@
         ]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include("ar_verify_chunks.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -108,7 +107,7 @@ start(normal, _Args) ->
 
     %% Start other apps which we depend on.
     set_mining_address(),
-    arweave_storage_chunk_storage:run_defragmentation(),
+    arweave_storage:run_defragmentation(),
 
     %% Start Arweave. Supervisor children may run boot-time validators
     %% in their init/1 callbacks that mutate static config (e.g.,
@@ -116,6 +115,10 @@ start(normal, _Args) ->
     %% supervisor tree's child order guarantees those validators run
     %% before any downstream consumer reads the config.
     Result = ar_sup:start_link(),
+    case Result of
+        {ok, _} -> ok = arweave_sync:activate();
+        _ -> ok
+    end,
 
     %% Prometheus metrics collector - metrics should be defined 
     %% in arweave_metrics already. We only start the metrics collector
@@ -268,6 +271,9 @@ prep_stop(State) ->
                                                 % accepting connections from other peers, and then
                                                 % start the shutdown procedure.
     ok = ranch:suspend_listener(ar_http_iface_listener),
+
+    %% Quiesce sync while the host's packing and storage services still exist.
+    ok = arweave_sync:deactivate(),
 
                                                 % all timers/intervals must be stopped.
     ar_timer:terminate_timers(),

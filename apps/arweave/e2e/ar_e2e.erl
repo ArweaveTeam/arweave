@@ -16,7 +16,6 @@
          wait_for_chunks_recorded/3]).
 
 -include_lib("ar.hrl").
--include_lib("ar_consensus.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -80,9 +79,9 @@ packing_type_to_packing(PackingType, Address) ->
 
 restart_node(Node, Snapshot, Overrides) when is_map(Overrides) ->
     ar_test_node:stop(Node),
-    ok = ar_test_node:remote_call(Node, arweave_config, restore,
+    ok = ar_test_node:remote_call(Node, arweave_config, internal_restore,
                                   [Snapshot#{runtime => false}]),
-    ok = ar_test_node:remote_call(Node, arweave_config, force_config,
+    ok = ar_test_node:remote_call(Node, arweave_config, internal_force_config,
                                   [Overrides]),
     ok = ar_test_node:remote_call(Node, ar, start_dependencies, []),
     ar_test_await:node_joined(Node),
@@ -108,7 +107,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
                                               [join, auto] => true
                                              }, true),
     InitialSnapshot = ar_test_node:remote_call(
-                        Node, arweave_config, snapshot, []),
+                        Node, arweave_config, internal_snapshot, []),
 
     ?LOG_INFO("Source node ~p started.", [Node]),
 
@@ -170,15 +169,15 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
     %% encipher is still pending its module's entropy, get chunk_storage
     %% `not_found' and invalidate a valid record
     %% (ar_chunk_copy_worker:read_and_post_chunk) — dropping overlap chunks and
-    %% leaving the partition short. Starting with `sync_jobs = 0' keeps
+    %% leaving the partition short. Starting with syncing disabled keeps
     %% ar_chunk_copy from running; once entropy is prepared, restart with sync on.
     case PackingType of
         replica_2_9 ->
             ExpectedNodeName = ar_test_node:start_other_node(
-                                 Node, B0, BaseConfig#{ [sync, jobs] => 0 }, true),
-            Snapshot = ar_test_node:remote_call(Node, arweave_config, snapshot, []),
+                Node, B0, BaseConfig#{ [sync, max_download_rate] => 0 }, true),
+            Snapshot = ar_test_node:remote_call(Node, arweave_config, internal_snapshot, []),
             ar_test_await:all_entropy_prepared(Node),
-            restart_node(Node, Snapshot, #{ [sync, jobs] => ?DEFAULT_SYNC_JOBS });
+            restart_node(Node, Snapshot, #{ [sync, max_download_rate] => infinity });
         _ ->
             ExpectedNodeName = ar_test_node:start_other_node(Node, B0, BaseConfig, true)
     end,
@@ -301,7 +300,7 @@ filter_storage_modules_by_packing([], _Packing) ->
     [].
 
 aligned_partition_size2([{ModuleStart, ModuleEnd, Packing} | Modules], PartitionStart, PartitionEnd, Acc) ->
-    Overlap = arweave_storage_module:get_overlap(Packing),
+    Overlap = arweave_storage:get_overlap(Packing),
     ClippedStart = max(ModuleStart, PartitionStart),
     ClippedEnd = min(ModuleEnd, PartitionEnd),
     AlignedModuleStart = max(0, arweave_lib_constants:get_chunk_padded_offset(ClippedStart) - ?DATA_CHUNK_SIZE),
@@ -473,7 +472,7 @@ assert_no_chunks(Node, Chunks) ->
 
 %% @doc Probe offset for each ?DATA_CHUNK_SIZE slot in a `WeaveSize'-byte
 %% genesis weave, as `ChunkEnd - ?DATA_CHUNK_SIZE + 1' (the smallest
-%% offset `arweave_storage_sync_record:is_recorded' resolves to that chunk).
+%% offset `arweave_storage:is_recorded' resolves to that chunk).
 genesis_chunk_offsets(WeaveSize) ->
     [N * ?DATA_CHUNK_SIZE - ?DATA_CHUNK_SIZE + 1
      || N <- lists:seq(1, WeaveSize div ?DATA_CHUNK_SIZE)].

@@ -6,17 +6,11 @@
 
 -include_lib("arweave/include/ar.hrl").
 
--ifdef(AR_TEST).
--else.
--ifndef(BLOCK_TIME_HISTORY_BLOCKS).
--endif.
--endif.
-
 history_length() ->
     ?BLOCK_TIME_HISTORY_BLOCKS.
 
 has_history(Height) ->
-    Height - history_length() > arweave_lib_fork:height_2_7().
+    Height - history_length() > arweave_lib_constants:height_2_7().
 
 get_history(B) ->
     lists:sublist(B#block.block_time_history, history_length()).
@@ -24,7 +18,7 @@ get_history(B) ->
 get_history_from_blocks([], _PrevB) ->
     [];
 get_history_from_blocks([B | Blocks], PrevB) ->
-    case B#block.height >= arweave_lib_fork:height_2_7() of
+    case B#block.height >= arweave_lib_constants:height_2_7() of
         false ->
             get_history_from_blocks(Blocks, B);
         true ->
@@ -41,7 +35,7 @@ set_history([B | Blocks], History) ->
 
 get_hashes(Blocks) ->
     TipB = hd(Blocks),
-    Len = min(TipB#block.height - arweave_lib_fork:height_2_7() + 1, arweave_lib_constants:get_consensus_window_size()),
+    Len = min(TipB#block.height - arweave_lib_constants:height_2_7() + 1, arweave_lib_constants:get_consensus_window_size()),
     [B#block.block_time_history_hash || B <- lists:sublist(Blocks, Len)].
 
 sum_history(B) ->
@@ -108,7 +102,7 @@ hash([{BlockInterval, VDFInterval, ChunkCount} | History], IOList) ->
     hash(History, [BlockIntervalBin, VDFIntervalBin, ChunkCountBin | IOList]).
 
 update_history(B, PrevB) ->
-    case B#block.height >= arweave_lib_fork:height_2_7() of
+    case B#block.height >= arweave_lib_constants:height_2_7() of
         false ->
             PrevB#block.block_time_history;
         true ->

@@ -31,8 +31,10 @@ fork_at_entropy_reset_point_test_() ->
 %% that the block is rejected and that the VDF client can later get on
 %% the correct chain and then mine a solution there.
 test_fork_checkpoints_not_found() ->
-    mock_reset_frequency(),
-    try
+    ar_test_node:run_with_mocked([main, peer1], [
+        {ar_nonce_limiter, get_reset_frequency,
+            fun() -> ?TEST_RESET_FREQUENCY end}
+    ], fun() ->
         [B0] = test_weave(),
 
         %% Start nodes that won't gossip blocks to each other, so the test
@@ -44,8 +46,6 @@ test_fork_checkpoints_not_found() ->
                 [gossip, block, pollers] => 0
             }
         }),
-        mock_reset_frequency(main),
-
         ar_test_node:start_peer(peer1, #{
             b0 => B0,
             config => #{
@@ -53,8 +53,6 @@ test_fork_checkpoints_not_found() ->
                 [gossip, block, pollers] => 0
             }
         }),
-        mock_reset_frequency(peer1),
-
         ar_test_node:with_gossip_paused(main, fun() ->
             ar_test_node:with_gossip_paused(peer1, fun() ->
                 %% Still need to connect to make sure VDF is shared.
@@ -93,10 +91,7 @@ test_fork_checkpoints_not_found() ->
                 ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 3))
             end)
         end)
-    after
-        disable_mocks(main),
-        disable_mocks(peer1)
-    end.
+    end).
 
 %% Scenario:
 %% 1. There's a chain fork on a block that opens a new VDF session.
@@ -122,8 +117,10 @@ test_fork_checkpoints_not_found() ->
 %% broke this fix for nodes using `disable vdf_server_pull`. We've now
 %% re-applied the fix and added this test.
 test_fork_refuse_validation() ->
-    mock_reset_frequency(),
-    try
+    ar_test_node:run_with_mocked([main, peer1], [
+        {ar_nonce_limiter, get_reset_frequency,
+            fun() -> ?TEST_RESET_FREQUENCY end}
+    ], fun() ->
         [B0] = test_weave(),
 
         %% Start nodes that won't gossip blocks to each other, so the test
@@ -135,8 +132,6 @@ test_fork_refuse_validation() ->
                 [gossip, block, pollers] => 0
             }
         }),
-        mock_reset_frequency(main),
-
         ar_test_node:start_peer(peer1, #{
             b0 => B0,
             config => #{
@@ -145,8 +140,6 @@ test_fork_refuse_validation() ->
                 [vdf, pull] => false
             }
         }),
-        mock_reset_frequency(peer1),
-
         ar_test_node:with_gossip_paused(main, fun() ->
             ar_test_node:with_gossip_paused(peer1, fun() ->
                 %% Still need to connect to make sure VDF is shared.
@@ -178,23 +171,7 @@ test_fork_refuse_validation() ->
                 ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 3))
             end)
         end)
-    after
-        disable_mocks(main),
-        disable_mocks(peer1)
-    end.
-
-mock_reset_frequency() ->
-    ar_test_util:new_mock(ar_nonce_limiter, [passthrough]),
-    ok = meck:expect(ar_nonce_limiter, get_reset_frequency, 0, ?TEST_RESET_FREQUENCY).
-
-mock_reset_frequency(Node) ->
-    ok = ar_test_node:remote_call(Node, ar_test_util, new_mock,
-        [ar_nonce_limiter, [passthrough]]),
-    ok = ar_test_node:remote_call(Node, meck, expect,
-        [ar_nonce_limiter, get_reset_frequency, 0, ?TEST_RESET_FREQUENCY]).
-
-disable_mocks(Node) ->
-    ok = ar_test_node:remote_call(Node, ar_test_util, unmock_module, [ar_nonce_limiter]).
+    end).
 
 test_weave() ->
     [B0] = ar_weave:init(),
@@ -221,14 +198,14 @@ with_vdf_pull_and_push_disabled(Node, Fun) when is_function(Fun, 0) ->
     %% (In the legacy config this was the `vdf_server_pull' bit of
     %% `disable'; in the per-leaf store it's the dedicated boolean.)
     Prior = ar_test_node:remote_call(Node, arweave_config, get, [[vdf, pull]]),
-    ok = ar_test_node:remote_call(Node, arweave_config, force_config,
+    ok = ar_test_node:remote_call(Node, arweave_config, internal_force_config,
         [#{[vdf, pull] => false}]),
     %% Also suspend the pull loop so peer1 cannot fetch full sessions.
     Pid = suspend_nonce_limiter_client(Node),
     try
         Fun()
     after
-        ok = ar_test_node:remote_call(Node, arweave_config, force_config,
+        ok = ar_test_node:remote_call(Node, arweave_config, internal_force_config,
             [#{[vdf, pull] => Prior}]),
         resume_nonce_limiter_client(Node, Pid)
     end.

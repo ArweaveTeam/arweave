@@ -109,7 +109,7 @@ next_state(#repack_chunk{state = needs_chunk} = RepackChunk) ->
       AbsoluteEndOffset =< arweave_lib_constants:strict_data_split_threshold()
      ),
 
-    IsStorageSupported = arweave_storage_chunk_storage:is_storage_supported(
+    IsStorageSupported = arweave_storage:is_storage_supported(
                            AbsoluteEndOffset, ChunkSize, TargetPacking),
 
     NextState = case {IsTooSmall, SourcePacking, Chunk, IsStorageSupported} of

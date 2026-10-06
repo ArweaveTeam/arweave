@@ -21,6 +21,7 @@
     write_legacy_list/1
 ]).
 -include("arweave_config.hrl").
+-include_lib("arweave_config/include/arweave_config_deps.hrl").
 
 specs() ->
     [
@@ -173,7 +174,7 @@ validate_one(Attrs) ->
 %% to nothing and never fires. `ar_webhook' owns the vocabulary, so a new
 %% event needs no change here.
 validate_events(Events) ->
-    Supported = ar_webhook:supported_events(),
+    Supported = ?DEP(webhooks):supported_events(),
     case [Event || Event <- Events, not lists:member(Event, Supported)] of
         [] ->
             ok;

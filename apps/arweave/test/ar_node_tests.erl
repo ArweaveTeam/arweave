@@ -3,7 +3,6 @@
 
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -59,8 +58,11 @@ test_mining_reward() ->
 
 % @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{arweave_lib_fork, height_2_6, fun() -> 0 end}],
-        fun test_multi_node_mining_reward/0, ?TEST_NODE_TIMEOUT).
+    ar_test_node:test_with_all_nodes_mocked(
+        [{arweave_lib_constants, height_2_6, fun() -> 0 end}],
+        fun test_multi_node_mining_reward/0,
+        ?TEST_NODE_TIMEOUT
+    ).
 
 test_multi_node_mining_reward() ->
     {_Priv1, Pub1} = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
@@ -110,8 +112,11 @@ replay_attack_test_() ->
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test_() ->
-    ar_test_node:test_with_all_nodes_mocked([{arweave_lib_fork, height_2_6, fun() -> 0 end}],
-        fun test_wallet_transaction/0, ?TEST_NODE_TIMEOUT).
+    ar_test_node:test_with_all_nodes_mocked(
+        [{arweave_lib_constants, height_2_6, fun() -> 0 end}],
+        fun test_wallet_transaction/0,
+        ?TEST_NODE_TIMEOUT
+    ).
 
 test_wallet_transaction() ->
     TestWalletTransaction = fun(KeyType) ->

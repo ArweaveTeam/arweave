@@ -5,7 +5,7 @@
 %%% prometheus module implementing the metric (e.g. `prometheus_counter',
 %%% `prometheus_gauge', `prometheus_histogram') and `Definition' is the
 %%% proplist accepted by that module's `new/1' function. The `name'
-%%% property is mandatory and is used by `arweave_metrics:cleanup/0' to
+%%% property is mandatory and is used by `arweave_metrics:internal_cleanup/0' to
 %%% deregister the metric.
 %%%
 -module(ar_metrics_definitions).
@@ -514,7 +514,15 @@ all_metrics() ->
         {prometheus_gauge, [{name, packing_buffer_size},
             {help, "The number of chunks in the packing server queue."}]},
         {prometheus_gauge, [{name, chunk_cache_size},
-                {help, "The number of chunks scheduled for downloading."}]},
+            {help, "Shared chunk lifecycle reservations across fetching, copying, "
+                    "disk-pool storage and repacking."}]},
+        {prometheus_gauge, [{name, chunk_cache_size_limit},
+            {help, "Shared chunk lifecycle capacity from packing.cache_size, "
+                    "including transformation workspace per reservation."}]},
+        {prometheus_gauge, [{name, chunk_cache_size_by_store},
+            {labels, [store_id]},
+            {help, "Shared reservations for local chunk processing in this store, "
+                    "excluding outstanding reads and network fetches."}]},
         {prometheus_counter, [{name, chunks_stored},
             {labels, [packing, store_id]},
             {help, "The counter is incremented every time a chunk is written to "
@@ -524,44 +532,42 @@ all_metrics() ->
             {help, "The counter is incremented every time a chunk is read from "
                     "chunk_storage."}]},
         {prometheus_histogram, [
-            {name, chunk_read_rate_bytes_per_second},
-            {labels, [store_id, type]},
-            {buckets, [infinity]}, %% we don't care about the histogram portion
-            {help, "The rate, in bytes per second, at which chunks are read from storage. "
-                    "The type label can be 'raw' or 'repack'."}
+            {name, chunk_storage_read_duration_milliseconds},
+            {labels, [store_id]},
+            {buckets, [0.5, 1, 2, 5, 12, 25, 50, 100, 250, 1000, 5000]},
+            {help, "Single-chunk ar_chunk_storage read latency (ms), observed at "
+                    "the public API (open + pread + close; no queue)."}
         ]},
         {prometheus_histogram, [
-            {name, chunk_write_rate_bytes_per_second},
-            {labels, [store_id, type]},
-            {buckets, [infinity]}, %% we don't care about the histogram portion
-            {help, "The rate, in bytes per second, at which chunks are written to storage."}
+            {name, chunk_storage_put_duration_milliseconds},
+            {labels, [store_id]},
+            {buckets, [1, 5, 25, 100, 500, 2000, 10000, 45000, 180000]},
+            {help, "Caller-observed arweave_storage:put_chunk latency (ms): queue wait "
+                    "behind the per-store server plus the write."}
         ]},
-        {prometheus_gauge, [{name, data_discovery},
-            {labels, [type, store_id, stat]},
-            {help, "Tracks peer availability statistics from data discovery. "
-                    "'type' is 'normal' or 'footprint'. "
-                    "'stat' is 'num_peers' - distinct peers offering data "
-                    "anywhere in this store_id's range."}]},
-        {prometheus_gauge, [{name, peer_interval_cache_size},
+        {prometheus_histogram, [
+            {name, repack_read_duration_milliseconds},
+            {labels, [store_id]},
+            {buckets, [5, 25, 100, 500, 2000, 10000, 60000]},
+            {help, "ar_repack_io footprint batch read latency (ms)."}
+        ]},
+        {prometheus_gauge, [{name, sync_discovery_peers},
+            {labels, [mode, store_id]},
+            {help, "Distinct peers advertising data in a configured store's range. "
+                    "'mode' is 'byte' or 'footprint'; store_id='all' is the "
+                    "distinct-peer union across configured stores."}]},
+        {prometheus_gauge, [{name, discovery_peers_scanned},
+            {help, "Distinct peers currently tracked by sync discovery."}]},
+        {prometheus_gauge, [{name, chunk_interval_cache_size},
             {labels, [unit]},
-            {help, "Size of ar_data_discovery's peer interval cache "
-                    "(per-(peer, window, mode) entries). 'unit' is 'rows' "
+            {help, "Size of arweave_sync_discovery's chunk interval cache "
+                    "(per-(peer, location, mode) entries). 'unit' is 'rows' "
                     "(row count) or 'bytes' (ets:info memory * wordsize, "
-                    "capped by ?MAX_INTERVAL_CACHE_BYTES). Sustained pressure "
-                    "near the byte cap indicates the cap should be raised or "
-                    "peer scanning is thrashing."}]},
-        {prometheus_counter, [{name, peer_interval_cache_evictions},
+                    "capped by the cache byte limit)."}]},
+        {prometheus_counter, [{name, chunk_interval_cache_evictions},
             {labels, [reason]},
-            {help, "Cumulative rows evicted from ar_data_discovery's peer "
-                    "interval cache. 'reason' is 'trim' (LRU cap fired) or "
-                    "'peer_removed' (whole-peer wipe on remove_peer)."}]},
-        {prometheus_counter, [{name, sync_tasks},
-            {labels, [state, peer]},
-            {help, "Sync task counters per peer. queued_in/queued_out track "
-                    "every queue add/remove (queue depth = queued_in - "
-                    "queued_out). Other states are flavor: dispatched, "
-                    "completed, activate_footprint, deactivate_footprint, "
-                    "rebalance_cut, reaped, dropped_unavailable."}]},
+            {help, "Cumulative rows evicted from arweave_sync_discovery's chunk "
+                    "interval cache, labeled by eviction reason."}]},
         {prometheus_counter, [{name, sync_chunks_skipped},
             {labels, [reason]},
             {help, "The number of chunks skipped during syncing."}]},
@@ -569,12 +575,54 @@ all_metrics() ->
             {labels, [store_id, mode]},
             {help, "The device lock status of the storage module. "
                     "-1: off, 0: paused, 1: active, 2: complete -2: unknown"}]},
-        {prometheus_gauge, [{name, sync_task_queue_inflight_bytes},
+        {prometheus_gauge, [{name, sync_claimed_bytes_by_store},
             {labels, [store_id]},
-            {help, "Total bytes in the per-StoreID sync_task_queue's "
-                    "inflight_intervals (ranges ar_peer_sync has pushed to "
-                    "ar_sync_dispatcher and not yet released, used by its dedup "
-                    "gate). Climbing without bound flags a dedup-overlay leak."}]},
+            {help, "Total bytes in the store's claimed ranges that have not yet "
+                    "completed."}]},
+        {prometheus_gauge, [{name, sync_claimed_peers_by_store},
+            {labels, [store_id]},
+            {help, "Distinct peers owning runnable, fetching, or write-pending "
+                    "claimed chunks for the store."}]},
+        {prometheus_gauge, [{name, sync_sweep_offset},
+            {labels, [store_id, mode]},
+            {help, "Bytes the mode's sweep cursor has swept into the store's range."}]},
+        {prometheus_gauge, [{name, sync_tasks_by_peer},
+            {labels, [stage, peer]},
+            {help, "Current peer-bound sync tasks by lifecycle stage. Stage is "
+                    "'queued', 'fetching', or 'writing'."}]},
+        {prometheus_gauge, [{name, sync_tasks_by_store},
+            {labels, [stage, store_id]},
+            {help, "Current sync tasks by store and lifecycle stage. Stage is "
+                    "'queued', 'fetching', or 'writing'."}]},
+        {prometheus_gauge, [{name, sync_peer_concurrency_cap},
+            {labels, [peer]},
+            {help, "Per-peer sync concurrency cap computed by the scheduler."}]},
+        {prometheus_gauge, [{name, sync_peer_goodput_bytes_per_second},
+            {labels, [peer]},
+            {help, "Chunk bytes fetched from the peer per second over the "
+                    "last scheduler tick."}]},
+        {prometheus_gauge, [{name, sync_peer_failure_pressure},
+            {labels, [peer]},
+            {help, "Share of the peer's fetch time spent on 429s, 503s, "
+                    "timeouts, and client errors over the last scheduler "
+                    "tick."}]},
+        {prometheus_gauge, [{name, sync_active_peers},
+            {help, "Distinct peers with queued or nonterminal sync tasks."}]},
+        {prometheus_gauge, [{name, sync_total_concurrency_cap},
+            {help, "Sum of the per-peer sync concurrency caps."}]},
+        {prometheus_gauge, [{name, sync_total_inflight},
+            {help, "Total in-flight sync fetch workers across all peers."}]},
+        {prometheus_gauge, [{name, sync_active_footprints},
+            {help, "Footprints holding a replica.2.9 entropy-cache slot. At "
+                    "sync_max_active_footprints, dispatch can only start "
+                    "chunks of footprints already bound."}]},
+        {prometheus_gauge, [{name, sync_max_active_footprints},
+            {help, "Entropy-cache slots available, from the configured cache "
+                    "size divided by the footprint size."}]},
+        {prometheus_gauge, [{name, sync_store_pipeline_limit_chunks},
+            {labels, [store_id]},
+            {help, "Fetched plus fetching chunk limit derived from the store's "
+                    "measured write rate and assignment target duration."}]},
         {prometheus_gauge, [{name, repack_chunk_states},
             {labels, [store_id, type, state]},
             {help, "The count of chunks in each state. 'type' can be 'cache' or 'queue'."}]},
@@ -592,7 +640,15 @@ all_metrics() ->
         {prometheus_counter, [{name, replica_2_9_entropy_stats},
             {labels, [partition, stat]},
             {help, "Count of different replica_2_9 entropy events: 'cache_hit', 'cache_miss', "
-                "'redundant'."}]},
+                   "'redundant'."}]},
+        {prometheus_histogram, [
+            {name, replica_2_9_entropy_reuse_count},
+            {buckets, [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, infinity]},
+            {help, "Chunks served by one cached replica.2.9 entropy before it "
+                   "was evicted. A footprint holds 1024 chunks, so values well "
+                   "below that mean entropy is being regenerated instead of "
+                   "amortized."}
+        ]},
         {prometheus_histogram, [
             {name, replica_2_9_entropy_duration_milliseconds},
             {buckets, [infinity]}, %% we don't care about the histogram portion

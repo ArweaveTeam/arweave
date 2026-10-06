@@ -2,6 +2,7 @@
 -test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -16,7 +17,7 @@
 %% must be live before any node's arweave app starts.
 uses_blacklists_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-        [{arweave_lib_fork, height_2_9_6, fun() -> infinity end},
+        [{arweave_lib_constants, height_2_9_6, fun() -> infinity end},
          {ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
         fun test_uses_blacklists/0,
         ?TEST_NODE_TIMEOUT
@@ -47,7 +48,6 @@ test_uses_blacklists() ->
                 [transactions, blocklist, files] =>
                     [list_to_binary(File) || File <- BlacklistFiles],
                 [transactions, allowlist, files] => [list_to_binary(WhitelistFile)],
-                [sync, jobs] => 10,
                 [transactions, blocklist, urls] =>
                     blocklist_urls(BlocklistPort),
                 [features, pack_served_chunks] => true
@@ -420,7 +420,8 @@ assert_removed_chunks(StorageModules, BadOffsets) ->
     ).
 
 storage_module_covers_offset(Module, Offset) ->
-    {Start, End} = arweave_storage_module:module_range(Module),
+    #store_info{effective_range = {Start, End}} =
+        arweave_storage:store_info(Module),
     Start =< Offset andalso Offset < End.
 
 remaining_stored_offsets(StorageModules, PaddedBadOffsets) ->
@@ -430,9 +431,11 @@ remaining_stored_offsets(StorageModules, PaddedBadOffsets) ->
     ])).
 
 remaining_stored_offsets_for_module(Module, PaddedBadOffsets) ->
-    {Start, End} = arweave_storage_module:module_range(Module),
-    StoreID = arweave_storage_module:id(Module),
-    Chunks = arweave_storage_chunk_storage:get_range(Start, End - Start, StoreID),
+    #store_info{effective_range = {Start, End}} =
+        arweave_storage:store_info(Module),
+    #store_info{id = StoreID} =
+        arweave_storage:store_info(Module),
+    Chunks = arweave_storage:get_chunk_range(Start, End - Start, StoreID),
     ChunkOffsets = [Offset || {Offset, _Chunk} <- Chunks],
     [
         Offset

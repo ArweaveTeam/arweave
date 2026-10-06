@@ -4,7 +4,6 @@
         debug_sha_verify_no_reset/6, debug_sha_verify/8, debug_sha2/3,
         step_number_to_salt_number/1, checkpoint_buffer_to_checkpoints/1]).
 
--include("ar_vdf.hrl").
 -include("ar.hrl").
 
 step_number_to_salt_number(0) ->
@@ -92,7 +91,8 @@ verify2(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes,
         false ->
             false;
         {true, CheckpointBuffer} ->
-            {true, arweave_lib_util:take_every_nth(?VDF_CHECKPOINT_COUNT_IN_STEP,
+            {true,
+                arweave_lib_util:take_every_nth(?VDF_CHECKPOINT_COUNT_IN_STEP,
                     checkpoint_buffer_to_checkpoints(CheckpointBuffer))}
     end.
 

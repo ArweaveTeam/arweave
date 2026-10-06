@@ -30,10 +30,9 @@
 
 -include("ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include("ar_consensus.hrl").
 -include("ar_data_sync.hrl").
--include("ar_sync_buckets.hrl").
--include("ar_data_discovery.hrl").
+-include_lib("arweave/include/ar_sync_buckets.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
 -include("ar_mining.hrl").
 -include("ar_wallets.hrl").
 -include("ar_pool.hrl").
@@ -269,7 +268,8 @@ get_wallet_list_chunk([Peer | Peers], H, Cursor) ->
             start ->
                 BasePath;
             _ ->
-                BasePath ++ "/" ++ binary_to_list(arweave_lib_util:encode(Cursor))
+                BasePath ++ "/"
+                    ++ binary_to_list(arweave_lib_util:encode(Cursor))
         end,
     Response =
         ar_http:req(#{
@@ -350,7 +350,7 @@ get_sync_record(Peer) ->
                                               peer => Peer,
                                               method => get,
                                               path => "/data_sync_record",
-                                              timeout => 30 * 1000,
+                                              timeout => ?DATA_SYNC_RECORD_TIMEOUT_MS,
                                               connect_timeout => 2000,
                                               limit => ?MAX_ETF_SYNC_RECORD_SIZE,
                                               headers => Headers
@@ -363,7 +363,7 @@ get_sync_record(Peer, Start, Limit) ->
                                               method => get,
                                               path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/"
                                               ++ integer_to_list(Limit),
-                                              timeout => 30 * 1000,
+                                              timeout => ?DATA_SYNC_RECORD_TIMEOUT_MS,
                                               connect_timeout => 5000,
                                               limit => ?MAX_ETF_SYNC_RECORD_SIZE,
                                               headers => Headers
@@ -376,7 +376,7 @@ get_sync_record(Peer, Start, End, Limit) ->
                                               method => get,
                                               path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/"
                                               ++ integer_to_list(End) ++ "/" ++ integer_to_list(Limit),
-                                              timeout => 30 * 1000,
+                                              timeout => ?DATA_SYNC_RECORD_TIMEOUT_MS,
                                               connect_timeout => 5000,
                                               limit => ?MAX_ETF_SYNC_RECORD_SIZE,
                                               headers => Headers
@@ -413,7 +413,7 @@ get_chunk_binary(Peer, Offset, RequestedPacking) ->
                              peer => Peer,
                              method => get,
                              path => "/chunk2/" ++ integer_to_binary(Offset),
-                             timeout => 120 * 1000,
+                             timeout => ?FETCH_TIMEOUT_MS,
                              connect_timeout => 5000,
                              limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
                              headers => p2p_headers() ++ Headers
@@ -511,7 +511,7 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
     ExpectedLength = ar_rewards:buffered_reward_history_length(Height),
     DoubleCheckLength = ar_rewards:expected_hashes_length(Height),
     true = length(ExpectedRewardHistoryHashes) == min(
-                                                    Height - arweave_lib_fork:height_2_6() + 1,
+                                                    Height - arweave_lib_constants:height_2_6() + 1,
                                                     DoubleCheckLength),
     case ar_http:req(#{
                        peer => Peer,
@@ -527,12 +527,12 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
                                                                    ExpectedRewardHistoryHashes) of
                         true ->
                             ?LOG_DEBUG([
-                                        {event, received_valid_reward_history},
-                                        {peer, arweave_lib_util:format_peer(Peer)},
-                                        {height, Height},
-                                        {expected_length, ExpectedLength},
-                                        {length, length(RewardHistory)}
-                                       ]),
+                                {event, received_valid_reward_history},
+                                {peer, arweave_lib_util:format_peer(Peer)},
+                                {height, Height},
+                                {expected_length, ExpectedLength},
+                                {length, length(RewardHistory)}
+                            ]),
                             {ok, RewardHistory};
                         false ->
                             ?LOG_WARNING([{event, received_invalid_reward_history},
@@ -560,7 +560,7 @@ get_reward_history([], _B, _RewardHistoryHashes) ->
 
 get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
     #block{ height = Height, indep_hash = H } = B,
-    Fork_2_7 = arweave_lib_fork:height_2_7(),
+    Fork_2_7 = arweave_lib_constants:height_2_7(),
     true = Height >= Fork_2_7,
     ExpectedLength = min(Height - Fork_2_7 + 1,
                          ar_block_time_history:history_length() + arweave_lib_constants:get_consensus_window_size()),
@@ -1155,7 +1155,7 @@ get_txs(Peers, B) ->
 get_txs(_Height, _Peers, [], TXs, _TotalSize) ->
     {ok, lists:reverse(TXs)};
 get_txs(Height, Peers, [TXID | Rest], TXs, TotalSize) ->
-    Fork_2_0 = arweave_lib_fork:height_2_0(),
+    Fork_2_0 = arweave_lib_constants:height_2_0(),
     case get_tx(Peers, TXID) of
         #tx{ format = 2 } = TX ->
             get_txs(Height, Peers, Rest, [TX | TXs], TotalSize);
@@ -1398,7 +1398,7 @@ parse_peer_list([_RawPeer | PeerArray], Left, Acc) ->
     parse_peer_list(PeerArray, Left - 1, Acc).
 
 %% @doc Parse peer addresses from an external source.
-%% NOTE: It might be tempting to use parser function from arweave_util,
+%% NOTE: It might be tempting to use parser function from arweave_lib_util,
 %% but we need an additional validation in the API.
 parse_peer_address(Peer) when is_binary(Peer), byte_size(Peer) =< ?MAX_PEER_ADDRESS_LEN ->
     parse_peer_address(binary_to_list(Peer));

@@ -18,14 +18,13 @@
     prometheus_process_collector,
     prometheus_httpd,
     runtime_tools,
+    arweave_lib,
     arweave_metrics,
     arweave_limiter,
-    arweave_storage,
-    arweave_entropy,
-    arweave_tools,
-    arweave_sync,
     arweave_throttling,
-    arweave_lib
+    arweave_sync,
+    arweave_storage,
+    arweave_entropy
    ]},
   {extra_applications, [recon]}
  ]}.

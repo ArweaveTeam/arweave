@@ -25,8 +25,8 @@
                                 ]).
 
 -define(HTTP_IFACE_ROUTES, [
-	{"/metrics/[:registry]", arweave_metrics_cowboy_handler, []},
-	{"/[...]", ar_http_iface_handler, []}
+    {"/metrics/[:registry]", arweave_metrics_cowboy_handler, []},
+    {"/[...]", ar_http_iface_handler, []}
 ]).
 
 -define(ENDPOINTS, ["info", "block", "block_announcement", "block2", "tx", "tx2",

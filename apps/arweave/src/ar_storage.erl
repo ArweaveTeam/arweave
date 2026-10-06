@@ -134,7 +134,7 @@ read_block_time_history(Height, BI) ->
 read_block_time_history(_Height, [], _CustomDir) ->
     [];
 read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI], CustomDir) ->
-    case Height < arweave_lib_fork:height_2_7() of
+    case Height < arweave_lib_constants:height_2_7() of
     true ->
             [];
         false ->
@@ -1515,9 +1515,13 @@ store_account_tree_update(Height, RootHash, Map) ->
                     %% be persisted yet, so attempt the (idempotent, content-addressed)
                     %% put rather than silently dropping it.
                     ?LOG_WARNING([{event, failed_to_read_account_tree_key},
-                            {key_hash, arweave_lib_util:encode(element(1, Key))},
-                            {key_prefix, case element(2, Key) of root -> root;
-                                    Prefix -> arweave_lib_util:encode(Prefix) end},
+                            {key_hash,
+                                arweave_lib_util:encode(element(1, Key))},
+                            {key_prefix,
+                                case element(2, Key) of
+                                    root -> root;
+                                    Prefix -> arweave_lib_util:encode(Prefix)
+                                end},
                             {height, Height},
                             {root_hash, arweave_lib_util:encode(RootHash)},
                             {reason, io_lib:format("~p", [Reason])}]),
@@ -1994,14 +1998,12 @@ test_update_block_index() ->
     ], read_block_index()).
 
 update_block_index_kv_read_error_test() ->
-    meck:new(ar_kv, [passthrough]),
-    meck:expect(ar_kv, delete_range, fun(_, _, _) -> ok end),
-    meck:expect(ar_kv, get, fun(block_index_db, _) -> {error, simulated_io_error} end),
-    try
+    ar_test_util:run_with_mocked([
+        {ar_kv, delete_range, fun(_, _, _) -> ok end},
+        {ar_kv, get, fun(block_index_db, _) -> {error, simulated_io_error} end}
+    ], fun() ->
         ?assertEqual({error, simulated_io_error}, update_block_index2(1, 0, []))
-    after
-        meck:unload(ar_kv)
-    end.
+    end).
 
 %% @doc read_file_raw/1 must close the descriptor on every branch, including the
 %% eof branch taken for an empty file. We capture the exact handle opened and
@@ -2010,18 +2012,19 @@ read_file_raw_closes_fd_on_eof_test() ->
     Filename = "ar_storage_fd_leak_test_"
         ++ integer_to_list(erlang:phash2(erlang:make_ref())) ++ ".tmp",
     ok = file:write_file(Filename, <<>>),
-    meck:new(file, [unstick, passthrough]),
-    meck:expect(file, open, fun(F, Modes) ->
-            R = meck:passthrough([F, Modes]),
-            case R of {ok, Fd} -> put(test_fd, Fd); _ -> ok end,
-            R
-        end),
     try
-        ?assertEqual(eof, read_file_raw(Filename)),
-        Fd = get(test_fd),
-        ?assertNotEqual(undefined, Fd),
-        ?assert(meck:called(file, close, [Fd]))
+        ar_test_util:run_with_mocked([
+            {file, open, fun(F, Modes) ->
+                R = meck:passthrough([F, Modes]),
+                case R of {ok, Fd} -> put(test_fd, Fd); _ -> ok end,
+                R
+            end}
+        ], fun() ->
+            ?assertEqual(eof, read_file_raw(Filename)),
+            Fd = get(test_fd),
+            ?assertNotEqual(undefined, Fd),
+            ?assert(meck:called(file, close, [Fd]))
+        end, [unstick, passthrough])
     after
-        meck:unload(file),
         file:delete(Filename)
     end.

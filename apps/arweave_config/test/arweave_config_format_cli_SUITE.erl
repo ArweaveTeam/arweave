@@ -1,5 +1,6 @@
 %%% @doc arweave_config_format_cli parser test suite.
 -module(arweave_config_format_cli_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

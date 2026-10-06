@@ -8,6 +8,7 @@
     list_map/1,
     non_neg_integer/1,
     pos_integer/1,
+    finite_pos_integer/1,
     ipv4/1,
     file/1,
     tcp_port/1,
@@ -211,6 +212,16 @@ integer(Integer) when is_integer(Integer) ->
     {ok, Integer};
 integer(V) ->
     {error, V}.
+
+%% @doc Validate as a finite non-negative integer: `infinity' is rejected.
+%% For options whose setters do arithmetic on the value.
+-spec finite_pos_integer(Input) -> Return when
+    Input :: list() | binary() | pos_integer(),
+    Return :: {ok, pos_integer()} | {error, term()}.
+finite_pos_integer(infinity) -> {error, infinity};
+finite_pos_integer(<<"infinity">>) -> {error, <<"infinity">>};
+finite_pos_integer("infinity") -> {error, "infinity"};
+finite_pos_integer(V) -> non_neg_integer(V).
 
 %% @doc Validate as a non-negative integer, or the atom `infinity'.
 %% `infinity' is accepted so options can carry a sentinel meaning
@@ -570,7 +581,7 @@ resolve_peer(Peer) when is_tuple(Peer) ->
         {error, _} = Err -> Err
     end;
 resolve_peer(Peer) ->
-    case arweave_config:safe_parse_peer(Peer) of
+    case arweave_config_peer:safe_parse_peer(Peer) of
         {ok, [_ | _] = PeerIDs} -> {ok, PeerIDs};
         _ -> {error, {invalid_peer, Peer}}
     end.

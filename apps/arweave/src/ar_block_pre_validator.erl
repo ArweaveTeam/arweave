@@ -7,7 +7,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
 
 -record(state, {
@@ -51,9 +50,11 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
                 B2 = B#block{ receive_timestamp = ReceiveTimestamp, source_peer = Peer },
                 case pre_validate_is_peer_banned(B2, Peer) of
                     enqueued ->
-                        ?LOG_DEBUG([{event, enqueued_block},
-                                    {hash, arweave_lib_util:encode(H)},
-                                    {peer, arweave_lib_util:format_peer(Peer)}]),
+                        ?LOG_DEBUG([
+                            {event, enqueued_block},
+                            {hash, arweave_lib_util:encode(H)},
+                            {peer, arweave_lib_util:format_peer(Peer)}
+                        ]),
                         ok;
                     Other ->
                         ar_ignore_registry:remove_ref(H, Ref),
@@ -236,14 +237,16 @@ pre_validate_previous_block(B, Peer) ->
         #block{ height = PrevHeight } = PrevB ->
             case B#block.height == PrevHeight + 1 of
                 false ->
-                    ?LOG_DEBUG([{event, previous_block_height_mismatch},
-                                {hash, arweave_lib_util:encode(B#block.indep_hash)},
-                                {prev_hash, arweave_lib_util:encode(PrevH)},
-                                {height, B#block.height},
-                                {prev_height, PrevHeight}]),
+                    ?LOG_DEBUG([
+                        {event, previous_block_height_mismatch},
+                        {hash, arweave_lib_util:encode(B#block.indep_hash)},
+                        {prev_hash, arweave_lib_util:encode(PrevH)},
+                        {height, B#block.height},
+                        {prev_height, PrevHeight}
+                    ]),
                     invalid;
                 true ->
-                    true = B#block.height >= arweave_lib_fork:height_2_6(),
+                    true = B#block.height >= arweave_lib_constants:height_2_6(),
                     PrevCDiff = B#block.previous_cumulative_diff,
                     case PrevB#block.cumulative_diff == PrevCDiff of
                         true ->
@@ -281,7 +284,7 @@ may_be_pre_validate_first_chunk_hash(B, PrevB, Peer) ->
     end.
 
 may_be_pre_validate_second_chunk_hash(#block{ recall_byte2 = undefined } = B, PrevB, Peer) ->
-    case B#block.height < arweave_lib_fork:height_2_7_2() orelse B#block.poa2 == #poa{} of
+    case B#block.height < arweave_lib_constants:height_2_7_2() orelse B#block.poa2 == #poa{} of
         false ->
             post_block_reject_warn(B, check_second_chunk, Peer),
             ar_events:send(block, {rejected, invalid_poa2_recall_byte2_undefined,
@@ -439,7 +442,7 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
                 LastStepPrevOutput = get_last_step_prev_output(B),
                 LastStepPrevOutput2 = get_last_step_prev_output(CacheB),
                 case LastStepPrevOutput == LastStepPrevOutput2
-                    andalso (Height < arweave_lib_fork:height_2_9()
+                    andalso (Height < arweave_lib_constants:height_2_9()
                              orelse PackingDifficulty == PackingDifficulty2) of
                     true ->
                         B2 = B#block{ poa = (B#block.poa)#poa{ chunk = Chunk },
@@ -595,7 +598,7 @@ pre_validate_previous_solution_hash(B, PrevB, SolutionResigned, Peer) ->
     end.
 
 pre_validate_last_retarget(B, PrevB, SolutionResigned, Peer) ->
-    true = B#block.height >= arweave_lib_fork:height_2_6(),
+    true = B#block.height >= arweave_lib_constants:height_2_6(),
     case ar_block:verify_last_retarget(B, PrevB) of
         true ->
             pre_validate_difficulty(B, PrevB, SolutionResigned, Peer);
@@ -607,7 +610,7 @@ pre_validate_last_retarget(B, PrevB, SolutionResigned, Peer) ->
     end.
 
 pre_validate_difficulty(B, PrevB, SolutionResigned, Peer) ->
-    true = B#block.height >= arweave_lib_fork:height_2_6(),
+    true = B#block.height >= arweave_lib_constants:height_2_6(),
     DiffValid = ar_retarget:validate_difficulty(B, PrevB),
     case DiffValid of
         true ->
@@ -619,7 +622,7 @@ pre_validate_difficulty(B, PrevB, SolutionResigned, Peer) ->
     end.
 
 pre_validate_cumulative_difficulty(B, PrevB, SolutionResigned, Peer) ->
-    true = B#block.height >= arweave_lib_fork:height_2_6(),
+    true = B#block.height >= arweave_lib_constants:height_2_6(),
     case ar_block:verify_cumulative_diff(B, PrevB) of
         false ->
             post_block_reject_warn_and_error_dump(B, check_cumulative_difficulty, Peer),
@@ -898,7 +901,7 @@ accept_block(B, Peer, Gossip) ->
     ok.
 
 compute_hash(B, PrevCDiff) ->
-    true = B#block.height >= arweave_lib_fork:height_2_6(),
+    true = B#block.height >= arweave_lib_constants:height_2_6(),
     SignedH = ar_block:generate_signed_hash(B),
     case ar_block:verify_signature(SignedH, PrevCDiff, B) of
         false ->
@@ -917,19 +920,23 @@ post_block_reject_warn_and_error_dump(B, Step, Peer, ExtraData) ->
     file:write_file(File, term_to_binary({B, ExtraData})),
     post_block_reject_warn(B, Step, Peer),
     ?LOG_WARNING([{event, post_block_rejected},
-                  {hash, arweave_lib_util:encode(B#block.indep_hash)}, {step, Step},
+                  {hash, arweave_lib_util:encode(B#block.indep_hash)},
+                  {step, Step},
                   {peer, arweave_lib_util:format_peer(Peer)},
                   {error_dump, File}]).
 
 post_block_reject_warn(B, Step, Peer) ->
     ?LOG_WARNING([{event, post_block_rejected},
-                  {hash, arweave_lib_util:encode(B#block.indep_hash)}, {step, Step},
+                  {hash, arweave_lib_util:encode(B#block.indep_hash)},
+                  {step, Step},
                   {peer, arweave_lib_util:format_peer(Peer)}]).
 
 post_block_reject_warn(B, Step, Peer, Params) ->
     ?LOG_WARNING([{event, post_block_rejected},
-                  {hash, arweave_lib_util:encode(B#block.indep_hash)}, {step, Step},
-                  {params, Params}, {peer, arweave_lib_util:format_peer(Peer)}]).
+                  {hash, arweave_lib_util:encode(B#block.indep_hash)},
+                  {step, Step},
+                  {params, Params},
+                  {peer, arweave_lib_util:format_peer(Peer)}]).
 
 record_block_pre_validation_time(ReceiveTimestamp) ->
     TimeMs = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000,

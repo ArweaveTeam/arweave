@@ -26,10 +26,7 @@
 -export([set_reward_addr/1]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
--include("ar_pricing.hrl").
 -include("ar_data_sync.hrl").
--include("ar_vdf.hrl").
 -include("ar_mining.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -97,8 +94,9 @@ start_link() ->
 tx_id_prefix(TXID) ->
     binary:part(TXID, 0, 8).
 
-%% @doc Return true if the given transaction identifier is found in the mempool or
-%% block cache (the last arweave_lib_constants:get_consensus_window_size() blocks).
+%% @doc Return true if the given transaction identifier is found in the mempool
+%% or block cache (the last arweave_lib_constants:get_consensus_window_size()
+%% blocks).
 is_mempool_or_block_cache_tx(TXID) ->
     ets:match_object(tx_prefixes, {tx_id_prefix(TXID), TXID}) /= [].
 
@@ -705,7 +703,7 @@ record_mempool_size_metrics({HeaderSize, DataSize}) ->
     arweave_metrics:gauge_set(mempool_data_size_bytes, DataSize).
 
 may_be_initialize_nonce_limiter([#block{ height = Height } = B | Blocks], BI) ->
-    case Height + 1 == arweave_lib_fork:height_2_6() of
+    case Height + 1 == arweave_lib_constants:height_2_6() of
         true ->
             {Seed, PartitionUpperBound, _TXRoot} =
                 case ar_node:get_block_index_upper_bound(Height, BI) of
@@ -867,7 +865,8 @@ get_block_anchors_and_recent_txs_map(BlockTXPairs) ->
               {[BH | Acc1], Acc3}
       end,
       {[], #{}},
-      lists:sublist(BlockTXPairs, arweave_lib_constants:get_max_tx_anchor_depth())
+      lists:sublist(BlockTXPairs,
+          arweave_lib_constants:get_max_tx_anchor_depth())
      ).
 
 get_max_block_size([_SingleElement]) ->
@@ -1072,7 +1071,8 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
                     {noreply, State};
                 ok ->
                     B2 =
-                        case B#block.height >= arweave_lib_fork:height_2_6() of
+                        case B#block.height >=
+                                arweave_lib_constants:height_2_6() of
                             true ->
                                 B#block{
                                   reward_history =
@@ -1082,7 +1082,8 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
                                 B
                         end,
                     B3 =
-                        case B#block.height >= arweave_lib_fork:height_2_7() of
+                        case B#block.height >=
+                                arweave_lib_constants:height_2_7() of
                             true ->
                                 BlockTimeHistory2 = ar_block_time_history:update_history(B, PrevB),
                                 Len2 = ar_block_time_history:history_length()
@@ -1150,7 +1151,7 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
                        {sig2_size, byte_size(Sig2)},
                        {height, Height}]),
             CheckKeyType =
-                case {byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE, Height >= arweave_lib_fork:height_2_9()} of
+                case {byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE, Height >= arweave_lib_constants:height_2_9()} of
                     {true, false} ->
                         false;
                     {true, true} ->
@@ -1212,7 +1213,7 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
     end.
 
 get_chunk_hash(#poa{ chunk = Chunk }, Height) ->
-    case Height >= arweave_lib_fork:height_2_7() of
+    case Height >= arweave_lib_constants:height_2_7() of
         false ->
             undefined;
         true ->
@@ -1459,8 +1460,7 @@ get_missing_txs_and_retry(_H, _TXIDs, _Worker, _Peers, _TXs, TotalSize)
 get_missing_txs_and_retry(H, [], Worker, _Peers, TXs, _TotalSize) ->
     gen_server:cast(Worker, {cache_missing_txs, H, lists:reverse(TXs)});
 get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
-    Split = min(5, length(TXIDs)),
-    {Bulk, Rest} = lists:split(Split, TXIDs),
+    {Bulk, Rest} = arweave_lib_util:split_at_most(5, TXIDs),
     Fetch =
         lists:foldl(
           fun   (TX = #tx{ format = 1, data_size = DataSize }, {Acc1, Acc2}) ->
@@ -1567,7 +1567,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
     {BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
     Height = B#block.height,
     {Rate, ScheduledRate} =
-        case Height >= arweave_lib_fork:height_2_5() of
+        case Height >= arweave_lib_constants:height_2_5() of
             true ->
                 {B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate};
             false ->
@@ -1680,7 +1680,7 @@ maybe_report_n_confirmations(B, BI) ->
     end.
 
 record_economic_metrics(B, PrevB) ->
-    case B#block.height >= arweave_lib_fork:height_2_5() of
+    case B#block.height >= arweave_lib_constants:height_2_5() of
         false ->
             ok;
         true ->
@@ -1695,7 +1695,7 @@ record_economic_metrics2(B, PrevB) ->
     arweave_metrics:gauge_set(endowment_pool, B#block.reward_pool),
     arweave_metrics:gauge_set(kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier),
     Period_200_Years = 200 * 365 * 24 * 60 * 60,
-    case B#block.height >= arweave_lib_fork:height_2_6() of
+    case B#block.height >= arweave_lib_constants:height_2_6() of
         true ->
             #block{ reward_history = RewardHistory } = B,
             RewardHistorySize = length(RewardHistory),
@@ -1748,7 +1748,7 @@ record_economic_metrics2(B, PrevB) ->
     end.
 
 record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
-    case Height >= arweave_lib_fork:height_2_6() of
+    case Height >= arweave_lib_constants:height_2_6() of
         true ->
             StepNumber = ar_block:vdf_step_number(B),
             PrevBStepNumber = ar_block:vdf_step_number(PrevB),
@@ -1763,7 +1763,7 @@ record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
 ignore_rejected_block(B) ->
     BH = B#block.indep_hash,
     case carries_v1_denomination0_tx(B)
-            andalso B#block.height < arweave_lib_fork:height_2_9_6() of
+            andalso B#block.height < arweave_lib_constants:height_2_9_6() of
         true ->
             ?LOG_DEBUG([{event, rejected_block_with_deprecated_v1_tx},
                         {block, arweave_lib_util:encode(BH)},
@@ -1864,7 +1864,7 @@ get_current_diff(TS) ->
     ar_retarget:maybe_retarget(Height + 1, DiffPair, TS, LastRetarget, PrevTS).
 
 get_merkle_rebase_threshold(PrevB) ->
-    case PrevB#block.height + 1 == arweave_lib_fork:height_2_7() of
+    case PrevB#block.height + 1 == arweave_lib_constants:height_2_7() of
         true ->
             PrevB#block.weave_size;
         _ ->
@@ -1905,7 +1905,7 @@ priority(_) ->
     {os:system_time(second), 1}.
 
 read_hash_list_2_0_for_1_0_blocks() ->
-    Fork_2_0 = arweave_lib_fork:height_2_0(),
+    Fork_2_0 = arweave_lib_constants:height_2_0(),
     case Fork_2_0 > 0 of
         true ->
             File = filename:join(["genesis_data", "hash_list_1_0"]),
@@ -1920,7 +1920,7 @@ read_hash_list_2_0_for_1_0_blocks() ->
 start_from_state([#block{} = GenesisB]) ->
     RewardHistory = GenesisB#block.reward_history,
     BlockTimeHistory = GenesisB#block.block_time_history,
-    BI = [ar_util:block_index_entry_from_block(GenesisB)],
+    BI = [block_index_entry_from_block(GenesisB)],
     self() ! {join_from_state, 0, BI, [GenesisB#block{
                                          reward_history = RewardHistory,
                                          block_time_history = BlockTimeHistory
@@ -1966,6 +1966,9 @@ start_from_state(BI, Height, CustomDir) ->
                     ok
             end
     end.
+
+block_index_entry_from_block(B) ->
+    {B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
 
 set_poa_caches([]) ->
     [];
@@ -2377,7 +2380,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
     end.
 
 assert_key_type(RewardKey, Height) ->
-    case Height >= arweave_lib_fork:height_2_9() of
+    case Height >= arweave_lib_constants:height_2_9() of
         false ->
             case RewardKey of
                 {{?RSA_KEY_TYPE, _, _}, {?RSA_KEY_TYPE, Pub}} ->
@@ -2516,8 +2519,7 @@ checker(List) ->
 checker([], Length, Buffer) ->
     {Length, Buffer};
 checker([H|T], Length, Buffer) ->
-    V = maps:get(H, Buffer, 0),
-    checker(T, Length, Buffer#{ H => V+1 }).
+    checker(T, Length, arweave_lib_util:increment_map_value(H, Buffer)).
 
 checker_test_disabled() ->
     ?assertEqual({0, #{}}, checker([])),

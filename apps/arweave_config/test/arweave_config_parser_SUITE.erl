@@ -1,6 +1,7 @@
 %%% @doc Tests for `arweave_config_parser` — parsing and formatting of
 %%% option_key lists.
 -module(arweave_config_parser_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

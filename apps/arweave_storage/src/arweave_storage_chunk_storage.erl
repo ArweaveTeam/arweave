@@ -1,6 +1,5 @@
 %% The blob storage optimized for fast reads.
 -module(arweave_storage_chunk_storage).
--export([storage_module_path/2, get_chunk_storage_path/2, cut/2]).
 
 -behaviour(gen_server).
 
@@ -1127,10 +1126,3 @@ read_chunks_sizes(DataDir) ->
             ]),
             error
     end.
-
-
-
-
-%% @doc Soft-delete everything above the given end offset.
-cut(Offset, StoreID) ->
-    arweave_storage:cut_sync_record(Offset, {ar_chunk_storage, byte}, StoreID).

@@ -1,6 +1,7 @@
 %%% @doc Targeted coverage for logging/debug options that are skipped
 %%% by the generic spec-driven format sweep.
 -module(arweave_config_options_logging_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -31,7 +32,9 @@ end_per_testcase(_TestCase, _Config) ->
 all() ->
     [
         debug_toggle_updates_store_and_handler,
+        with_test_config_restores_debug_side_effect,
         logging_path_coerces_to_list,
+        with_test_config_restores_logging_path,
         logging_formatter_and_limits_update,
         logger_set_with_no_live_handler_stores_anyway,
         debug_handler_toggle_via_logging_spec,
@@ -53,9 +56,37 @@ debug_toggle_updates_store_and_handler(_Config) ->
     ?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
     ok.
 
+with_test_config_restores_debug_side_effect(_Config) ->
+    ?assertEqual(false, arweave_config:get([debug])),
+    ?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
+    arweave_config:internal_with_test_config(fun() ->
+        ?assertEqual(ok, arweave_config:set([debug], true)),
+        ?assertMatch({ok, _}, logger:get_handler_config(arweave_debug))
+    end),
+    ?assertEqual(false, arweave_config:get([debug])),
+    ?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
+    ok.
+
 logging_path_coerces_to_list(_Config) ->
     ok = arweave_config:set([logging, path], <<"/tmp/arweave-logs">>),
     ?assertEqual("/tmp/arweave-logs", arweave_config:get([logging, path])),
+    ok = arweave_config:set([logging, path], "./logs"),
+    ?assertEqual("./logs", arweave_config:get([logging, path])),
+    ok.
+
+with_test_config_restores_logging_path(_Config) ->
+    lists:foreach(fun(OriginalPath) ->
+        ok = arweave_config:set([logging, path], OriginalPath),
+        arweave_config:internal_with_test_config(fun() ->
+            ok = arweave_config:set([logging, path], <<"/tmp/changed-logs">>)
+        end),
+        ?assertEqual(OriginalPath, arweave_config:get([logging, path])),
+        ?assertError(test_failure, arweave_config:internal_with_test_config(fun() ->
+            ok = arweave_config:set([logging, path], <<"/tmp/changed-logs">>),
+            error(test_failure)
+        end)),
+        ?assertEqual(OriginalPath, arweave_config:get([logging, path]))
+    end, ["./logs", "/tmp/original-logs"]),
     ok.
 
 logging_formatter_and_limits_update(_Config) ->

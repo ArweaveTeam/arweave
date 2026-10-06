@@ -46,7 +46,7 @@
         test_with_all_nodes_mocked/3]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include("ar_mining.hrl").
 
 
@@ -339,7 +339,7 @@ start_node(B0, Overrides, WaitUntilSync) when is_map(Overrides) ->
     arweave_config:start(),
     DataDir = arweave_config:get([data_dir]),
     write_genesis_files(DataDir, B0),
-    update_config(Overrides),
+    ok = update_config(Overrides),
     ok = arweave_limiter:start(),
     start_dependencies(),
     ar_test_await:node_joined(main),
@@ -419,7 +419,6 @@ base_cm_config(Peers) ->
         [join, auto]                            => true,
         [mining, address]                       => RewardAddr,
         [mining, hashing_threads]               => 1,
-        [sync, jobs]                            => 2,
         [disk_pool, workers]                       => 2,
         [gossip, header, workers]              => 2,
         [features, serve_tx_data_without_limits] => true,
@@ -492,7 +491,7 @@ mainnet_packing_mocks() ->
     [
         {arweave_lib_constants, partition_size, fun() -> 3_600_000_000_000 end},
         {arweave_lib_constants, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
-        {arweave_storage_module, get_overlap, fun(_) -> 104_857_600 end},
+        {arweave_storage, get_overlap, fun(_) -> 104_857_600 end},
         {arweave_lib_constants, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
         {arweave_lib_constants, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
     ].
@@ -518,7 +517,7 @@ clean_up_and_stop() ->
     ok = filelib:ensure_dir(DataDir),
     {ok, Entries} = file:list_dir_all(DataDir),
     lists:foreach(
-        fun ("wallets") ->
+        fun    ("wallets") ->
                 ok;
             (Entry) ->
                 ?LOG_DEBUG([{event, clean_up_and_stop},
@@ -572,7 +571,7 @@ write_genesis_files(DataDir, B0) ->
         ok = ar_kv:put(block_index_db, << 0:256 >>,
                 term_to_binary({H, WeaveSize, TXRoot, <<>>})),
         ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
-        case arweave_lib_fork:height_2_7() of
+        case arweave_lib_constants:height_2_7() of
             0 ->
                 ok = ar_kv:put(block_time_history_db, H,
                         term_to_binary(hd(B0#block.block_time_history)));
@@ -747,14 +746,13 @@ start_with_overrides(B0, RewardAddr, Overrides) when is_map(Overrides) ->
         [join, auto]                            => true,
         [mining, address]                       => RewardAddr,
         [disk_space_check_frequency]            => 1000,
-        [sync, jobs]                            => 2,
         [disk_pool, workers]                       => 2,
         [gossip, header, workers]              => 2,
         [features, serve_tx_data_without_limits] => true,
         [features, serve_wallet_lists]          => true,
         [debug]                                 => true
     },
-    update_config(maps:merge(TestDefaults, Overrides)),
+    ok = update_config(maps:merge(TestDefaults, Overrides)),
     ok = arweave_limiter:start(),
     start_dependencies(),
     ar_test_await:node_joined(main),
@@ -1112,7 +1110,7 @@ join(JoinOnNode, Rejoin, Overrides) when is_map(Overrides) ->
         [join, auto]                    => true,
         [peers, trusted]                => [arweave_lib_util:format_peer(Peer)]
     },
-    update_config(maps:merge(JoinDefaults, Overrides)),
+    ok = update_config(maps:merge(JoinDefaults, Overrides)),
     start_dependencies(),
     ar_test_await:node_joined(main),
     whereis(ar_node_worker).
@@ -1129,7 +1127,7 @@ storage_module_packing(RewardAddr, _Index, Options) ->
         replica_2_9 ->
             {replica_2_9, RewardAddr};
         not_set ->
-            case arweave_lib_fork:height_2_9() of
+            case arweave_lib_constants:height_2_9() of
                 0 -> {replica_2_9, RewardAddr};
                 _ -> {spora_2_6, RewardAddr}
             end
@@ -1221,7 +1219,7 @@ wait_until_syncs_genesis_data() ->
     %% copy the missing data over from each other. This procedure is executed on startup
     %% but the disk pool did not have any data at the time.
     [
-        ar_chunk_copy:start_copy(arweave_storage_module:id(M))
+        ar_chunk_copy:start_copy((arweave_storage:store_info(M))#store_info.id)
         || M <- StorageModules
     ],
     [wait_until_syncs_data(Start, End, WeaveSize, Packing)

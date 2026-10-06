@@ -10,6 +10,7 @@
 -export([get/1, is_unlimited/1, is_beyond/2, clip/3, kept_intervals/3]).
 
 -include("ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc How many footprints of each sector the module keeps: its
@@ -17,8 +18,11 @@
 %% a partition, or every footprint without a limit.
 get(StoreID) ->
     All = arweave_lib_constants:get_replica_2_9_footprints_per_partition(),
-    case arweave_storage_module:get_by_id(StoreID) of
-        {_Start, _End, _Packing} = Module ->
+    case arweave_storage:store_info(StoreID) of
+        #store_info{
+            configured_range = {Start, End}, packing = Packing
+        } when is_integer(End) ->
+            Module = {Start, End, Packing},
             clamp(arweave_config:storage_module_footprint_limit(Module), All);
         _ ->
             All
@@ -51,12 +55,13 @@ clip(BucketEndOffset, Count, Limit) ->
     end.
 
 %% @doc The byte intervals of [Start, End) within the first Limit footprints
-%% of their sectors, as an ar_intervals set: what a module with the limit
-%% keeps of the range.
+%% of their sectors, as an arweave_lib_intervals set: what a module with the
+%% limit keeps of the range.
 kept_intervals(Start, End, Limit) ->
     case is_unlimited(Limit) of
         true ->
-            arweave_lib_intervals:add(arweave_lib_intervals:new(), End, Start);
+            arweave_lib_intervals:add(
+                arweave_lib_intervals:new(), End, Start);
         false ->
             kept_intervals(Start, End, Limit, arweave_lib_intervals:new())
     end.
@@ -95,10 +100,23 @@ get_test() ->
                 #{partition => 2, packing_format => unpacked,
                     footprint_limit => 10 * All}
             ]}),
-        ?assertEqual(1, get(arweave_storage_module:id({0, P, {replica_2_9, Addr}}))),
-        ?assertEqual(All, get(arweave_storage_module:id({P, 2 * P, unpacked}))),
+        ?assertEqual(
+            1,
+            get(
+                (arweave_storage:store_info({0, P, {replica_2_9, Addr}}))#store_info.id
+            )
+        ),
+        ?assertEqual(
+            All,
+            get((arweave_storage:store_info({P, 2 * P, unpacked}))#store_info.id)
+        ),
         %% A limit above the partition keeps every footprint.
-        ?assertEqual(All, get(arweave_storage_module:id({2 * P, 3 * P, unpacked}))),
+        ?assertEqual(
+            All,
+            get(
+                (arweave_storage:store_info({2 * P, 3 * P, unpacked}))#store_info.id
+            )
+        ),
         ?assertEqual(All, get(?DEFAULT_MODULE)),
         ?assertEqual(All, get("storage_module_9_unpacked")),
         ok = arweave_config:internal_force_config(#{
@@ -109,7 +127,12 @@ get_test() ->
                     footprint_limit => 1}
             ]}),
         %% A repack source is limited by its repack entry.
-        ?assertEqual(1, get(arweave_storage_module:id({3 * P, 4 * P, unpacked})))
+        ?assertEqual(
+            1,
+            get(
+                (arweave_storage:store_info({3 * P, 4 * P, unpacked}))#store_info.id
+            )
+        )
     end).
 
 is_beyond_test() ->

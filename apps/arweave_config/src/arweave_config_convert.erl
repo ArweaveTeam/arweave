@@ -53,11 +53,11 @@ encoder(Format) ->
     {error, {unsupported_format, Format}}.
 
 encoder_from_string(String) ->
-	case string:lowercase(String) of
-		"json" -> encoder(json);
-		"yaml" -> encoder(yaml);
-		Other -> {error, {unsupported_format, Other}}
-	end.
+    case string:lowercase(String) of
+        "json" -> encoder(json);
+        "yaml" -> encoder(yaml);
+        Other -> {error, {unsupported_format, Other}}
+    end.
 
 read_input(InputFilename) ->
     case file:read_file(InputFilename) of
@@ -204,8 +204,8 @@ encode_list_item(_Root, Item) ->
 %% never filtered this way — everything the parse writes there is
 %% operator-authored and is kept verbatim, defaults included.
 is_list_item_default(Root, Field, Value) ->
-	Key = arweave_config_options_registry:list_item_key(Root, Field),
-	arweave_config_options_registry:is_default(Key, Value).
+    Key = arweave_config_options_registry:list_item_key(Root, Field),
+    arweave_config_options_registry:is_default(Key, Value).
 
 encode_field(Root, Field, Value) ->
     FieldKey = arweave_config_options_registry:list_item_key(Root, Field),

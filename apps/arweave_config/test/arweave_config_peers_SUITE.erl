@@ -5,6 +5,7 @@
 %%%     legacy aggregator view.
 %%%   - Cross-instance validators (D3 invariants).
 -module(arweave_config_peers_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -39,6 +40,7 @@ end_per_testcase(_TestCase, _Config) ->
 
 all() ->
         [
+        parse_peer,
         roundtrip_peers_list,
         roundtrip_cm_exit_peer,
         multi_role_peer_lists_correctly,
@@ -288,3 +290,38 @@ clear_and_replace_rejected_at_runtime(_Config) ->
         "clear-via-set must not delete entries at runtime"),
 
     ok.
+
+%% @doc Peer strings, tuples and host names parse into peer tuples; bad input
+%% throws.
+parse_peer(_Config) ->
+    ?assertThrow(
+        empty_peer_string,
+        arweave_config_peer:parse_peer("")
+    ),
+    ?assertThrow(
+        invalid_peer,
+        arweave_config_peer:parse_peer(1)
+    ),
+    ?assertEqual(
+        [{127, 0, 0, 1, 1985}],
+        arweave_config_peer:parse_peer({{127, 0, 0, 1}, 1985})
+    ),
+
+    Opts = #{module_resolve => ar_test_inet_mock},
+    ?assertEqual(
+        [{127, 0, 0, 1, 1984}],
+        arweave_config_peer:parse_peer("single.record.local", Opts)
+    ),
+    ?assertEqual(
+        [
+            {127, 0, 0, 2, 1984},
+            {127, 0, 0, 3, 1984},
+            {127, 0, 0, 4, 1984},
+            {127, 0, 0, 5, 1984}
+        ],
+        arweave_config_peer:parse_peer("multi.record.local", Opts)
+    ),
+    ?assertThrow(
+        {invalid_peer_string, _, _},
+        arweave_config_peer:parse_peer("error.test.local", Opts)
+    ).

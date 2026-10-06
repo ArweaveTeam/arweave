@@ -6,6 +6,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -record(state, {
                 store_id,
@@ -35,14 +36,16 @@ start_link(StoreID) ->
     gen_server:start_link({local, Name}, ?MODULE, [StoreID], []).
 
 name(StoreID) ->
-    list_to_atom("ar_data_root_sync_" ++ arweave_storage_module:label(StoreID)).
+    #store_info{label = Label} = arweave_storage:store_info(StoreID),
+    list_to_atom("ar_data_root_sync_" ++ Label).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
 init([StoreID]) ->
-    {RangeStart, RangeEnd} = arweave_storage_module:get_range(StoreID),
+    #store_info{effective_range = {RangeStart, RangeEnd}} =
+        arweave_storage:store_info(StoreID),
     gen_server:cast(self(), sync),
     {ok, #state{ store_id = StoreID,
                  range_start = RangeStart,
@@ -52,7 +55,7 @@ init([StoreID]) ->
 handle_cast(sync, State) ->
     case ar_node:is_joined() of
         false ->
-            ar_util:cast_after(500, self(), sync),
+            ar_util:cast_after(?NODE_JOIN_RETRY_DELAY_MS, self(), sync),
             {noreply, State};
         true ->
             SyncingEnabled = arweave_config:get(

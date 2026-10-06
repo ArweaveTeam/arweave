@@ -6,7 +6,6 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
 disk_pool_rotation_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_disk_pool_rotation/0}.
@@ -44,11 +43,13 @@ test_disk_pool_rotation() ->
     timer:sleep(2_000),
     Options = #{ format => etf, random_subset => false },
     Global1 = get_global_sync_record(Options),
-    ?assertEqual(Expected, arweave_lib_intervals:intersection(Global1, Expected)),
+    ?assertEqual(Expected,
+        arweave_lib_intervals:intersection(Global1, Expected)),
     ar_test_node:mine(main),
     ?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
     Global2 = get_global_sync_record(Options),
-    ?assertEqual(Expected, arweave_lib_intervals:intersection(Global2, Expected)),
+    ?assertEqual(Expected,
+        arweave_lib_intervals:intersection(Global2, Expected)),
     ar_test_node:mine(main),
     ?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
     ar_test_node:mine(main),
@@ -57,6 +58,6 @@ test_disk_pool_rotation() ->
     ok = ar_test_await:global_sync_record_excludes(Options, Expected).
 
 get_global_sync_record(Options) ->
-    {ok, Binary} = arweave_storage_global_sync_record:get_serialized_sync_record(Options),
+    {ok, Binary} = arweave_storage:get_serialized_sync_record(Options),
     {ok, Global} = arweave_lib_intervals:safe_from_etf(Binary),
     Global.

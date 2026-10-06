@@ -13,9 +13,9 @@ rejects_txs_with_outdated_anchors_test_() ->
         %% A TX anchoring the block one past get_max_tx_anchor_depth() is rejected.
         %%
         %% A TX anchoring the deepest still-valid block (the
-        %% arweave_lib_constants:get_max_tx_anchor_depth()-th block from the tip) is
-        %% accepted. This pins both sides of the depth boundary and guards
-        %% against an off-by-one in
+        %% arweave_lib_constants:get_max_tx_anchor_depth()-th block from the
+        %% tip) is accepted. This pins both sides of the depth boundary and
+        %% guards against an off-by-one in
         %% lists:sublist(BlockTXPairs, get_max_tx_anchor_depth()) inside
         %% ar_node_worker:get_block_anchors_and_recent_txs_map/1.
         Key = {_, Pub} = ar_wallet:new(),

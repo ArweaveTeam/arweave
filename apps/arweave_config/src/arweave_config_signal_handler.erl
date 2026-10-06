@@ -17,6 +17,7 @@
     handle_info/2
 ]).
 -include_lib("kernel/include/logger.hrl").
+-include_lib("arweave_config/include/arweave_config_deps.hrl").
 
 -type signal() :: sigquit | sigterm | sigusr1 | sigusr2.
 
@@ -71,7 +72,7 @@ signal(E, State) ->
     update_state(E, State).
 
 sigusr1() ->
-    spawn(fun () -> arweave_diagnostic:all() end).
+    spawn(fun () -> ?DEP(diagnostic):all() end).
 
 sigusr2() ->
     ok.

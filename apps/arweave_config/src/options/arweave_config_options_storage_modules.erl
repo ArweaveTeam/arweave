@@ -60,7 +60,7 @@
     write_module_maps/2
 ]).
 -include("arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 
 specs() ->
     [
@@ -220,7 +220,7 @@ normalize_entry({Start, End, _Packing} = Module)
 %% converted to runtime tuples by the legacy parser) as the canonical
 %% `[storage_modules]' list of maps.
 write_legacy_list([]) ->
-	ok;
+    ok;
 write_legacy_list(L) when is_list(L) ->
     ExistingDefrags = defrag_storage_modules(),
     write_modules(lists:usort(L ++ ExistingDefrags)),

@@ -20,7 +20,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -54,7 +53,7 @@ get_blocks() ->
 
 %% @doc Get the current block index (the list of {block hash, weave size, tx root} triplets).
 get_block_index() ->
-    case ar_util:safe_ets_lookup(node_state, is_joined) of
+    case safe_ets_lookup(node_state, is_joined) of
         [{_, true}] ->
             element(2, get_block_index_and_height());
         _ ->
@@ -64,7 +63,7 @@ get_block_index() ->
 %% @doc Return the current tip block. Assume the node has joined the network and
 %% initialized the state.
 get_current_block() ->
-    case ar_util:safe_ets_lookup(node_state, current) of
+    case safe_ets_lookup(node_state, current) of
         [{_, Current}] ->
             ar_block_cache:get(block_cache, Current);
         _ ->
@@ -74,7 +73,7 @@ get_current_block() ->
 %% @doc Return the current network difficulty. Assume the node has joined the network and
 %% initialized the state.
 get_current_diff() ->
-    case ar_util:safe_ets_lookup(node_state, diff_pair) of
+    case safe_ets_lookup(node_state, diff_pair) of
         [{_, DiffPair}] ->
             DiffPair;
         _ ->
@@ -120,7 +119,7 @@ is_in_block_index(H) ->
 
 %% @doc Get the current block hash.
 get_current_block_hash() ->
-    case ar_util:safe_ets_lookup(node_state, current) of
+    case safe_ets_lookup(node_state, current) of
         [{current, H}] ->
             H;
         [] ->
@@ -181,13 +180,13 @@ read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks, CustomDir) ->
             end;
         Error ->
             ar:console("Failed to read block header ~s, reason: ~p.~n",
-                       [arweave_lib_util:encode(BH), io_lib:format("~p", [Error])]),
+                [arweave_lib_util:encode(BH), io_lib:format("~p", [Error])]),
             not_found
     end.
 
 %% @doc Get the block index entry by height.
 get_block_index_entry(Height) ->
-    case ar_util:safe_ets_lookup(node_state, is_joined) of
+    case safe_ets_lookup(node_state, is_joined) of
         [] ->
             not_joined;
         [{_, false}] ->
@@ -204,8 +203,8 @@ get_block_index_entry(Height) ->
 %% blocks was computed and stored along with the network client.
 %% @end
 get_2_0_hash_of_1_0_block(Height) ->
-    [{hash_list_2_0_for_1_0_blocks, HL}] = ar_util:safe_ets_lookup(node_state, hash_list_2_0_for_1_0_blocks),
-    Fork_2_0 = arweave_lib_fork:height_2_0(),
+    [{hash_list_2_0_for_1_0_blocks, HL}] = safe_ets_lookup(node_state, hash_list_2_0_for_1_0_blocks),
+    Fork_2_0 = arweave_lib_constants:height_2_0(),
     case Height > Fork_2_0 of
         true ->
             invalid_height;
@@ -215,7 +214,7 @@ get_2_0_hash_of_1_0_block(Height) ->
 
 %% @doc Return the current height of the blockweave.
 get_height() ->
-    case ar_util:safe_ets_lookup(node_state, height) of
+    case safe_ets_lookup(node_state, height) of
         [{height, Height}] ->
             Height;
         [] ->
@@ -223,7 +222,7 @@ get_height() ->
     end.
 
 get_weave_size() ->
-    case ar_util:safe_ets_lookup(node_state, weave_size) of
+    case safe_ets_lookup(node_state, weave_size) of
         [{weave_size, WeaveSize}] ->
             WeaveSize;
         [] ->
@@ -232,7 +231,7 @@ get_weave_size() ->
 
 %% @doc Check whether the node has joined the network.
 is_joined() ->
-    case ar_util:safe_ets_lookup(node_state, is_joined) of
+    case safe_ets_lookup(node_state, is_joined) of
         [{is_joined, IsJoined}] ->
             IsJoined;
         [] ->
@@ -241,14 +240,14 @@ is_joined() ->
 
 %% @doc Get the currently estimated USD to AR exchange rate.
 get_current_usd_to_ar_rate() ->
-    [{_, Rate}] = ar_util:safe_ets_lookup(node_state, usd_to_ar_rate),
+    [{_, Rate}] = safe_ets_lookup(node_state, usd_to_ar_rate),
     Rate.
 
 %% @doc Returns a list of block anchors corrsponding to the current state -
 %% the hashes of the recent blocks that can be used in transactions as anchors.
 %% @end
 get_block_anchors() ->
-    case ar_util:safe_ets_lookup(node_state, block_anchors) of
+    case safe_ets_lookup(node_state, block_anchors) of
         [{block_anchors, BlockAnchors}] ->
             BlockAnchors;
         [] ->
@@ -259,12 +258,12 @@ get_block_anchors() ->
 %% Used for preventing replay attacks.
 %% @end
 get_recent_txs_map() ->
-    [{recent_txs_map, RecentTXMap}] = ar_util:safe_ets_lookup(node_state, recent_txs_map),
+    [{recent_txs_map, RecentTXMap}] = safe_ets_lookup(node_state, recent_txs_map),
     RecentTXMap.
 
 %% @doc Return memory pool size
 get_mempool_size() ->
-    [{mempool_size, MempoolSize}] = ar_util:safe_ets_lookup(node_state, mempool_size),
+    [{mempool_size, MempoolSize}] = safe_ets_lookup(node_state, mempool_size),
     MempoolSize.
 
 %% @doc Get the block shadow from the block cache.
@@ -296,7 +295,7 @@ get_recent_partition_upper_bound_by_prev_h(H) ->
 
 %% @doc Get the list of the recent {H, TXIDs} pairs sorted from latest to earliest.
 get_block_txs_pairs() ->
-    [{_, BlockTXPairs}] = ar_util:safe_ets_lookup(node_state, block_txs_pairs),
+    [{_, BlockTXPairs}] = safe_ets_lookup(node_state, block_txs_pairs),
     BlockTXPairs.
 
 %% @doc Return the weave size `?SEARCH_SPACE_UPPER_BOUND_DEPTH' blocks back from
@@ -330,7 +329,7 @@ get_block_index_upper_bound(_Height, BI, _Depth) ->
 get_recent_partition_upper_bound_by_prev_h(H, Diff) ->
     case ar_block_cache:get_block_and_status(block_cache, H) of
         {_B, {on_chain, _}} ->
-            [{_, BI}] = ar_util:safe_ets_lookup(node_state, recent_block_index),
+            [{_, BI}] = safe_ets_lookup(node_state, recent_block_index),
             Genesis = length(BI) =< ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
             get_recent_partition_upper_bound_by_prev_h(H, Diff, BI, Genesis);
         {#block{ indep_hash = H2, previous_block = PrevH, weave_size = WeaveSize }, _} ->
@@ -381,14 +380,27 @@ get_max_partition_number(PartitionUpperBound) ->
 %% @doc Return the current weave size. Assume the node has joined the network and
 %% initialized the state.
 get_current_weave_size() ->
-    [{_, WeaveSize}] = ar_util:safe_ets_lookup(node_state, weave_size),
+    [{_, WeaveSize}] = safe_ets_lookup(node_state, weave_size),
     WeaveSize.
 
 %% @doc Return the maximum block size among the latest ?BLOCK_INDEX_HEAD_LEN blocks.
 %% Assume the node has joined the network and initialized the state.
 get_recent_max_block_size() ->
-    [{_, MaxBlockSize}] = ar_util:safe_ets_lookup(node_state, recent_max_block_size),
+    [{_, MaxBlockSize}] = safe_ets_lookup(node_state, recent_max_block_size),
     MaxBlockSize.
+
+%% @doc Safely lookup a key in an ETS table.
+%% Returns [] if the table doesn't exist - this can happen when running some of the helper
+%% utilities like data_doctor
+safe_ets_lookup(Table, Key) ->
+    try
+        ets:lookup(Table, Key)
+    catch
+        Type:Reason ->
+            ?LOG_WARNING([{event, ets_table_not_found}, {table, Table}, {key, Key},
+                {type, Type}, {reason, Reason}]),
+            []
+    end.
 
 %%%===================================================================
 %%% Tests.

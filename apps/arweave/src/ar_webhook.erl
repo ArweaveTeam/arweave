@@ -633,7 +633,14 @@ is_synced_by_storage_modules(Start, End, Module) ->
 is_synced_by_storage_modules([]) ->
     true;
 is_synced_by_storage_modules([{Start, End, StoreID} | Intervals]) ->
-    case arweave_storage:get_next_interval(unsynced, Start, End, any_packing, {ar_data_sync, byte}, StoreID) of
+    case arweave_storage:get_next_interval(
+        unsynced,
+        Start,
+        End,
+        any_packing,
+        {ar_data_sync, byte},
+        StoreID
+    ) of
         not_found ->
             is_synced_by_storage_modules(Intervals);
         _I ->

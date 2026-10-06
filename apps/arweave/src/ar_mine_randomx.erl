@@ -6,8 +6,6 @@
          randomx_decrypt_sub_chunk/5,
          randomx_reencrypt_chunk/7,
          randomx_generate_replica_2_9_entropy/2,
-         randomx_encrypt_replica_2_9_sub_chunk/1,
-         randomx_decrypt_replica_2_9_sub_chunk/1,
          exor_sub_chunk/2]).
 
 %% These exports are required for the STUB mode, where these functions are unused.
@@ -15,7 +13,6 @@
 -export([jit/0, large_pages/0, hardware_aes/0, init_fast2/5, init_light2/4]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -106,7 +103,8 @@ randomx_generate_replica_2_9_entropy({_, {stub_state, _}}, Key) ->
     %% Make it fast, deterministic, and scoped by Key.
     %% Note that ?REPLICA_2_9_ENTROPY_SIZE is
     %% reduced significantly in the AR_TEST mode.
-    SubChunkCount = arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy(),
+    SubChunkCount =
+        arweave_lib_constants:get_sub_chunks_per_replica_2_9_entropy(),
     lists:foldl(
       fun(N1, Acc) ->
               lists:foldl(
@@ -138,23 +136,7 @@ randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key) ->
                           ),
     EntropyFused.
 
-randomx_decrypt_replica_2_9_sub_chunk(
-  {_PackingState, Entropy, SubChunk, EntropySubChunkIndex}) ->
-    SubChunkSize = ?SUB_CHUNK_SIZE,
-    EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
-    {ok, exor_sub_chunk(SubChunk, EntropyPart)}.
-
-randomx_encrypt_replica_2_9_sub_chunk(
-  {_PackingState, Entropy, SubChunk, EntropySubChunkIndex}) ->
-    SubChunkSize = ?SUB_CHUNK_SIZE,
-    EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
-    {ok, exor_sub_chunk(SubChunk, EntropyPart)}.
-
-%% @doc Encipher/decipher the given sub-chunk using the given 2.9 entropy.
--spec exor_sub_chunk(
-        SubChunk :: binary(),
-        EntropyPart :: binary()
-       ) -> binary().
+%% @doc Encipher or decipher the sub-chunk with its 2.9 entropy slice.
 exor_sub_chunk(SubChunk, EntropyPart) ->
     crypto:exor(SubChunk, EntropyPart).
 
@@ -190,15 +172,6 @@ hardware_aes() ->
         true  -> 1;
         false -> 0
     end.
-
-split_into_sub_chunks(Chunk) ->
-    split_into_sub_chunks(Chunk, 0).
-
-split_into_sub_chunks(<<>>, _StartOffset) ->
-    [];
-split_into_sub_chunks(<< SubChunk:8192/binary, Rest/binary >>, StartOffset) ->
-    [{StartOffset, SubChunk} | split_into_sub_chunks(Rest, StartOffset + 8192)].
-
 
 init_fast2(rx512, Key, JIT, LargePages, Threads) ->
     {ok, FastState} = ar_rx512_nif:rx512_init_nif(Key, ?RANDOMX_HASHING_MODE_FAST, JIT, LargePages, Threads),

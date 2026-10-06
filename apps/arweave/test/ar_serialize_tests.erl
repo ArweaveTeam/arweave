@@ -13,16 +13,16 @@
 block_to_binary_test_() ->
     %% Set the mainnet values here because we are using the mainnet fixtures.
     ar_test_node:test_with_all_nodes_mocked([
-            {arweave_lib_fork, height_1_6, fun() -> 95000 end},
-            {arweave_lib_fork, height_1_7, fun() -> 235200 end},
-            {arweave_lib_fork, height_1_8, fun() -> 269510 end},
-            {arweave_lib_fork, height_1_9, fun() -> 315700 end},
-            {arweave_lib_fork, height_2_0, fun() -> 422250 end},
-            {arweave_lib_fork, height_2_2, fun() -> 552180 end},
-            {arweave_lib_fork, height_2_3, fun() -> 591140 end},
-            {arweave_lib_fork, height_2_4, fun() -> 633720 end},
-            {arweave_lib_fork, height_2_5, fun() -> 812970 end},
-            {arweave_lib_fork, height_2_6, fun() -> infinity end}],
+            {arweave_lib_constants, height_1_6, fun() -> 95000 end},
+            {arweave_lib_constants, height_1_7, fun() -> 235200 end},
+            {arweave_lib_constants, height_1_8, fun() -> 269510 end},
+            {arweave_lib_constants, height_1_9, fun() -> 315700 end},
+            {arweave_lib_constants, height_2_0, fun() -> 422250 end},
+            {arweave_lib_constants, height_2_2, fun() -> 552180 end},
+            {arweave_lib_constants, height_2_3, fun() -> 591140 end},
+            {arweave_lib_constants, height_2_4, fun() -> 633720 end},
+            {arweave_lib_constants, height_2_5, fun() -> 812970 end},
+            {arweave_lib_constants, height_2_6, fun() -> infinity end}],
         fun test_block_to_binary/0).
 
 test_block_to_binary() ->
@@ -187,9 +187,9 @@ block_index_to_binary_test() ->
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test_() ->
     ar_test_node:test_with_all_nodes_mocked([
-            {arweave_lib_fork, height_2_6, fun() -> infinity end},
-            {arweave_lib_fork, height_2_6_8, fun() -> infinity end},
-            {arweave_lib_fork, height_2_7, fun() -> infinity end}],
+            {arweave_lib_constants, height_2_6, fun() -> infinity end},
+            {arweave_lib_constants, height_2_6_8, fun() -> infinity end},
+            {arweave_lib_constants, height_2_7, fun() -> infinity end}],
         fun test_block_roundtrip/0).
 
 test_block_roundtrip() ->
@@ -566,7 +566,8 @@ footprint_to_json_map_test() ->
         {arweave_lib_intervals:new()},
         {arweave_lib_intervals:from_list([{3, 0}, {2048, 1024}])},
         {arweave_lib_intervals:from_list([{1024, 0}])},
-        {arweave_lib_intervals:from_list([{3, 0}, {10000, 500}, {200000, 100000}])}
+        {arweave_lib_intervals:from_list(
+            [{3, 0}, {10000, 500}, {200000, 100000}])}
     ],
     lists:foreach(
         fun(TestCase) ->

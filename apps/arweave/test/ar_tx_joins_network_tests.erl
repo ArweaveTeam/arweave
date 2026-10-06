@@ -10,7 +10,7 @@
 
 joins_network_successfully_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{arweave_lib_fork, height_2_9_6, fun() -> infinity end}],
+            [{arweave_lib_constants, height_2_9_6, fun() -> infinity end}],
             fun joins_network_successfully/0, ?TEST_NODE_TIMEOUT).
 
 joins_network_successfully() ->

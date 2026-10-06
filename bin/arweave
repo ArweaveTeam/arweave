@@ -606,7 +606,7 @@ arweave_test_run() {
         TEST_PATH="$(./rebar3 as ${TEST_PROFILE} path)"
         
         ## TODO: Generate path for all apps -> Should we fetch this from somewhere?
-        APPS="arweave arweave_config arweave_limiter arweave_diagnostic"
+        APPS="arweave arweave_config arweave_limiter arweave_diagnostic arweave_sync arweave_storage"
 
 	PATH_ARGS=""
         for app in $APPS; do

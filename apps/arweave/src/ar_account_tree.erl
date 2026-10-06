@@ -423,7 +423,7 @@ apply_block_validate(B, PrevB, Args, Tid) ->
           B#block.debt_supply == DebtSupply2,
           B#block.kryder_plus_rate_multiplier_latch == KryderPlusRateMultiplierLatch,
           B#block.kryder_plus_rate_multiplier == KryderPlusRateMultiplier,
-          B#block.height >= arweave_lib_fork:height_2_6()} of
+          B#block.height >= arweave_lib_constants:height_2_6()} of
         {false, _, _, _, _, _} ->
             {error, invalid_reward_pool};
         {true, false, _, _, _, true} ->
@@ -454,7 +454,7 @@ finalize_apply_block({error, _} = Error, _B, _PrevRootHash, State) ->
 
 add_wallets(State, RootHash, Wallets, Height, Denomination) ->
     Tid = maps:get(tid, State),
-    true = Height >= arweave_lib_fork:height_2_2(),
+    true = Height >= arweave_lib_constants:height_2_2(),
     RootHash2 = with_snapshot(Tid,
         fun() ->
             _ = move_sink_to(State, RootHash, add_wallets),
@@ -469,7 +469,7 @@ set_current(State, RootHash, Height, PruneDepth) ->
     State1 = move_sink_to(State, RootHash, set_current),
     Tid = maps:get(tid, State1),
     {RootHash, _, _} = compute_hash(Tid, #{ sink => ar_storage }),
-    true = Height >= arweave_lib_fork:height_2_2(),
+    true = Height >= arweave_lib_constants:height_2_2(),
     arweave_metrics:gauge_set(wallet_list_size, ar_patricia_tree_ets:size(Tid)),
     State1#{ dag := ar_diff_dag:filter(maps:get(dag, State1), PruneDepth) }.
 

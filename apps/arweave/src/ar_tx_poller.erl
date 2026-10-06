@@ -138,7 +138,8 @@ check_for_received_txs(#state{ pending_txids = [] } = State) ->
                 latest_txid_source_peer = TXIDPeer };
         {error, Error} ->
             ?LOG_DEBUG([{event, failed_to_get_mempool_txids_from_peers},
-                    {peers, [arweave_lib_util:format_peer(Peer) || Peer <- Peers]},
+                    {peers,
+                        [arweave_lib_util:format_peer(Peer) || Peer <- Peers]},
                     {error, io_lib:format("~p", [Error])}
             ]),
             State
@@ -152,7 +153,8 @@ download_and_verify_tx(TXID, TXIDPeer) ->
         not_found ->
             ar_ignore_registry:remove_ref(TXID, Ref),
             ?LOG_DEBUG([{event, failed_to_get_tx_from_peers},
-                    {peers, [arweave_lib_util:format_peer(Peer) || Peer <- Peers]},
+                    {peers,
+                        [arweave_lib_util:format_peer(Peer) || Peer <- Peers]},
                     {txid, arweave_lib_util:encode(TXID)},
                     {txid_peer, arweave_lib_util:format_peer(TXIDPeer)}
             ]);
@@ -188,7 +190,8 @@ validate_tx(#tx{ id = TXID } = TX, Ref, Peer, TXIDPeer, Time, Size) ->
 log_invalid_tx(tx_bad_anchor, TXID, TX, Peer, TXIDPeer) ->
     LastTX = arweave_lib_util:encode(TX#tx.last_tx),
     CurrentHeight = ar_node:get_height(),
-    CurrentBlockHash = arweave_lib_util:encode(ar_node:get_current_block_hash()),
+    CurrentBlockHash =
+        arweave_lib_util:encode(ar_node:get_current_block_hash()),
     ?LOG_INFO(format_invalid_tx_message(tx_bad_anchor,
         TXID, Peer, TXIDPeer, [
             {last_tx, LastTX},
@@ -198,7 +201,8 @@ log_invalid_tx(tx_bad_anchor, TXID, TX, Peer, TXIDPeer) ->
 log_invalid_tx(tx_verification_failed, TXID, TX, Peer, TXIDPeer) ->
     LastTX = arweave_lib_util:encode(TX#tx.last_tx),
     CurrentHeight = ar_node:get_height(),
-    CurrentBlockHash = arweave_lib_util:encode(ar_node:get_current_block_hash()),
+    CurrentBlockHash =
+        arweave_lib_util:encode(ar_node:get_current_block_hash()),
     ErrorCodes = ar_tx_db:get_error_codes(TXID),
     ?LOG_INFO(format_invalid_tx_message(tx_verification_failed,
         TXID, Peer, TXIDPeer, [

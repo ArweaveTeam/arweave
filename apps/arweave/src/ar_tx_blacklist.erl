@@ -110,7 +110,8 @@ get_blacklisted_intervals(Start, End, Intervals) ->
                 [{Offset, Start2}] when Start2 >= End ->
                     Intervals;
                 [{Offset, Start2}] when Offset >= End ->
-                    arweave_lib_intervals:add(Intervals, End, max(Start2, Start));
+                    arweave_lib_intervals:add(Intervals, End,
+                        max(Start2, Start));
                 [{Offset, Start2}] ->
                     get_blacklisted_intervals(Offset, End,
                             arweave_lib_intervals:add(Intervals, Offset, max(Start2, Start)));

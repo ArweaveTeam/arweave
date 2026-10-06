@@ -1,6 +1,5 @@
 %%% Per-store entropy preparation, cursors and device scheduling.
 -module(arweave_entropy_preparation).
--export([shift_entropy_offset/2]).
 
 -behaviour(gen_server).
 
@@ -437,10 +436,3 @@ read_cursor(StoreID, ModuleStart) ->
 
 store_cursor(Cursor, StoreID) ->
     ?DEP(storage):write_entropy_cursor(Cursor, StoreID).
-
-
-
-
-shift_entropy_offset(Offset, SectorCount) ->
-    SectorSize = arweave_lib_constants:get_replica_2_9_entropy_sector_size(),
-    arweave_lib_constants:get_chunk_bucket_end(Offset + SectorSize * SectorCount).

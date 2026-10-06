@@ -178,7 +178,8 @@ handle_cast({init, Blocks, Args}, _) ->
         undefined ->
             Peers = proplists:get_value(from_peers, Args),
     B =
-        case length(Blocks) >= arweave_lib_constants:get_consensus_window_size() of
+        case length(Blocks) >=
+                arweave_lib_constants:get_consensus_window_size() of
             true ->
                 lists:nth(arweave_lib_constants:get_consensus_window_size(), Blocks);
             false ->
@@ -219,7 +220,8 @@ find_local_account_tree(_Blocks, Skipped, Skipped, _CustomDir) ->
     not_found;
 find_local_account_tree(Blocks, SearchDepth, Skipped, CustomDir) ->
     {IsLast, B} =
-        case length(Blocks) >= arweave_lib_constants:get_consensus_window_size() of
+        case length(Blocks) >=
+                arweave_lib_constants:get_consensus_window_size() of
             true ->
                 {false, lists:nth(arweave_lib_constants:get_consensus_window_size(), Blocks)};
             false ->
@@ -347,7 +349,7 @@ apply_block2(B, PrevB, Args, Tree, DAG) ->
             B#block.debt_supply == DebtSupply2,
             B#block.kryder_plus_rate_multiplier_latch == KryderPlusRateMultiplierLatch,
             B#block.kryder_plus_rate_multiplier == KryderPlusRateMultiplier,
-            B#block.height >= arweave_lib_fork:height_2_6()} of
+            B#block.height >= arweave_lib_constants:height_2_6()} of
         {false, _, _, _, _, _} ->
             {{error, invalid_reward_pool}, DAG};
         {true, false, _, _, _, true} ->
@@ -385,7 +387,7 @@ set_current(DAG, RootHash, Height, PruneDepth) ->
         end
     ),
     Tree = ar_diff_dag:legacy_get_sink(UpdatedDAG),
-    true = Height >= arweave_lib_fork:height_2_2(),
+    true = Height >= arweave_lib_constants:height_2_2(),
     arweave_metrics:gauge_set(wallet_list_size, ar_patricia_tree_legacy:size(Tree)),
     ar_diff_dag:filter(UpdatedDAG, PruneDepth).
 
@@ -447,7 +449,7 @@ get_account_tree_range(Tree, Cursor) ->
 
 compute_hash(Tree, Diff, Height) ->
     Tree2 = apply_diff(Diff, Tree),
-    true = Height >= arweave_lib_fork:height_2_2(),
+    true = Height >= arweave_lib_constants:height_2_2(),
     element(1, ar_block:hash_wallet_list(Tree2)).
 
 maybe_add_node(DAG, RootHash, RootHash, _Wallets, _Metadata) ->

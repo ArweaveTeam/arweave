@@ -1,44 +1,14 @@
--include_lib("arweave_lib/include/arweave_lib_constants.hrl").
-
 %% The size in bits of the offset key in kv databases.
 -define(OFFSET_KEY_BITSIZE, 256).
-
-
 
 %% Polling interval for ar_device_lock cooperative locking. Sync workers
 %% that fail to acquire (or are paused on) a device lock re-cast themselves
 %% after this delay to retry without busy-spinning.
 -ifdef(AR_TEST).
-
-
 -define(DEVICE_LOCK_WAIT, 100).
-
-
 -else.
-
-
 -define(DEVICE_LOCK_WAIT, 5_000).
-
-
 -endif.
-
-
-
-%% A single sync unit: fetch the byte range [start_offset, end_offset) from
-%% `peer` into storage module `store_id`. `footprint_key` groups chunks that
-%% share the same 256 MiB entropy (replica.2.9 mode) for admission control;
-%% `none` means the task has no footprint constraint. `retry_count` counts
-%% down on transient errors; the task is abandoned at 0.
--record(sync_task, {
-                    start_offset,
-                    end_offset,
-                    peer,
-                    store_id,
-                    retry_count = 3,
-                    footprint_key = none
-                   }).
-
-
 
 %% The size in bits of the key prefix used in prefix bloom filter
 %% when looking up chunks by offsets from kv database.
@@ -48,8 +18,6 @@
 %% found in the filter and smaller than an SST table (200 MiB) so that the
 %% filter lookup can narrow the search down to a single table.
 -define(OFFSET_KEY_PREFIX_BITSIZE, 232).
-
-
 
 %% The upper size limit for a serialized chunk with its proof
 %% as it travels around the network.
@@ -61,91 +29,45 @@
 %% and special JSON chars.
 -define(MAX_SERIALIZED_CHUNK_PROOF_SIZE, 750000).
 
-
-
 %% Transaction data bigger than this limit is not served in
 %% GET /tx/<id>/data endpoint. Clients interested in downloading
 %% such data should fetch it chunk by chunk.
 -define(MAX_SERVED_TX_DATA_SIZE, 12 * 1024 * 1024).
 
-
-
 %% The frequency of storing the server state on disk.
 -define(STORE_STATE_FREQUENCY_MS, 30000).
 
-
-
 %% The maximum number of chunks currently being downloaded or processed.
 -ifdef(AR_TEST).
-
-
 -define(SYNC_BUFFER_SIZE, 100).
-
-
 -else.
-
-
 -define(SYNC_BUFFER_SIZE, 1000).
-
-
 -endif.
-
-
 
 %% Defines how long we keep the interval excluded from syncing.
 %% If we cannot find an interval by peers, we temporarily exclude
 %% it from the sought ranges to prevent the syncing process from slowing down.
 -ifdef(AR_TEST).
-
-
 -define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 5000).
-
-
 -else.
-
-
 -define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 10 * 60 * 1000).
-
-
 -endif.
-
-
 
 %% Let at least this many chunks stack up, per storage module, then write them on disk in the
 %% ascending order, to reduce out-of-order disk writes causing fragmentation.
 -ifdef(AR_TEST).
-
-
 -define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 2).
-
-
 -else.
-
-
--define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 100).
-
- % ~ 25 MB worth of chunks.
+-define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 100). % ~ 25 MB worth of chunks.
 -endif.
-
-
 
 %% If a chunk spends longer than this in the store queue, write it on disk without waiting
 %% for ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD chunks to stack up.
 -ifdef(AR_TEST).
-
-
 -define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 1000).
-
-
 -else.
-
-
--define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 2_000).
-
- % 2 seconds.
+-define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 2_000). % 2 seconds.
 -endif.
-
-
 
 %% @doc The state of the server managing data synchronization.
 -record(data_sync_state, {
@@ -199,14 +121,9 @@
                           chunk_data_db,
                           %% A reference to the on-disk key value storage mapping migration names to their stages.
                           migrations_index,
-                          %% A flag indicating the process has started collecting the intervals for syncing.
-                          %% We consult the other storage modules first, then search among the network peers.
-                          sync_status = undefined,
                           %% The offsets of the chunks currently scheduled for (re-)packing (keys) and
                           %% some chunk metadata needed for storing the chunk once it is packed.
                           packing_map = #{},
-                          %% The mining address the chunks are packed with in 2.6.
-                          mining_address,
                           %% The identifier of the storage module the process is responsible for.
                           store_id,
                           %% Footprints of each sector the module keeps (ar_footprint_limit).
@@ -218,15 +135,5 @@
                           %% The priority queue of chunks sorted by offset. The motivation is to have chunks
                           %% stack up, per storage module, before writing them on disk so that we can write
                           %% them in the ascending order and reduce out-of-order disk writes causing fragmentation.
-                          store_chunk_queue = gb_sets:new(),
-                          %% The length of the store chunk queue.
-                          store_chunk_queue_len = 0,
-                          %% The threshold controlling the brief accumuluation of the chunks in the queue before
-                          %% the actual disk dump, to reduce the chance of out-of-order write causing disk
-                          %% fragmentation.
-                          store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
+                          store_chunk_queue = gb_sets:new()
                          }).
-
-
-
-

@@ -50,7 +50,8 @@ test_data_roots_sync_from_peer() ->
     %% The node fetches this many latest blocks after joining the network.
     %% Mine enough newer blocks so the earliest data blocks are older than
     %% that window and have to use data root syncing to fetch data roots.
-    LatestJoinedBlockCount = 2 * arweave_lib_constants:get_max_tx_anchor_depth(),
+    LatestJoinedBlockCount =
+        2 * arweave_lib_constants:get_max_tx_anchor_depth(),
     ?assertEqual(10, LatestJoinedBlockCount),
     Blocks = BlocksBeforeJoin ++ lists:map(
             fun(_) ->
@@ -108,7 +109,8 @@ test_data_roots_sync_from_peer() ->
                                     [B#block.height, ConfiguredRanges, Intersection]),
                                 ok = ar_test_await:http_data_roots_available(main, B);
                             false ->
-                                case arweave_lib_intervals:is_empty(Intersection) of
+                                case arweave_lib_intervals:is_empty(
+                                    Intersection) of
                                     false ->
                                         ?debugFmt("Asserting data roots synced for partitions "
                                             "we configured, range intersection: ~0p", [Intersection]),
@@ -237,7 +239,7 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 
     MainConfig = #{
         [mining, enabled] => false,
-        [sync, jobs] => 0,
+        [sync, max_download_rate] => 0,
         [gossip, header, workers] => 0,
         [gossip, data_roots, syncing_enabled] => true
     },
@@ -457,7 +459,7 @@ join_main_on_peer1(ExpectedHeight, EnableBackgroundSync) ->
 join_main_on_peer1(ExpectedHeight, EnableBackgroundSync, MaxDuplicateDataRoots) ->
     BaseOverrides = #{
         [mining, enabled] => false,
-        [sync, jobs] => 0,
+        [sync, max_download_rate] => 0,
         [gossip, header, workers] =>
             case EnableBackgroundSync of
                 true -> 2;
@@ -623,7 +625,7 @@ data_roots_sync_mocks() ->
     [
         {arweave_lib_constants, get_consensus_window_size, fun() -> 5 end},
         {arweave_lib_constants, get_max_tx_anchor_depth, fun() -> 5 end},
-        {arweave_storage_module, get_overlap, fun(_Packing) -> 0 end}
+        {arweave_storage, get_overlap, fun(_Packing) -> 0 end}
     ].
 
 unpacked_storage_module_configs() ->

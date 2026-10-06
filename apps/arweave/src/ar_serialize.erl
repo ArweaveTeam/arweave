@@ -37,8 +37,6 @@
         parse_integer/1, parse_integer_or_infinity/1]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
--include("ar_vdf.hrl").
 -include("ar_mining.hrl").
 -include("ar_pool.hrl").
 
@@ -80,7 +78,7 @@ block_to_binary(#block{ indep_hash = H, previous_block = PrevH, timestamp = TS,
                 _ ->
                     ScheduledRate
             end,
-    Nonce2 = case B#block.height >= arweave_lib_fork:height_2_6() of
+    Nonce2 = case B#block.height >= arweave_lib_constants:height_2_6() of
             true -> binary:encode_unsigned(Nonce, big); false -> Nonce end,
     << H:48/binary, (encode_bin(PrevH, 8))/binary, (encode_int(TS, 8))/binary,
             (encode_bin(Nonce2, 16))/binary, (encode_int(Height, 8))/binary,
@@ -133,12 +131,13 @@ binary_to_block(<< H:48/binary, PrevHSize:8, PrevH:PrevHSize/binary,
             _ -> {RateDividend, RateDivisor} end,
     ScheduledRate = case SchedRateDivisorSize of 0 -> undefined;
             _ -> {SchedRateDividend, SchedRateDivisor} end,
-    case Height >= arweave_lib_fork:height_2_5() andalso
+    case Height >= arweave_lib_constants:height_2_5() andalso
             (Rate == undefined orelse ScheduledRate == undefined) of
         true ->
             {error, invalid_block_input};
         false ->
-            Addr2 = case {AddrSize, Height >= arweave_lib_fork:height_2_6()} of
+            Addr2 =
+                case {AddrSize, Height >= arweave_lib_constants:height_2_6()} of
                     {0, false} -> unclaimed; _ -> Addr end,
             B = #block{ indep_hash = H, previous_block = PrevH, timestamp = TS,
                     nonce = Nonce, height = Height, diff = Diff,
@@ -173,14 +172,14 @@ block_to_json_struct(
             unpacked_chunk2_hash = UnpackedChunk2Hash,
             replica_format = ReplicaFormat } = B) ->
     {JSONDiff, JSONCDiff} =
-        case Height >= arweave_lib_fork:height_1_8() of
+        case Height >= arweave_lib_constants:height_1_8() of
             true ->
                 {integer_to_binary(Diff), integer_to_binary(CDiff)};
             false ->
                 {Diff, CDiff}
     end,
     {JSONRewardPool, JSONBlockSize, JSONWeaveSize} =
-        case Height >= arweave_lib_fork:height_2_4() of
+        case Height >= arweave_lib_constants:height_2_4() of
             true ->
                 {integer_to_binary(RewardPool), integer_to_binary(BlockSize),
                     integer_to_binary(WeaveSize)};
@@ -188,13 +187,13 @@ block_to_json_struct(
                 {RewardPool, BlockSize, WeaveSize}
     end,
     Tags2 =
-        case Height >= arweave_lib_fork:height_2_5() of
+        case Height >= arweave_lib_constants:height_2_5() of
             true ->
                 [arweave_lib_util:encode(Tag) || Tag <- Tags];
             false ->
                 Tags
         end,
-    Nonce2 = case B#block.height >= arweave_lib_fork:height_2_6() of
+    Nonce2 = case B#block.height >= arweave_lib_constants:height_2_6() of
             true -> binary:encode_unsigned(Nonce); false -> Nonce end,
     JSONElements =
         [{nonce, arweave_lib_util:encode(Nonce2)}, {previous_block, arweave_lib_util:encode(PrevHash)},
@@ -219,7 +218,7 @@ block_to_json_struct(
                 {block_size, JSONBlockSize}, {cumulative_diff, JSONCDiff},
                 {hash_list_merkle, arweave_lib_util:encode(MR)}, {poa, poa_to_json_struct(POA)}],
     JSONElements2 =
-        case Height < arweave_lib_fork:height_1_6() of
+        case Height < arweave_lib_constants:height_1_6() of
             true ->
                 KeysToDelete = [cumulative_diff, hash_list_merkle],
                 delete_keys(KeysToDelete, JSONElements);
@@ -227,14 +226,14 @@ block_to_json_struct(
                 JSONElements
         end,
     JSONElements3 =
-        case Height >= arweave_lib_fork:height_2_4() of
+        case Height >= arweave_lib_constants:height_2_4() of
             true ->
                 delete_keys([tx_tree], JSONElements2);
             false ->
                 JSONElements2
         end,
     JSONElements4 =
-        case Height >= arweave_lib_fork:height_2_5() of
+        case Height >= arweave_lib_constants:height_2_5() of
             true ->
                 {RateDividend, RateDivisor} = B#block.usd_to_ar_rate,
                 {ScheduledRateDividend,
@@ -255,7 +254,7 @@ block_to_json_struct(
                 JSONElements3
         end,
     JSONElements5 =
-        case Height >= arweave_lib_fork:height_2_6() of
+        case Height >= arweave_lib_constants:height_2_6() of
             true ->
                 PricePerGiBMinute = B#block.price_per_gib_minute,
                 ScheduledPricePerGiBMinute = B#block.scheduled_price_per_gib_minute,
@@ -316,7 +315,7 @@ block_to_json_struct(
                 JSONElements4
         end,
     JSONElements8 =
-        case Height >= arweave_lib_fork:height_2_7() of
+        case Height >= arweave_lib_constants:height_2_7() of
             true ->
                 JSONElements7 = [
                         {merkle_rebase_support_threshold, integer_to_binary(RebaseThreshold)},
@@ -334,7 +333,7 @@ block_to_json_struct(
                 JSONElements5
         end,
     JSONElements9 =
-        case Height >= arweave_lib_fork:height_2_8() of
+        case Height >= arweave_lib_constants:height_2_8() of
             false ->
                 JSONElements8;
             true ->
@@ -353,7 +352,7 @@ block_to_json_struct(
                 end
         end,
     JSONElements10 =
-        case Height >= arweave_lib_fork:height_2_9() of
+        case Height >= arweave_lib_constants:height_2_9() of
             false ->
                 JSONElements9;
             true ->
@@ -657,7 +656,7 @@ encode_double_signing_proof(undefined, _Height) ->
 encode_double_signing_proof(Proof, Height) ->
     {Key, Sig1, CDiff1, PrevCDiff1, Preimage1,
             Sig2, CDiff2, PrevCDiff2, Preimage2} = Proof,
-    case Height >= arweave_lib_fork:height_2_9() of
+    case Height >= arweave_lib_constants:height_2_9() of
         false ->
             << 1:8, Key:512/binary, Sig1:512/binary,
                 (ar_serialize:encode_int(CDiff1, 16))/binary,
@@ -693,7 +692,7 @@ encode_post_2_6_fields(#block{ height = Height, hash_preimage = HashPreimage,
             double_signing_proof = DoubleSigningProof,
             previous_cumulative_diff = PrevCDiff } = B) ->
     RewardKey = case B#block.reward_key of undefined -> <<>>; {_Type, Key} -> Key end,
-    case Height >= arweave_lib_fork:height_2_6() of
+    case Height >= arweave_lib_constants:height_2_6() of
         false ->
             <<>>;
         true ->
@@ -720,7 +719,7 @@ encode_post_2_7_fields(#block{ height = Height,
         block_time_history_hash = BlockTimeHistoryHash,
         nonce_limiter_info = #nonce_limiter_info{ vdf_difficulty = VDFDifficulty,
                 next_vdf_difficulty = NextVDFDifficulty } } = B) ->
-    case Height >= arweave_lib_fork:height_2_7() of
+    case Height >= arweave_lib_constants:height_2_7() of
         true ->
             << (encode_int(Threshold, 16))/binary, ChunkHash:32/binary,
                     (encode_bin(Chunk2Hash, 8))/binary,
@@ -737,7 +736,7 @@ encode_post_2_8_fields(#block{ height = Height,
         unpacked_chunk_hash = UnpackedChunkHash, unpacked_chunk2_hash = UnpackedChunk2Hash,
         poa = #poa{ unpacked_chunk = UnpackedChunk },
         poa2 = #poa{ unpacked_chunk = UnpackedChunk2 }} = B) ->
-    case Height >= arweave_lib_fork:height_2_8() of
+    case Height >= arweave_lib_constants:height_2_8() of
         false ->
             <<>>;
         true ->
@@ -750,7 +749,7 @@ encode_post_2_8_fields(#block{ height = Height,
     end.
 
 encode_post_2_9_fields(#block{ height = Height, replica_format = ReplicaFormat }) ->
-    case Height >= arweave_lib_fork:height_2_9() of
+    case Height >= arweave_lib_constants:height_2_9() of
         false ->
             <<>>;
         true ->
@@ -845,7 +844,7 @@ parse_block_tags_transactions(Bin, B) ->
     end.
 
 parse_block_transactions(Bin, B) ->
-    case {parse_block_transactions(Bin), B#block.height < arweave_lib_fork:height_2_6()} of
+    case {parse_block_transactions(Bin), B#block.height < arweave_lib_constants:height_2_6()} of
         {{error, Reason}, _} ->
             {error, Reason};
         {{ok, TXs, <<>>}, true} ->
@@ -893,7 +892,7 @@ parse_block_post_2_6_fields(B, << HashPreimageSize:8, HashPreimage:HashPreimageS
             steps = parse_checkpoints(Steps, Height) },
     RecallByte2_2 = case RecallByte2Size of 0 -> undefined; _ -> RecallByte2 end,
     SigType =
-        case {RewardKeySize, Height >= arweave_lib_fork:height_2_9()} of
+        case {RewardKeySize, Height >= arweave_lib_constants:height_2_9()} of
             {?ECDSA_PUB_KEY_SIZE, true} ->
                 ?ECDSA_KEY_TYPE;
             _ ->
@@ -961,7 +960,7 @@ parse_block_transactions(_N, _Rest, _TXs) ->
 parse_double_signing_proof(<< 0:8, Rest/binary >>, B) ->
     parse_post_2_7_fields(Rest, B);
 parse_double_signing_proof(Bin, #block{ height = Height } = B) ->
-    case {Bin, Height >= arweave_lib_fork:height_2_9()} of
+    case {Bin, Height >= arweave_lib_constants:height_2_9()} of
         {<< 1:8, Key:512/binary, Sig1:512/binary,
                 CDiff1Size:16, CDiff1:(CDiff1Size * 8),
                 PrevCDiff1Size:16, PrevCDiff1:(PrevCDiff1Size * 8),
@@ -997,7 +996,7 @@ parse_double_signing_proof(Bin, #block{ height = Height } = B) ->
 end.
 
 parse_post_2_7_fields(Rest, #block{ height = Height } = B) ->
-    case {Rest, Height >= arweave_lib_fork:height_2_7()} of
+    case {Rest, Height >= arweave_lib_constants:height_2_7()} of
         {<<>>, false} ->
             {ok, B};
         {<< ThresholdSize:16, Threshold:(ThresholdSize*8), ChunkHash:32/binary,
@@ -1019,7 +1018,7 @@ parse_post_2_7_fields(Rest, #block{ height = Height } = B) ->
     end.
 
 parse_post_2_8_fields(Rest, #block{ height = Height, poa = PoA, poa2 = PoA2 } = B) ->
-    case {Rest, Height >= arweave_lib_fork:height_2_8()} of
+    case {Rest, Height >= arweave_lib_constants:height_2_8()} of
         {<<>>, false} ->
             {ok, B};
         {<< PackingDifficulty:8, UnpackedChunkHashSize:8,
@@ -1050,7 +1049,7 @@ parse_post_2_8_fields(Rest, #block{ height = Height, poa = PoA, poa2 = PoA2 } = 
     end.
 
 parse_post_2_9_fields(Rest, #block{ height = Height } = B) ->
-    case {Rest, Height >= arweave_lib_fork:height_2_9()} of
+    case {Rest, Height >= arweave_lib_constants:height_2_9()} of
         {<<>>, false} ->
             {ok, B};
         {<< ReplicaFormat:8 >>, true} ->
@@ -1383,8 +1382,9 @@ json_struct_to_block(JSONBlock) when is_binary(JSONBlock) ->
     json_struct_to_block(dejsonify(JSONBlock));
 json_struct_to_block({BlockStruct}) ->
     Height = find_value(<<"height">>, BlockStruct),
-    true = is_integer(Height) andalso Height < arweave_lib_fork:height_2_6(),
-    Fork_2_5 = arweave_lib_fork:height_2_5(),
+    true = is_integer(Height) andalso
+        Height < arweave_lib_constants:height_2_6(),
+    Fork_2_5 = arweave_lib_constants:height_2_5(),
     TXIDs = find_value(<<"txs">>, BlockStruct),
     WalletList = find_value(<<"wallet_list">>, BlockStruct),
     HashList = find_value(<<"hash_list">>, BlockStruct),
@@ -1397,8 +1397,8 @@ json_struct_to_block({BlockStruct}) ->
                 true = (byte_size(list_to_binary(TagsValue)) =< 2048),
                 TagsValue
         end,
-    Fork_1_8 = arweave_lib_fork:height_1_8(),
-    Fork_1_6 = arweave_lib_fork:height_1_6(),
+    Fork_1_8 = arweave_lib_constants:height_1_8(),
+    Fork_1_6 = arweave_lib_constants:height_1_6(),
     CDiff =
         case find_value(<<"cumulative_diff">>, BlockStruct) of
             _ when Height < Fork_1_6 -> 0;
@@ -1430,7 +1430,7 @@ json_struct_to_block({BlockStruct}) ->
                 ar_wallet:base64_address_with_optional_checksum_to_decoded_address(RewardAddr)
         end,
     {RewardPool, BlockSize, WeaveSize} =
-        case Height >= arweave_lib_fork:height_2_4() of
+        case Height >= arweave_lib_constants:height_2_4() of
             true ->
                 {
                     parse_integer(find_value(<<"reward_pool">>, BlockStruct)),
@@ -1586,7 +1586,8 @@ poa_to_json_struct(POA) ->
             <<>> ->
                 Fields;
             UnpackedChunk ->
-                Fields ++ [{unpacked_chunk, arweave_lib_util:encode(UnpackedChunk)}]
+                Fields ++
+                    [{unpacked_chunk, arweave_lib_util:encode(UnpackedChunk)}]
         end,
     {Fields2}.
 
@@ -1606,7 +1607,7 @@ nonce_limiter_info_to_json_struct(Height,
             %% compatibility.
             {checkpoints, [arweave_lib_util:encode(Elem) || Elem <- Steps]}],
     Fields2 =
-        case Height >= arweave_lib_fork:height_2_7() of
+        case Height >= arweave_lib_constants:height_2_7() of
             false ->
                 Fields;
             true ->
@@ -1642,7 +1643,8 @@ json_struct_to_poa_from_map(JSONStruct) ->
     #poa{
         option = parse_integer(maps:get(<<"option">>, JSONStruct)),
         tx_path = arweave_lib_util:decode(maps:get(<<"tx_path">>, JSONStruct)),
-        data_path = arweave_lib_util:decode(maps:get(<<"data_path">>, JSONStruct)),
+        data_path =
+            arweave_lib_util:decode(maps:get(<<"data_path">>, JSONStruct)),
         chunk = arweave_lib_util:decode(maps:get(<<"chunk">>, JSONStruct)),
         unpacked_chunk = arweave_lib_util:decode(maps:get(<<"unpacked_chunk">>, JSONStruct, <<>>))
     }.
@@ -1989,7 +1991,8 @@ poa_no_chunk_map_to_json_map(Map) ->
 
 json_map_to_poa_map(JSON) ->
     Map = #{
-        data_root => arweave_lib_util:decode(maps:get(<<"data_root">>, JSON, <<>>)),
+        data_root =>
+            arweave_lib_util:decode(maps:get(<<"data_root">>, JSON, <<>>)),
         chunk => arweave_lib_util:decode(maps:get(<<"chunk">>, JSON)),
         data_path => arweave_lib_util:decode(maps:get(<<"data_path">>, JSON)),
         tx_path => arweave_lib_util:decode(maps:get(<<"tx_path">>, JSON, <<>>)),
@@ -2100,7 +2103,8 @@ json_map_to_candidate(JSON) ->
     H0 = arweave_lib_util:decode(maps:get(<<"h0">>, JSON)),
     H1 = decode_if_set(JSON, <<"h1">>, fun arweave_lib_util:decode/1, not_set),
     H2 = decode_if_set(JSON, <<"h2">>, fun arweave_lib_util:decode/1, not_set),
-    MiningAddress = arweave_lib_util:decode(maps:get(<<"mining_address">>, JSON)),
+    MiningAddress =
+        arweave_lib_util:decode(maps:get(<<"mining_address">>, JSON)),
     NextSeed = arweave_lib_util:decode(maps:get(<<"next_seed">>, JSON)),
     NextVDFDifficulty = parse_integer(maps:get(<<"next_vdf_difficulty">>, JSON)),
     Nonce = decode_if_set(JSON, <<"nonce">>, fun parse_integer/1, not_set),
@@ -2208,7 +2212,8 @@ solution_to_json_struct(
 json_map_to_solution(JSON) ->
     LastStepCheckpoints = parse_json_checkpoints(
             arweave_lib_util:decode(maps:get(<<"last_step_checkpoints">>, JSON, <<>>))),
-    MiningAddress = arweave_lib_util:decode(maps:get(<<"mining_address">>, JSON)),
+    MiningAddress =
+        arweave_lib_util:decode(maps:get(<<"mining_address">>, JSON)),
     NextSeed = arweave_lib_util:decode(maps:get(<<"next_seed">>, JSON)),
     NextVDFDifficulty = maps:get(<<"next_vdf_difficulty">>, JSON),
     NextVDFDifficulty2 =

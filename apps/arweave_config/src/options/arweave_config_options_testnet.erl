@@ -6,7 +6,6 @@
 -export([specs/0, group_description/0, validate/0]).
 -include("arweave_config.hrl").
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 
 specs() ->
     [

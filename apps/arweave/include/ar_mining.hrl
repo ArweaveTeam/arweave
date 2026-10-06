@@ -1,15 +1,7 @@
--include_lib("arweave_lib/include/arweave_lib_constants.hrl").
-
 -ifndef(AR_MINING_HRL).
-
-
 -define(AR_MINING_HRL, true).
 
-
-
 -define(GC_LOG_THRESHOLD, 1000).
-
-
 
 %% fields prefixed with cm_ are only set when a solution is distributed across miners as part
 %% of a coordinated mining set.
@@ -42,8 +34,6 @@
                            label = <<"not_set">> %% not atom, for prevent atom table pollution DoS
                           }).
 
-
-
 -record(mining_solution, {
                           last_step_checkpoints = [],
                           merkle_rebase_threshold = 0,
@@ -68,10 +58,4 @@
                           replica_format = 0
                          }).
 
-
-
 -endif.
-
-
-
-

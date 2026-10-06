@@ -3,7 +3,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -253,7 +252,7 @@ do_test_chunk_cache_size_with_mocks(H1s, H2s, RecallRange2s, FirstChunks) ->
             end
         },
         {
-            ar_chunk_storage, get_range,
+            arweave_storage, get_chunk_range,
             fun (RangeStart, Size, StoreID) ->
                 Count = increment_mock_counter(get_range),
                 FirstChunk = get_mock_value(Count, FirstChunks),

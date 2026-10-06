@@ -34,7 +34,7 @@ start(Args) ->
     %% current or legacy
     Dialect = dialect(Env, Args),
     %% Recorded so consumers can tell how the node was configured -
-    %% ar_storage_module uses the legacy bucket-notation directory
+    %% arweave_storage uses the legacy bucket-notation directory
     %% names only for legacy launches (see
     %% arweave_config:is_legacy_launch/0).
     ok = arweave_config:set([config_dialect], Dialect),

@@ -85,7 +85,8 @@ init([]) ->
       lists:seq(1, HeaderSyncJobs)
      ),
     gen_server:cast(self(), store_sync_state),
-    ets:insert(?MODULE, {synced_blocks, arweave_lib_intervals:sum(SyncRecord)}),
+    ets:insert(?MODULE,
+        {synced_blocks, arweave_lib_intervals:sum(SyncRecord)}),
     {ok,
      #state{
         sync_record = SyncRecord,
@@ -151,7 +152,8 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
     BaseHeight = get_base_height(CurrentBI, PrevHeight, RecentBI),
     State2 = State#state{
                sync_record = arweave_lib_intervals:cut(SyncRecord, BaseHeight),
-               retry_record = arweave_lib_intervals:cut(RetryRecord, BaseHeight),
+               retry_record =
+                   arweave_lib_intervals:cut(RetryRecord, BaseHeight),
                block_index = RecentBI,
                height = Height
               },
@@ -175,7 +177,8 @@ handle_cast({add_historical_block, _, _, _, _, _},
     gen_server:cast(self(), process_item),
     {noreply, State};
 handle_cast({add_historical_block, B, H, H2, TXRoot, Backoff}, State) ->
-    case arweave_lib_intervals:is_inside(State#state.sync_record, B#block.height) of
+    case arweave_lib_intervals:is_inside(
+        State#state.sync_record, B#block.height) of
         true ->
             %% The node worker stored its validated copy of the block while
             %% the download was in flight; keep that copy.
@@ -219,7 +222,7 @@ handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecor
                     %% the weave is very costly. Therefore, a list of 2.0 hashes for 1.0
                     %% blocks was computed and stored along with the network client.
                     H2 =
-                        case Height < arweave_lib_fork:height_2_0() of
+                        case Height < arweave_lib_constants:height_2_0() of
                             true ->
                                 ar_node:get_2_0_hash_of_1_0_block(Height);
                             false ->
@@ -298,7 +301,7 @@ handle_info({event, disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, _Perc
                             [disk_pool, max_buffer_size]),
     DiskCacheSizeMb = arweave_config:get([gossip, header, cache_size]),
     DiskPoolSize = MaxDiskPoolBufferMb * ?MiB,
-    DiskCacheSize = DiskCacheSizeMb * 1048576,
+    DiskCacheSize = DiskCacheSizeMb * ?MiB,
     BufferSize = 10_000_000_000,
     case Bytes < DiskPoolSize + DiskCacheSize + BufferSize div 2 of
         true ->
@@ -493,7 +496,7 @@ update_backoff({_Timestamp, Interval}) ->
     {os:system_time(second) + Interval2, Interval2}.
 
 check_fork(Height, H, TXRoot) ->
-    case Height < arweave_lib_fork:height_2_0() of
+    case Height < arweave_lib_constants:height_2_0() of
         true ->
             true;
         false ->
@@ -520,7 +523,7 @@ download_block(H, H2, TXRoot) ->
     end.
 
 download_block(Peers, H, H2, TXRoot) ->
-    Fork_2_0 = arweave_lib_fork:height_2_0(),
+    Fork_2_0 = arweave_lib_constants:height_2_0(),
     Opts = #{ rand_min => length(Peers) },
     case ar_http_iface_client:get_block_shadow(Peers, H, Opts) of
         unavailable ->
