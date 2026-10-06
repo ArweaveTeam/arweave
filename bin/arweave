@@ -400,7 +400,7 @@ arweave_wallet_create_ecdsa() {
 # Arweave Data Doctor Section
 ######################################################################
 arweave_doctor() {
-    ARWEAVE_OPTS="-run ar_data_doctor main"
+    ARWEAVE_OPTS="-run arweave_tools_doctor main"
     ARGS=("$@")
 }
 

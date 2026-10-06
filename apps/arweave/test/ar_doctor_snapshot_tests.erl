@@ -28,7 +28,7 @@ test_snapshot_export() ->
     _ = file:del_dir_r(SnapshotDir),
     ar_test_node:stop(),
     ok = ar_test_await:ar_kv_stopped(10_000),
-    ?assertEqual(true, ar_doctor_snapshot:main([DataDir, SnapshotDir,
+    ?assertEqual(true, arweave_tools_doctor_snapshot:main([DataDir, SnapshotDir,
             "height", integer_to_list(?SNAPSHOT_HEIGHT)])),
     ok = stop_ar_kv(),
     {ok, Files} = file:list_dir(SnapshotDir),

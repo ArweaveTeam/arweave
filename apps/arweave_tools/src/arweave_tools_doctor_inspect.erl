@@ -1,11 +1,17 @@
--module(ar_doctor_inspect).
+-module(arweave_tools_doctor_inspect).
+
 
 -export([main/1, help/0]).
 
+
 -include_lib("arweave/include/ar.hrl").
+
 -include_lib("arweave/include/ar_consensus.hrl").
+
 -include_lib("arweave_config/include/arweave_config.hrl").
+
 -include_lib("arweave/include/ar_chunk_storage.hrl").
+
 
 %%--------------------------------------------------------------------
 %% API
@@ -35,12 +41,14 @@ main(Args) ->
             false
     end.
 
+
 help() ->
     ar:console("Usage: inspect chunks <directory> <start_range> <end_range> <address1> [address2 ...]~n"),
     ar:console("       inspect bitmap <data_dir> <storage_module>~n"),
     ar:console("storage_module is a JSON storage_modules entry, e.g.~n"),
     ar:console("'{\"partition\": 0, \"packing_format\": \"replica_2_9\", \"packing_address\": \"<addr>\"}'~n"),
     ar:console("or with range_start/range_end.~n").
+
 
 %%--------------------------------------------------------------------
 %% Inspect Chunks
@@ -53,6 +61,7 @@ inspect_range(Dir, Start, End, Addresses) ->
     inspect_chunk(Dir, Start, Addresses),
     Next = Start + ?DATA_CHUNK_SIZE,
     inspect_range(Dir, Next, End, Addresses).
+
 
 %% inspect_chunk/2 locates the chunk file and reads the local chunk,
 %% then queries the remote chunk and prints their generated ids.
@@ -92,6 +101,7 @@ inspect_chunk(Dir, PaddedEndOffset, Addresses) ->
                ExpectedChunkID, RawChunk, PaddedEndOffset, Addresses, TXRoot, ChunkSize),
     print_match(Result).
 
+
 %% New functions for checking unpacked chunks without printing per test;
 %% only the first matching test is reported.
 
@@ -108,6 +118,7 @@ check_unpacked(
               Rest, PaddedEndOffset, TXRoot, LocalChunk, ChunkSize, ExpectedChunkID)
     end.
 
+
 check_packings_for_address(
   Address, PaddedEndOffset, TXRoot, LocalChunk, ChunkSize, ExpectedChunkID) ->
     Packings = [
@@ -115,6 +126,7 @@ check_packings_for_address(
                 {spora_2_6, Address}
                ],
     check_packings(Packings, PaddedEndOffset, TXRoot, LocalChunk, ChunkSize, ExpectedChunkID).
+
 
 check_packings([], _PaddedEndOffset, _TXRoot, _LocalChunk, _ChunkSize, _ExpectedChunkID) ->
     no_match;
@@ -129,6 +141,7 @@ check_packings(
               Rest, PaddedEndOffset, TXRoot, LocalChunk, ChunkSize, ExpectedChunkID)
     end.
 
+
 check_packing(Packing, PaddedEndOffset, TXRoot, LocalChunk, ChunkSize, ExpectedChunkID) ->
     case ar_packing_server:unpack(Packing, PaddedEndOffset, TXRoot, LocalChunk, ChunkSize) of
         {ok, Unpacked} ->
@@ -141,6 +154,7 @@ check_packing(Packing, PaddedEndOffset, TXRoot, LocalChunk, ChunkSize, ExpectedC
         {error, _Reason} ->
             no_match
     end.
+
 
 %% read_local_chunk/2 opens the file, reads ?OFFSET_SIZE+?DATA_CHUNK_SIZE bytes
 %% starting at Position and closes the file.
@@ -163,6 +177,7 @@ read_local_chunk(Filepath, Position) ->
             {0, <<>>}
     end.
 
+
 %% fetch_remote_chunk/1 uses httpc (in inets application) to query the remote URL.
 fetch_remote_chunk(PaddedOffset) ->
     %% Build URL e.g. "http://arweave.net/chunk2/123456"
@@ -181,6 +196,7 @@ fetch_remote_chunk(PaddedOffset) ->
             ar:console("HTTP request error for ~s: ~p~n", [URL, Reason]),
             {error, Reason}
     end.
+
 
 %% check_all/6 performs the raw, entropy, and unpacking checks sequentially
 check_all(ExpectedChunkID, LocalChunk, PaddedEndOffset, Addresses, TXRoot, ChunkSize) ->
@@ -202,6 +218,7 @@ check_all(ExpectedChunkID, LocalChunk, PaddedEndOffset, Addresses, TXRoot, Chunk
             end
     end.
 
+
 %% print_match/1 prints the match result.
 print_match({match, Type}) when is_list(Type) ->
     ar:console("~nMATCH: ~s~n", [Type]);
@@ -209,6 +226,7 @@ print_match({match, Packing}) ->
     ar:console("~nMATCH: ~p~n", [ar_serialize:encode_packing(Packing, true)]);
 print_match(no_match) ->
     ar:console("~nNO MATCH~n").
+
 
 %%--------------------------------------------------------------------
 %% Inspect Bitmap
@@ -226,12 +244,13 @@ bitmap(DataDir, StorageModuleConfig) ->
     [StorageModule] = arweave_config:storage_modules(),
     StoreID = arweave_storage_module:id(StorageModule),
 
-    case ar_data_doctor:check_module_dir(DataDir, StoreID) of
+    case arweave_tools_doctor:check_module_dir(DataDir, StoreID) of
         false ->
             false;
         true ->
             bitmap(DataDir, StorageModule, StoreID)
     end.
+
 
 bitmap(DataDir, StorageModule, StoreID) ->
     ar_kv_sup:start_link(),
@@ -241,12 +260,14 @@ bitmap(DataDir, StorageModule, StoreID) ->
 
     {ModuleStart, ModuleEnd} = arweave_storage_module:module_range(StorageModule),
 
-    ChunkPackings = ar_chunk_visualization:get_chunk_packings(
+    ChunkPackings = arweave_tools_chunk_visualization:get_chunk_packings(
                       ModuleStart, ModuleEnd, StoreID, true),
-    ar_chunk_visualization:print_chunk_stats(ChunkPackings),
-    Bitmap = ar_chunk_visualization:generate_bitmap(ChunkPackings),
+    arweave_tools_chunk_visualization:print_chunk_stats(ChunkPackings),
+    Bitmap = arweave_tools_chunk_visualization:generate_bitmap(ChunkPackings),
 
     Filename = "bitmap_" ++ StoreID ++ ".ppm",
-    file:write_file(Filename, ar_chunk_visualization:bitmap_to_binary(Bitmap)),
+    file:write_file(Filename, arweave_tools_chunk_visualization:bitmap_to_binary(Bitmap)),
     ar:console("Bitmap written to ~s~n", [Filename]),
     true.
+
+

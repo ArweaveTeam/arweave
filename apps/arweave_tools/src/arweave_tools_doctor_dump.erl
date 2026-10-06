@@ -1,13 +1,19 @@
--module(ar_doctor_dump).
+-module(arweave_tools_doctor_dump).
+
 
 -export([main/1, help/0]).
 
+
 -include_lib("kernel/include/file.hrl").
+
 -include_lib("arweave/include/ar.hrl").
+
 -include_lib("arweave_config/include/arweave_config.hrl").
+
 
 main(Args) ->
     dump(Args).
+
 
 help() ->
     ar:console("data-doctor dump <include_txs> <block_id> <min_height> <data_dir> <output_dir>~n"),
@@ -18,6 +24,7 @@ help() ->
     ar:console("  output_dir: Full path to a directory where the dumped data will be written.~n"),
     ar:console("~nExample:~n"),
     ar:console("data-doctor dump true ZR7zbobdw55a....pRpUabEkLD0V 100000 /mnt/arweave-data /mnt/output~n").
+
 
 dump([IncludeTXs, H, MinHeight, DataDir, OutputDir]) ->
     ok = filelib:ensure_dir(filename:join([OutputDir, "blocks", "dummy"])),
@@ -35,9 +42,11 @@ dump([IncludeTXs, H, MinHeight, DataDir, OutputDir]) ->
 dump(_) ->
     false.
 
+
 list_to_boolean("true") -> true;
 list_to_boolean("false") -> false;
 list_to_boolean(_) -> false.
+
 
 dump_blocks(BH, MinHeight, OutputDir, IncludeTXs) ->
     H = arweave_lib_util:encode(BH),
@@ -84,6 +93,7 @@ dump_blocks(BH, MinHeight, OutputDir, IncludeTXs) ->
             io:format("Block ~p not found.~n", [H])
     end.
 
+
 dump_txs([], _OutputDir) ->
     ok;
 dump_txs([TXID | TXIDs], OutputDir) ->
@@ -99,3 +109,5 @@ dump_txs([TXID | TXIDs], OutputDir) ->
             ok
     end,
     dump_txs(TXIDs, OutputDir).
+
+

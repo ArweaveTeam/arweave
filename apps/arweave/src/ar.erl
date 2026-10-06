@@ -267,7 +267,7 @@ benchmark_vdf() ->
     benchmark_vdf(Args).
 
 benchmark_vdf(Args) ->
-    ar_bench_vdf:run_benchmark_from_cli(Args),
+    arweave_tools_bench_vdf:run_benchmark_from_cli(Args),
     init:stop(1).
 
 benchmark_hash() ->
@@ -275,7 +275,7 @@ benchmark_hash() ->
     benchmark_hash(Args).
 
 benchmark_hash(Args) ->
-    ar_bench_hash:run_benchmark_from_cli(Args),
+    arweave_tools_bench_hash:run_benchmark_from_cli(Args),
     init:stop(1).
 
 benchmark_packing() ->
@@ -283,7 +283,7 @@ benchmark_packing() ->
     benchmark_packing(Args).
 
 benchmark_packing(Args) ->
-    ar_bench_packing:run_benchmark_from_cli(Args),
+    arweave_tools_bench_packing:run_benchmark_from_cli(Args),
     init:stop(1).
 
 shutdown([NodeName]) ->
