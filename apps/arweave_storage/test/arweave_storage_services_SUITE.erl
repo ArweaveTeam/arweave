@@ -4,7 +4,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
 
 suite() -> [{timetrap, {seconds, 60}}].
 
