@@ -447,13 +447,16 @@ flat_driven_goodput_bounds_concurrency(_Config) ->
     Peer = {5, 5, 5, 5, 5},
     TickMs = 1000,
     RTTMs = 250,
-    Caps = caps_after_ticks(Peer, lists:duplicate(20, 400), RTTMs, TickMs),
-    %% Six samples measure the seed; the doubled step to sixteen skips
-    %% one and measures six, finding nothing; the seed has no lower cap to
+    Window = ?PROBE_WINDOW_SAMPLES,
+    Caps = caps_after_ticks(Peer, lists:duplicate(3 * Window + 2, 400),
+        RTTMs, TickMs),
+    %% A window measures the seed; the doubled step to sixteen skips
+    %% one and measures another, finding nothing; the seed has no lower cap to
     %% test, so the probe ends, and after one baseline window the next probe
     %% steps upward in a base step.
     ?assertEqual(
-        lists:duplicate(5, 8) ++ lists:duplicate(7, 16) ++ lists:duplicate(7, 8) ++ [9],
+        lists:duplicate(Window - 1, 8) ++ lists:duplicate(Window + 1, 16)
+            ++ lists:duplicate(Window + 1, 8) ++ [9],
         Caps
     ).
 

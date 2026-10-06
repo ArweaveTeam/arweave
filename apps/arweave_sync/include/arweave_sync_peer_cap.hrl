@@ -27,8 +27,9 @@
 %%   while the peer was at its concurrency cap and the download limit and
 %%   chunk cache had room, so the peer, not its supply of work, set its
 %%   goodput;
-%% - window: GOODPUT_WINDOW_SAMPLES goodput samples from ticks where the peer
-%%   was driven; the window's goodput is its total bytes over its total time;
+%% - window: PROBE_WINDOW_SAMPLES goodput samples from ticks where the peer
+%%   was driven; the probe compares the rate reached in at least two samples,
+%%   so slowdowns do not hide available capacity and one burst cannot imply it;
 %% - step: one move of the cap up or down; the probe judges a step by comparing
 %%   the window at the new cap with the window before it;
 %% - probe: steps that try a higher cap and, if that gains nothing, a lower
@@ -39,10 +40,12 @@
 %% peer's goodput. A step down never goes below this cap.
 -define(CONCURRENCY_CAP_INITIAL, 8).
 
-%% A window holds GOODPUT_WINDOW_SAMPLES goodput samples. The probe judges each
-%% step by a window's goodput, and the peer queue is sized from the mean
-%% goodput of the peer's last GOODPUT_WINDOW_SAMPLES goodput samples.
+%% Queue sizing retains its one-minute moving average independently of probes.
 -define(GOODPUT_WINDOW_SAMPLES, 6).
+
+%% Twelve production ticks cover two minutes, leaving multiple observations
+%% outside a 20-40 second slowdown, even when requests finish in batches.
+-define(PROBE_WINDOW_SAMPLES, 12).
 
 %% After a cap change, the probe skips GOODPUT_TRANSITION_SAMPLES goodput
 %% samples, so
@@ -54,15 +57,14 @@
 %% 1/CONCURRENCY_CAP_STEP_DIVISOR of the cap: a cap of 24 steps to 27 or 21. The
 %% step doubles in size (27, then 33) when goodput rose by at least half as much
 %% as the cap did (a 1/16 gain on the first step), or when a step down held
-%% goodput.
+%% goodput. Smaller gains retain the step rather than shrinking it.
 -define(CONCURRENCY_CAP_STEP_DIVISOR, 8).
 
 %% After a step down that cost goodput, the probe rests for PROBE_REST_SAMPLES
-%% goodput samples: seven windows, so the cap holds for eight windows (eight
-%% minutes at the production tick) before the next probe. When the cap already
-%% matches what the peer can serve, every probe ends in such a step, and the
-%% rest keeps the cost of those probes under about 1.5% of goodput.
--define(PROBE_REST_SAMPLES, 7 * ?GOODPUT_WINDOW_SAMPLES).
+%% goodput samples: six minutes plus the two-minute baseline, preserving an
+%% eight-minute hold before the next probe. When the cap already matches what
+%% the peer can serve, the rest keeps costly downward probes infrequent.
+-define(PROBE_REST_SAMPLES, 36).
 
 %% A peer's cap and probing state.
 -record(cap_control, {
@@ -82,8 +84,6 @@
     %% there.
     baseline_cap = undefined,
     baseline_goodput = undefined,
-    %% The totals for the window the probe is measuring.
-    window_bytes = 0,
-    window_ms = 0,
-    window_samples = 0
+    %% Per-tick rates, in bytes/ms, for the window the probe is measuring.
+    window_samples = []
 }).
