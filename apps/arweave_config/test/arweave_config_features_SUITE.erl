@@ -58,7 +58,7 @@ names_sorted(_Config) ->
     ok.
 
 enabled_with_stored_value(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         [Flag | _] = arweave_config_features:names(),
         ok = arweave_config:set([features, Flag], true),
         ?assertEqual(true, arweave_config_features:enabled(Flag)),
@@ -68,7 +68,7 @@ enabled_with_stored_value(_Config) ->
     ok.
 
 enabled_fallback_default(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         %% Walk the catalog and verify every default round-trips.
         lists:foreach(
             fun(#{ name := Name, default := Default }) ->
@@ -100,7 +100,7 @@ tombstone_message_unknown(_Config) ->
     ok.
 
 classify_legacy_flag_promotes_dedicated_options(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         lists:foreach(
             fun assert_promotion/1,
             [

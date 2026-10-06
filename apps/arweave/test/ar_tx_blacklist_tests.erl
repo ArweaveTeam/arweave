@@ -40,7 +40,7 @@ test_uses_blacklists() ->
     ok = file:write_file(WhitelistFile, <<>>),
     RewardAddr = ar_test_node:generate_address(main),
     StorageModules = blacklist_storage_modules(RewardAddr),
-    Config = arweave_config:snapshot(),
+    Config = arweave_config:internal_snapshot(),
     try
         ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
             config => #{
@@ -504,4 +504,4 @@ decode_chunk(EncodedProof) ->
     ).
 
 teardown(Config) ->
-    arweave_config:restore(Config).
+    arweave_config:internal_restore(Config).

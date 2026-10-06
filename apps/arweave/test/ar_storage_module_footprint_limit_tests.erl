@@ -57,7 +57,7 @@ test_repack_in_place() ->
     %% 524288 (sector 0, second) and 786432 (sector 1, first).
     ok = ar_test_await:chunk_recorded(main, 524288, #{store_id => StoreID}),
     %% force_config lifts the runtime lock; the store survives the restart.
-    ok = arweave_config:force_config(#{
+    ok = arweave_config:internal_force_config(#{
         [storage_modules] => [],
         [repack_modules] => [
             #{partition => 0, from_format => unpacked,

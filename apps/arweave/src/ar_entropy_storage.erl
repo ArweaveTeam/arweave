@@ -488,7 +488,7 @@ test_replica_2_9() ->
                       {0, arweave_lib_constants:partition_size(), Packing},
                       {arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(), Packing}
                      ],
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
                                             ar_test_node:start(#{
                                                                  reward_addr => RewardAddr,
                                                                  [storage_modules] => StorageModules

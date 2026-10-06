@@ -24,7 +24,7 @@
 setup_all() ->
     [B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
     RewardAddr = ar_test_node:generate_address(main),
-    Config = arweave_config:snapshot(),
+    Config = arweave_config:internal_snapshot(),
     %% We'll use partition 0 for any unsynced ranges.
     StorageModules = [
         {arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(),
@@ -36,7 +36,7 @@ setup_all() ->
     Config.
 
 cleanup_all(Config) ->
-    ok = arweave_config:restore(Config).
+    ok = arweave_config:internal_restore(Config).
 
 %% @doc Setup the environment so we can control VDF step generation.
 setup_pool_client() ->
@@ -47,7 +47,7 @@ setup_pool_client() ->
     }).
 
 cleanup_pool_client(Config) ->
-    ok = arweave_config:restore(Config).
+    ok = arweave_config:internal_restore(Config).
 
 setup_pool_job() ->
     {setup_pool_client(), setup_one()}.
@@ -63,12 +63,12 @@ setup_vdf_session() ->
 
 cleanup_vdf_session({Config, _}) ->
     cleanup_one(ok),
-    ok = arweave_config:restore(Config).
+    ok = arweave_config:internal_restore(Config).
 
 start_controlled_vdf_node(ExtraConfig) ->
     [B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
     RewardAddr = ar_test_node:generate_address(main),
-    Config = arweave_config:snapshot(),
+    Config = arweave_config:internal_snapshot(),
     %% We'll use partition 0 for any unsynced ranges.
     StorageModules = [
         {arweave_lib_constants:partition_size(), 2 * arweave_lib_constants:partition_size(),

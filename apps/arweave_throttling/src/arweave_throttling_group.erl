@@ -97,6 +97,7 @@
 -compile({nowarn_unused_function, [{turn_off, 1}, {turn_on, 1}]}).
 -endif.
 
+-include_lib("arweave_throttling/include/arweave_throttling_deps.hrl").
 -include_lib("kernel/include/logger.hrl").
 
 %% `reset_timer' is `undefined' when no refill is pending, or
@@ -156,13 +157,13 @@ start_link(#{id := _ID} = Spec) ->
 %% 60s ceiling; on expiry the caller sends a `cancel_request' cast
 %% to evict the entry from the queue and returns `{error, timeout}'.
 throttle(GroupID, Peer) ->
-	{Time, Value} = timer:tc(fun do_throttle/2, [GroupID, Peer]),
-	arweave_metrics:histogram_observe(arweave_throttling_request_response_time_microseconds,
-					[GroupID], Time),
-	Value.
+    {Time, Value} = timer:tc(fun do_throttle/2, [GroupID, Peer]),
+    ?DEP(metrics):histogram_observe(arweave_throttling_request_response_time_microseconds,
+                    [GroupID], Time),
+    Value.
 
 do_throttle(GroupID, Peer) ->
-    arweave_metrics:counter_inc(arweave_throttling_requests_total, [GroupID]),
+    ?DEP(metrics):counter_inc(arweave_throttling_requests_total, [GroupID]),
     case arweave_throttling_process:get(GroupID) of
         {ok, Pid} ->
             do_throttle(GroupID, Peer, Pid);
@@ -174,26 +175,26 @@ do_throttle(GroupID, Peer) ->
 
 do_throttle(GroupID, Peer, Pid) ->
     {Time, WorkerReturn} = timer:tc(fun try_throttle_call/2, [Pid, Peer]),
-    arweave_metrics:histogram_observe(arweave_throttling_worker_response_time_microseconds,
+    ?DEP(metrics):histogram_observe(arweave_throttling_worker_response_time_microseconds,
                                       [GroupID], Time),
     case WorkerReturn of
         accepted ->
             ok;
         {queued, Ref} ->
-            arweave_metrics:counter_inc(arweave_throttling_queued_total, [GroupID]),
+            ?DEP(metrics):counter_inc(arweave_throttling_queued_total, [GroupID]),
             receive
                 {request_ready, Ref} ->
                     ok
             after ?THROTTLE_RECEIVE_TIMEOUT_MS ->
                     gen_server:cast(Pid, {cancel_request, Peer, Ref}),
-                    arweave_metrics:counter_inc(arweave_throttling_requests_error,
+                    ?DEP(metrics):counter_inc(arweave_throttling_requests_error,
                                                 [GroupID, "throttle_receive_timeout"]),
                     {error, throttle_receive_timeout}
             end;
         {error, Reason} = Error ->
             %% TODO: extract error reason
             ?LOG_ERROR([{event, client_throttling_throttle_error}, {reason, Reason}]),
-            arweave_metrics:counter_inc(arweave_throttling_requests_error,
+            ?DEP(metrics):counter_inc(arweave_throttling_requests_error,
                                         [GroupID, "unknown"]),
             Error
     end.
@@ -227,7 +228,7 @@ update_quota(Pid, GroupID, Peer,
        is_integer(Remaining), Remaining >= 0,
        is_integer(ResetAmount), ResetAmount >= 0,
        is_integer(ResetSeconds), ResetSeconds >= 0 ->
-    arweave_metrics:counter_inc(arweave_throttling_quota_update_requests,
+    ?DEP(metrics):counter_inc(arweave_throttling_quota_update_requests,
                                 [GroupID]),
     ReceivedAt = monotonic_ms(),
     gen_server:cast(Pid, {update_quota, Peer, Total, Remaining,
@@ -237,7 +238,7 @@ update_quota(Pid, GroupID, Peer,
 %% `GroupID' because its outbound quota is near exhaustion.
 is_throttled(GroupID, Peer) when is_tuple(Peer) ->
     {Time, Value} = timer:tc(fun do_is_throttled/2, [GroupID, Peer]),
-    arweave_metrics:histogram_observe(arweave_throttling_is_throttled_response_time_microseconds,
+    ?DEP(metrics):histogram_observe(arweave_throttling_is_throttled_response_time_microseconds,
                                       [GroupID], Time),
     Value.
 
@@ -537,7 +538,7 @@ touch(State) ->
     State#{last_activity_ts := monotonic_ms()}.
 
 idle_timeout() ->
-    arweave_config:get([throttling, idle_timeout]).
+    ?DEP(config):get([throttling, idle_timeout]).
 
 arm_idle_timer(DelayMs) ->
     _ = erlang:send_after(DelayMs, self(), idle_check),
@@ -553,7 +554,7 @@ has_pending_work(#{peers := Peers}) ->
 
 stop_idle(#{id := GroupID}, IdleTimeout) ->
     ok = arweave_throttling_process:delete(GroupID, self()),
-    arweave_metrics:counter_inc(arweave_throttling_idle_shutdown_total),
+    ?DEP(metrics):counter_inc(arweave_throttling_idle_shutdown_total),
     ?LOG_DEBUG([{event, throttling_group_idle_shutdown},
                 {group_id, GroupID},
                 {idle_timeout, IdleTimeout}]),

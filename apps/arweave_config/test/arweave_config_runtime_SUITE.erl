@@ -97,7 +97,7 @@ runtime_writable_cases() ->
     ].
 
 runtime_writable_options_accept_set(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:runtime(),
         true = arweave_config:is_runtime(),
         lists:foreach(
@@ -119,7 +119,7 @@ runtime_writable_options_accept_set(_Config) ->
 %% Before `runtime/0' is called, every spec accepts writes regardless
 %% of its `runtime' annotation. Spot-check one of each polarity.
 load_mode_accepts_every_spec(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         false = arweave_config:is_runtime(),
         %% runtime => false (default for [data_dir]).
         ok = arweave_config:set([data_dir], "/tmp/load-mode"),
@@ -134,7 +134,7 @@ load_mode_accepts_every_spec(_Config) ->
 %% Second call to `runtime/0' is a no-op — the flag is already set
 %% and the validator pass re-runs cleanly.
 runtime_flip_is_idempotent(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         false = arweave_config:is_runtime(),
         ok = arweave_config:runtime(),
         true = arweave_config:is_runtime(),
@@ -146,7 +146,7 @@ runtime_flip_is_idempotent(_Config) ->
 %% Post-runtime: writes accepted on `runtime => true' specs.
 %% Booleans declared `runtime => true' accept writes after the flip.
 runtime_writable_boolean(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:set([debug], false),
         ok = arweave_config:runtime(),
         ok = arweave_config:set([debug], true),
@@ -159,7 +159,7 @@ runtime_writable_boolean(_Config) ->
 %% Integers declared `runtime => true' accept writes after the flip
 %% (and the `non_neg_integer' type validator coerces binary input).
 runtime_writable_non_neg_integer(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Key = [logging, formatter, max_size],
         ok = arweave_config:set(Key, 4096),
         ok = arweave_config:runtime(),
@@ -175,7 +175,7 @@ runtime_writable_non_neg_integer(_Config) ->
 %% Scalar `runtime => false' (string-typed). The store keeps the
 %% load-mode value untouched.
 non_runtime_scalar_rejected(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:set([data_dir], "/tmp/load-mode"),
         ok = arweave_config:runtime(),
         Result = arweave_config:set([data_dir], "/tmp/runtime-change"),
@@ -190,7 +190,7 @@ non_runtime_scalar_rejected(_Config) ->
 %% before the type validator, so even a syntactically valid value is
 %% rejected.
 non_runtime_address_rejected(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:runtime(),
         Result = arweave_config:set(
             [mining, address],
@@ -203,7 +203,7 @@ non_runtime_address_rejected(_Config) ->
 
 %% Static peer options reject normal `set/2` writes after runtime.
 non_runtime_list_replace_rejected(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:set([peers, trusted], [{1,2,3,4,1984}]),
         ok = arweave_config:runtime(),
         ?assertMatch(

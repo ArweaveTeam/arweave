@@ -38,7 +38,7 @@ end_per_suite(_Config) -> ok.
 init_per_testcase(_TestCase, Config) ->
     AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
     ok = arweave_config:start(),
-    ConfigSnapshot = arweave_config:snapshot(),
+    ConfigSnapshot = arweave_config:internal_snapshot(),
     ok = arweave_throttling:start(),
 
 
@@ -53,7 +53,7 @@ init_per_testcase(_TestCase, Config) ->
     [{apps_before, AppsBefore}, {config_snapshot, ConfigSnapshot} | Config].
 
 end_per_testcase(_TestCase, Config) ->
-    ok = arweave_config:restore(?config(config_snapshot, Config)),
+    ok = arweave_config:internal_restore(?config(config_snapshot, Config)),
     ok = arweave_throttling:stop(),
 
     arweave_throttling_metrics:cleanup(),

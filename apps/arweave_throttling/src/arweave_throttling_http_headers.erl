@@ -44,6 +44,8 @@
 %%% @end
 -module(arweave_throttling_http_headers).
 
+-include_lib("arweave_throttling/include/arweave_throttling_deps.hrl").
+
 -export([parse/1, quota_from_headers/2]).
 
 %% Largest RateLimit-Reset (seconds) we accept: one day.
@@ -188,7 +190,7 @@ is_suffix(Suffix, Bin) ->
 %% `ar_serialize:parse_integer/1', which refuses to build a bignum out
 %% of an oversized digit string.
 to_integer(Bin) ->
-    ar_serialize:parse_integer(string:trim(to_bin(Bin))).
+    ?DEP(serialize):parse_integer(string:trim(to_bin(Bin))).
 
 lowercase_keys(Headers) ->
     maps:fold(fun(K, V, AccIn) ->

@@ -19,7 +19,7 @@ test_sync_record() ->
     WeaveSize = 4 * ?DATA_CHUNK_SIZE,
     [B0] = ar_weave:init([], 1, WeaveSize),
     RewardAddr = ar_test_node:generate_address(main),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Partition = {0, arweave_lib_constants:partition_size(), {spora_2_6, RewardAddr}},
         PartitionID = ar_storage_module:id(Partition),
         ar_test_node:start(B0, RewardAddr, #{[storage_modules] => [Partition]}),

@@ -182,18 +182,18 @@ test_persisted_mempool() ->
     }),
     {ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(main, SignedTX, false),
     ok = ar_test_await:tx_in_mempool(main, SignedTX#tx.id),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ar_test_node:stop(),
         %% Rejoin the network.
         %% Expect the pending transactions to be picked up and distributed.
-        ok = arweave_config:force_config(#{
+        ok = arweave_config:internal_force_config(#{
             [join, start_from_latest_state] => false,
             [peers, trusted] => [arweave_lib_util:format_peer(ar_test_node:peer_ip(peer1))]
         }),
         %% Restart in load mode (runtime => false) so boot validators can
         %% rewrite static config.
-        Snapshot = arweave_config:snapshot(),
-        ok = arweave_config:restore(Snapshot#{runtime => false}),
+        Snapshot = arweave_config:internal_snapshot(),
+        ok = arweave_config:internal_restore(Snapshot#{runtime => false}),
         ar:start_dependencies(),
         ar_test_await:node_joined(main),
         ar_test_node:connect_to_peer(peer1),

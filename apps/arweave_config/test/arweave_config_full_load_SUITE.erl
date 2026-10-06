@@ -42,7 +42,7 @@ every_option_is_covered(_Config) ->
     assert_all_options_are_covered(full_config_yaml, full_config_data()).
 
 load_empty_json_defaults(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, LeafMap} = arweave_config_format_json:parse(
             arweave_config_test_util:read_fixture("empty_config.json")),
         ok = arweave_config:load(LeafMap),
@@ -80,7 +80,7 @@ load_json_and_yaml(_Config) ->
         ConfigLeafMap, maps:keys(ConfigLeafMap)),
     lists:foreach(
         fun({Tag, Data, Parser, _ShapeAssert}) ->
-            arweave_config:with_test_config(fun() ->
+            arweave_config:internal_with_test_config(fun() ->
                 {ok, ParsedLeafMap} = Parser(Data),
                 ok = arweave_config:load(ParsedLeafMap),
                 assert_all_options_are_covered(Tag, ParsedLeafMap),
@@ -106,7 +106,7 @@ port: 1985
 ">>}
     ],
     lists:foreach(fun({Parser, Data}) ->
-        arweave_config:with_test_config(fun() ->
+        arweave_config:internal_with_test_config(fun() ->
             {ok, LeafMap} = Parser(Data),
             ok = arweave_config:load(LeafMap),
             ?assertEqual(true, arweave_config:get([mining, enabled])),
@@ -133,7 +133,7 @@ mining:
     ok.
 
 load_legacy_json(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, _} = arweave_config_format_legacy_json:parse(
             arweave_config_test_util:legacy_fixture()),
         assert_legacy_json_subset()
@@ -145,7 +145,7 @@ load_cli_and_legacy_cli(_Config) ->
     {Args, Keys} = cli_args(ConfigLeafMap),
     assert_cli_shape(Args),
     Expected = arweave_config_test_util:expected_loaded_values(ConfigLeafMap, Keys),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, Map} = arweave_config_format_cli:parse(Args),
         ok = arweave_config:load(Map),
         arweave_config_test_util:assert_loaded_values(Expected),
@@ -159,7 +159,7 @@ load_env(_Config) ->
     {Vars, Keys} = env_fixture_values(ConfigLeafMap),
     assert_env_shape(Vars),
     Expected = arweave_config_test_util:expected_loaded_values(ConfigLeafMap, Keys),
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         apply_env(Vars, fun() ->
             Parsed = arweave_config_format_env:parse(),
             ok = arweave_config:load(Parsed),
@@ -581,7 +581,7 @@ legacy_json_supported_pairs() ->
 assert_legacy_cli_surface() ->
     lists:foreach(
         fun({Description, Args, Assert}) ->
-            arweave_config:with_test_config(fun() ->
+            arweave_config:internal_with_test_config(fun() ->
                 case arweave_config_format_legacy_cli:parse(Args) of
                     ok -> Assert();
                     Other -> erlang:error({Description, parser_failed, Other, Args})

@@ -1072,8 +1072,8 @@ test_vdf_stats() ->
     ?assertEqual(undefined, vdf_speed(1000)).
 
 test_data_size_stats() ->
-    arweave_config:with_test_config(fun() ->
-                                            ok = arweave_config:force_config(#{[mining, address] => ?TEST_MINING_ADDR}),
+    arweave_config:internal_with_test_config(fun() ->
+                                            ok = arweave_config:internal_force_config(#{[mining, address] => ?TEST_MINING_ADDR}),
 
                                             WeaveSize = floor(2 * arweave_lib_constants:partition_size()),
                                             ets:insert(node_state, [{weave_size, WeaveSize}]),
@@ -1099,7 +1099,7 @@ do_test_data_size_stats(Mining, Packing) ->
                       {2 * arweave_lib_constants:partition_size(), 3 * arweave_lib_constants:partition_size(), Mining},
                       {2 * arweave_lib_constants:partition_size(), 3 * arweave_lib_constants:partition_size(), Packing}
                      ],
-    ok = arweave_config:force_config(#{
+    ok = arweave_config:internal_force_config(#{
                                        [storage_modules] => StorageModules
                                       }),
 
@@ -1398,7 +1398,7 @@ test_report_poa1_multiple_2() ->
     test_report({replica_2_9, ?TEST_MINING_ADDR}, {replica_2_9, ?TEST_PACKING_ADDR}, 2).
 
 test_report(Mining, Packing, PoA1Multiplier) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
                                             do_test_report(Mining, Packing, PoA1Multiplier)
                                     end).
 
@@ -1429,7 +1429,7 @@ do_test_report(Mining, Packing, PoA1Multiplier) ->
                       {2 * arweave_lib_constants:partition_size(), 3 * arweave_lib_constants:partition_size(), Packing}
                      ],
 
-    ok = arweave_config:force_config(#{
+    ok = arweave_config:internal_force_config(#{
                                        [storage_modules] => StorageModules,
                                        [mining, address] => MiningAddress
                                       }),

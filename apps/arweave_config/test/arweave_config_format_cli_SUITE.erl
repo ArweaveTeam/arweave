@@ -118,7 +118,7 @@ assert_parse_sets(Args, Key, Expected) ->
     assert_parse_sets(Args, #{}, Key, Expected).
 
 assert_parse_sets(Args, Opts, Key, Expected) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, Map} = arweave_config_format_cli:parse(Args, Opts),
         ok = arweave_config:load(Map),
         ?assertEqual(Expected, arweave_config:get(Key))
