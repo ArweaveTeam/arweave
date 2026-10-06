@@ -362,9 +362,7 @@ do_prepare_entropy(State) ->
                 generate_entropies(RewardAddr, BucketEndOffset, false),
             EntropyKeys = generate_entropy_keys(RewardAddr, BucketEndOffset),
             EntropyOffsets = entropy_offsets(BucketEndOffset, ModuleEnd),
-            arweave_storage_entropy_storage:store_entropy_footprint(
-              StoreID, Entropies, EntropyOffsets,
-              ModuleStart, EntropyKeys, RewardAddr)
+            arweave_storage:store_entropy_footprint(StoreID, fun(Write, Acc) -> map_entropies(Entropies, EntropyOffsets, ModuleStart, EntropyKeys, RewardAddr, Write, [StoreID], Acc) end)
         end,
     case Outcome of
         complete ->
@@ -391,7 +389,7 @@ do_prepare_entropy(State) ->
             %% loop crosses them one lookup each until it passes the module
             %% end.
             NextCursor =
-                arweave_storage_footprint_record:get_next_sector_start(BucketEndOffset),
+                arweave_lib_footprint:get_next_sector_start(BucketEndOffset),
             gen_server:cast(self(), prepare_entropy),
             store_prepare_cursor(NextCursor, StoreID),
             State#state{ cursor = NextCursor };

@@ -73,6 +73,7 @@
 %%% @end
 %%%===================================================================
 -module(ar_timer).
+-export([monotonic_ms/0, system_ms/0, sleep/1]).
 -export([
     apply_after/4,
     apply_after/5,
@@ -338,3 +339,7 @@ terminate_timers() ->
         _ ->
             [ timer:cancel(Ref) || {Ref, _, _} <- ets:tab2list(timer_tab) ]
     end.
+
+monotonic_ms() -> erlang:monotonic_time(millisecond).
+system_ms() -> erlang:system_time(millisecond).
+sleep(Ms) -> timer:sleep(Ms).

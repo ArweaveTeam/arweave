@@ -1,5 +1,8 @@
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 -ifndef(ARWEAVE_STORAGE_HRL).
+
 -define(ARWEAVE_STORAGE_HRL, true).
+
 
 -record(store_info, {
     % Storage module ID, or the default module ID.
@@ -28,4 +31,7 @@
     packing_difficulty
 }).
 
+
 -endif.
+
+

@@ -1,6 +1,8 @@
 -include_lib("arweave_lib/include/arweave_lib_constants.hrl").
+
 %% The size in bits of the offset key in kv databases.
 -define(OFFSET_KEY_BITSIZE, 256).
+
 
 
 %% Polling interval for ar_device_lock cooperative locking. Sync workers
@@ -8,13 +10,18 @@
 %% after this delay to retry without busy-spinning.
 -ifdef(AR_TEST).
 
+
 -define(DEVICE_LOCK_WAIT, 100).
+
 
 -else.
 
+
 -define(DEVICE_LOCK_WAIT, 5_000).
 
+
 -endif.
+
 
 
 %% A single sync unit: fetch the byte range [start_offset, end_offset) from
@@ -32,6 +39,7 @@
                    }).
 
 
+
 %% The size in bits of the key prefix used in prefix bloom filter
 %% when looking up chunks by offsets from kv database.
 %% 29 bytes of the prefix correspond to the 16777216 (16 Mib) max distance
@@ -40,6 +48,7 @@
 %% found in the filter and smaller than an SST table (200 MiB) so that the
 %% filter lookup can narrow the search down to a single table.
 -define(OFFSET_KEY_PREFIX_BITSIZE, 232).
+
 
 
 %% The upper size limit for a serialized chunk with its proof
@@ -53,26 +62,34 @@
 -define(MAX_SERIALIZED_CHUNK_PROOF_SIZE, 750000).
 
 
+
 %% Transaction data bigger than this limit is not served in
 %% GET /tx/<id>/data endpoint. Clients interested in downloading
 %% such data should fetch it chunk by chunk.
 -define(MAX_SERVED_TX_DATA_SIZE, 12 * 1024 * 1024).
 
 
+
 %% The frequency of storing the server state on disk.
 -define(STORE_STATE_FREQUENCY_MS, 30000).
+
 
 
 %% The maximum number of chunks currently being downloaded or processed.
 -ifdef(AR_TEST).
 
+
 -define(SYNC_BUFFER_SIZE, 100).
+
 
 -else.
 
+
 -define(SYNC_BUFFER_SIZE, 1000).
 
+
 -endif.
+
 
 
 %% Defines how long we keep the interval excluded from syncing.
@@ -80,39 +97,54 @@
 %% it from the sought ranges to prevent the syncing process from slowing down.
 -ifdef(AR_TEST).
 
+
 -define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 5000).
+
 
 -else.
 
+
 -define(EXCLUDE_MISSING_INTERVAL_TIMEOUT_MS, 10 * 60 * 1000).
 
+
 -endif.
+
 
 
 %% Let at least this many chunks stack up, per storage module, then write them on disk in the
 %% ascending order, to reduce out-of-order disk writes causing fragmentation.
 -ifdef(AR_TEST).
 
+
 -define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 2).
+
 
 -else.
 
+
 -define(STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD, 100).
+
  % ~ 25 MB worth of chunks.
 -endif.
+
 
 
 %% If a chunk spends longer than this in the store queue, write it on disk without waiting
 %% for ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD chunks to stack up.
 -ifdef(AR_TEST).
 
+
 -define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 1000).
+
 
 -else.
 
+
 -define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 2_000).
+
  % 2 seconds.
 -endif.
+
 
 
 %% @doc The state of the server managing data synchronization.
@@ -194,5 +226,7 @@
                           %% fragmentation.
                           store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
                          }).
+
+
 
 

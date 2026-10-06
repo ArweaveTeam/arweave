@@ -817,7 +817,7 @@ prepare_solution(poa1, Candidate, Solution) ->
                     error
             end;
         {error, Error} ->
-            Modules = arweave_storage_module:get_all(RecallByte1 + 1),
+            Modules = arweave_storage:covering_stores(RecallByte1 + 1, any_packing),
             ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
             LogData = [{recall_byte, RecallByte1},
                        {modules_covering_recall_byte, ModuleIDs},
@@ -831,7 +831,7 @@ prepare_solution(poa1, Candidate, Solution) ->
                     ?LOG_WARNING([{event, failed_to_find_poa1_proofs_for_h2_solution},
                                   {error, io_lib:format("~p", [Error])},
                                   {tags, [solution_proofs]} | LogData]),
-                    case arweave_storage_module:get(RecallByte1 + 1, Packing) of
+                    case arweave_storage:covering_store(RecallByte1 + 1, Packing) of
                         {_ModuleStart, _ModuleEnd, Packing} = StorageModule ->
                             StoreID = arweave_storage_module:id(StorageModule),
                             case arweave_storage_chunk_storage:get(RecallByte1, StoreID) of
@@ -874,7 +874,7 @@ prepare_solution(poa2, Candidate, Solution) ->
         {ok, PoA2} ->
             prepare_solution(poa1, Candidate, Solution#mining_solution{ poa2 = PoA2 });
         {error, _Error} ->
-            Modules = arweave_storage_module:get_all(RecallByte2 + 1),
+            Modules = arweave_storage:covering_stores(RecallByte2 + 1, any_packing),
             ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
             LogData = [{recall_byte2, RecallByte2}, {modules_covering_recall_byte, ModuleIDs}],
             %% If we are a coordinated miner and not an exit node - the exit
@@ -913,7 +913,7 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
                 {ok, PoA} ->
                     {ok, PoA};
                 {error, Error} ->
-                    Modules = arweave_storage_module:get_all(RecallByte + 1),
+                    Modules = arweave_storage:covering_stores(RecallByte + 1, any_packing),
                     ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
                     ?LOG_INFO([{event, failed_to_find_poa_proofs_locally},
                                {poa, PoAType},

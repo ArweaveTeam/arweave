@@ -133,7 +133,7 @@ expected_inserted_rows(sync, UnboundedExpandedBucketCount) ->
     min(UnboundedExpandedBucketCount, MaxSubBucketExclusive);
 expected_inserted_rows(footprint, UnboundedExpandedBucketCount) ->
     WeaveSize = ar_node:get_weave_size(),
-    MaxFootprintOffset = arweave_storage_footprint_record:max_offset(WeaveSize),
+    MaxFootprintOffset = arweave_lib_footprint:max_footprint_offset(WeaveSize),
     BucketSize = ar_sync_buckets:get_network_footprint_bucket_size(),
     MaxSubBucketExclusive =
         (MaxFootprintOffset + BucketSize - 1) div BucketSize,

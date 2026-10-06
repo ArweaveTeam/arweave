@@ -573,7 +573,7 @@ repack_footprint(Cursor, #state{ footprint_limit = FootprintLimit } = State) ->
             %% After that the repacked sectors are skipped one lookup each
             %% until the cursor passes the module end.
             NextCursor =
-                arweave_storage_footprint_record:get_next_sector_start(BucketEndOffset),
+                arweave_lib_footprint:get_next_sector_start(BucketEndOffset),
             gen_server:cast(self(), repack),
             log_debug(skipping_beyond_footprint_limit, State,
                 [{cursor, Cursor}, {next_cursor, NextCursor}]),
@@ -667,7 +667,7 @@ should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
     #state{ module_start = ModuleStart, module_end = ModuleEnd,
             target_packing = TargetPacking, store_id = StoreID } = State,
     PaddedEndOffset = arweave_lib_constants:get_chunk_padded_offset(Cursor),
-    IsChunkRecorded = arweave_storage_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
+    IsChunkRecorded = arweave_storage:is_recorded(PaddedEndOffset, any_packing, {ar_data_sync, byte}, StoreID),
     IsEntropyRecorded = arweave_storage_entropy_storage:is_entropy_recorded(
                           PaddedEndOffset, TargetPacking, StoreID),
     %% Only replica_2_9 writes entropy into empty buckets; for any other target an empty
@@ -714,8 +714,7 @@ should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
 get_next_cursor(Cursor, TargetPacking, StoreID, ModuleEnd) ->
     MinNext = Cursor + ?DATA_CHUNK_SIZE,
     %% The next offset not yet packed to the target.
-    TargetStart = interval_start(arweave_storage_sync_record:get_next_unsynced_interval(
-                                   Cursor, infinity, TargetPacking, ar_data_sync, StoreID), MinNext),
+    TargetStart = interval_start(arweave_storage:get_next_interval(unsynced, Cursor, infinity, TargetPacking, {ar_data_sync, byte}, StoreID), MinNext),
     Candidates = case needs_entropy(TargetPacking) of
                      true ->
                          [TargetStart];
@@ -723,8 +722,7 @@ get_next_cursor(Cursor, TargetPacking, StoreID, ModuleEnd) ->
                          %% A bucket with no chunk data can never be repacked to a non-entropy
                          %% packing, so also jump to the next offset that holds chunk data - or past
                          %% the module end, ending the repack, when no data remains.
-                         SyncedStart = interval_start(arweave_storage_sync_record:get_next_synced_interval(
-                                                        Cursor, infinity, ar_data_sync, StoreID), ModuleEnd + ?DATA_CHUNK_SIZE),
+                         SyncedStart = interval_start(arweave_storage:get_next_interval(synced, Cursor, infinity, any_packing, {ar_data_sync, byte}, StoreID), ModuleEnd + ?DATA_CHUNK_SIZE),
                          [TargetStart, SyncedStart]
                  end,
     lists:max([MinNext | Candidates]).
@@ -902,12 +900,11 @@ assemble_repack_chunk(
     end.
 
 get_chunk_packing(PaddedEndOffset, ConfiguredPacking, StoreID) ->
-    HasConfiguredPacking = arweave_storage_sync_record:is_recorded(
-                             PaddedEndOffset, ConfiguredPacking, ar_data_sync, StoreID),
+    HasConfiguredPacking = arweave_storage:is_recorded(PaddedEndOffset, ConfiguredPacking, {ar_data_sync, byte}, StoreID),
     case HasConfiguredPacking of
         true -> ConfiguredPacking;
         _ ->
-            case arweave_storage_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID) of
+            case arweave_storage:is_recorded(PaddedEndOffset, any_packing, {ar_data_sync, byte}, StoreID) of
                 {true, Packing} -> Packing;
                 _ -> not_found
             end
@@ -2053,7 +2050,7 @@ test_init_repack_chunk_map_a() ->
                repack_chunk_map = #{},
                %% No footprint limit, so nothing is clipped.
                footprint_limit =
-                   arweave_storage_footprint_record:get_footprints_per_partition(),
+                   arweave_lib_constants:get_replica_2_9_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
 
@@ -2086,7 +2083,7 @@ test_init_repack_chunk_map_b() ->
                repack_chunk_map = #{},
                %% No footprint limit, so nothing is clipped.
                footprint_limit =
-                   arweave_storage_footprint_record:get_footprints_per_partition(),
+                   arweave_lib_constants:get_replica_2_9_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),
@@ -2122,7 +2119,7 @@ test_init_repack_chunk_map_sector_boundary() ->
                repack_chunk_map = #{},
                %% No footprint limit, so nothing is clipped.
                footprint_limit =
-                   arweave_storage_footprint_record:get_footprints_per_partition(),
+                   arweave_lib_constants:get_replica_2_9_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),

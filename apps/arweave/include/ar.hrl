@@ -1,7 +1,11 @@
 -ifndef(AR_HRL).
 
+
 -define(AR_HRL, true).
 -include_lib("arweave_lib/include/arweave_lib_constants.hrl").
+
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
+
 
 
 %%% A collection of record structures used throughout the Arweave server.
@@ -11,6 +15,7 @@
 -define(IS_TEST, erlang:get_cookie() == test).
 
 
+
 %% Default gen_server:call timeout.
 %% Is used to safely replace deprecated `infinity` timeout, that was used in
 %% multiple places, with a more reasonable value.
@@ -18,23 +23,31 @@
 -define(DEFAULT_CALL_TIMEOUT, 600000).
 
 
+
 %% The mainnet name. Does not change at the hard forks.
 -ifndef(NETWORK_NAME).
 
+
 -ifdef(AR_TEST).
+
 
 -else.
 
--endif.
 
 -endif.
+
+
+-endif.
+
 
 
 %% When a request is received without specifing the X-Network header, this network name
 %% is assumed.
 -ifndef(DEFAULT_NETWORK_NAME).
 
+
 -endif.
+
 
 
 %% The current release number of the arweave client software.
@@ -42,8 +55,10 @@
 -define(CLIENT_VERSION, 5).
 
 
+
 %% The current build number -- incremented for every release.
 -define(RELEASE_NUMBER, 110).
+
 
 
 %% Header names are lowercase, as HTTP/2 requires.
@@ -55,75 +70,100 @@
         ]).
 
 
+
 -define(CORS_HEADERS,
         #{<<"access-control-allow-origin">> => <<"*">>}).
 
 
+
 -ifdef(FORKS_RESET).
+
 
 -else.
 
+
 -endif.
+
 
 
 -ifndef(TARGET_BLOCK_TIME).
 
+
 -endif.
+
 
 
 -ifndef(RETARGET_BLOCKS).
 
+
 -endif.
+
 
 
 %% How far into the past or future the block can be in order to be accepted for
 %% processing.
 -ifdef(AR_TEST).
 
+
 -else.
 
+
 -endif.
+
 
 
 %% The maximum lag when fork recovery (chain reorganisation) is performed.
 -ifdef(AR_TEST).
 
+
 -else.
 
+
 -endif.
+
 
 
 %% The recommended depth of the block to use as an anchor for transactions.
 %% The corresponding block hash is returned by the GET /tx_anchor endpoint.
 -ifdef(AR_TEST).
 
+
 -else.
 
+
 -endif.
+
 
 
 %% The number of blocks returned in the /info 'recent' field
 -ifdef(AR_TEST).
 
+
 -else.
+
 
 -endif.
 
 
+
 %% How long to wait before giving up on unit test(s).
 -define(TEST_SUITE_TIMEOUT, 90 * 60).
+
  %% 90 minutes
 %% How long to wait before giving up on e2e test(s).
 -define(E2E_TEST_SUITE_TIMEOUT, 6 * 60 * 60).
+
  %% 6 hours
 %% Default test timeout to use if a test starts a node. We keep having test failures due to
 %% the timeout elapsing, and I think it may be that sometimes on the runner it just takes a
 %% while to launch a test node.
 -define(TEST_NODE_TIMEOUT, 300).
+
  %% 5 minutes
 
 %% The maximum byte size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * ?MiB).
+
 
 
 %% Serve format-1 transactions without a denomination only once they are
@@ -131,10 +171,12 @@
 -define(V1_DENOMINATION0_TX_MIN_CONFIRMATIONS, 12).
 
 
+
 %% The response body POST /tx replies with to a format-1 transaction without
 %% a denomination.
 -define(V1_DENOMINATION0_TX_REJECTED, <<"Format 1 transactions are deprecated "
         "and not accepted. Sign a format 2 transaction.">>).
+
 
 
 %% The maximum nesting depth for JSON inputs accepted via
@@ -145,12 +187,16 @@
 -define(MAX_JSON_DEPTH, 256).
 
 
+
 %% The maximum number of transactions (both format=1 and format=2) in a block.
 -ifdef(AR_TEST).
 
+
 -else.
 
+
 -endif.
+
 
 
 %% Mempool Limits.
@@ -170,13 +216,18 @@
 %% its headers.
 -ifdef(AR_TEST).
 
+
 -define(MEMPOOL_HEADER_SIZE_LIMIT, 50 * ?MiB).
+
 
 -else.
 
+
 -define(MEMPOOL_HEADER_SIZE_LIMIT, 250 * ?MiB).
 
+
 -endif.
+
 
 
 %% The maximum allowed size of transaction data stored in mempool.
@@ -184,17 +235,23 @@
 %% to be part of the header.
 -ifdef(AR_TEST).
 
+
 -define(MEMPOOL_DATA_SIZE_LIMIT, 50 * ?MiB).
+
 
 -else.
 
+
 -define(MEMPOOL_DATA_SIZE_LIMIT, 500 * ?MiB).
+
 
 -endif.
 
 
+
 %% Default timeout for establishing an HTTP connection.
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).
+
 
 
 %% Default timeout used when sending to and receiving from a TCP socket
@@ -202,9 +259,11 @@
 -define(HTTP_REQUEST_SEND_TIMEOUT, 60 * 1000).
 
 
+
 %% The time in milliseconds to wait before retrying
 %% a failed join (block index download) attempt.
 -define(REJOIN_TIMEOUT, 10 * 1000).
+
 
 
 %% How many times to retry fetching the block index from each of
@@ -212,16 +271,22 @@
 -define(REJOIN_RETRIES, 3).
 
 
+
 %% Maximum allowed number of accepted requests per minute per IP.
 -ifdef(AR_TEST).
 
+
 -define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 100_000).
+
 
 -else.
 
+
 -define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 900).
 
+
 -endif.
+
 
 
 %% Number of seconds an IP address should be completely banned from doing
@@ -229,20 +294,28 @@
 -define(BAD_BLOCK_BAN_TIME, 24 * 60 * 60).
 
 
+
 %% A part of transaction propagation delay independent from the size, in seconds.
 -ifdef(AR_TEST).
 
+
 -define(BASE_TX_PROPAGATION_DELAY, 0).
+
 
 -else.
 
+
 -ifndef(BASE_TX_PROPAGATION_DELAY).
+
 
 -define(BASE_TX_PROPAGATION_DELAY, 30).
 
--endif.
 
 -endif.
+
+
+-endif.
+
 
 
 %% A conservative assumption of the network speed used to
@@ -251,25 +324,33 @@
 %% queue, and the time it takes to propagate the transaction to peers.
 -ifdef(AR_TEST).
 
+
 -define(TX_PROPAGATION_BITS_PER_SECOND, 1000000000).
+
 
 -else.
 
+
 -define(TX_PROPAGATION_BITS_PER_SECOND, 3000000).
+
  % 3 mbps
 -endif.
+
 
 
 %% The number of peers to send new blocks to in parallel.
 -define(BLOCK_PROPAGATION_PARALLELIZATION, 20).
 
 
+
 %% The maximum number of peers to propagate txs to, by default.
 -define(DEFAULT_MAX_PROPAGATION_PEERS, 16).
 
 
+
 %% The maximum number of peers to propagate blocks to, by default.
 -define(DEFAULT_MAX_BLOCK_PROPAGATION_PEERS, 1000).
+
 
 
 %% When the transaction data size is smaller than this number of bytes,
@@ -278,56 +359,70 @@
 -define(TX_SEND_WITHOUT_ASKING_SIZE_LIMIT, 1000).
 
 
+
 %% Block headers directory, relative to the data dir.
 -define(BLOCK_DIR, "blocks").
+
 
 
 %% Transaction headers directory, relative to the data dir.
 -define(TX_DIR, "txs").
 
 
+
 %% Disk cache directory, relative to the data dir.
 -define(DISK_CACHE_DIR, "disk_cache").
+
 
 
 %% Block headers directory, relative to the disk cache directory.
 -define(DISK_CACHE_BLOCK_DIR, "blocks").
 
 
+
 %% Transaction headers directory, relative to the disk cache directory.
 -define(DISK_CACHE_TX_DIR, "txs").
+
 
 
 %% Backup block hash list storage directory, relative to the data dir.
 -define(HASH_LIST_DIR, "hash_lists").
 
 
+
 %% Directory for storing miner wallets, relative to the data dir.
 -define(WALLET_DIR, "wallets").
+
 
 
 %% Directory for storing unique wallet lists, relative to the data dir.
 -define(WALLET_LIST_DIR, "wallet_lists").
 
 
+
 %% Directory for storing data chunks, relative to the data dir.
 -define(DATA_CHUNK_DIR, "data_chunks").
+
 
 
 %% Directory for RocksDB key-value storages, relative to the data dir.
 -define(ROCKS_DB_DIR, "rocksdb").
 
 
+
 %% Log output directory, NOT relative to the data dir.
 -define(LOG_DIR, "logs").
+
 
 
 %% The directory for persisted metrics, NOT relative to the data dir.
 -define(METRICS_DIR, "metrics").
 
 
+
 %% The ID and module for the default storage module.
 -define(DEFAULT_MODULE, "default").
+
 
 
 %% Number of transaction propagation processes to spawn.
@@ -337,33 +432,46 @@
 -define(NUM_EMITTER_PROCESSES, 16).
 
 
+
 %% Disk cache size in MB
 -ifdef(AR_TEST).
 
+
 -define(DISK_CACHE_SIZE, 1).
 
+
 -define(DISK_CACHE_CLEAN_PERCENT_MAX, 20).
+
 
 -else.
 
+
 -define(DISK_CACHE_SIZE, 5120).
+
 
 -define(DISK_CACHE_CLEAN_PERCENT_MAX, 20).
 
+
 -endif.
+
 
 
 %% The speed in chunks/s of moving the fork 2.5 packing threshold.
 -ifdef(AR_TEST).
 
+
 -else.
 
+
 -endif.
+
 
 
 -ifndef(INITIAL_VDF_DIFFICULTY).
 
+
 -endif.
+
 
 
 %% @doc A chunk with the proofs of its presence in the weave at a particular offset.
@@ -387,6 +495,7 @@
               %% ?DATA_CHUNK_SIZE-sized unpacked chunk.
               unpacked_chunk = <<>>
              }).
+
 
 
 %% @doc The information which simplifies validation of the nonce limiting procedures.
@@ -424,6 +533,7 @@
                             }).
 
 
+
 %% @doc A VDF session.
 -record(vdf_session, {
                       step_number,
@@ -438,12 +548,14 @@
                      }).
 
 
+
 %% @doc The format of the nonce limiter update provided by the configured trusted peer.
 -record(nonce_limiter_update, {
                                session_key,
                                session,
                                is_partial = true
                               }).
+
 
 
 %% @doc The format of the response to nonce limiter updates by configured trusted peers.
@@ -453,6 +565,7 @@
                                         postpone = 0,
                                         format = 2
                                        }).
+
 
 
 %% @doc A compact announcement of a new block gossiped to peers. Peers
@@ -468,6 +581,7 @@
                             }).
 
 
+
 %% @doc A reply to a block announcement when we are willing to receive this
 %% block from the announcing peer.
 -record(block_announcement_response, {
@@ -475,6 +589,7 @@
                                       missing_tx_indices = [], % Missing transactions' indices, 0 =<, =< 999.
                                       missing_chunk2
                                      }).
+
 
 
 %% @doc A block (txs is a list of tx records) or a block shadow (txs is a list of
@@ -699,6 +814,7 @@
                }).
 
 
+
 %% @doc A transaction.
 -record(tx, {
              %% 1 or 2.
@@ -759,6 +875,7 @@
             }).
 
 
+
 %% @doc The data_path field will only be not_found if the chunk record is corrupt/invalid.
 %% This can happen if the chunk entry exists in the chunks_index but not in the chunk_data_db.
 %% In this case:
@@ -774,6 +891,7 @@
                         }).
 
 
+
 -record(chunk_offsets, {
                         absolute_offset = not_set :: not_set | non_neg_integer(),
                         bucket_end_offset = not_set :: not_set | non_neg_integer(),
@@ -782,16 +900,20 @@
                        }).
 
 
+
 %% A macro to return whether a term is a block record.
 -define(IS_BLOCK(X), (is_record(X, block))).
+
 
 
 %% Convert a v2.0 block index into an old style block hash list.
 -define(BI_TO_BHL(BI), ([BH || {BH, _, _} <- BI])).
 
 
+
 %% Pattern matches on ok-tuple and returns the value.
 -define(OK(Tuple), begin (case (Tuple) of {ok, SuccessValue} -> (SuccessValue) end) end).
+
 
 
 %% Minimum number of characters for internal API secret. Used in the optional HTTP API
@@ -799,9 +921,11 @@
 -define(INTERNAL_API_SECRET_MIN_LEN, 16).
 
 
+
 %% The frequency of issuing a reminder to the console and the logfile
 %% about the insufficient disk space, in milliseconds.
 -define(DISK_SPACE_WARNING_FREQUENCY, 24 * 60 * 60 * 1000).
+
 
 
 %% Use a standard way of logging.
@@ -809,6 +933,9 @@
 -include_lib("kernel/include/logger.hrl").
 
 
+
 -endif.
+
+
 
 

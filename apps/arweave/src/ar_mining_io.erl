@@ -334,7 +334,7 @@ chunks_read(standalone, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOf
 get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, ?DEFAULT_MODULE, Intervals) ->
     ReplicaFormat = get_replica_format_from_packing_difficulty(PackingDifficulty),
     Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
-    case arweave_storage_sync_record:get_next_synced_interval(Start, End, Packing, ar_data_sync, ?DEFAULT_MODULE) of
+    case arweave_storage:get_next_interval(synced, Start, End, Packing, {ar_data_sync, byte}, ?DEFAULT_MODULE) of
         not_found ->
             Intervals;
         {Right, Left} ->
@@ -474,7 +474,7 @@ find_thread(RangeStart, RangeEnd, State) ->
 find_largest_intersection(not_found, _RangeStart, _RangeEnd, _Max, _MaxKey) ->
     not_found;
 find_largest_intersection([StoreID | StoreIDs], RangeStart, RangeEnd, Max, MaxKey) ->
-    I = arweave_storage_sync_record:get_intersection_size(RangeEnd, RangeStart, ar_chunk_storage, StoreID),
+    I = arweave_storage:get_intersection_size(RangeEnd, RangeStart, any_packing, {ar_chunk_storage, byte}, StoreID),
     case I > Max of
         true ->
             find_largest_intersection(StoreIDs, RangeStart, RangeEnd, I, StoreID);

@@ -51,7 +51,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
                         store_id = TargetStoreID, retry_count = RetryCount } = Task) ->
     Start2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Start + 1),
     Byte = Start2 - 1,
-    IsRecorded = arweave_storage_sync_record:is_recorded(Byte + 1, ar_data_sync, TargetStoreID),
+    IsRecorded = arweave_storage:is_recorded(Byte + 1, any_packing, {ar_data_sync, byte}, TargetStoreID),
     case {Byte >= End, IsRecorded} of
         {true, _} ->
             ok;

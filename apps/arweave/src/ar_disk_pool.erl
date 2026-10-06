@@ -428,16 +428,16 @@ is_estimated_long_term_chunk(TXStartOffset, RelativeEndOffset, WeaveSize) ->
             %% the space ahead (the data may be rearranged during after a reorg).
             is_offset_vicinity_covered(AbsoluteEndOffset);
         false ->
-            arweave_storage_module:has_any(AbsoluteEndOffset)
+            arweave_storage:covers_offset(AbsoluteEndOffset, any_packing, any_store)
     end.
 
 is_offset_vicinity_covered(Offset) ->
     Size = max(?MIN_CHUNK_PERSISTENCE_ESTIMATION_VICINITY,
                ar_node:get_recent_max_block_size()),
-    arweave_storage_module:has_range(max(0, Offset - Size * 2), Offset + Size * 2).
+    arweave_storage:covers_range(max(0, Offset - Size * 2), Offset + Size * 2, any_packing, any_store).
 
 chunk_offsets_synced(DataRootID, ChunkOffset, TXStartOffset) ->
-    case arweave_storage_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
+    case arweave_storage:is_recorded(TXStartOffset + ChunkOffset, any_packing, {ar_data_sync, byte}, any_store) of
         {{true, _}, _StoreID} ->
             Iterator = ar_data_roots:iterator(DataRootID, TXStartOffset, ?DEFAULT_MODULE),
             chunk_offsets_synced2(ChunkOffset, Iterator);
@@ -448,7 +448,7 @@ chunk_offsets_synced(DataRootID, ChunkOffset, TXStartOffset) ->
 chunk_offsets_synced2(ChunkOffset, Iterator) ->
     case ar_data_roots:next(Iterator) of
         {ok, {_, _, TXStartOffset, _}, Iterator2} ->
-            case arweave_storage_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
+            case arweave_storage:is_recorded(TXStartOffset + ChunkOffset, any_packing, {ar_data_sync, byte}, any_store) of
                 {{true, _}, _StoreID} ->
                     chunk_offsets_synced2(ChunkOffset, Iterator2);
                 false ->
@@ -805,7 +805,7 @@ validation_logs(AbsoluteEndOffset, ValidationTuple) ->
 
 process_immature_chunk(Iterator, AbsoluteEndOffset, Args,
                        StoreID, DiskPool) ->
-    case arweave_storage_sync_record:is_recorded(AbsoluteEndOffset, ar_data_sync, StoreID) of
+    case arweave_storage:is_recorded(AbsoluteEndOffset, any_packing, {ar_data_sync, byte}, StoreID) of
         {true, unpacked} ->
             %% Set CanRemoveFromDiskPool to false because we have encountered an
             %% offset above the disk pool threshold => we need to keep the chunk
@@ -856,8 +856,7 @@ process_mature_chunk(Iterator, AbsoluteEndOffset, CanRemoveFromDiskPool, Args,
     MaybeStoreIDs =
         maybe
             {store_ids, StoreIDs1} ?=
-                case arweave_storage_module:get_all(AbsoluteEndOffset - ChunkSize,
-                                               AbsoluteEndOffset) of
+                case arweave_storage:covering_stores(AbsoluteEndOffset - ChunkSize, AbsoluteEndOffset) of
                     [] ->
                         {next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool};
                     Modules ->
@@ -924,7 +923,7 @@ process_mature_chunk(Iterator, AbsoluteEndOffset, CanRemoveFromDiskPool, Args,
     end.
 
 filter_storage_modules_by_synced_offset(AbsoluteEndOffset, [StoreID | StoreIDs]) ->
-    case arweave_storage_sync_record:is_recorded(AbsoluteEndOffset, ar_data_sync, StoreID) of
+    case arweave_storage:is_recorded(AbsoluteEndOffset, any_packing, {ar_data_sync, byte}, StoreID) of
         {true, _Packing} ->
             filter_storage_modules_by_synced_offset(AbsoluteEndOffset, StoreIDs);
         false ->
@@ -950,9 +949,8 @@ delete_chunk(Iterator, Args, StoreID, DiskPool) ->
                             StartOffset = arweave_lib_constants:get_chunk_padded_offset(
                                             AbsoluteEndOffset - ChunkSize),
                             ok = arweave_storage_footprint_record:delete(PaddedOffset, StoreID),
-                            ok = arweave_storage_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync,
-                                                       StoreID),
-                            case arweave_storage_sync_record:is_recorded(PaddedOffset, ar_data_sync) of
+                            ok = arweave_storage:delete_sync_record(PaddedOffset, StartOffset, {ar_data_sync, byte}, StoreID),
+                            case arweave_storage:is_recorded(PaddedOffset, any_packing, {ar_data_sync, byte}, any_store) of
                                 false ->
                                     ar_events:send(sync_record,
                                                    {global_remove_range, StartOffset, PaddedOffset});

@@ -357,7 +357,7 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_sync_record),
-        {ok, Binary} ?= arweave_storage_global_sync_record:get_serialized_sync_buckets(),
+        {ok, Binary} ?= arweave_storage:get_serialized_buckets(byte),
         {200, #{}, Binary, Req}
     else
         {error, not_initialized} ->
@@ -369,7 +369,7 @@ handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
 handle(<<"GET">>, [<<"footprint_buckets">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_sync_record),
-        {ok, Binary} ?= arweave_storage_global_sync_record:get_serialized_footprint_buckets(),
+        {ok, Binary} ?= arweave_storage:get_serialized_buckets(footprint),
         {200, #{}, Binary, Req}
     else
         {error, not_initialized} ->
@@ -2114,7 +2114,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
     FindStorageModules =
         case CheckFootprintNumber of
             ok ->
-                case arweave_storage_module:get_all(Start, End) of
+                case arweave_storage:covering_stores(Start, End) of
                     [] ->
                         {404, #{}, <<>>, Req};
                     Modules ->
@@ -2175,7 +2175,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
                                 true
                         end,
                     {ReadPacking, CheckRecords} =
-                        case arweave_storage_sync_record:is_recorded(Offset, ar_data_sync) of
+                        case arweave_storage:is_recorded(Offset, any_packing, {ar_data_sync, byte}, any_store) of
                             false ->
                                 {none, {reply, {404, #{}, <<>>, Req}}};
                             {true, _} ->
@@ -2317,7 +2317,7 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
     maybe
         ok ?= acquire_http_semaphore(get_chunk),
         CheckRecords =
-            case arweave_storage_sync_record:is_recorded(Offset, ar_data_sync) of
+            case arweave_storage:is_recorded(Offset, any_packing, {ar_data_sync, byte}, any_store) of
                 false ->
                     {reply, {404, #{}, <<>>, Req}};
                 {true, _StoreID} ->

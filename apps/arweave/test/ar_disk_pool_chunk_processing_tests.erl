@@ -164,7 +164,7 @@ test_blacklisted_byte_skipped() ->
     true = wait_until_disk_pool_size(0),
     StoreID = arweave_storage_module:id(hd(StorageModules)),
     ?assertEqual(false,
-        arweave_storage_sync_record:is_recorded(AbsoluteEndOffset, ar_data_sync, StoreID)),
+        arweave_storage:is_recorded(AbsoluteEndOffset, any_packing, {ar_data_sync, byte}, StoreID)),
     %% Clean up the blacklist entry.
     arweave_lib_ets_intervals:delete(ar_tx_blacklist_offsets, AbsoluteEndOffset,
         AbsoluteEndOffset - 1).

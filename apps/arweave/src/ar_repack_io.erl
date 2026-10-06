@@ -278,13 +278,13 @@ remove_from_sync_record(Offsets, StoreID) ->
     DeleteSyncRecord =
         case DeleteFootprint of
             ok ->
-                arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+                arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_data_sync, byte}, StoreID);
             Error2 ->
                 Error2
         end,
     case DeleteSyncRecord of
         ok ->
-            arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
+            arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_chunk_storage, byte}, StoreID);
         Error3 ->
             Error3
     end.
@@ -299,7 +299,7 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
       } = Metadata,
 
     StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-    arweave_storage_sync_record:add(PaddedEndOffset, StartOffset, Packing, ar_data_sync, StoreID),
+    arweave_storage:add_sync_record(PaddedEndOffset, StartOffset, Packing, {ar_data_sync, byte}, StoreID),
     case ar_data_sync:is_footprint_record_supported(PaddedEndOffset, ChunkSize, Packing) of
         true ->
             arweave_storage_footprint_record:add(PaddedEndOffset, Packing, StoreID);

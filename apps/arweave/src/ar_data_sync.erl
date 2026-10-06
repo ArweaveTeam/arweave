@@ -252,12 +252,12 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
     IsRecorded =
         case {RequestOrigin, Pack} of
             {miner, _} ->
-                StorageModules = arweave_storage_module:get_all(Offset),
-                arweave_storage_sync_record:is_recorded_any(Offset, ar_data_sync, StorageModules);
+                StorageModules = arweave_storage:covering_stores(Offset, any_packing),
+                arweave_storage:is_recorded_any(Offset, {ar_data_sync, byte}, StorageModules);
             {_, false} ->
-                arweave_storage_sync_record:is_recorded(Offset, {ar_data_sync, Packing});
+                arweave_storage:is_recorded(Offset, any_packing, {{ar_data_sync, Packing}, byte}, any_store);
             {_, true} ->
-                arweave_storage_sync_record:is_recorded(Offset, ar_data_sync)
+                arweave_storage:is_recorded(Offset, any_packing, {ar_data_sync, byte}, any_store)
         end,
     SeekOffset =
         case maps:get(bucket_based_offset, Options, true) of
@@ -271,14 +271,14 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
             get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
                       RequestOrigin);
         {true, StoreID} ->
-            UnpackedReply = arweave_storage_sync_record:is_recorded(Offset, {ar_data_sync, unpacked}),
+            UnpackedReply = arweave_storage:is_recorded(Offset, any_packing, {{ar_data_sync, unpacked}, byte}, any_store),
             log_chunk_error(RequestOrigin, chunk_record_not_associated_with_packing,
                             [{store_id, StoreID}, {seek_offset, SeekOffset},
                              {is_recorded_unpacked, io_lib:format("~p", [UnpackedReply])}]),
             {error, chunk_not_found};
         Reply ->
-            UnpackedReply = arweave_storage_sync_record:is_recorded(Offset, {ar_data_sync, unpacked}),
-            Modules = arweave_storage_module:get_all(Offset),
+            UnpackedReply = arweave_storage:is_recorded(Offset, any_packing, {{ar_data_sync, unpacked}, byte}, any_store),
+            Modules = arweave_storage:covering_stores(Offset, any_packing),
             ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
             RootRecords = [ets:lookup(sync_records, {ar_data_sync, ID})
                            || ID <- ModuleIDs],
@@ -299,7 +299,7 @@ get_chunk(Offset, #{ packing := Packing } = Options) ->
 %% @doc Fetch the merkle proofs for the chunk corresponding to Offset.
 get_chunk_proof(Offset, Options) ->
     RequestOrigin = maps:get(origin, Options, unknown),
-    IsRecorded = arweave_storage_sync_record:is_recorded(Offset, ar_data_sync),
+    IsRecorded = arweave_storage:is_recorded(Offset, any_packing, {ar_data_sync, byte}, any_store),
     SeekOffset =
         case maps:get(bucket_based_offset, Options, true) of
             true ->
@@ -806,7 +806,7 @@ handle_cast({join, RecentBI}, State) ->
 
 handle_cast({cut, Start}, #data_sync_state{ store_id = StoreID,
                                             range_end = End } = State) ->
-    case arweave_storage_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
+    case arweave_storage:get_next_interval(synced, Start, End, any_packing, {ar_data_sync, byte}, StoreID) of
         not_found ->
             ok;
         _Interval ->
@@ -823,7 +823,7 @@ handle_cast({cut, Start}, #data_sync_state{ store_id = StoreID,
                 true ->
                     ok = delete_chunk_metadata_range(Start, End, State),
                     ok = arweave_storage_chunk_storage:cut(Start, StoreID),
-                    ok = arweave_storage_sync_record:cut(Start, ar_data_sync, StoreID)
+                    ok = arweave_storage:cut_sync_record(Start, {ar_data_sync, byte}, StoreID)
             end
     end,
     {noreply, State};
@@ -942,8 +942,7 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
             RemoveFromSyncRecord =
                 case RemoveFromFootprint of
                     ok ->
-                        arweave_storage_sync_record:delete(PaddedOffset,
-                                              PaddedStartOffset, ar_data_sync, StoreID);
+                        arweave_storage:delete_sync_record(PaddedOffset, PaddedStartOffset, {ar_data_sync, byte}, StoreID);
                     Error ->
                         Error
                 end,
@@ -1431,7 +1430,7 @@ read_chunk_with_metadata(
             %% isn't stored.
             {error, chunk_not_found};
         {error, Err} ->
-            Modules = arweave_storage_module:get_all(SeekOffset),
+            Modules = arweave_storage:covering_stores(SeekOffset, any_packing),
             ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
             log_chunk_error(RequestOrigin, failed_to_fetch_chunk_metadata,
                             [{seek_offset, SeekOffset},
@@ -1461,7 +1460,7 @@ read_chunk_with_metadata(
                 end,
             case ReadFun(AbsoluteEndOffset, ChunkDataKey, StoreID) of
                 not_found ->
-                    Modules = arweave_storage_module:get_all(SeekOffset),
+                    Modules = arweave_storage:covering_stores(SeekOffset, any_packing),
                     ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
                     log_chunk_error(RequestOrigin, failed_to_read_chunk_data_path,
                                     [{seek_offset, SeekOffset},
@@ -1482,10 +1481,9 @@ read_chunk_with_metadata(
                                      {absolute_end_offset, Offset}]),
                     {error, failed_to_read_chunk};
                 {ok, {Chunk, DataPath}} ->
-                    case arweave_storage_sync_record:is_recorded(Offset, StoredPacking, ar_data_sync,
-                                                    StoreID) of
+                    case arweave_storage:is_recorded(Offset, StoredPacking, {ar_data_sync, byte}, StoreID) of
                         false ->
-                            Modules = arweave_storage_module:get_all(SeekOffset),
+                            Modules = arweave_storage:covering_stores(SeekOffset, any_packing),
                             ModuleIDs = [arweave_storage_module:id(Module) || Module <- Modules],
                             RootRecords = [ets:lookup(sync_records, {ar_data_sync, ID})
                                            || ID <- ModuleIDs],
@@ -1548,7 +1546,7 @@ invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
                   {store_id, StoreID}]),
     case remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) of
         ok ->
-            arweave_storage_sync_record:add(PaddedEndOffset, StartOffset, invalid_chunks, StoreID),
+            arweave_storage:add_sync_record(PaddedEndOffset, StartOffset, any_packing, {invalid_chunks, byte}, StoreID),
             case delete_invalid_metadata(AbsoluteEndOffset, StoreID) of
                 ok ->
                     ok;
@@ -1568,7 +1566,7 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
     Remove2 =
         case Remove1 of
             ok ->
-                arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+                arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_data_sync, byte}, StoreID);
             Error ->
                 Error
         end,
@@ -1576,8 +1574,7 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
     Remove3 =
         case {Remove2, IsSmallChunkBeforeThreshold} of
             {ok, false} ->
-                arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset,
-                                      ar_chunk_storage, StoreID);
+                arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_chunk_storage, byte}, StoreID);
             _ ->
                 Remove2
         end,
@@ -1590,8 +1587,7 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
         end,
     case {Remove4, IsSmallChunkBeforeThreshold} of
         {ok, false} ->
-            arweave_storage_sync_record:delete(PaddedEndOffset, StartOffset,
-                                  ar_chunk_storage_replica_2_9_1_unpacked, StoreID);
+            arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_chunk_storage_replica_2_9_1_unpacked, byte}, StoreID);
         _ ->
             Remove4
     end.
@@ -1741,7 +1737,7 @@ remove_range(Start, End, Ref, ReplyTo) ->
                         end
                 end
         end,
-    StorageModules = arweave_storage_module:get_all(Start, End),
+    StorageModules = arweave_storage:covering_stores(Start, End),
     StoreIDs = [?DEFAULT_MODULE | [arweave_storage_module:id(M) || M <- StorageModules]],
     RefL = [make_ref() || _ <- StoreIDs],
     PID = spawn(fun() -> ReplyFun(ReplyFun, sets:from_list(RefL)) end),
@@ -1838,7 +1834,7 @@ remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
         ar_data_roots:remove_range(BlockStartOffset, WeaveSize, StoreID),
     ok = delete_chunk_metadata_range(BlockStartOffset, WeaveSize, State),
     ok = arweave_storage_chunk_storage:cut(BlockStartOffset, StoreID),
-    ok = arweave_storage_sync_record:cut(BlockStartOffset, ar_data_sync, StoreID),
+    ok = arweave_storage:cut_sync_record(BlockStartOffset, {ar_data_sync, byte}, StoreID),
     ar_events:send(sync_record, {global_cut, BlockStartOffset}),
     ar_disk_pool:reset_orphaned_data_roots_timestamps(OrphanedDataRoots),
     ok.
@@ -2101,7 +2097,7 @@ update_chunks_index2(Args, UpdateFootprint, StoreID) ->
         ok ->
             StartOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
             PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteEndOffset),
-            case arweave_storage_sync_record:add(PaddedOffset, StartOffset, Packing, ar_data_sync, StoreID) of
+            case arweave_storage:add_sync_record(PaddedOffset, StartOffset, Packing, {ar_data_sync, byte}, StoreID) of
                 ok ->
                     case UpdateFootprint of
                         true ->
@@ -2160,7 +2156,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
             decrement_chunk_cache_size(),
             {noreply, State};
         true ->
-            case arweave_storage_sync_record:is_recorded(Byte + 1, ar_data_sync, StoreID) of
+            case arweave_storage:is_recorded(Byte + 1, any_packing, {ar_data_sync, byte}, StoreID) of
                 {true, _} ->
                     Reason = chunk_already_synced,
                     arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
@@ -2337,7 +2333,7 @@ store_chunk2(ChunkArgs, Args, State) ->
             _ ->
                 case arweave_storage_footprint_record:delete(PaddedOffset, StoreID) of
                     ok ->
-                        arweave_storage_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync, StoreID);
+                        arweave_storage:delete_sync_record(PaddedOffset, StartOffset, {ar_data_sync, byte}, StoreID);
                     Error ->
                         Error
                 end
@@ -2366,7 +2362,7 @@ store_chunk2(ChunkArgs, Args, State) ->
             ProcessAlreadyStored =
                 case StoreIndex of
                     already_stored ->
-                        case arweave_storage_sync_record:is_recorded(PaddedOffset, Packing, ar_data_sync, StoreID) of
+                        case arweave_storage:is_recorded(PaddedOffset, Packing, {ar_data_sync, byte}, StoreID) of
                             false ->
                                 do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
                                                                StoreID, undefined,
@@ -2532,7 +2528,7 @@ initialize_footprint_record(Cursor, State) ->
       } = State,
     BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
 
-    case arweave_storage_sync_record:get_next_synced_interval(Cursor, RangeEnd, ar_data_sync, StoreID) of
+    case arweave_storage:get_next_interval(synced, Cursor, RangeEnd, any_packing, {ar_data_sync, byte}, StoreID) of
         not_found ->
             ok = ar_kv:put(migration_db(StoreID),
                            ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
@@ -2560,7 +2556,7 @@ initialize_footprint_record(Cursor, State) ->
 initialize_footprint_range(Start, End, _StoreID) when Start >= End ->
     ok;
 initialize_footprint_range(Start, End, StoreID) ->
-    case arweave_storage_sync_record:is_recorded(Start + 1, ar_data_sync, StoreID) of
+    case arweave_storage:is_recorded(Start + 1, any_packing, {ar_data_sync, byte}, StoreID) of
         {true, unpacked_padded} ->
             ok;
         {true, Packing} ->

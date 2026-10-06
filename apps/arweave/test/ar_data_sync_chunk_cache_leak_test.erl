@@ -74,7 +74,7 @@ test_chunk_cache_leak_on_unpack_error() ->
             #{ packing => PeerPacking }),
     ok = ar_test_await:until(valid_chunk_synced,
             fun() ->
-                arweave_storage_sync_record:is_recorded(ValidEndOffset, ar_data_sync) =/= false
+                arweave_storage:is_recorded(ValidEndOffset, any_packing, {ar_data_sync, byte}, any_store) =/= false
             end, 60_000),
     %% At most the corrupted chunk retry stays in flight.
     ok = ar_test_await:until(chunk_cache_drained,

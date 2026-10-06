@@ -28,21 +28,19 @@ test_sync_record() ->
         %% Genesis data only
         ok = ar_test_await:global_sync_record_matches(Options, [{1048576, 0}]),
         ?assertEqual(not_found,
-            arweave_storage_sync_record:get_interval(DiskPoolStart+1, ar_data_sync, ?DEFAULT_MODULE)),
-        ?assertEqual({1048576, 0}, arweave_storage_sync_record:get_interval(1, ar_data_sync, PartitionID)),
+            arweave_storage:get_interval(DiskPoolStart+1, any_packing, {ar_data_sync, byte}, ?DEFAULT_MODULE)),
+        ?assertEqual({1048576, 0}, arweave_storage:get_interval(1, any_packing, {ar_data_sync, byte}, PartitionID)),
 
         %% Add a diskpool chunk
-        arweave_storage_sync_record:add(
-            DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart, unpacked, ar_data_sync, ?DEFAULT_MODULE),
+        arweave_storage:add_sync_record(DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart, unpacked, {ar_data_sync, byte}, ?DEFAULT_MODULE),
         ok = ar_test_await:global_sync_record_matches(Options,
             [{1048576, 0}, {DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart}]),
         ?assertEqual({DiskPoolStart+?DATA_CHUNK_SIZE,DiskPoolStart},
-            arweave_storage_sync_record:get_interval(DiskPoolStart+1, ar_data_sync, ?DEFAULT_MODULE)),
-        ?assertEqual({1048576, 0}, arweave_storage_sync_record:get_interval(1, ar_data_sync, PartitionID)),
+            arweave_storage:get_interval(DiskPoolStart+1, any_packing, {ar_data_sync, byte}, ?DEFAULT_MODULE)),
+        ?assertEqual({1048576, 0}, arweave_storage:get_interval(1, any_packing, {ar_data_sync, byte}, PartitionID)),
 
         %% Remove the diskpool chunk
-        arweave_storage_sync_record:delete(
-            DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart, ar_data_sync, ?DEFAULT_MODULE),
+        arweave_storage:delete_sync_record(DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart, {ar_data_sync, byte}, ?DEFAULT_MODULE),
         timer:sleep(SleepTime),
         {ok, Binary3} = arweave_storage_global_sync_record:get_serialized_sync_record(Options),
         {ok, Global3} = arweave_lib_intervals:safe_from_etf(Binary3),
@@ -54,8 +52,7 @@ test_sync_record() ->
         ok = ar_test_await:global_sync_record_matches(Options, [{1048576, 0}]),
 
         %% Add a storage module chunk
-        arweave_storage_sync_record:add(
-            PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, unpacked, ar_data_sync, PartitionID),
+        arweave_storage:add_sync_record(PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, unpacked, {ar_data_sync, byte}, PartitionID),
         timer:sleep(SleepTime),
         {ok, Binary5} = arweave_storage_global_sync_record:get_serialized_sync_record(Options),
         {ok, Global5} = arweave_lib_intervals:safe_from_etf(Binary5),
@@ -63,14 +60,13 @@ test_sync_record() ->
         ?assertEqual([{1048576, 0},{PartitionStart+?DATA_CHUNK_SIZE,PartitionStart}],
             arweave_lib_intervals:to_list(Global5)),
         ?assertEqual(not_found,
-            arweave_storage_sync_record:get_interval(DiskPoolStart+1, ar_data_sync, ?DEFAULT_MODULE)),
-        ?assertEqual({1048576, 0}, arweave_storage_sync_record:get_interval(1, ar_data_sync, PartitionID)),
+            arweave_storage:get_interval(DiskPoolStart+1, any_packing, {ar_data_sync, byte}, ?DEFAULT_MODULE)),
+        ?assertEqual({1048576, 0}, arweave_storage:get_interval(1, any_packing, {ar_data_sync, byte}, PartitionID)),
         ?assertEqual({PartitionStart+?DATA_CHUNK_SIZE, PartitionStart},
-                arweave_storage_sync_record:get_interval(PartitionStart+1, ar_data_sync, PartitionID)),
+                arweave_storage:get_interval(PartitionStart+1, any_packing, {ar_data_sync, byte}, PartitionID)),
 
         %% Remove the storage module chunk
-        arweave_storage_sync_record:delete(
-            PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, ar_data_sync, PartitionID),
+        arweave_storage:delete_sync_record(PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, {ar_data_sync, byte}, PartitionID),
         timer:sleep(SleepTime),
         ?assertEqual([{1048576, 0},{PartitionStart+?DATA_CHUNK_SIZE,PartitionStart}],
             arweave_lib_intervals:to_list(Global5)),
@@ -78,27 +74,24 @@ test_sync_record() ->
                 {global_remove_range, PartitionStart, PartitionStart+?DATA_CHUNK_SIZE}),
         ok = ar_test_await:global_sync_record_matches(Options, [{1048576, 0}]),
         ?assertEqual(not_found,
-            arweave_storage_sync_record:get_interval(DiskPoolStart+1, ar_data_sync, ?DEFAULT_MODULE)),
-        ?assertEqual({1048576, 0}, arweave_storage_sync_record:get_interval(1, ar_data_sync, PartitionID)),
+            arweave_storage:get_interval(DiskPoolStart+1, any_packing, {ar_data_sync, byte}, ?DEFAULT_MODULE)),
+        ?assertEqual({1048576, 0}, arweave_storage:get_interval(1, any_packing, {ar_data_sync, byte}, PartitionID)),
         ?assertEqual(not_found,
-                arweave_storage_sync_record:get_interval(PartitionStart+1, ar_data_sync, PartitionID)),
+                arweave_storage:get_interval(PartitionStart+1, any_packing, {ar_data_sync, byte}, PartitionID)),
 
         %% Add chunk to both diskpool and storage module
-        arweave_storage_sync_record:add(
-            PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, unpacked, ar_data_sync, ?DEFAULT_MODULE),
-        arweave_storage_sync_record:add(
-            PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, unpacked, ar_data_sync, PartitionID),
+        arweave_storage:add_sync_record(PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, unpacked, {ar_data_sync, byte}, ?DEFAULT_MODULE),
+        arweave_storage:add_sync_record(PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, unpacked, {ar_data_sync, byte}, PartitionID),
         ok = ar_test_await:global_sync_record_matches(Options,
             [{1048576, 0}, {PartitionStart+?DATA_CHUNK_SIZE, PartitionStart}]),
         ?assertEqual({PartitionStart+?DATA_CHUNK_SIZE,PartitionStart},
-            arweave_storage_sync_record:get_interval(PartitionStart+1, ar_data_sync, ?DEFAULT_MODULE)),
-        ?assertEqual({1048576, 0}, arweave_storage_sync_record:get_interval(1, ar_data_sync, PartitionID)),
+            arweave_storage:get_interval(PartitionStart+1, any_packing, {ar_data_sync, byte}, ?DEFAULT_MODULE)),
+        ?assertEqual({1048576, 0}, arweave_storage:get_interval(1, any_packing, {ar_data_sync, byte}, PartitionID)),
         ?assertEqual({PartitionStart+?DATA_CHUNK_SIZE, PartitionStart},
-            arweave_storage_sync_record:get_interval(PartitionStart+1, ar_data_sync, PartitionID)),
+            arweave_storage:get_interval(PartitionStart+1, any_packing, {ar_data_sync, byte}, PartitionID)),
 
         %% Now remove it from just the diskpool
-        arweave_storage_sync_record:delete(
-            PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, ar_data_sync, ?DEFAULT_MODULE),
+        arweave_storage:delete_sync_record(PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, {ar_data_sync, byte}, ?DEFAULT_MODULE),
         timer:sleep(SleepTime),
         {ok, Binary7} = arweave_storage_global_sync_record:get_serialized_sync_record(Options),
         {ok, Global7} = arweave_lib_intervals:safe_from_etf(Binary7),
@@ -106,10 +99,10 @@ test_sync_record() ->
         ?assertEqual([{1048576, 0}, {PartitionStart+?DATA_CHUNK_SIZE,PartitionStart}],
             arweave_lib_intervals:to_list(Global7)),
         ?assertEqual(not_found,
-            arweave_storage_sync_record:get_interval(DiskPoolStart+1, ar_data_sync, ?DEFAULT_MODULE)),
-        ?assertEqual({1048576, 0}, arweave_storage_sync_record:get_interval(1, ar_data_sync, PartitionID)),
+            arweave_storage:get_interval(DiskPoolStart+1, any_packing, {ar_data_sync, byte}, ?DEFAULT_MODULE)),
+        ?assertEqual({1048576, 0}, arweave_storage:get_interval(1, any_packing, {ar_data_sync, byte}, PartitionID)),
         ?assertEqual({PartitionStart+?DATA_CHUNK_SIZE, PartitionStart},
-            arweave_storage_sync_record:get_interval(PartitionStart+1, ar_data_sync, PartitionID)),
+            arweave_storage:get_interval(PartitionStart+1, any_packing, {ar_data_sync, byte}, PartitionID)),
 
         ar_test_node:stop()
     end).

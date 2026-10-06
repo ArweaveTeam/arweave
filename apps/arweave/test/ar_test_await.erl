@@ -788,7 +788,7 @@ has_range(Node, StartOffset, EndOffset) ->
 collect_footprint_intervals(NodeIP, StartOffset, EndOffset) ->
     StartPartition = arweave_lib_replica_2_9:get_entropy_partition(StartOffset + 1),
     LastPartition = arweave_lib_replica_2_9:get_entropy_partition(EndOffset + 1),
-    FootprintsPerPartition = arweave_storage_footprint_record:get_footprints_per_partition(),
+    FootprintsPerPartition = arweave_lib_constants:get_replica_2_9_footprints_per_partition(),
     collect_footprint_intervals(NodeIP, StartPartition, LastPartition,
         0, FootprintsPerPartition - 1, arweave_lib_intervals:new()).
 
@@ -804,7 +804,7 @@ collect_footprint_intervals(NodeIP, Partition, LastPartition,
     FootprintByteIntervals =
         case ar_http_iface_client:get_footprints(NodeIP, Partition, Footprint) of
             {ok, FootprintIntervals} ->
-                arweave_storage_footprint_record:get_intervals_from_footprint_intervals(
+                arweave_lib_footprint:footprint_intervals_to_byte_intervals(
                     FootprintIntervals);
             not_found ->
                 ?LOG_INFO([{event, footprint_record_not_found},
