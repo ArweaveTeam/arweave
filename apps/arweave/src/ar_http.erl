@@ -651,6 +651,10 @@ await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
         {response, nofin, Status, Headers} ->
             await_response(Args#{ status => Status, headers => Headers });
 
+        {inform, _Status, _Headers} ->
+            %% A 1xx interim response precedes the final one.
+            await_response(Args);
+
         {data, IsFin, Data} ->
             Counter2 = Counter + byte_size(Data),
             case Limit /= infinity andalso Counter2 > Limit of
@@ -663,14 +667,12 @@ await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
                     await_response(Args#{ counter := Counter2,
                             acc := [Acc | Data] });
                 false ->
-                    End = os:system_time(microsecond),
-                    FinData = iolist_to_binary([Acc | Data]),
-                    download_metric(FinData, Args),
-                    upload_metric(Args),
-                    ResponseCode = gen_code_rest(maps:get(status, Args)),
-                    ResponseHeaders = maps:get(headers, Args),
-                    {ok, {ResponseCode, ResponseHeaders, FinData, Start, End}}
+                    complete_response([Acc | Data], Args)
             end;
+
+        {trailers, _Trailers} ->
+            %% A trailer section ends a body whose last data was nofin.
+            complete_response(Acc, Args);
 
         {error, timeout} = Response ->
             record_response_status(Method, Path, Response),
@@ -688,8 +690,18 @@ await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
             record_response_status(Method, Path, Response),
             gun:cancel(PID, Ref),
             log(warn, gun_await_unknown, Args, Response),
-            Response
+            {error, {unexpected_gun_reply, Response}}
     end.
+
+%% @doc Build the reply for a response whose body has ended.
+complete_response(Body, #{ start := Start } = Args) ->
+    End = os:system_time(microsecond),
+    FinData = iolist_to_binary(Body),
+    download_metric(FinData, Args),
+    upload_metric(Args),
+    ResponseCode = gen_code_rest(maps:get(status, Args)),
+    ResponseHeaders = maps:get(headers, Args),
+    {ok, {ResponseCode, ResponseHeaders, FinData, Start, End}}.
 
 log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
     case arweave_config:get([features, http_logging]) of
