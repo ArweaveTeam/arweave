@@ -1631,7 +1631,9 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
     ar_mempool:drop_txs(ar_mempool:get_txs(ForkTXIDs), false, false),
     return_orphaned_txs_to_mempool(CurrentH, ForkRootB#block.indep_hash,
         sets:from_list(ForkTXIDs)),
-    gen_server:cast(self(), {filter_mempool, ar_mempool:get_all_txids()}),
+    %% Re-verify the lowest priority transactions first.
+    gen_server:cast(self(),
+            {filter_mempool, lists:reverse(ar_mempool:get_all_txids())}),
     SearchSpaceUpperBound = ar_node:get_partition_upper_bound(B#block.height, RecentBI),
     ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
     %% IMPORTANT! Always emit new_tip before checkpoint_block! For example,

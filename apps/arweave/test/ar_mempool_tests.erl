@@ -45,11 +45,31 @@ add_tx_test_() ->
                     {timeout, Timeout, {with, GenesisData, [fun test_load_from_disk_denomination/1]}},
                     {timeout, Timeout, {with, GenesisData, [fun test_last_tx_map_prunes_emptied_keys/1]}},
                     {timeout, Timeout, {with, GenesisData, [fun test_origin_tx_map_prunes_emptied_keys/1]}},
-                    {timeout, Timeout, {with, GenesisData, [fun test_origin_spent_total_map_prunes_zeroed_keys/1]}}
+                    {timeout, Timeout, {with, GenesisData, [fun test_origin_spent_total_map_prunes_zeroed_keys/1]}},
+                    {timeout, Timeout, {with, GenesisData, [fun test_take_chunk/1]}}
             ]
         }
     end
 }.
+
+%% @doc take_chunk/2 takes transactions from the head of the identifier list,
+%% skipping identifiers no longer in the mempool, and returns the rest of the
+%% list, so that re-verifying the mempool chunk by chunk is linear in its size.
+test_take_chunk({{_, {_, Owner}}, _LastTXID, _OtherKey, _B0}) ->
+    TXs = [tx(2, Owner, Reward, <<>>) || Reward <- lists:seq(1, 5)],
+    [ar_mempool:add_tx(TX, waiting) || TX <- TXs],
+    [TX1, TX2, TX3, TX4, TX5] = TXs,
+    Missing = crypto:strong_rand_bytes(32),
+    TXIDs = [TX1#tx.id, Missing, TX2#tx.id, TX3#tx.id, TX4#tx.id, TX5#tx.id],
+    {ok, Chunk1, Rest1} = ar_mempool:take_chunk(TXIDs, 2),
+    ?assertEqual([TX1#tx.id, TX2#tx.id], [TX#tx.id || TX <- Chunk1]),
+    ?assertEqual([TX3#tx.id, TX4#tx.id, TX5#tx.id], Rest1),
+    {ok, Chunk2, Rest2} = ar_mempool:take_chunk(Rest1, 2),
+    ?assertEqual([TX3#tx.id, TX4#tx.id], [TX#tx.id || TX <- Chunk2]),
+    {ok, Chunk3, Rest3} = ar_mempool:take_chunk(Rest2, 2),
+    ?assertEqual([TX5#tx.id], [TX#tx.id || TX <- Chunk3]),
+    ?assertEqual([], Rest3),
+    ?assertEqual({ok, [], []}, ar_mempool:take_chunk([Missing], 2)).
 
 %% @doc Test that mempool transactions are correctly sorted in priority order
 test_mempool_sorting({{_, {_, Owner}}, _LastTXID, _OtherKey, _B0}) ->

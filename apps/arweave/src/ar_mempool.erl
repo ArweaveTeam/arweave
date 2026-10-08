@@ -275,20 +275,22 @@ get_all_txids() ->
       get_priority_set()
      ).
 
-take_chunk(Mempool, Size) ->
-    take_chunk(Mempool, Size, []).
-take_chunk(Mempool, 0, Taken) ->
-    {ok, Taken, Mempool};
+%% @doc Return {ok, TXs, Rest} where TXs are the first Size transactions
+%% among the given identifiers that are still in the mempool, in the given
+%% order, and Rest are the identifiers after them.
+take_chunk(TXIDs, Size) ->
+    take_chunk(TXIDs, Size, []).
+
+take_chunk(TXIDs, 0, Taken) ->
+    {ok, lists:reverse(Taken), TXIDs};
 take_chunk([], _Size, Taken) ->
-    {ok, Taken, []};
-take_chunk(Mempool, Size, Taken) ->
-    TXID = lists:last(Mempool),
-    RemainingMempool = lists:droplast(Mempool),
+    {ok, lists:reverse(Taken), []};
+take_chunk([TXID | TXIDs], Size, Taken) ->
     case get_tx(TXID) of
         not_found ->
-            take_chunk(RemainingMempool, Size, Taken);
+            take_chunk(TXIDs, Size, Taken);
         TX ->
-            take_chunk(RemainingMempool, Size - 1, [TX | Taken])
+            take_chunk(TXIDs, Size - 1, [TX | Taken])
     end.
 
 get_tx_metadata(TXID) ->
