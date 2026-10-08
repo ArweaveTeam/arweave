@@ -1695,6 +1695,13 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
             N when is_binary(N) ->
                 parse_integer(N)
         end,
+    %% Only formats 1 and 2 exist.
+    case Format == 1 orelse Format == 2 of
+        true ->
+            ok;
+        false ->
+            throw({error, unsupported_tx_format})
+    end,
     Denomination =
         case find_value(<<"denomination">>, TXStruct) of
             undefined ->

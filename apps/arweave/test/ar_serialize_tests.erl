@@ -227,6 +227,24 @@ binary_to_tx_rejects_bare_tx_id_test() ->
     ?assertMatch({ok, #tx{ id = ID }} when ID == TX#tx.id,
                  ar_serialize:binary_to_tx(ar_serialize:tx_to_binary(TX))).
 
+%% Only formats 1 and 2 exist.
+json_struct_to_tx_rejects_unsupported_format_test() ->
+    TX = (ar_tx:new(<<"test">>))#tx{ format = 2 },
+    {Props} = ar_serialize:dejsonify(
+            ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
+    WithFormat = fun(Format) ->
+        {lists:keyreplace(<<"format">>, 1, Props, {<<"format">>, Format})}
+    end,
+    ?assertMatch(#tx{ format = 1 }, ar_serialize:json_struct_to_tx(WithFormat(1))),
+    ?assertMatch(#tx{ format = 2 },
+            ar_serialize:json_struct_to_tx(WithFormat(<<"2">>))),
+    lists:foreach(
+        fun(Format) ->
+            ?assertThrow({error, unsupported_tx_format},
+                    ar_serialize:json_struct_to_tx(WithFormat(Format)))
+        end,
+        [0, 3, <<"3">>, -1]).
+
 oversized_json_integer_rejected_test() ->
     TXBase = ar_tx:new(<<"test">>),
     TX = TXBase#tx{

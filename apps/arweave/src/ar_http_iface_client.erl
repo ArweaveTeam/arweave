@@ -1636,6 +1636,18 @@ bare_tx_id_tx_response_test() ->
     ?assertEqual({error, transaction_identifier_only},
                  handle_tx_response({127, 0, 0, 1, 1984}, binary, Response)).
 
+%% @doc A JSON transaction response with an unknown format is reported as an
+%% error.
+unsupported_tx_format_tx_response_test() ->
+    TX = (ar_tx:new(<<"test">>))#tx{ format = 2,
+                                     id = crypto:strong_rand_bytes(32) },
+    {Props} = ar_serialize:tx_to_json_struct(TX),
+    Body = ar_serialize:jsonify({lists:keyreplace(format, 1, Props,
+                                                  {format, 3})}),
+    Response = {ok, {{<<"200">>, <<"OK">>}, [], Body, 0, 1}},
+    ?assertEqual({error, unsupported_tx_format},
+                 handle_tx_response({127, 0, 0, 1, 1984}, json, Response)).
+
 %% @doc Only a JSON object is accepted as a /info response body.
 decode_info_test() ->
     ?assertEqual(#{ <<"height">> => 1 }, decode_info(<<"{\"height\":1}">>)),
