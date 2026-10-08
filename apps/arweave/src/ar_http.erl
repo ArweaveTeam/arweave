@@ -601,9 +601,11 @@ method_to_list(_) ->
 request(PID, Args) ->
     Timeout = maps:get(timeout, Args, ?HTTP_REQUEST_SEND_TIMEOUT),
     Ref = request2(PID, Args),
+    %% The timeout bounds the whole response, so that a peer sending it
+    %% in small parts cannot hold the request open indefinitely.
     ResponseArgs = #{ pid => PID
                     , stream_ref => Ref
-                    , timeout => Timeout
+                    , deadline => erlang:monotonic_time(millisecond) + Timeout
                       %% Default to ?MAX_BODY_SIZE, matching the server-side default in
                       %% ar_http_iface_middleware:read_complete_body/2. The client-side
                       %% and server-side limits are matched purely for the sake of
@@ -639,9 +641,10 @@ lowercase_names(Headers) ->
 merge_headers(HeadersA, HeadersB) ->
     lists:ukeymerge(1, lists:keysort(1, HeadersB), lists:keysort(1, HeadersA)).
 
-await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
+await_response( #{ pid := PID, stream_ref := Ref, deadline := Deadline
                  , start := Start, limit := Limit, counter := Counter
                  , acc := Acc, method := Method, path := Path } = Args) ->
+    Timeout = max(0, Deadline - erlang:monotonic_time(millisecond)),
     case gun:await(PID, Ref, Timeout) of
         {response, fin, Status, Headers} ->
             End = os:system_time(microsecond),

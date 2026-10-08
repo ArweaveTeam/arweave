@@ -8,6 +8,13 @@
 %% Fail a stuck loopback exchange promptly; these are not timing assertions.
 -define(TIMEOUT, 3000).
 
+%% The slow servers send a part of the response every ?SLOW_INTERVAL
+%% milliseconds, well within ?SLOW_REQUEST_TIMEOUT, ?SLOW_PARTS times, taking
+%% far longer than ?SLOW_REQUEST_TIMEOUT in total.
+-define(SLOW_REQUEST_TIMEOUT, 500).
+-define(SLOW_INTERVAL, 100).
+-define(SLOW_PARTS, 20).
+
 %% @doc An HTTP/1.1 interim 1xx response is skipped.
 http1_interim_response_test() ->
     with_server(interim, fun(Peer) ->
@@ -43,13 +50,32 @@ http2_push_test() ->
             request(Peer, http2))
     end).
 
+%% @doc The timeout bounds the whole request, not each wait for a message, so
+%% a body arriving in small parts more slowly than that times out.
+http1_slow_body_timeout_test() ->
+    with_server(slow_body, fun(Peer) ->
+        ?assertEqual({error, timeout},
+            request(Peer, http1, ?SLOW_REQUEST_TIMEOUT))
+    end).
+
+%% @doc Interim responses repeated beyond the timeout do not keep the request
+%% waiting.
+http1_repeated_interim_timeout_test() ->
+    with_server(repeated_interim, fun(Peer) ->
+        ?assertEqual({error, timeout},
+            request(Peer, http1, ?SLOW_REQUEST_TIMEOUT))
+    end).
+
 %% @doc Send one request; peer requests use HTTP/2, others HTTP/1.1.
 request(Peer, Protocol) ->
+    request(Peer, Protocol, ?TIMEOUT).
+
+request(Peer, Protocol, Timeout) ->
     ar_http:req(#{
         method => get,
         peer => Peer,
         path => "/probe",
-        timeout => ?TIMEOUT,
+        timeout => Timeout,
         is_peer_request => Protocol == http2
     }).
 
@@ -99,12 +125,36 @@ serve_http1(Socket, interim) ->
         "HTTP/1.1 100 Continue\r\n\r\n",
         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
     ]);
+serve_http1(Socket, slow_body) ->
+    ok = gen_tcp:send(Socket, ["HTTP/1.1 200 OK\r\nContent-Length: ",
+        integer_to_list(?SLOW_PARTS), "\r\nConnection: close\r\n\r\n"]),
+    send_slowly(Socket, "x"),
+    finish_response(Socket, []);
+serve_http1(Socket, repeated_interim) ->
+    send_slowly(Socket, "HTTP/1.1 103 Early Hints\r\n\r\n"),
+    finish_response(Socket, [
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
+    ]);
 serve_http1(Socket, trailers) ->
     finish_response(Socket, [
         "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n",
         "Trailer: x-checksum\r\nConnection: close\r\n\r\n",
         "2\r\nOK\r\n0\r\nx-checksum: 1\r\n\r\n"
     ]).
+
+%% @doc Send Part ?SLOW_PARTS times, ?SLOW_INTERVAL milliseconds apart. Stop
+%% early once the client disconnects.
+send_slowly(Socket, Part) ->
+    send_slowly(Socket, Part, ?SLOW_PARTS).
+
+send_slowly(_Socket, _Part, 0) ->
+    ok;
+send_slowly(Socket, Part, N) ->
+    timer:sleep(?SLOW_INTERVAL),
+    case gen_tcp:send(Socket, Part) of
+        ok -> send_slowly(Socket, Part, N - 1);
+        {error, _} -> ok
+    end.
 
 serve_http2(Socket, Mode) ->
     ok = gen_tcp:send(Socket, cow_http2:settings(#{})),
