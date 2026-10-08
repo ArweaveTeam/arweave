@@ -308,7 +308,7 @@ get_block_index(Peer, Start, End, Encoding) ->
                        method => get,
                        peer => Peer,
                        path => Root ++ StartList ++ "/" ++ EndList,
-                       timeout => 20000,
+                       timeout => 40_000,
                        connect_timeout => 5000,
                        headers => p2p_headers()
                       }) of
