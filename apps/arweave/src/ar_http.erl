@@ -655,6 +655,12 @@ await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
             %% A 1xx interim response precedes the final one.
             await_response(Args);
 
+        {push, PushedRef, _Method, _URI, _Headers} ->
+            %% Gun cannot tell HTTP/2 servers not to push, so refuse the
+            %% pushed stream and keep waiting for the response.
+            gun:cancel(PID, PushedRef),
+            await_response(Args);
+
         {data, IsFin, Data} ->
             Counter2 = Counter + byte_size(Data),
             case Limit /= infinity andalso Counter2 > Limit of

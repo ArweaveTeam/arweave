@@ -36,6 +36,13 @@ http2_trailers_test() ->
             request(Peer, http2))
     end).
 
+%% @doc An HTTP/2 pushed stream is cancelled and the response completes.
+http2_push_test() ->
+    with_server(push, fun(Peer) ->
+        ?assertMatch({ok, {{<<"200">>, _}, _, <<"OK">>, _, _}},
+            request(Peer, http2))
+    end).
+
 %% @doc Send one request; peer requests use HTTP/2, others HTTP/1.1.
 request(Peer, Protocol) ->
     ar_http:req(#{
@@ -102,7 +109,23 @@ serve_http1(Socket, trailers) ->
 serve_http2(Socket, Mode) ->
     ok = gen_tcp:send(Socket, cow_http2:settings(#{})),
     StreamID = receive_headers(Socket),
-    finish_response(Socket, http2_frames(StreamID, Mode)).
+    finish_response(Socket, http2_frames(StreamID, Mode, Socket)).
+
+http2_frames(StreamID, push, Socket) ->
+    %% Gun refuses a promise whose authority differs from the request's.
+    {ok, {_, Port}} = inet:sockname(Socket),
+    Authority = iolist_to_binary(["127.0.0.1:", integer_to_list(Port)]),
+    {Promise, State} = cow_hpack:encode([{<<":method">>, <<"GET">>},
+        {<<":scheme">>, <<"http">>}, {<<":authority">>, Authority},
+        {<<":path">>, <<"/pushed">>}]),
+    {Final, _} = cow_hpack:encode([{<<":status">>, <<"200">>}], State),
+    [
+        cow_http2:push_promise(StreamID, 2, Promise),
+        cow_http2:headers(StreamID, nofin, Final),
+        cow_http2:data(StreamID, fin, <<"OK">>)
+    ];
+http2_frames(StreamID, Mode, _Socket) ->
+    http2_frames(StreamID, Mode).
 
 http2_frames(StreamID, interim) ->
     {Inform, State} = cow_hpack:encode([{<<":status">>, <<"103">>}]),
