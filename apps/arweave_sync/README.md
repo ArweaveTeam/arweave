@@ -341,6 +341,11 @@ concurrency cap, and the download limit and chunk cache have room). A peer
 that is not driven keeps its cap, because its goodput says nothing about what
 more concurrency would give.
 
+Every ten seconds, `arweave_sync` measures goodput and failures for peers with
+assigned chunk or footprint work. Fetches completed during those ten seconds
+are included, even if the peer has no work left when the measurement is taken.
+Advertising needed data alone does not count as assigned work.
+
 The probe reads two metrics:
 
 - **Goodput** (see [Terms](#terms)). The probe measures the peer's goodput at
@@ -354,8 +359,8 @@ The probe reads two metrics:
   Rejections do not count against the peer's reputation in
   [`ar_peers`](../arweave/src/ar_peers.erl).
 
-**Memory.** Caps are remembered when a peer leaves the active set, so a
-returning peer does not start from scratch.
+**Memory.** When a peer has no work left, its concurrency cap is saved and
+reused when more work is assigned to it.
 
 ### Each peer's queue length
 

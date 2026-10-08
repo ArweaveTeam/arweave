@@ -12,15 +12,17 @@
 %%%    gathered since the last tick, then reset those inputs for the next one:
 %%%    - the goodput sample: the bytes add_fetch_result/4 added;
 %%%    - the failure pressure: the fetch times add_fetch_result/4 added;
-%%%    - whether the peer was driven, as update_driven/3 marked it.
-%%% 2. Dispatch (snapshot/2 to commit_plan/2), any number of times until the
-%%%    next tick: copy each active peer's queue and limits into a plan, bind
+%%%    - whether the peer was driven, as update_activity/3 marked it.
+%%%    mark_peers_active/2 carries unfinished work into the next interval.
+%%% 2. Dispatch (snapshot/3 to commit_plan/2), any number of times until the
+%%%    next tick: copy each peer's queue and limits into a plan, bind
 %%%    tasks to peer queues and take tasks to fetch within those limits, then
-%%%    commit the queues. update_driven/3 marks the peers that were driven.
+%%%    commit the queues. update_activity/3 records bound work and whether
+%%%    peers were driven.
 %%% 3. Fetch results (add_fetch_result/4), after each fetch: add the bytes it
 %%%    fetched and its fetch time to the peer's totals for the next tick.
 %%%
-%%% A plan is this module's part of one dispatch pass: a copy of each active
+%%% A plan is this module's part of one dispatch pass: a copy of each known
 %%% peer's queue and limits, and the count of tasks it holds, which the pass
 %%% changes as it binds tasks and takes tasks to fetch.
 %%%
@@ -49,7 +51,6 @@
     peer_priority/3,
     queued_tasks/2,
     queue_max_length/1,
-    set_store_task_targets/3,
     start_task/3,
     store_load/3,
     take_startable_task/2,
@@ -59,10 +60,12 @@
 
 -export([
     new/0,
+    mark_peers_active/2, active_peers/1,
     %% Tick.
     tick/3,
     %% Dispatch.
-    snapshot/2, update_driven/3, commit_plan/2,
+    snapshot/3, update_activity/3, commit_plan/2,
+    mark_active/2,
     enqueue_tasks/3, take_fetch/2,
     set_store_task_targets/2,
     has_capacity/3, queue_capacity/2,
@@ -91,6 +94,27 @@
 new() ->
     #state{}.
 
+new_peer(undefined) ->
+    #peer{};
+new_peer(LastTickMs) ->
+    #peer{last_tick = {0, LastTickMs}}.
+
+%% @doc Remember peers with assigned work during this interval.
+mark_peers_active(ActivePeers,
+        #state{peers = Peers, last_tick_ms = LastTickMs} = State) ->
+    Peers2 = lists:foldl(
+        fun(Peer, Acc) ->
+            PeerState = maps:get(Peer, Acc, new_peer(LastTickMs)),
+            maps:put(Peer, PeerState#peer{active = true}, Acc)
+        end,
+        Peers,
+        ActivePeers),
+    State#state{peers = Peers2}.
+
+%% @doc Return every peer marked active since the last tick.
+active_peers(#state{peers = Peers}) ->
+    [Peer || {Peer, #peer{active = true}} <- maps:to_list(Peers)].
+
 %%%===================================================================
 %%% Tick: measure, update, publish.
 %%%===================================================================
@@ -99,22 +123,21 @@ new() ->
 %% and failure pressure from the fetch results since the previous tick, update
 %% its cap, and size its peer queue.
 %%
-%% ActivePeers: the peers with work. Every other peer keeps its cap control but
-%% has no cap in the plan until it is active again.
-tick(ActivePeers, NowMs, #state{ peers = Peers } = State) ->
+%% ActivePeers: the full list of peers marked active since the last tick,
+%% including peers whose work has finished; idle peers retain their limits.
+tick(ActivePeers, NowMs,
+        #state{ peers = Peers } = State) ->
     Active = sets:from_list(ActivePeers),
-    %% An active peer may have no entry yet, for example one that is only a
-    %% source of queued work; it starts from a fresh #peer{}.
     Peers2 = maps:map(
         fun(Peer, PeerState) ->
             case sets:is_element(Peer, Active) of
                 true -> tick_peer(Peer, NowMs, PeerState);
-                false -> idle_peer(PeerState)
+                false -> idle_peer(NowMs, PeerState)
             end
         end,
-        maps:merge(maps:from_keys(ActivePeers, #peer{}), Peers)),
-    State2 = State#state{ peers = Peers2 },
-    publish(State2),
+        Peers),
+    State2 = State#state{ peers = Peers2, last_tick_ms = NowMs },
+    publish(ActivePeers, State2),
     State2.
 
 -ifdef(AR_TEST).
@@ -149,14 +172,16 @@ tick_peer(Peer, NowMs, PeerState) ->
     PeerState2#peer{
         fetch_timing = #fetch_timing{},
         last_tick = Tick,
+        active = false,
         driven = false
     }.
 
 %% @doc Start the next interval for a peer that is not active.
-idle_peer(PeerState) ->
+idle_peer(NowMs, PeerState) ->
     PeerState#peer{
         fetch_timing = #fetch_timing{},
-        last_tick = undefined,
+        last_tick = {PeerState#peer.fetched_bytes, NowMs},
+        active = false,
         driven = false
     }.
 
@@ -257,45 +282,41 @@ log_cap_decision(Peer, PrevCap, PeerState, Goodput, FailurePressure, FailureMs,
         {client_error_worker_ms, FetchTiming#fetch_timing.client_error_ms},
         {driven, Driven}]).
 
-publish(#state{ peers = Peers }) ->
-    Active = maps:filter(fun(_Peer, PeerState) -> is_active(PeerState) end,
-        Peers),
+publish(ActivePeers, #state{ peers = Peers }) ->
     TotalCap = maps:fold(
         fun(_Peer, #peer{ control = Control }, Acc) ->
             Acc + arweave_sync_peer_cap:cap(Control)
         end,
         0,
-        Active),
-    arweave_sync_metrics:publish_peer_caps(maps:keys(Active), TotalCap).
-
-is_active(#peer{ last_tick = LastTick }) ->
-    LastTick =/= undefined.
+        maps:with(ActivePeers, Peers)),
+    arweave_sync_metrics:publish_peer_caps(ActivePeers, TotalCap).
 
 %%%===================================================================
 %%% Dispatch: snapshot.
 %%%===================================================================
 
-%% @doc Return a plan for one dispatch pass: each active peer's cap and queue
-%% length from the last tick, with the peer's queue and current fetches.
+%% @doc Snapshot each peer's limits, queues, tasks and footprint assignments.
 %%
 %% Tasks: the scheduler's tasks; each fetching task counts against its peer's
 %% concurrency cap.
-snapshot(Tasks, #state{ peers = Peers }) ->
-    PeerPlans = maps:filtermap(
-        fun(_Peer, PeerState) ->
-            case is_active(PeerState) of
-                true -> {true, new_peer_plan(PeerState)};
-                false -> false
-            end
-        end,
+snapshot(Tasks, Footprints, #state{ peers = Peers }) ->
+    PeerPlans = maps:map(
+        fun(_Peer, PeerState) -> new_peer_plan(PeerState) end,
         Peers),
-    Plan = count_fetching_tasks(Tasks, #plan{ peers = PeerPlans }),
+    Plan0 = lists:foldl(fun mark_active/2, #plan{peers = PeerPlans},
+        arweave_sync_footprint:peers(Footprints)),
+    Plan = count_assigned_tasks(Tasks, Plan0),
     maps:fold(
         fun(Peer, #peer{ queue = Queue }, Acc) ->
             enqueue_tasks(Peer, queue:to_list(Queue), Acc)
         end,
         Plan,
         Peers).
+
+%% @doc Mark a peer active in its dispatch plan.
+mark_active(Peer, Plan) ->
+    PeerPlan = peer_plan(Peer, Plan),
+    put_peer_plan(Peer, PeerPlan#peer_plan{active = true}, Plan).
 
 new_peer_plan(#peer{ control = Control } = PeerState) ->
     #peer_plan{
@@ -304,27 +325,33 @@ new_peer_plan(#peer{ control = Control } = PeerState) ->
         queue_max_length = queue_max_length(recent_goodput(PeerState))
     }.
 
-%% @doc Update each peer's fetching count and driven flag from the plan.
+%% @doc Record each peer's interval activity and current fetching count.
 %%
 %% GatesOpen: whether the shared gates (download limit, chunk cache) are open;
 %% while they are closed, no peer is driven.
-update_driven(#plan{ peers = PeerPlans }, GatesOpen,
-        #state{ peers = Peers } = State) ->
+update_activity(#plan{ peers = PeerPlans }, GatesOpen,
+        #state{ peers = Peers, last_tick_ms = LastTickMs } = State) ->
+    PlanPeers = maps:keys(PeerPlans),
+    PlanPeerStates = maps:from_keys(PlanPeers, new_peer(LastTickMs)),
     Peers2 = maps:map(
         fun(Peer, PeerState) ->
-            update_peer_driven(
+            do_update_activity(
                 maps:get(Peer, PeerPlans, #peer_plan{}),
                 GatesOpen, PeerState)
         end,
-        maps:merge(maps:from_keys(maps:keys(PeerPlans), #peer{}), Peers)),
+        maps:merge(PlanPeerStates, Peers)),
     State#state{ peers = Peers2 }.
 
-update_peer_driven(#peer_plan{ fetching_count = FetchingCount,
+do_update_activity(#peer_plan{ active = PlanActive,
+        fetching_count = FetchingCount,
         task_count = TaskCount,
         concurrency_cap = ConcurrencyCap }, GatesOpen,
-        #peer{ driven = Driven } = PeerState) ->
+        #peer{ active = Active, driven = Driven } = PeerState) ->
     Queued = TaskCount > FetchingCount,
     PeerState#peer{
+        %% Active remembers work since the last tick; PlanActive records work
+        %% in this pass. Preserve earlier activity and include new activity.
+        active = Active orelse PlanActive,
         fetching_count = FetchingCount,
         driven = Driven orelse (GatesOpen andalso Queued
             andalso FetchingCount >= ConcurrencyCap)
@@ -332,22 +359,22 @@ update_peer_driven(#peer_plan{ fetching_count = FetchingCount,
 
 %% @doc Write each peer's queue from the plan back to the peer state.
 commit_plan(#plan{ peers = PeerPlans },
-        #state{ peers = Peers } = State) ->
+        #state{ peers = Peers, last_tick_ms = LastTickMs } = State) ->
     Peers2 = maps:fold(
         fun(Peer, #peer_plan{ queue = Queue }, Acc) ->
-            PeerState = maps:get(Peer, Acc, #peer{}),
+            PeerState = maps:get(Peer, Acc, new_peer(LastTickMs)),
             maps:put(Peer, PeerState#peer{ queue = Queue }, Acc)
         end,
         Peers,
         PeerPlans),
     State#state{ peers = Peers2 }.
 
-count_fetching_tasks(Tasks, Plan) ->
+count_assigned_tasks(Tasks, Plan) ->
     maps:fold(
         fun(_TaskRef, #task{ state = fetching, peer = Peer } = Task, Acc) ->
                 count_fetching_task(Peer, Task, Acc);
-           (_TaskRef, _Task, Acc) ->
-                Acc
+           (_TaskRef, #task{peer = Peer}, Acc) ->
+                mark_active(Peer, Acc)
         end,
         Plan,
         Tasks).
@@ -460,6 +487,7 @@ count_task(#task{ store_id = StoreID }, #peer_plan{
         task_count = StoreLoad#store_load.task_count + 1
     },
     PeerPlan#peer_plan{
+        active = true,
         task_count = TaskCount + 1,
         stores = maps:put(StoreID, StoreLoad2, Stores)
     }.
@@ -486,14 +514,6 @@ set_store_task_targets(StoresByPeer, #plan{ peers = Peers } = Plan) ->
                 maps:get(Peer, StoresByPeer, []), PeerPlan)
         end,
         Peers) }.
-
--ifdef(AR_TEST).
-%% @doc Split one peer's task limit across the supplied stores.
-set_store_task_targets(Peer, StoreIDs, Plan) ->
-    PeerPlan = peer_plan(Peer, Plan),
-    PeerPlan2 = do_set_store_task_targets(StoreIDs, PeerPlan),
-    put_peer_plan(Peer, PeerPlan2, Plan).
--endif.
 
 do_set_store_task_targets(StoreIDs, PeerPlan) ->
     StoreIDsWithTasks = stores_with_tasks(PeerPlan),
@@ -787,9 +807,10 @@ has_queued_tasks(#state{ peers = Peers }) ->
 
 %% @doc Add one completed fetch attempt to the peer's fetch results.
 add_fetch_result(Peer, BytesFetched, FetchTiming,
-        #state{ peers = Peers } = State) ->
-    PeerState = maps:get(Peer, Peers, #peer{}),
+        #state{ peers = Peers, last_tick_ms = LastTickMs } = State) ->
+    PeerState = maps:get(Peer, Peers, new_peer(LastTickMs)),
     PeerState2 = PeerState#peer{
+        active = true,
         fetched_bytes = PeerState#peer.fetched_bytes + BytesFetched,
         fetch_timing = merge_fetch_timing(
             PeerState#peer.fetch_timing, FetchTiming)

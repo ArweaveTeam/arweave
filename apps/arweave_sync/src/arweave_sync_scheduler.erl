@@ -39,14 +39,14 @@
 
 -ifdef(AR_TEST).
 -export([
-    active_peers/1,
+    peers_with_work/1,
     admit_work/3,
     bind_to_peers/1,
     bind_work/2,
     on_task_fetch_completed/4,
     on_task_unpacked/2,
     on_task_write_completed/2,
-    update_driven/2,
+    update_activity/2,
     resolve_work/2,
     snapshot/1,
     start_fetches/2,
@@ -384,9 +384,9 @@ dispatch(State0) ->
     %% Bind work from the work queues to peer queues, up to each peer's queue
     %% length.
     Plan1 = bind_to_peers(Plan0),
-    %% Note which peers are already at their cap while the download limit
-    %% and the chunk cache have room.
-    State2 = update_driven(State1, Plan1),
+    %% Record interval activity, including peers already at their cap while
+    %% the download limit and chunk cache have room.
+    State2 = update_activity(State1, Plan1),
     %% Start fetches from the peer queues within the peer caps, the store cache
     %% limits, the download limit and the chunk cache.
     {State3, Plan2} = start_fetches(State2, Plan1),
@@ -398,8 +398,8 @@ dispatch(State0) ->
             Plan2#dispatch_plan.footprints, Plan2#dispatch_plan.stores
         )
     }),
-    %% Note the peers that the just-started fetches filled to their cap.
-    State4 = update_driven(State3, Plan3),
+    %% Record newly started work and peers it filled to their cap.
+    State4 = update_activity(State3, Plan3),
     %% Spawn the fetch workers and write the pass's changes back.
     State5 = spawn_workers(State4, Plan3),
     %% Schedule a pass for when the download limit refills, if it holds back
@@ -422,6 +422,7 @@ snapshot(State) ->
         footprints = arweave_sync_footprint:snapshot(State#state.footprints),
         peers = arweave_sync_peer:snapshot(
             State#state.tasks,
+            State#state.footprints,
             State#state.peer_state
         )
     },
@@ -432,17 +433,18 @@ snapshot(State) ->
     ),
     Plan0#dispatch_plan{peers = PeerPlan}.
 
-%% @doc Record which peers are driven: at their cap with tasks still queued,
-%% while the download limit and the chunk cache have room.
-update_driven(State, Plan) ->
+%% @doc Record interval activity and whether peers were driven by queued work.
+update_activity(State, Plan) ->
     GatesOpen =
         arweave_sync_download_limit:has_capacity(
             State#state.download_limit
         ) andalso
             not is_chunk_cache_full(Plan),
     State#state{
-        peer_state = arweave_sync_peer:update_driven(
-            Plan#dispatch_plan.peers, GatesOpen, State#state.peer_state
+        peer_state = arweave_sync_peer:update_activity(
+            Plan#dispatch_plan.peers,
+            GatesOpen,
+            State#state.peer_state
         )
     }.
 
@@ -670,6 +672,9 @@ build_footprint_batch(Reservation, Source, Plan) ->
     AvailableIntervals = arweave_sync_store:unclaimed_intervals(
         StoreID, SourceIntervals, Plan#dispatch_plan.stores
     ),
+    %% Tasks are the individual chunks selected for this batch. The bound
+    %% reservation tracks the chosen peer, chunks left for later batches and
+    %% tasks still needing entropy; it is none once no such work remains.
     {FootprintPlan2, Tasks, BoundReservation} =
         arweave_sync_footprint:build_batch(
             Reservation,
@@ -687,16 +692,27 @@ build_footprint_batch(Reservation, Source, Plan) ->
             bound ->
                 Plan#dispatch_plan.stores
         end,
+    %% Assign this batch's chunk tasks to Peer and claim their byte ranges.
     BoundTasks = [Task#task{peer = Peer} || Task <- Tasks],
     StorePlan3 = arweave_sync_store:enqueue_bound_tasks(
         BoundTasks, StorePlan2
     ),
+    %% Requeue the reservation only if it still has chunks left to batch.
     StorePlan4 = arweave_sync_store:add_reservations(
         [BoundReservation], StorePlan3
     ),
-    PeerPlan = arweave_sync_peer:enqueue_tasks(
-        Peer, BoundTasks, Plan#dispatch_plan.peers
-    ),
+    PeerPlan =
+        case {BoundTasks, BoundReservation} of
+            {[], #footprint_reservation{}} ->
+                %% BoundReservation is not none, so footprint chunks still
+                %% need processing. Keep the peer active even though this
+                %% batch adds no tasks.
+                arweave_sync_peer:mark_active(
+                    Peer, Plan#dispatch_plan.peers);
+            _ ->
+                arweave_sync_peer:enqueue_tasks(
+                    Peer, BoundTasks, Plan#dispatch_plan.peers)
+        end,
     Plan#dispatch_plan{
         footprints = FootprintPlan2,
         stores = StorePlan4,
@@ -789,33 +805,34 @@ spawn_worker(Task) ->
 %%% Tick.
 %%%===================================================================
 
-%% @doc Sample the store write rates and update the limits of the peers with
-%% work.
+%% @doc Sample store rates and update peers active since the last tick.
 tick(State, NowMs) ->
     State2 = State#state{
         stores =
             arweave_sync_store:sample_write_rates(NowMs, State#state.stores)
     },
+    PeerState = State2#state.peer_state,
+    ActivePeers = arweave_sync_peer:active_peers(PeerState),
+    PeerState2 = arweave_sync_peer:tick(ActivePeers, NowMs, PeerState),
+    %% Unfinished assignments are also active in the next interval.
     State2#state{
-        peer_state = arweave_sync_peer:tick(
-            active_peers(State2), NowMs, State2#state.peer_state
+        peer_state = arweave_sync_peer:mark_peers_active(
+            peers_with_work(State2), PeerState2
         )
     }.
 
-%% @doc Return the peers with work.
-active_peers(State) ->
+%% @doc Return peers with unfinished chunk or footprint work.
+peers_with_work(State) ->
     #state{
-        stores = Stores,
         tasks = Tasks,
         footprints = Footprints,
         peer_state = PeerState
     } = State,
-    lists:usort(
-        arweave_sync_store:source_peers(Stores) ++
-            [Task#task.peer || Task <- maps:values(Tasks)] ++
-            arweave_sync_footprint:peers(Footprints) ++
-            maps:keys(arweave_sync_peer:queue_lengths(PeerState))
-    ).
+    TaskPeers = [Task#task.peer || Task <- maps:values(Tasks)],
+    FootprintPeers = arweave_sync_footprint:peers(Footprints),
+    QueueLengths = arweave_sync_peer:queue_lengths(PeerState),
+    QueuedPeers = maps:keys(QueueLengths),
+    lists:usort(TaskPeers ++ FootprintPeers ++ QueuedPeers).
 
 %% @doc Publish the scheduler's metrics; only the tick calls this, because it
 %% walks every task.
@@ -834,7 +851,7 @@ emit_metrics(State) ->
         arweave_sync_peer:queued_tasks(PeerState)
     ),
     arweave_sync_metrics:publish_peers(
-        active_peers(State),
+        peers_with_work(State),
         Tasks,
         arweave_sync_peer:queue_lengths(PeerState),
         map_size(MonitorIndex)
