@@ -199,6 +199,7 @@ tick_interval_ms() -> ?TICK_INTERVAL_MS.
 %%%===================================================================
 
 init([]) ->
+    process_flag(trap_exit, true),
     ?LOG_INFO([{event, init}, {module, ?MODULE}]),
     {ok, _} = ?DEP(clock):send_after(
         tick_interval_ms(),

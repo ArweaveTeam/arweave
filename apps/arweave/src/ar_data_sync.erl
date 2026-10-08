@@ -2283,7 +2283,7 @@ store_chunk2(ChunkArgs, Args, State) ->
                 end,
             ProcessAlreadyStored =
                 case StoreIndex of
-                    already_stored ->
+                    {error, already_stored} ->
                         case arweave_storage:is_recorded(
                             PaddedOffset,
                             Packing,
