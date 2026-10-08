@@ -89,6 +89,202 @@ test_persist_equivalence() ->
     check_stream_into_ets(stream_ets_shared, shared_prefix_accounts()),
     check_stream_into_ets(stream_ets_nested, nested_accounts()).
 
+%% A delete leaves an inner node with a single child that earlier inserts
+%% pushed two levels down without rehashing it. Below the root, such a node
+%% takes its child's hash and is not stored. Its parent points at the child
+%% directly.
+single_child_node_read_test_() ->
+    {timeout, 60, fun test_single_child_node_read/0}.
+
+test_single_child_node_read() ->
+    HashFun = ar_block:wallet_list_hash_fun(),
+    {Dormant, _, Accounts, Root, Tree} = persist_single_child_node(HashFun),
+    ar_patricia_tree_ets:delete_table(Tree),
+    {DormantAddr, DormantValue} = Dormant,
+    ?assertEqual([], single_child_entries()),
+    ?assertEqual(Accounts, read(Root)),
+    ?assertEqual(DormantValue, ar_storage:read_account(DormantAddr, Root)),
+    ?assertEqual({ok, Root}, stream_root(Root, HashFun)),
+    %% Absent addresses below, beside and away from the single-child node.
+    lists:foreach(
+        fun(Addr) ->
+            ?assertEqual({0, <<>>}, ar_storage:read_account(Addr, Root))
+        end,
+        [pad32(<<1, 2, 3, 4, 7>>), pad32(<<1, 2, 3, 8>>), pad32(<<1, 5>>),
+         pad32(<<5>>)]
+    ).
+
+%% Databases written in the format of earlier releases, which also stored
+%% every node below the root with no value and a single child, read back the
+%% same as databases written in the current format. Each case applies its
+%% steps to an empty tree and persists after every step, once in each format.
+storage_formats_read_test_() ->
+    {timeout, 120, fun test_storage_formats_read/0}.
+
+test_storage_formats_read() ->
+    HashFun = ar_block:wallet_list_hash_fun(),
+    %% {Name, Steps, WhetherTheLegacyFormatStoresSingleChildNodes}
+    Cases = [
+        {no_single_child_nodes, [{insert, many_accounts(60)}], false},
+        {value_nodes_with_one_and_several_children,
+            [{insert, nested_accounts()}], false},
+        {single_child_no_value_node,
+            [{insert, shared_prefix_accounts()},
+             {delete, [pad32(<<0, 0, 0, 1>>), pad32(<<0, 0, 0, 2>>),
+                       pad32(<<0, 0, 0, 3>>)]}], true},
+        {single_child_value_and_no_value_nodes,
+            [{insert, nested_accounts()}, {delete, [<<"abd">>, <<"b">>]}],
+            true},
+        {stacked_single_child_nodes,
+            [{insert, [account(pad32(<<1, 2, 3, 4, 5>>), t1),
+                       account(pad32(<<1, 2, 3, 4, 9>>), t2),
+                       account(pad32(<<1, 2, 9>>), t1),
+                       account(pad32(<<9>>), t2)]},
+             {delete, [pad32(<<1, 2, 9>>)]},
+             {delete, [pad32(<<1, 2, 3, 4, 9>>)]}], true},
+        %% Earlier releases stored the single-child node here under a prefix
+        %% that resolves back to itself, which made reads loop forever.
+        {single_child_node_above_moved_leaf,
+            [{insert, [account(pad32(<<1, 2, 3, 4, 5>>), t1),
+                       account(pad32(<<9>>), t2)]},
+             {insert, [account(pad32(<<1, 2, 9, 9, 9>>), t1)]},
+             {insert, [account(pad32(<<1, 2, 3, 4, 9>>), t2)]},
+             {delete, [pad32(<<1, 2, 3, 4, 9>>)]}], true},
+        {single_child_root, [{insert, [account(pad32(<<7>>), t2)]}], true},
+        {single_child_root_above_branch,
+            [{insert, [account(pad32(<<5, 1>>), t1),
+                       account(pad32(<<5, 2>>), t2)]}], true}
+    ],
+    lists:foreach(
+        fun({Name, Steps, HasSingleChildNodes}) ->
+            lists:foreach(
+                fun(Legacy) ->
+                    Case = {Name, {legacy, Legacy}},
+                    clear_db(),
+                    {Root, Accounts, Deleted} = persist_steps(Steps, HashFun,
+                            #{ legacy_single_child_nodes => Legacy }),
+                    ?assertEqual(fresh_root(Accounts, HashFun), Root, Case),
+                    SingleChildKeys = [Key
+                            || {Key, _} <- single_child_entries()],
+                    case Legacy of
+                        true ->
+                            ?assertEqual(HasSingleChildNodes,
+                                    SingleChildKeys /= [], Case);
+                        false ->
+                            ?assertEqual([], SingleChildKeys -- [Root], Case)
+                    end,
+                    ?assertEqual(Accounts, read(Root), Case),
+                    lists:foreach(
+                        fun({Addr, Value}) ->
+                            ?assertEqual(Value,
+                                    ar_storage:read_account(Addr, Root),
+                                    {Case, Addr})
+                        end,
+                        Accounts),
+                    lists:foreach(
+                        fun(Addr) ->
+                            ?assertEqual({0, <<>>},
+                                    ar_storage:read_account(Addr, Root),
+                                    {Case, Addr})
+                        end,
+                        [<<16#FE, 0:248>> | Deleted]),
+                    ?assertEqual({ok, Root}, stream_root(Root, HashFun), Case)
+                end,
+                [true, false])
+        end,
+        Cases).
+
+%% Deleting two keys stacks two single-child nodes above a leaf. The parent
+%% of the upper one points past both of them at the leaf.
+stacked_single_child_nodes_test_() ->
+    {timeout, 60, fun test_stacked_single_child_nodes/0}.
+
+test_stacked_single_child_nodes() ->
+    HashFun = ar_block:wallet_list_hash_fun(),
+    {KeptAddr, KeptValue} = Kept = account(pad32(<<1, 2, 3, 4, 5>>), t1),
+    {SiblingAddr, _} = Sibling = account(pad32(<<1, 2, 3, 4, 9>>), t2),
+    {CousinAddr, _} = Cousin = account(pad32(<<1, 2, 9>>), t1),
+    Other = account(pad32(<<9>>), t2),
+    clear_db(),
+    {_, Tree1, _} = persist_ets(build_ets([Kept, Sibling, Cousin, Other]),
+            HashFun),
+    {_, Tree2, _} = persist_ets(
+            delete_all(ar_patricia_tree_ets, Tree1, [CousinAddr]), HashFun),
+    {Root, Tree3, _} = persist_ets(
+            delete_all(ar_patricia_tree_ets, Tree2, [SiblingAddr]), HashFun),
+    ar_patricia_tree_ets:delete_table(Tree3),
+    ?assertEqual(fresh_root([Kept, Other], HashFun), Root),
+    ?assertEqual([], single_child_entries()),
+    %% No node moved after it was stored, so every child reference, including
+    %% the one skipping the single-child nodes, names an existing entry.
+    ?assertEqual([], unresolved_child_references()),
+    ?assertEqual(sort([Kept, Other]), read(Root)),
+    ?assertEqual(KeptValue, ar_storage:read_account(KeptAddr, Root)),
+    ?assertEqual({0, <<>>}, ar_storage:read_account(SiblingAddr, Root)),
+    ?assertEqual({ok, Root}, stream_root(Root, HashFun)).
+
+%% Reinserting the deleted key gives the single-child node a second child
+%% again, so it is stored and its parent points at it.
+single_child_node_reinsert_test_() ->
+    {timeout, 60, fun test_single_child_node_reinsert/0}.
+
+test_single_child_node_reinsert() ->
+    HashFun = ar_block:wallet_list_hash_fun(),
+    {_, Split2, Accounts, _, Tree} = persist_single_child_node(HashFun),
+    {Root, Tree2, _} =
+        persist_ets(insert_all(ar_patricia_tree_ets, Tree, [Split2]), HashFun),
+    ar_patricia_tree_ets:delete_table(Tree2),
+    Accounts2 = sort([Split2 | Accounts]),
+    ?assertEqual(fresh_root(Accounts2, HashFun), Root),
+    ?assertEqual([], single_child_entries()),
+    ?assertEqual(Accounts2, read(Root)),
+    ?assertEqual({ok, Root}, stream_root(Root, HashFun)).
+
+%% A root with a single child is the one single-child node that is stored, so
+%% that a stored tree is always found under exactly its root hash.
+single_child_root_read_test_() ->
+    {timeout, 60, fun test_single_child_root_read/0}.
+
+test_single_child_root_read() ->
+    HashFun = ar_block:wallet_list_hash_fun(),
+    {Addr, Value} = Account = account(pad32(<<7>>), t2),
+    clear_db(),
+    {Root, Tree, _} = persist_ets(build_ets([Account]), HashFun),
+    ar_patricia_tree_ets:delete_table(Tree),
+    ?assertEqual(HashFun(leaf, Account), Root),
+    ?assertEqual({ok, term_to_binary([{Root, binary:part(Addr, 0, 1)}])},
+            ar_kv:get(account_tree_db, Root)),
+    ?assertEqual([Account], read(Root)),
+    ?assertEqual(Value, ar_storage:read_account(Addr, Root)),
+    ?assertEqual({ok, Root}, stream_root(Root, HashFun)).
+
+%% A single-child entry whose child was never stored does not resolve, so
+%% reading falls back to the (absent) wallet list files.
+single_child_entry_without_child_test_() ->
+    {timeout, 60, fun test_single_child_entry_without_child/0}.
+
+test_single_child_entry_without_child() ->
+    Hash = crypto:hash(sha384, <<"single_child_entry_without_child">>),
+    clear_db(),
+    ok = ar_kv:put(account_tree_db, Hash,
+            term_to_binary([{Hash, << 1, 2, 3 >>}])),
+    ?assertEqual(not_found, ar_storage:read_wallet_list(Hash)).
+
+%% A hash stored only under a longer prefix is not found by its root key, even
+%% when the entry just before that key is a single-child node of another hash.
+single_child_entry_before_unknown_root_test_() ->
+    {timeout, 60, fun test_single_child_entry_before_unknown_root/0}.
+
+test_single_child_entry_before_unknown_root() ->
+    PrevHash = << 1:384 >>,
+    Hash = << 2:384 >>,
+    clear_db(),
+    ok = ar_kv:put(account_tree_db, << PrevHash/binary, 1 >>,
+            term_to_binary([{PrevHash, << 1, 2 >>}])),
+    ok = ar_kv:put(account_tree_db, << Hash/binary, 7 >>,
+            term_to_binary(account(pad32(<< 7 >>), t1))),
+    ?assertEqual(not_found, ar_storage:read_wallet_list(Hash)).
+
 %%%===================================================================
 %%% Helpers
 %%%===================================================================
@@ -206,6 +402,85 @@ check_stream_into_ets(Name, Accounts) ->
     ar_patricia_tree_ets:delete_table(Tid),
     ?assertEqual(Root, RootEts, {stream_into_ets, Name}).
 
+%% @doc Persist the tree of each step: a dormant account, then two inserts that
+%% push it two levels down without rehashing it, then a delete that leaves the
+%% node above it with a single child. Return the dormant account, the deleted
+%% account, the final accounts, the final root and the final ets tree.
+persist_single_child_node(HashFun) ->
+    Dormant = account(pad32(<<1, 2, 3, 4, 5>>), t1),
+    Other = account(pad32(<<9>>), t2),
+    Split1 = account(pad32(<<1, 2, 9, 9, 9>>), t1),
+    {Split2Addr, _} = Split2 = account(pad32(<<1, 2, 3, 4, 9>>), t2),
+    clear_db(),
+    {_, Tree1, _} = persist_ets(build_ets([Dormant, Other]), HashFun),
+    {_, Tree2, _} =
+        persist_ets(insert_all(ar_patricia_tree_ets, Tree1, [Split1]), HashFun),
+    {_, Tree3, _} =
+        persist_ets(insert_all(ar_patricia_tree_ets, Tree2, [Split2]), HashFun),
+    {Root, Tree4, _} = persist_ets(
+            delete_all(ar_patricia_tree_ets, Tree3, [Split2Addr]), HashFun),
+    {Dormant, Split2, sort([Dormant, Other, Split1]), Root, Tree4}.
+
+%% @doc Return the account_tree_db entries holding a single-child node.
+single_child_entries() ->
+    case ar_kv:get_range(account_tree_db, <<>>, ?DB_END) of
+        {ok, Entries} ->
+            [Entry || {_, Bin} = Entry <- maps:to_list(Entries),
+                is_single_child_entry(binary_to_term(Bin))];
+        Error ->
+            Error
+    end.
+
+%% @doc Return the {Hash, Prefix} child references stored in account_tree_db
+%% with no entry at exactly that hash and prefix.
+unresolved_child_references() ->
+    case ar_kv:get_range(account_tree_db, <<>>, ?DB_END) of
+        {ok, Entries} ->
+            References = lists:append([Children
+                    || Bin <- maps:values(Entries),
+                    [_ | _] = Children <- [binary_to_term(Bin)]]),
+            [{Hash, Prefix} || {Hash, Prefix} <- References,
+                not maps:is_key(<< Hash/binary, (db_prefix(Prefix))/binary >>,
+                        Entries)];
+        Error ->
+            Error
+    end.
+
+db_prefix(root) ->
+    <<>>;
+db_prefix(Prefix) ->
+    Prefix.
+
+is_single_child_entry([_]) ->
+    true;
+is_single_child_entry(_) ->
+    false.
+
+fresh_root(Accounts, HashFun) ->
+    Tree = build_ets(Accounts),
+    {Root, _, _} = ar_patricia_tree_ets:compute_hash(Tree, HashFun, #{}),
+    ar_patricia_tree_ets:delete_table(Tree),
+    Root.
+
+%% @doc Stream the stored tree into a fresh ets table the way the node does on
+%% startup and return {ok, RootHash} of the result.
+stream_root(Root, HashFun) ->
+    Tid = ar_patricia_tree_ets:new(),
+    Insert = fun(Key, Value, Tid2) ->
+        ar_patricia_tree_ets:insert(Key, Value, Tid2)
+    end,
+    Result =
+        case ar_storage:fold_wallet_list(Root, Insert, Tid, not_set) of
+            {ok, Tid} ->
+                {RootEts, _, _} =
+                    ar_patricia_tree_ets:compute_hash(Tid, HashFun, #{}),
+                {ok, RootEts};
+            Other ->
+                Other
+        end,
+    ar_patricia_tree_ets:delete_table(Tid),
+    Result.
+
 apply_mods(Accounts, Mods) ->
     Base = maps:from_list(Accounts),
     sort(maps:to_list(lists:foldl(fun({K, V}, Acc) -> Acc#{ K => V } end, Base, Mods))).
@@ -220,22 +495,53 @@ read(RootHash) ->
 clear_db() ->
     ar_kv:delete_range(account_tree_db, <<>>, ?DB_END).
 
+%% @doc Apply Steps ({insert, Accounts} or {delete, Keys}) to an empty ets
+%% tree, persisting it after every step. Return the final root, the sorted
+%% final accounts and the deleted keys.
+persist_steps(Steps, HashFun, Opts) ->
+    {Root, Tree, Accounts, Deleted} = lists:foldl(
+        fun({insert, New}, {_, StepTree, StepAccounts, StepDeleted}) ->
+                {StepRoot, StepTree2, _} = persist_ets(
+                        insert_all(ar_patricia_tree_ets, StepTree, New),
+                        HashFun, Opts),
+                {StepRoot, StepTree2,
+                 maps:merge(StepAccounts, maps:from_list(New)), StepDeleted};
+           ({delete, Keys}, {_, StepTree, StepAccounts, StepDeleted}) ->
+                {StepRoot, StepTree2, _} = persist_ets(
+                        delete_all(ar_patricia_tree_ets, StepTree, Keys),
+                        HashFun, Opts),
+                {StepRoot, StepTree2, maps:without(Keys, StepAccounts),
+                 StepDeleted ++ Keys}
+        end,
+        {<<>>, ar_patricia_tree_ets:new(), #{}, []},
+        Steps),
+    ar_patricia_tree_ets:delete_table(Tree),
+    {Root, sort(maps:to_list(Accounts)), Deleted}.
+
 %% @doc Hash the ets tree, streaming node-update batches to a sink that writes them to
 %% account_tree_db (as ar_storage will on a live node), and block until every batch is written
 %% before returning - so the subsequent read/1 sees a complete tree.
 persist_ets(Tree, HashFun) ->
+    persist_ets(Tree, HashFun, #{}).
+
+persist_ets(Tree, HashFun, Opts) ->
     Sink = spawn_link(fun() -> writer_sink_loop(account_tree_db) end),
-    Result = ar_patricia_tree_ets:compute_hash(Tree, HashFun, #{ sink => Sink }),
+    Result = ar_patricia_tree_ets:compute_hash(Tree, HashFun,
+            Opts#{ sink => Sink }),
     Sink ! {account_tree_persist_sync, self()},
     receive {account_tree_persist_synced, Sink} -> ok end,
     unlink(Sink),
     exit(Sink, kill),
     Result.
 
+%% @doc Write node-update batches to DBName, keeping the entries already stored
+%% as ar_storage does.
 writer_sink_loop(DBName) ->
     receive
         {account_tree_node_batch, Batch} ->
-            ok = ar_kv:write_batch(DBName, [{K, term_to_binary(V)} || {K, V} <- Batch]),
+            NewNodes = [{K, term_to_binary(V)} || {K, V} <- Batch,
+                    ar_kv:get(DBName, K) == not_found],
+            ok = ar_kv:write_batch(DBName, NewNodes),
             writer_sink_loop(DBName);
         {account_tree_persist_sync, From} ->
             From ! {account_tree_persist_synced, self()},

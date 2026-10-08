@@ -61,7 +61,9 @@ foldr(Fun, Acc, Tree) ->
 
 %% @doc Recompute the root hash. compute_hash/2 returns the UpdateMap; /3 returns it only when
 %% PersistOpts has return_update_map => true, otherwise #{}. PersistOpts
-%% #{ progress => true } logs progress lines during the computation.
+%% #{ progress => true } logs progress lines during the computation. See
+%% ar_patricia_tree_core:compute_hash/5 for
+%% #{ legacy_single_child_nodes => true }.
 compute_hash(Tree, HashFun) ->
     compute_hash(Tree, HashFun, #{ return_update_map => true }).
 
@@ -71,9 +73,9 @@ compute_hash(Tree, HashFun, PersistOpts) ->
             true -> #{};
             false -> no_update_map
         end,
-    Progress = maps:get(progress, PersistOpts, false) == true,
     {RootHash, Tree2, Acc} =
-        ar_patricia_tree_core:compute_hash(?MODULE, Tree, HashFun, Acc0, Progress),
+        ar_patricia_tree_core:compute_hash(?MODULE, Tree, HashFun, Acc0,
+                PersistOpts),
     UpdateMap = case Acc of no_update_map -> #{}; _ -> Acc end,
     {RootHash, Tree2, UpdateMap}.
 

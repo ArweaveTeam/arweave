@@ -10,10 +10,12 @@
 -export([insert/4, get_value/3, lookup/3, size/2, is_empty/2, from_proplist/2, delete/3,
          get_range/3, get_range/4, foldr/4, compute_hash/4, compute_hash/5]).
 
-%% The storage backend. get_node returns the node {Parent, Children, Hash, Suffix, Value}
-%% or not_found. put_node, del_node, and set_size return the (possibly new) Tree. emit is
-%% called once per hashed node during compute_hash, threading Acc. progress_extra returns
-%% extra fields for the progress log.
+%% The storage backend. get_node returns the node
+%% {Parent, Children, Hash, Suffix, Value} or not_found. put_node, del_node, and
+%% set_size return the (possibly new) Tree. emit is called once per hashed node
+%% during compute_hash, threading Acc, except for a node below the root with no
+%% value and a single child, which takes its child's hash. progress_extra
+%% returns extra fields for the progress log.
 -callback new() -> Tree :: term().
 -callback get_node(Tree :: term(), Key :: term()) -> tuple() | not_found.
 -callback put_node(Tree :: term(), Key :: term(), Node :: tuple()) -> Tree :: term().
@@ -92,22 +94,28 @@ foldr(Backend, Fun, Acc, Tree) ->
             foldr(Backend, Fun, Acc, Tree, root)
     end.
 
-%% @doc Recompute the root hash, re-hashing only the paths invalidated since the previous
-%% computation. HashFun(leaf, {Key, Value}) hashes a leaf, HashFun(node, ChildHashes)
-%% combines child hashes. Backend:emit is called at every hashed node, threading Acc.
-%% Return {RootHash, Tree, Acc}.
+%% @doc Recompute the root hash, re-hashing only the paths invalidated since the
+%% previous computation. HashFun(leaf, {Key, Value}) hashes a leaf,
+%% HashFun(node, ChildHashes) combines child hashes. Backend:emit is called at
+%% every hashed node, threading Acc, except for a node below the root with no
+%% value and a single child. Return {RootHash, Tree, Acc}.
 compute_hash(Backend, Tree, HashFun, Acc) ->
-    compute_hash(Backend, Tree, HashFun, Acc, false).
+    compute_hash(Backend, Tree, HashFun, Acc, #{}).
 
-%% @doc Like compute_hash/4. When Progress is true, log a progress line every
-%% ?PROGRESS_CHUNK hashed leaves (see progress_init/3).
-compute_hash(Backend, Tree, HashFun, Acc, Progress) ->
+%% @doc Like compute_hash/4. Opts #{ progress => true } logs a progress line
+%% every ?PROGRESS_CHUNK hashed leaves (see progress_init/3).
+%% Opts #{ legacy_single_child_nodes => true } emits every node with no value
+%% and a single child, referenced by its own key, as releases before #1488 did.
+%% Only tests use it, to write databases in that format.
+compute_hash(Backend, Tree, HashFun, Acc, Opts) ->
     case Backend:get_size(Tree) of
         0 ->
             {<<>>, Tree, Acc};
         _ ->
+            Progress = maps:get(progress, Opts, false) == true,
+            Legacy = maps:get(legacy_single_child_nodes, Opts, false) == true,
             progress_init(Backend, Tree, Progress),
-            Result = do_compute_hash(Backend, Tree, HashFun, Acc, root),
+            Result = do_compute_hash(Backend, Tree, HashFun, Acc, root, Legacy),
             progress_finish(Backend, Tree),
             Result
     end.
@@ -237,7 +245,7 @@ lookup(Backend, Key, Tree, Level) ->
             end
     end.
 
-do_compute_hash(Backend, Tree, HashFun, Acc, KeyPrefix) ->
+do_compute_hash(Backend, Tree, HashFun, Acc, KeyPrefix, Legacy) ->
     {Parent, Children, Hash, Suffix, MaybeValue} = Backend:get_node(Tree, KeyPrefix),
     case Hash of
         no_hash ->
@@ -254,8 +262,17 @@ do_compute_hash(Backend, Tree, HashFun, Acc, KeyPrefix) ->
                     {Hashes, Tree2, ChildrenAcc} = gb_sets_foldr(
                         fun(Child, {HashesIn, TreeIn, AccIn}) ->
                             {ChildHash, TreeOut, AccOut} = do_compute_hash(
-                                Backend, TreeIn, HashFun, AccIn, Child),
-                            {[{ChildHash, Child} | HashesIn], TreeOut, AccOut}
+                                Backend, TreeIn, HashFun, AccIn, Child, Legacy),
+                            ChildKey =
+                                case Legacy of
+                                    true ->
+                                        Child;
+                                    false ->
+                                        skip_single_child_nodes(Backend,
+                                                TreeOut, Child)
+                                end,
+                            {[{ChildHash, ChildKey} | HashesIn], TreeOut,
+                             AccOut}
                         end,
                         {[], Tree, Acc},
                         Children
@@ -274,9 +291,15 @@ do_compute_hash(Backend, Tree, HashFun, Acc, KeyPrefix) ->
                                 {NodeHash, NodeAcc};
                             no_value ->
                                 case Hashes of
+                                    [{SingleHash, _}]
+                                            when KeyPrefix == root
+                                                orelse Legacy ->
+                                        %% Keep the root entry so a stored
+                                        %% tree is found by its root hash.
+                                        {SingleHash, Backend:emit(ChildrenAcc,
+                                                SingleHash, KeyPrefix, Hashes)};
                                     [{SingleHash, _}] ->
-                                        {SingleHash, Backend:emit(ChildrenAcc, SingleHash,
-                                                KeyPrefix, Hashes)};
+                                        {SingleHash, ChildrenAcc};
                                     _ ->
                                         NodeHash = HashFun(node, ChildHashes),
                                         {NodeHash, Backend:emit(ChildrenAcc, NodeHash,
@@ -313,6 +336,19 @@ foldr(Backend, Fun, Acc, Tree, KeyPrefix) ->
                 _ ->
                     Acc2
             end
+    end.
+
+%% @doc Return Key, or the key of the first node below it with a value or
+%% several children. A node with no value and a single child is not emitted, so
+%% its parent records the key of that node instead.
+skip_single_child_nodes(Backend, Tree, Key) ->
+    {_Parent, Children, _Hash, _Suffix, MaybeValue} =
+        Backend:get_node(Tree, Key),
+    case {MaybeValue, gb_sets:size(Children)} of
+        {no_value, 1} ->
+            skip_single_child_nodes(Backend, Tree, gb_sets:smallest(Children));
+        _ ->
+            Key
     end.
 
 gb_sets_foldr(Fun, Acc, G) ->

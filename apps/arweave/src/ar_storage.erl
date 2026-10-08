@@ -466,8 +466,8 @@ read_account(Addr, Key) ->
 
 read_account(Addr, Key, Prefix, CustomDir) ->
     case get_account_tree_value(Key, Prefix, CustomDir) of
-        {ok, << Key:48/binary, _/binary >>, V} ->
-            case binary_to_term(V, [safe]) of
+        {ok, << Key:48/binary, _/binary >>, Node} ->
+            case Node of
                 {K, Val} when K == Addr ->
                     Val;
                 {_, _} ->
@@ -1028,8 +1028,9 @@ fold_wallet_list(WalletListHash, Fun, Acc, CustomDir) when is_binary(WalletListH
     fold_wallet_list(get_account_tree_value(Key, <<>>, CustomDir), Fun, Acc, [],
             WalletListHash, Key, CustomDir).
 
-fold_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Fun, Acc, Keys, RootHash, K, CustomDir) ->
-    case binary_to_term(Bin, [safe]) of
+fold_wallet_list({ok, << K:48/binary, _/binary >>, Node}, Fun, Acc, Keys,
+        RootHash, K, CustomDir) ->
+    case Node of
         {Key, Value} ->
             Acc2 = Fun(Key, Value, Acc),
             case Keys of
@@ -1589,16 +1590,61 @@ is_disk_full_error(Reason) ->
     Text = lists:flatten(io_lib:format("~p", [Reason])),
     string:find(Text, "No space left on device") =/= nomatch.
 
-%% @doc Ignore the prefix when querying a key since the prefix might depend on the order of
-%% insertions and is only used to optimize certain lookups.
+%% @doc Return {ok, DBKey, Value} with the decoded account tree node stored
+%% under the given key, or none. Ignore the prefix when querying a key since
+%% it might depend on the order of insertions and only optimizes lookups.
 get_account_tree_value(Key, Prefix, CustomDir) ->
-    ar_kv:get_prev(get_db_name(account_tree_db, CustomDir), << Key/binary, Prefix/binary >>).
-    % does not work:
-    %ar_kv:get_next(account_tree_db, << Key/binary, Prefix/binary >>).
-    % works:
-    %<< N:(48 * 8) >> = Key,
-    %Key2 = << (N + 1):(48 * 8) >>,
-    %ar_kv:get_prev(account_tree_db, Key2).
+    DB = get_db_name(account_tree_db, CustomDir),
+    case ar_kv:get_prev(DB, << Key/binary, Prefix/binary >>) of
+        {ok, << Key:48/binary, _/binary >> = DBKey, Bin} ->
+            Value = binary_to_term(Bin, [safe]),
+            case is_single_child_node(Value) of
+                true ->
+                    %% A node with no value and a single child is stored
+                    %% under its child's hash and only points at the child.
+                    get_account_tree_value(DB, Key);
+                false ->
+                    {ok, DBKey, Value}
+            end;
+        {ok, _DBKey, _Bin} ->
+            none;
+        Reply ->
+            Reply
+    end.
+
+%% @doc Return true if the stored account tree value is a node with no value
+%% and a single child. A leaf is stored as {Key, Value} and other nodes as a
+%% list of child hashes, where a node with a value lists the value's hash
+%% first, so only this node is a list of one. It is stored under its child's
+%% hash, next to the child's own entry.
+is_single_child_node([_]) ->
+    true;
+is_single_child_node(_) ->
+    false.
+
+%% @doc Return {ok, DBKey, Value} for the first entry stored under the given
+%% key, with any prefix, that is not a single-child node, or none. Unlike
+%% get_account_tree_value/3, read every entry under the key instead of seeking
+%% one by the prefix hint.
+get_account_tree_value(DB, Key) ->
+    KeySize = byte_size(Key),
+    End = << (binary:decode_unsigned(Key) + 1):(KeySize * 8) >>,
+    case ar_kv:get_range(DB, Key, End) of
+        {ok, Map} ->
+            Nodes = [{DBKey, Value}
+                    || {DBKey, Bin} <- lists:sort(maps:to_list(Map)),
+                    binary:longest_common_prefix([DBKey, Key]) == KeySize,
+                    Value <- [binary_to_term(Bin, [safe])],
+                    not is_single_child_node(Value)],
+            case Nodes of
+                [{DBKey, Value} | _] ->
+                    {ok, DBKey, Value};
+                [] ->
+                    none
+            end;
+        Error ->
+            Error
+    end.
 
 %%%===================================================================
 %%% Tests
