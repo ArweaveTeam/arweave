@@ -446,7 +446,7 @@ get_mempool(Peer) ->
                                           peer => Peer,
                                           method => get,
                                           path => "/tx/pending",
-                                          timeout => 5 * 1000,
+                                          timeout => 10 * 1000,
                                           connect_timeout => 500,
                                           %% Sufficient for a JSON-encoded list of the transaction identifiers
                                           %% from a mempool with 250 MiB worth of transaction headers with no data.
