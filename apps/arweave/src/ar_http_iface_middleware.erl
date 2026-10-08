@@ -2464,18 +2464,39 @@ handle_post_chunk(check_chunk_proof_ratio, Proof, Req) ->
         false ->
             {400, #{}, jiffy:encode(#{ error => chunk_proof_ratio_not_attractive }), Req};
         true ->
-            handle_post_chunk(validate_proof, Proof, Req)
+            handle_post_chunk(check_data_root, Proof, Req)
+    end;
+handle_post_chunk(check_data_root, Proof, Req) ->
+    case maps:get(data_root, Proof) of
+        <<_:32/binary>> ->
+            handle_post_chunk(validate_proof, Proof, Req);
+        _ ->
+            {400, #{}, jiffy:encode(#{ error => invalid_data_root }), Req}
     end;
 handle_post_chunk(validate_proof, Proof, Req) ->
     Parent = self(),
+    Ref = make_ref(),
     #{ chunk := Chunk, data_path := DataPath, data_size := TXSize, offset := Offset,
        data_root := DataRoot } = Proof,
     Peer = ar_http_util:arweave_peer(Req),
-    spawn(fun() ->
-                  Parent ! ar_disk_pool:add_chunk(
-                             DataRoot, DataPath, Chunk, Offset, TXSize, Peer)
-          end),
+    %% Monitor the worker so that its crash does not leave the handler
+    %% waiting for a reply until the handler timeout.
+    {_, MonitorRef} = spawn_monitor(fun() ->
+        Parent ! {Ref, ar_disk_pool:add_chunk(
+            DataRoot, DataPath, Chunk, Offset, TXSize, Peer)}
+    end),
     receive
+        {Ref, Reply} ->
+            demonitor(MonitorRef, [flush]),
+            add_chunk_reply_to_response(Reply, Req);
+        {'DOWN', MonitorRef, process, _, Reason} ->
+            ?LOG_WARNING([{event, post_chunk_worker_down},
+                {reason, io_lib:format("~P", [Reason, 20])}]),
+            {500, #{}, <<>>, Req}
+    end.
+
+add_chunk_reply_to_response(Reply, Req) ->
+    case Reply of
         ok ->
             {200, #{}, <<>>, Req};
         temporary ->

@@ -3,6 +3,7 @@
 
 -export([
     test_rejects_invalid_chunks/0,
+    test_post_chunk_worker_crash/0,
     test_does_not_store_small_chunks_after_2_5/0,
     test_does_not_store_small_chunks_after_2_5/1,
     test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size/0,
@@ -65,6 +66,27 @@ test_rejects_invalid_chunks() ->
             data_size => <<"0">>
         }))
     ),
+    %% A 32-byte data path whose note is 0 passes the proof ratio check
+    %% when data_size is 0, so these requests reach the data root check.
+    ?assertMatch(
+        {ok, {{<<"400">>, _}, _, <<"{\"error\":\"invalid_data_root\"}">>, _, _}},
+        ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
+            data_root => arweave_util:encode(<<"abc">>),
+            chunk => <<>>,
+            data_path => arweave_util:encode(<<0:256>>),
+            offset => <<"0">>,
+            data_size => <<"0">>
+        }))
+    ),
+    ?assertMatch(
+        {ok, {{<<"400">>, _}, _, <<"{\"error\":\"invalid_data_root\"}">>, _, _}},
+        ar_test_node:post_chunk(main, ar_serialize:jsonify(#{
+            chunk => <<>>,
+            data_path => arweave_util:encode(<<0:256>>),
+            offset => <<"0">>,
+            data_size => <<"0">>
+        }))
+    ),
     ar_test_data_sync:setup_nodes(),
     Chunk = crypto:strong_rand_bytes(500),
     SizedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(
@@ -85,6 +107,27 @@ test_rejects_invalid_chunks() ->
     ?assertMatch(
         {ok, {{<<"413">>, _}, _, <<"Payload too large">>, _, _}},
         ar_test_node:post_chunk(main, << <<0>> || _ <- lists:seq(1, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE + 1) >>)
+    ).
+
+test_post_chunk_worker_crash() ->
+    ar_test_data_sync:setup_main_node(),
+    Proof = ar_serialize:jsonify(#{
+        data_root => arweave_util:encode(crypto:strong_rand_bytes(32)),
+        chunk => <<>>,
+        data_path => arweave_util:encode(<<0:256>>),
+        offset => <<"0">>,
+        data_size => <<"0">>
+    }),
+    CrashingAddChunk = fun(_, _, _, _, _, _) -> error(simulated_crash) end,
+    %% The handler must reply as soon as the worker dies rather than wait
+    %% for the handler timeout, which replies with "Handler timeout".
+    ?assertMatch(
+        {ok, {{<<"500">>, _}, _, <<>>, _, _}},
+        ar_test_node:run_with_mocked(
+            [main],
+            [{ar_disk_pool, add_chunk, CrashingAddChunk}],
+            fun() -> ar_test_node:post_chunk(main, Proof) end
+        )
     ).
 
 test_does_not_store_small_chunks_after_2_5() ->

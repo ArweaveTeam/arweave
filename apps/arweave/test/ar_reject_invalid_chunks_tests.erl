@@ -8,6 +8,10 @@
 rejects_invalid_chunks_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun ar_reject_chunks_tests:test_rejects_invalid_chunks/0}.
 
+post_chunk_worker_crash_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT,
+            fun ar_reject_chunks_tests:test_post_chunk_worker_crash/0}.
+
 rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT,
             fun ar_reject_chunks_tests:
