@@ -556,7 +556,7 @@ load_from_url(URL) ->
                 peer => {Host, Port},
                 path => binary_to_list(iolist_to_binary([Path, Query])),
                 is_peer_request => false,
-                timeout => 20000,
+                timeout => 120_000,
                 connect_timeout => 1000,
                 %% The blacklist source is supposed to be trusted
                 %% so we allow it to exceed the ?MAX_BODY_SIZE default.
