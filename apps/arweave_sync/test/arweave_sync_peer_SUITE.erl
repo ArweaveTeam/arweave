@@ -14,6 +14,10 @@ all() ->
         dispatch_tracks_fetch_capacity,
         queued_footprint_tasks_share_peer_queue_with_fetches,
         snapshot_restores_queued_task_limit,
+        source_candidates_are_not_active,
+        snapshot_tracks_assignments_without_fetch_load,
+        idle_peer_retains_assignment_limits,
+        first_burst_after_idle_tick_sizes_queue,
         queue_max_length_preserves_bounded_store_exploration,
         priority_counts_own_fetches_as_available,
         compare_priorities_margins,
@@ -26,6 +30,7 @@ all() ->
         queue_max_length_tracks_measured_goodput,
         queue_sized_from_recent_goodput,
         tick_covers_active_peers,
+        drained_peer_still_advances_probe,
         worker_time_pressure_isolated,
         flat_driven_goodput_bounds_concurrency
     ].
@@ -103,9 +108,94 @@ snapshot_restores_queued_task_limit(_Config) ->
     %% queue of a peer with a cap of two.
     PeerState = active_peer(#cap_control{cap = 2}),
     State = #state{peers = #{Peer => PeerState#peer{queue = queue:from_list([Task])}}},
-    Plan = arweave_sync_peer:snapshot(#{}, State),
+    Plan = arweave_sync_peer:snapshot(#{}, #{}, State),
     ?assertEqual(1 / 10, arweave_sync_peer:load(Peer, Plan)),
     ?assertEqual(7, arweave_sync_peer:queue_capacity(Peer, Plan)).
+
+%% @doc Advertising work does not make a source active until it is assigned.
+source_candidates_are_not_active(_Config) ->
+    Candidate = {1, 1, 1, 1, 1},
+    Assigned = {2, 2, 2, 2, 2},
+    State0 = arweave_sync_peer:new(),
+    Plan0 = arweave_sync_peer:snapshot(#{}, #{}, State0),
+    ?assertEqual(?CONCURRENCY_CAP_INITIAL,
+        arweave_sync_peer:concurrency_cap(Assigned, Plan0)),
+    Plan1 = arweave_sync_peer:set_store_task_targets(
+        #{Candidate => [store]}, Plan0),
+    Task = #task{peer = Assigned, store_id = store},
+    Plan2 = arweave_sync_peer:enqueue_tasks(Assigned, [Task], Plan1),
+    State1 = arweave_sync_peer:update_activity(Plan2, true, State0),
+    ?assertEqual([Assigned], arweave_sync_peer:active_peers(State1)),
+    %% A one-second tick samples only the peer given tasks.
+    State2 = arweave_sync_peer:tick(
+        arweave_sync_peer:active_peers(State1), 1000, State1),
+    ?assertNot(maps:is_key(Candidate, State2#state.peers)).
+
+snapshot_tracks_assignments_without_fetch_load(_Config) ->
+    FootprintOwner = {1, 1, 1, 1, 1},
+    Writer = {2, 2, 2, 2, 2},
+    Idle = {3, 3, 3, 3, 3},
+    Footprint = #footprint{store_id = store, partition = 0, footprint = 1},
+    Reservation = arweave_sync_footprint:test_reservation(
+        store, Footprint, [], FootprintOwner, 0, bound),
+    Footprints = arweave_sync_footprint:test_state([Reservation]),
+    Tasks = #{writing => #task{state = writing, peer = Writer}},
+    State0 = #state{peers = #{Idle => #peer{}}},
+    Plan = arweave_sync_peer:snapshot(Tasks, Footprints, State0),
+    %% Footprint and write assignments are active but consume no fetch slots.
+    State1 = arweave_sync_peer:update_activity(Plan, true, State0),
+    ?assertEqual([FootprintOwner, Writer],
+        lists:sort(arweave_sync_peer:active_peers(State1))),
+    lists:foreach(fun(Peer) ->
+        ?assertEqual(0.0, arweave_sync_peer:load(Peer, Plan)),
+        ?assertEqual(0, arweave_sync_peer:fetching_count(Peer, Plan))
+    end, [FootprintOwner, Writer]).
+
+%% @doc Returning peers can use their retained limits without a new sample.
+idle_peer_retains_assignment_limits(_Config) ->
+    Peer = {3, 3, 3, 3, 3},
+    %% The peer previously grew to four times the initial cap.
+    RememberedCap = 4 * ?CONCURRENCY_CAP_INITIAL,
+    State0 = #state{last_tick_ms = 0, peers = #{Peer => #peer{
+        control = #cap_control{cap = RememberedCap},
+        last_tick = {0, 0}
+    }}},
+    ?assertEqual([], arweave_sync_peer:active_peers(State0)),
+    Plan0 = arweave_sync_peer:snapshot(#{}, #{}, State0),
+    Task = #task{peer = Peer, store_id = store},
+    Plan1 = arweave_sync_peer:enqueue_tasks(Peer, [Task], Plan0),
+    State1 = arweave_sync_peer:update_activity(Plan1, true, State0),
+    ?assertEqual([Peer], arweave_sync_peer:active_peers(State1)),
+    ?assertEqual(RememberedCap,
+        arweave_sync_peer:concurrency_cap(Peer, Plan1)),
+    PeerState = maps:get(Peer, State1#state.peers),
+    ?assertEqual({0, 0}, PeerState#peer.last_tick).
+
+%% @doc New and returning peers sample their first completed burst after idle.
+first_burst_after_idle_tick_sizes_queue(_Config) ->
+    Peer = {4, 4, 4, 4, 4},
+    State0 = arweave_sync_peer:tick([], 0, arweave_sync_peer:new()),
+    %% A one-second burst at twice the initial cap should size a queue for
+    %% four seconds of that goodput, rather than retain the bootstrap size.
+    BurstChunks = 2 * ?CONCURRENCY_CAP_INITIAL,
+    BurstMs = 1000,
+    State1 = arweave_sync_peer:add_fetch_result(Peer,
+        BurstChunks * ?DATA_CHUNK_SIZE,
+        #fetch_timing{productive_ms = BurstMs}, State0),
+    State2 = arweave_sync_peer:tick(
+        arweave_sync_peer:active_peers(State1), BurstMs, State1),
+    {_Cap, QueueLength} = limits(Peer, State2),
+    ?assertEqual(BurstChunks * ?QUEUE_TARGET_DURATION_MS div BurstMs,
+        QueueLength),
+    %% Idle ticks must not dilute the next burst with the idle duration.
+    State3 = arweave_sync_peer:tick([], 10 * BurstMs, State2),
+    State4 = arweave_sync_peer:add_fetch_result(Peer,
+        2 * BurstChunks * ?DATA_CHUNK_SIZE,
+        #fetch_timing{productive_ms = BurstMs}, State3),
+    State5 = arweave_sync_peer:tick(
+        arweave_sync_peer:active_peers(State4), 11 * BurstMs, State4),
+    {_Cap2, ResumedQueueLength} = limits(Peer, State5),
+    ?assertEqual(3 * QueueLength div 2, ResumedQueueLength).
 
 %% @doc A reservation whose own fetches fill its peer's room for the store is
 %% busy, not blocked; one with nothing in flight is blocked.
@@ -183,8 +273,7 @@ dispatch_splits_peer_capacity_across_stores(_Config) ->
     %% Four active and four queued tasks split into four tasks per
     %% store.
     Plan0 = arweave_sync_peer:set_store_task_targets(
-        peer,
-        [store_a, store_b],
+        #{peer => [store_a, store_b]},
         arweave_sync_peer:new_plan(#{peer => 4}, #{peer => 4})
     ),
     Task = #task{state = queued, store_id = store_a},
@@ -215,8 +304,7 @@ stores_with_tasks_remain_in_target_split(_Config) ->
     %% Four active and four queued tasks fill the peer's task limit while store
     %% A is the only ready store.
     Plan0 = arweave_sync_peer:set_store_task_targets(
-        Peer,
-        [StoreA],
+        #{Peer => [StoreA]},
         arweave_sync_peer:new_plan(#{Peer => 4}, #{Peer => 4})
     ),
     Task = #task{state = queued, store_id = StoreA},
@@ -373,8 +461,7 @@ queue_sized_from_recent_goodput(_Config) ->
         RecentGoodputs(Tick(sample(chunks_per_second(200)), 0, Six))
     ).
 
-%% Caps and queue limits cover exactly the active peers, while cap control is
-%% retained when a peer leaves.
+%% @doc Idle peers retain limits and advance their counter snapshots.
 tick_covers_active_peers(_Config) ->
     A = {1, 1, 1, 1, 1},
     B = {2, 2, 2, 2, 2},
@@ -398,10 +485,9 @@ tick_covers_active_peers(_Config) ->
     State2 = fetch_tick([A, B], #{A => Productive, B => Failed}, Rate, 2, State1),
     ?assertMatch({100, _}, limits(A, State2)),
     ?assertMatch({50, _}, limits(B, State2)),
-    %% B leaves the active set: it has no cap in the dispatch snapshot, but
-    %% its cap control remains for when it returns.
+    %% B leaves the active set but keeps its cap and measured queue length.
     State3 = fetch_tick([A], #{A => Productive}, Rate, 3, State2),
-    ?assertEqual({?CONCURRENCY_CAP_MIN, ?CONCURRENCY_CAP_INITIAL}, limits(B, State3)),
+    ?assertEqual({50, MeasuredQueueMaxLength}, limits(B, State3)),
     State4 = fetch_tick([A, B], #{A => Productive, B => Productive}, Rate, 4, State3),
     ?assertMatch({50, _}, limits(B, State4)),
     %% Lower goodput contracts queued work without changing an undriven cap.
@@ -417,8 +503,52 @@ tick_covers_active_peers(_Config) ->
     ),
     ?assertEqual({200, LowRateQueueMaxLength}, limits(peer, #state{peers = #{peer => Low}})),
     %% Unmeasured peers receive an eight-task queue bootstrap.
-    Fresh = arweave_sync_peer:tick([A], 1000, arweave_sync_peer:new()),
+    FreshState = arweave_sync_peer:mark_peers_active(
+        [A], arweave_sync_peer:new()),
+    Fresh = arweave_sync_peer:tick([A], 1000, FreshState),
     ?assertEqual({?CONCURRENCY_CAP_INITIAL, ?CONCURRENCY_CAP_INITIAL}, limits(A, Fresh)).
+
+%% @doc A peer that drains after reaching its cap still advances its probe.
+drained_peer_still_advances_probe(_Config) ->
+    Peer = {5, 5, 5, 5, 5},
+    Cap = ?CONCURRENCY_CAP_INITIAL,
+    Task = #task{peer = Peer, store_id = store},
+    EmptyPlan = arweave_sync_peer:new_plan(#{Peer => Cap}, #{}),
+    %% Fill the cap with one replacement waiting, then finish the whole
+    %% burst before the control tick. The interval was still driven.
+    QueuedPlan = arweave_sync_peer:enqueue_tasks(
+        Peer, lists:duplicate(Cap + 1, Task), EmptyPlan
+    ),
+    BusyPlan = lists:foldl(
+        fun(_, Plan) -> arweave_sync_peer:start_task(Peer, Task, Plan) end,
+        QueuedPlan,
+        lists:seq(1, Cap)
+    ),
+    InitialState = arweave_sync_peer:mark_peers_active(
+        [Peer], arweave_sync_peer:new()),
+    State0 = arweave_sync_peer:tick([Peer], 0, InitialState),
+    State = lists:foldl(
+        fun(Tick, Acc) ->
+            Driven = arweave_sync_peer:update_activity(BusyPlan, true, Acc),
+            Fetched = arweave_sync_peer:add_fetch_result(
+                Peer, (Cap + 1) * ?DATA_CHUNK_SIZE,
+                #fetch_timing{productive_ms = (Cap + 1) * 1000}, Driven
+            ),
+            Drained = arweave_sync_peer:update_activity(
+                EmptyPlan, true, Fetched
+            ),
+            arweave_sync_peer:tick(
+                arweave_sync_peer:active_peers(Drained),
+                Tick * ?TICK_INTERVAL_MS,
+                Drained
+            )
+        end,
+        State0,
+        lists:seq(1, ?PROBE_WINDOW_SAMPLES)
+    ),
+    %% A full baseline window starts the fresh peer's doubled probe.
+    ExpectedCap = 2 * Cap,
+    ?assertMatch({ExpectedCap, _}, limits(Peer, State)).
 
 %% Worker-time pressure is isolated by peer, and a clean interval after a
 %% failed one measures the cut cap before changing it.
@@ -515,13 +645,15 @@ mark_driven(Peer, #state{peers = Peers} = State) ->
 
 %% @doc Return the cap and queue length a dispatch snapshot gives Peer.
 limits(Peer, State) ->
-    Plan = arweave_sync_peer:snapshot(#{}, State),
+    Plan = arweave_sync_peer:snapshot(#{}, #{}, State),
     #peer_plan{concurrency_cap = Cap, queue_max_length = QueueMaxLength} =
         arweave_sync_peer:peer_plan(Peer, Plan),
     {Cap, QueueMaxLength}.
 
 caps_after_ticks(Peer, ChunksPerTick, RTTMs, TickMs) ->
-    State0 = arweave_sync_peer:tick([Peer], 0, arweave_sync_peer:new()),
+    InitialState = arweave_sync_peer:mark_peers_active(
+        [Peer], arweave_sync_peer:new()),
+    State0 = arweave_sync_peer:tick([Peer], 0, InitialState),
     {_State, _Now, Caps} = lists:foldl(
         fun(Chunks, {State, Now, Acc}) ->
             Now2 = Now + TickMs,

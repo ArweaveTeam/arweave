@@ -67,10 +67,7 @@
 -include_lib("arweave_sync/include/arweave_sync_deps.hrl").
 
 -ifdef(AR_TEST).
--export([test_reservation/6, reservation_state/1,
-        reservation_peer/1, active_tasks/1,
-        test_state/1, test_get/2, test_plan/2,
-        set_max_active/2]).
+-export([test_reservation/6, test_state/1, test_plan/2]).
 -endif.
 
 -opaque reservation() :: #footprint_reservation{}.
@@ -594,9 +591,6 @@ put_reservation(Footprint, Reservation,
 -ifdef(AR_TEST).
 test_plan(Reservations, MaxActive) ->
     new_plan(Reservations, MaxActive).
--endif.
-
--ifdef(AR_TEST).
 
 test_reservation(StoreID, Footprint, Sources, Peer, ActiveTasks, State) ->
     #footprint_reservation{
@@ -608,23 +602,8 @@ test_reservation(StoreID, Footprint, Sources, Peer, ActiveTasks, State) ->
         state = State
     }.
 
-reservation_state(#footprint_reservation{ state = State }) ->
-    State.
-
-reservation_peer(#footprint_reservation{ peer = Peer }) ->
-    Peer.
-
-active_tasks(#footprint_reservation{ active_tasks = ActiveTasks }) ->
-    ActiveTasks.
-
 test_state(Reservations) ->
     maps:from_list([{key(Reservation), Reservation}
         || Reservation <- Reservations]).
-
-test_get(Footprint, Footprints) ->
-    maps:get(Footprint, reservations(Footprints)).
-
-set_max_active(MaxActive, Plan) ->
-    Plan#plan{ max_active = MaxActive }.
 
 -endif.

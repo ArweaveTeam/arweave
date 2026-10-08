@@ -19,13 +19,13 @@
     %% peer, and the fetch time since the last tick.
     fetched_bytes = 0,
     fetch_timing = #fetch_timing{},
-    %% {FetchedBytes, TimeMs} at the last tick, which the next tick uses to
-    %% compute the peer's goodput sample; undefined while the peer is not
-    %% active.
+    %% {FetchedBytes, TimeMs} at the last tick; undefined before the first
+    %% counter snapshot.
     last_tick = undefined,
-    %% Updated by update_driven/3: whether the peer was driven in any dispatch
-    %% pass since the last tick, and how many fetches the peer had in flight
-    %% in the latest pass.
+    %% Assigned work remembered for the next tick, including completed work.
+    active = false,
+    %% Updated by update_activity/3: whether the peer was driven in any
+    %% dispatch pass since the last tick, and its latest in-flight count.
     driven = false,
     fetching_count = 0,
     %% The goodput of the peer's most recent goodput samples, newest first, up
@@ -35,7 +35,9 @@
 
 -record(state, {
     %% Peer => #peer{}, with one entry for each peer seen.
-    peers = #{}
+    peers = #{},
+    %% Latest tick time in milliseconds, used as the baseline for new peers.
+    last_tick_ms = undefined
 }).
 
 %% One local store's tasks on a peer during a dispatch pass: the tasks it has in
@@ -47,19 +49,23 @@
 
 %% One peer's part of a plan.
 -record(peer_plan, {
+    %% True if this peer was assigned tasks or footprint work during this
+    %% dispatch pass. update_activity/3 sets #peer.active when this is true,
+    %% preserving activity from earlier passes until the next tick.
+    active = false,
     queue = queue:new(),
     fetching_count = 0,
     %% Tasks in the peer queue or fetching.
     task_count = 0,
-    concurrency_cap = ?CONCURRENCY_CAP_MIN,
+    concurrency_cap = ?CONCURRENCY_CAP_INITIAL,
     queue_max_length = ?CONCURRENCY_CAP_INITIAL,
     %% StoreID => #store_load{}.
     stores = #{}
 }).
 
-%% This module's part of a dispatch plan, from snapshot/2 to commit_plan/2.
+%% This module's part of a dispatch plan, from snapshot/3 to commit_plan/2.
 -record(plan, {
-    %% Peer => #peer_plan{} for each active peer.
+    %% Peer => #peer_plan{} with retained limits and assigned tasks.
     peers = #{}
 }).
 

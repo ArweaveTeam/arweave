@@ -17,6 +17,7 @@ all() ->
         shutdown_terminates_workers,
         local_writes_do_not_consume_peer_capacity,
         bound_footprint_owner_is_an_active_peer,
+        activity_includes_assigned_and_completed_work,
         reservation_binding_claims_only_enqueued_tasks,
         fragmented_partial_intervals_claim_each_request,
         overlapping_partial_intervals_defer_duplicate_request,
@@ -87,9 +88,21 @@ shutdown_terminates_workers(_Config) ->
             stop -> ok
         end
     end),
-    MonitorRef = erlang:monitor(process, WorkerPID),
-    arweave_sync_scheduler:terminate_workers(#{MonitorRef => {make_ref(), WorkerPID}}),
-    ?assertNot(is_process_alive(WorkerPID)).
+    try
+        {ok, Scheduler} = supervisor:start_child(arweave_sync_sup,
+            ?CHILD(arweave_sync_scheduler, worker)),
+        sys:replace_state(Scheduler, fun(State) ->
+            Ref = erlang:monitor(process, WorkerPID),
+            State#state{monitor_index = #{Ref => {make_ref(), WorkerPID}}}
+        end),
+        ok = supervisor:terminate_child(arweave_sync_sup,
+            arweave_sync_scheduler),
+        ?assertNot(is_process_alive(WorkerPID))
+    after
+        supervisor:terminate_child(arweave_sync_sup, arweave_sync_scheduler),
+        supervisor:delete_child(arweave_sync_sup, arweave_sync_scheduler),
+        exit(WorkerPID, kill)
+    end.
 
 %% @doc Pending local writes count toward store load but do not consume peer
 %% fetch capacity.
@@ -122,29 +135,28 @@ local_writes_do_not_consume_peer_capacity(_Config) ->
                 arweave_sync_store:new()
             ),
             PeerPlan0 = arweave_sync_peer:snapshot(
-                Tasks, arweave_sync_peer:new()
+                Tasks, #{}, arweave_sync_peer:new()
             ),
             PeerPlan = arweave_sync_peer:set_store_task_targets(
-                Peer, [StoreID], PeerPlan0
+                #{Peer => [StoreID]}, PeerPlan0
             ),
             Plan = #dispatch_plan{
                 stores = StorePlan, peers = PeerPlan
             },
-            %% One task exists in each local stage, but only the fetching task occupies
-            %% the peer's single network slot. The default peer has one active slot and
-            %% an eight-task queued-work bootstrap, so one of nine assignments is used.
+            %% The initial cap and queue each allow eight tasks. Only the
+            %% fetch occupies one of those sixteen peer assignments.
             ?assertEqual(
-                1 / 9,
+                1 / (2 * ?CONCURRENCY_CAP_INITIAL),
                 arweave_sync_peer:load(Peer, Plan#dispatch_plan.peers)
             ),
-            ?assertNot(
+            ?assert(
                 arweave_sync_peer:can_start_fetch(
                     Peer, Plan#dispatch_plan.peers
                 )
             ),
             %% Local writes are accounted only by the destination store.
             ?assertEqual(
-                1 / 9,
+                1 / (2 * ?CONCURRENCY_CAP_INITIAL),
                 arweave_sync_peer:store_load(
                     Peer, StoreID, Plan#dispatch_plan.peers
                 )
@@ -155,14 +167,91 @@ local_writes_do_not_consume_peer_capacity(_Config) ->
 %% @doc A bound footprint keeps its peer active even without queued or inflight
 %% tasks.
 bound_footprint_owner_is_an_active_peer(_Config) ->
+    Peer = {1, 1, 1, 1, 1},
     Footprint = #footprint{store_id = store1, partition = 0, footprint = 1},
     Reservation = arweave_sync_footprint:test_reservation(
-        store1, Footprint, [], peer1, 0, bound
+        store1, Footprint, [], Peer, 0, bound
     ),
     Footprints = arweave_sync_footprint:test_state([Reservation]),
-    ?assertEqual(
-        [peer1], arweave_sync_scheduler:active_peers(#state{footprints = Footprints})
-    ).
+    State0 = #state{footprints = Footprints},
+    Plan0 = (base_plan())#dispatch_plan{
+        peers = arweave_sync_peer:snapshot(
+            #{}, Footprints, State0#state.peer_state),
+        footprints = arweave_sync_footprint:snapshot(Footprints)
+    },
+    State = arweave_sync_scheduler:update_activity(State0, Plan0),
+    ?assertEqual([Peer],
+        arweave_sync_scheduler:peers_with_work(State)),
+    ?assertEqual([Peer],
+        arweave_sync_peer:active_peers(State#state.peer_state)),
+    Ticked = arweave_sync_scheduler:tick(State, 1000),
+    ?assertEqual([Peer],
+        arweave_sync_peer:active_peers(Ticked#state.peer_state)),
+    PeerPlan = arweave_sync_peer:snapshot(
+        #{}, Footprints, Ticked#state.peer_state),
+    ?assertEqual(?CONCURRENCY_CAP_INITIAL,
+        arweave_sync_peer:concurrency_cap(Peer, PeerPlan)).
+
+%% @doc Ticks sample assigned and completed work while excluding candidates.
+activity_includes_assigned_and_completed_work(_Config) ->
+    QueuedPeer = {1, 1, 1, 1, 1},
+    WritingPeer = {2, 2, 2, 2, 2},
+    CompletedPeer = {3, 3, 3, 3, 3},
+    SourcePeer = {4, 4, 4, 4, 4},
+    Queued = #task{peer = QueuedPeer, store_id = store1},
+    Unassigned = #task{offset = 0, store_id = store1,
+        sources = [#task_source{peer = SourcePeer}]},
+    Writing = #task{state = writing, peer = WritingPeer, store_id = store1},
+    PeerState = record_peer_results([WritingPeer, CompletedPeer],
+        ?DATA_CHUNK_SIZE, #fetch_timing{productive_ms = 1000},
+        arweave_sync_peer:new()),
+    {ok, 1, State0} = arweave_sync_scheduler:admit_work(store1, Unassigned,
+        #state{tasks = #{writing => Writing}, peer_state = PeerState}),
+    PeerPlan0 = arweave_sync_peer:enqueue_tasks(QueuedPeer, [Queued],
+        arweave_sync_peer:snapshot(State0#state.tasks, #{}, PeerState)),
+    State1 = arweave_sync_scheduler:update_activity(State0,
+        (base_plan())#dispatch_plan{peers = PeerPlan0}),
+    State = State1#state{peer_state = arweave_sync_peer:commit_plan(
+        PeerPlan0, State1#state.peer_state)},
+    Peers = [QueuedPeer, WritingPeer, CompletedPeer],
+    ?assertEqual([QueuedPeer, WritingPeer],
+        lists:sort(arweave_sync_scheduler:peers_with_work(State))),
+    ?assertEqual(Peers,
+        lists:sort(arweave_sync_peer:active_peers(State#state.peer_state))),
+    %% One-second ticks expose carryover and a subsequent idle interval.
+    Ticked = arweave_sync_scheduler:tick(State, 1000),
+    ?assertEqual(undefined, arweave_metrics:gauge_value(
+        sync_peer_goodput_bytes_per_second,
+        [arweave_lib_util:format_peer(SourcePeer)])),
+    %% Only current work carries activity into the next interval.
+    ?assertEqual([QueuedPeer, WritingPeer],
+        lists:sort(arweave_sync_peer:active_peers(Ticked#state.peer_state))),
+    Plan = arweave_sync_peer:snapshot(#{}, #{}, Ticked#state.peer_state),
+    lists:foreach(fun(Peer) ->
+        ?assertEqual(?CONCURRENCY_CAP_INITIAL,
+            arweave_sync_peer:concurrency_cap(Peer, Plan))
+    end, Peers),
+    %% Work present at the boundary still counts if it drains before the
+    %% following tick; an entire interval without work then makes it idle.
+    %% The potential source remains queued after assigned work finishes.
+    Drained = Ticked#state{tasks = #{}, peer_state =
+        arweave_sync_peer:clear_queues(Ticked#state.peer_state)},
+    Sampled = arweave_sync_scheduler:tick(Drained, 2000),
+    ?assertEqual([], arweave_sync_peer:active_peers(Sampled#state.peer_state)),
+    SampledPlan = arweave_sync_peer:snapshot(#{}, #{}, Sampled#state.peer_state),
+    ?assertEqual(?CONCURRENCY_CAP_INITIAL,
+        arweave_sync_peer:concurrency_cap(QueuedPeer, SampledPlan)),
+    ?assertEqual(?CONCURRENCY_CAP_INITIAL,
+        arweave_sync_peer:concurrency_cap(WritingPeer, SampledPlan)),
+    Idle = arweave_sync_scheduler:tick(Sampled, 3000),
+    IdlePlan = arweave_sync_peer:snapshot(#{}, #{}, Idle#state.peer_state),
+    lists:foreach(fun(Peer) ->
+        ?assertEqual(?CONCURRENCY_CAP_INITIAL,
+            arweave_sync_peer:concurrency_cap(Peer, IdlePlan)),
+        ?assertEqual(undefined, arweave_metrics:gauge_value(
+            sync_peer_goodput_bytes_per_second,
+            [arweave_lib_util:format_peer(Peer)]))
+    end, Peers).
 
 %% @doc Binding a footprint replaces its speculative claim with claims for
 %% enqueued tasks only.
@@ -392,8 +481,7 @@ peer_queue_stays_full_behind_active_cap(_Config) ->
          || Index <- lists:seq(0, 9)
         ],
         PeerPlan = arweave_sync_peer:set_store_task_targets(
-            Peer,
-            [StoreID],
+            #{Peer => [StoreID]},
             arweave_sync_peer:new_plan(
                 #{Peer => 2}, #{Peer => 4}
             )
@@ -416,7 +504,7 @@ peer_queue_stays_full_behind_active_cap(_Config) ->
                 arweave_sync_peer:queued_tasks(Peer, Plan2#dispatch_plan.peers)
             )
         ),
-        State2A = arweave_sync_scheduler:update_driven(State2, Plan2),
+        State2A = arweave_sync_scheduler:update_activity(State2, Plan2),
         ?assertEqual([Peer], arweave_sync_peer:driven_peers(State2A#state.peer_state)),
         Plan2A = Plan2#dispatch_plan{
             stores = arweave_sync_store:refresh_work(
@@ -964,14 +1052,12 @@ footprint_piggyback(_Config) ->
             }
         ),
         ?assertEqual(3, length(Plan#dispatch_plan.tasks_to_start)),
-        Reservation = arweave_sync_footprint:test_get(
+        Reservation = arweave_sync_footprint:reservation(
             Footprint, Plan#dispatch_plan.footprints
         ),
-        ?assertEqual(
-            bound, arweave_sync_footprint:reservation_state(Reservation)
-        ),
-        ?assertEqual(3, arweave_sync_footprint:active_tasks(Reservation)),
-        ?assertEqual(P, arweave_sync_footprint:reservation_peer(Reservation))
+        ?assertEqual(bound, Reservation#footprint_reservation.state),
+        ?assertEqual(3, Reservation#footprint_reservation.active_tasks),
+        ?assertEqual(P, Reservation#footprint_reservation.peer)
     end).
 
 %% @doc A bound footprint's remaining intervals refill and start tasks even with
@@ -1018,8 +1104,7 @@ bound_footprint_refills_through_dispatch(_Config) ->
             #state{},
             Plan0#dispatch_plan{
                 peers = arweave_sync_peer:set_store_task_targets(
-                    Peer,
-                    [StoreID],
+                    #{Peer => [StoreID]},
                     arweave_sync_peer:new_plan(
                         #{Peer => 1}, #{Peer => 2}
                     )
@@ -1028,10 +1113,10 @@ bound_footprint_refills_through_dispatch(_Config) ->
         ),
         [Started] = Plan#dispatch_plan.tasks_to_start,
         ?assertEqual(Peer, Started#task.peer),
-        Reservation2 = arweave_sync_footprint:test_get(
+        Reservation2 = arweave_sync_footprint:reservation(
             Footprint, Plan#dispatch_plan.footprints
         ),
-        ?assertEqual(2, arweave_sync_footprint:active_tasks(Reservation2)),
+        ?assertEqual(2, Reservation2#footprint_reservation.active_tasks),
         [#task_source{intervals = RemainingIntervals}] =
             arweave_sync_footprint:sources(Reservation2),
         ?assertEqual(
@@ -1474,17 +1559,15 @@ head_of_line_blocked_peers(_Config) ->
         ?assert(lists:all(fun(Pr) -> Pr =:= Fast end, Peers))
     end).
 
-%% @doc Scheduler ticks retain exploration caps, probe productive peers and
-%% remove inactive peer caps.
+%% @doc Scheduler ticks probe active peers and retain idle peers' limits.
 cap(_Config) ->
     PeerA = {1, 1, 1, 1, 25},
     PeerB = {2, 2, 2, 2, 75},
 
-    %% A genuinely unseen peer retains one exploration request until the
-    %% next control tick measures it.
+    %% An unseen peer can use its initial cap without a control tick.
     PeerPlan = arweave_sync_peer:new_plan(#{known => 1}, #{}),
     ?assertEqual(
-        1,
+        ?CONCURRENCY_CAP_INITIAL,
         arweave_sync_peer:concurrency_cap(unknown, PeerPlan)
     ),
     ?assertEqual(
@@ -1507,7 +1590,7 @@ cap(_Config) ->
     ),
     State1 = arweave_sync_scheduler:tick(State0, 1000),
     PeerPlan1 = arweave_sync_peer:snapshot(
-        #{}, State1#state.peer_state
+        #{}, #{}, State1#state.peer_state
     ),
     ?assertEqual(8, arweave_sync_peer:concurrency_cap(PeerA, PeerPlan1)),
     ?assertEqual(8, arweave_sync_peer:concurrency_cap(PeerB, PeerPlan1)),
@@ -1520,7 +1603,7 @@ cap(_Config) ->
         State1, 2000, BaselineTicks
     ),
     PeerPlan2 = arweave_sync_peer:snapshot(
-        #{}, State2#state.peer_state
+        #{}, #{}, State2#state.peer_state
     ),
     ?assertEqual(8, arweave_sync_peer:concurrency_cap(PeerA, PeerPlan2)),
     ?assertEqual(8, arweave_sync_peer:concurrency_cap(PeerB, PeerPlan2)),
@@ -1529,23 +1612,33 @@ cap(_Config) ->
         State2, 2000 + BaselineTicks * 1000, 1
     ),
     PeerPlan3 = arweave_sync_peer:snapshot(
-        #{}, State3#state.peer_state
+        #{}, #{}, State3#state.peer_state
     ),
     ?assertEqual(16, arweave_sync_peer:concurrency_cap(PeerA, PeerPlan3)),
     ?assertEqual(16, arweave_sync_peer:concurrency_cap(PeerB, PeerPlan3)),
-    %% With PeerB's queue drained and nothing in flight, PeerB drops from the
-    %% caps map (its budget memory is kept in the scheduler state) while PeerA
-    %% keeps probing.
+    %% PeerB completed work during this interval, so draining its queue and
+    %% fetches before the tick must still preserve its measured cap.
     State4 = productive_ticks(
         [PeerA, PeerB], #{PeerA => 16}, ProductiveTiming,
         State3, 3000 + BaselineTicks * 1000, 1
     ),
     PeerPlan4 = arweave_sync_peer:snapshot(
-        #{}, State4#state.peer_state
+        #{}, #{}, State4#state.peer_state
     ),
     ?assertEqual(16, arweave_sync_peer:concurrency_cap(PeerA, PeerPlan4)),
-    ?assertEqual(1, arweave_sync_peer:concurrency_cap(PeerB, PeerPlan4)),
-    %% Dispatch uses the recomputed cap; an unknown peer retains one probe.
+    ?assertEqual(16, arweave_sync_peer:concurrency_cap(PeerB, PeerPlan4)),
+    %% A full interval without PeerB's work removes its activity marker,
+    %% while its cap remains available for the next assignment.
+    State5 = productive_ticks(
+        [PeerA], #{PeerA => 16}, ProductiveTiming,
+        State4, 4000 + BaselineTicks * 1000, 1
+    ),
+    PeerPlan5 = arweave_sync_peer:snapshot(#{}, #{}, State5#state.peer_state),
+    ?assertEqual(16, arweave_sync_peer:concurrency_cap(PeerA, PeerPlan5)),
+    ?assertEqual(16, arweave_sync_peer:concurrency_cap(PeerB, PeerPlan5)),
+    ?assertNot(lists:member(PeerB,
+        arweave_sync_peer:active_peers(State5#state.peer_state))),
+    %% Dispatch uses the recomputed cap or an unknown peer's initial cap.
     Plan = (base_plan())#dispatch_plan{
         peers = arweave_sync_peer:new_plan(#{p => 40}, #{})
     },
@@ -1554,7 +1647,7 @@ cap(_Config) ->
         arweave_sync_peer:concurrency_cap(p, Plan#dispatch_plan.peers)
     ),
     ?assertEqual(
-        1,
+        ?CONCURRENCY_CAP_INITIAL,
         arweave_sync_peer:concurrency_cap(unknown, Plan#dispatch_plan.peers)
     ).
 
@@ -1687,9 +1780,12 @@ seed_candidate(#footprint_reservation{} = Reservation, State) ->
     State#state{stores = StoreStates, footprints = Footprints}.
 
 set_max_active_footprints(MaxActive, Plan) ->
+    Footprints = arweave_sync_footprint:commit_plan(
+        Plan#dispatch_plan.footprints
+    ),
     Plan#dispatch_plan{
-        footprints = arweave_sync_footprint:set_max_active(
-            MaxActive, Plan#dispatch_plan.footprints
+        footprints = arweave_sync_footprint:test_plan(
+            Footprints, MaxActive
         )
     }.
 
@@ -1716,12 +1812,8 @@ peer_plans(InflightCounts, PeerCaps) ->
     ).
 
 peer_plans_for_stores(PeerCaps, StoresByPeer) ->
-    maps:fold(
-        fun(Peer, StoreIDs, Acc) ->
-            arweave_sync_peer:set_store_task_targets(Peer, StoreIDs, Acc)
-        end,
-        arweave_sync_peer:new_plan(PeerCaps, #{}),
-        StoresByPeer
+    arweave_sync_peer:set_store_task_targets(
+        StoresByPeer, arweave_sync_peer:new_plan(PeerCaps, #{})
     ).
 
 %% @doc Run Count scheduler ticks, one second apart from NowMs, in which Peers
@@ -1783,10 +1875,10 @@ driven_peer_state(InflightByPeer, State) ->
                 Peer, [#task{state = queued, peer = Peer, store_id = s}], Acc
             )
         end,
-        arweave_sync_peer:snapshot(Tasks, PeerState),
+        arweave_sync_peer:snapshot(Tasks, #{}, PeerState),
         InflightByPeer
     ),
-    PeerState2 = arweave_sync_peer:update_driven(PeerPlan, true, PeerState),
+    PeerState2 = arweave_sync_peer:update_activity(PeerPlan, true, PeerState),
     State#state{
         tasks = Tasks,
         peer_state = arweave_sync_peer:commit_plan(PeerPlan, PeerState2)

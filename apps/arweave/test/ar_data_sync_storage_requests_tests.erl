@@ -68,14 +68,17 @@ queued_writes_release_cache_test_() ->
         {arweave_storage, is_storage_supported, fun(_, _, _) -> true end},
         {arweave_storage, delete_footprint, fun(_, _) -> ok end},
         {arweave_storage, delete_sync_record, fun(_, _, _, _) -> ok end},
-        {arweave_storage, is_recorded, fun(_, _, _, _) -> true end},
+        {arweave_storage, is_recorded, fun
+            (_, _, {ar_data_sync, footprint}, _) -> false;
+            (_, _, _, _) -> true
+        end},
         {arweave_storage, add_sync_record, fun(_, _, _, _, _) -> ok end},
         {arweave_storage, add_footprint, fun(_, _, _) -> ok end},
         {arweave_storage, put_chunk, fun
             (?DATA_CHUNK_SIZE, _, Packing, _) ->
                 {ok, Packing};
             (Offset, _, _, _) when Offset =:= 2 * ?DATA_CHUNK_SIZE ->
-                already_stored;
+                {error, already_stored};
             (_, _, _, _) ->
                 {error, test_write_failed}
         end},
@@ -278,6 +281,8 @@ queued_writes_release_cache() ->
         [stored, {skipped, already_stored}, {error, test_write_failed}],
         [take_store_result(Ref) || {_, Ref, _} <- Replies]
     ),
+    ?assert(meck:called(arweave_storage, add_footprint,
+        [2 * ?DATA_CHUNK_SIZE, unpacked, ?DEFAULT_MODULE])),
     ?assertEqual(
         lists:duplicate(3, {error, expired}),
         [cache_reference_status(CacheRef) || {ok, CacheRef} <- Reservations]
@@ -332,10 +337,6 @@ with_storage(Test, Mocks) ->
     {setup, Setup, Cleanup, Tests} = ar_test_util:with_mocked(
         [
             {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end},
-            {arweave_lib_util, cast_after, fun(_, PID, Message) ->
-                PID ! {'$gen_cast', Message},
-                {ok, make_ref()}
-            end},
             %% The chunk is below the two-chunk mature-data bound.
             {ar_disk_pool, get_threshold, fun() -> 2 * ?DATA_CHUNK_SIZE end},
             {ar_packing_server, request_repack, fun(Key, _, _, _) ->

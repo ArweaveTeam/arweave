@@ -5,6 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_sync/include/arweave_sync.hrl").
+-include("arweave_sync_peer_cap.hrl").
 -include_lib("arweave_sync/include/arweave_sync_sweeper.hrl").
 -include_lib("arweave_sim/include/arweave_sim.hrl").
 
@@ -35,6 +36,7 @@ all() ->
         test_rate_limit_settles_and_recovers,
         test_recurring_rate_limit_preserves_throughput,
         test_recurring_client_errors_preserve_throughput,
+        test_completed_peer_bursts_are_sampled,
         test_single_peer_saturation,
         test_single_peer_recovers_from_variable_latency,
         test_single_peer_variable_latency_without_slowdowns,
@@ -106,6 +108,98 @@ end_per_testcase(_Case, Config) ->
 %%====================================================================
 %% Test cases
 %%====================================================================
+
+test_completed_peer_bursts_are_sampled(_Config) ->
+    DrivenPeer = ?PEER_UNLIMITED,
+    UndrivenPeer = ?PEER_SLOW,
+    FailedPeer = ?PEER_FLAKY,
+    Peers = [DrivenPeer, UndrivenPeer, FailedPeer],
+    Cap = ?CONCURRENCY_CAP_INITIAL,
+    WorldPeers = maps:from_list([
+        {Peer, #sim_peer{
+            %% Finite chunk-picker offers below provide all the work; gossip
+            %% cannot refill the queues after a burst finishes.
+            sync_kinds = [],
+            %% Serving capacity stays above even the doubled sixteen-fetch cap.
+            max_serve_cps = 100,
+            latency_ms = fun(_Inflight) ->
+                case arweave_sim:monotonic_ms() < 1000 of
+                    %% The bootstrap request crosses the one-second tick.
+                    true -> 1000 + ?SIM_SUBSTEP_MS;
+                    false -> ?SIM_SUBSTEP_MS
+                end
+            end,
+            failure_policy = fun(_Tick, Sequence) ->
+                %% Only the first four burst requests fail; later bursts
+                %% are healthy and must retain the resulting failure cut.
+                case Peer =:= FailedPeer andalso Sequence > 1
+                        andalso Sequence =< 1 + Cap div 2 of
+                    true -> client_error;
+                    false -> none
+                end
+            end
+        }}
+     || Peer <- Peers
+    ]),
+    arweave_sync_sim:start_sim(#sim_world{peers = WorldPeers}),
+    [{StoreID, {StoreStart, _StoreEnd}} | _] = arweave_sim:store_ranges(),
+    %% One slow request per peer straddles the first tick, establishing the
+    %% initial cap and measurement timestamp even without the fix.
+    IndexedPeers = lists:zip(Peers, lists:seq(0, length(Peers) - 1)),
+    %% Reserve sixteen distinct chunks per peer per round, enough for
+    %% one second at the doubled cap in the final measurement.
+    Stride = 2 * Cap,
+    Bootstrap = lists:append([
+        peer_burst_tasks(StoreID, StoreStart, Peer, Index * Stride, 1)
+     || {Peer, Index} <- IndexedPeers
+    ]),
+    ?assertEqual(
+        {ok, length(Peers)},
+        arweave_sync_scheduler:claim_and_enqueue(StoreID, Bootstrap)
+    ),
+    arweave_sync_sim:flush_pipeline(),
+    arweave_sync_sim:run_for(1),
+    %% Nine tasks fill the eight-fetch cap and leave one queued; four tasks
+    %% cannot drive a peer. Chunk ranges are disjoint, including bootstrap.
+    BurstSizes = #{DrivenPeer => Cap + 1,
+        UndrivenPeer => Cap div 2, FailedPeer => Cap div 2},
+    %% Every burst and its writes drain within one tick. Twelve driven
+    %% samples complete the baseline window and double the fetch cap.
+    lists:foreach(fun(Round) ->
+        Bursts = lists:append([
+            peer_burst_tasks(StoreID, StoreStart, Peer,
+                (Round * length(Peers) + Index) * Stride,
+                maps:get(Peer, BurstSizes))
+         || {Peer, Index} <- IndexedPeers
+        ]),
+        ?assertEqual({ok, length(Bursts)},
+            arweave_sync_scheduler:claim_and_enqueue(StoreID, Bursts)),
+        Measurement = arweave_sync_sim:run_for(1),
+        ?assertEqual(0, lists:sum(maps:values(arweave_sync_sim:metric(
+            final_http_inflight_by_peer, Measurement))))
+    end, lists:seq(1, ?PROBE_WINDOW_SAMPLES)),
+    %% One-second requests expose the remembered limits as serving rates:
+    %% sixteen for the driven peer, eight for the undriven healthy peer,
+    %% and four for the undriven peer whose first burst failed.
+    SlowPeers = maps:map(fun(_Peer, SimPeer) ->
+        SimPeer#sim_peer{latency_ms = 1000}
+    end, WorldPeers),
+    arweave_sync_sim:update_world(#sim_world{peers = SlowPeers}),
+    FinalSizes = #{DrivenPeer => 2 * Cap,
+        UndrivenPeer => Cap, FailedPeer => Cap},
+    Work = lists:append([
+        peer_burst_tasks(StoreID, StoreStart, Peer,
+            ((?PROBE_WINDOW_SAMPLES + 1) * length(Peers) + Index) * Stride,
+            maps:get(Peer, FinalSizes))
+     || {Peer, Index} <- IndexedPeers
+    ]),
+    ?assertEqual({ok, length(Work)},
+        arweave_sync_scheduler:claim_and_enqueue(StoreID, Work)),
+    arweave_sync_sim:flush_pipeline(),
+    Measurement = arweave_sync_sim:run_for(1),
+    ?assertEqual(#{DrivenPeer => 2 * Cap, UndrivenPeer => Cap,
+        FailedPeer => Cap div 2},
+        arweave_sync_sim:metric(served_by_peer, Measurement)).
 
 %% Starting at zero and changing the live rate pauses/resumes the same pipeline,
 %% while positive rate changes continue to bound fetched bytes.
@@ -2730,10 +2824,13 @@ test_unpromoted_footprint_work_does_not_block_store(_Config) ->
             arweave_lib_intervals:sum(CachedIntervals)
         ),
         arweave_sync_sim:update_world(FullWorld),
-        %% Five thirteen-tick steps recover from the failure floor to the
-        %% 25 requests needed at 100 chunks/s. Ninety-six ticks also cover
-        %% residual errors and the first downward probe before measurement.
-        arweave_sync_sim:run_for(96),
+        %% Ten probe windows cover growth from the failure floor, a flat
+        %% upward step, two downward steps, and a settled window after the
+        %% cap is restored. Measure outside those temporary cuts.
+        RecoveryTicks = 10 * (
+            ?PROBE_WINDOW_SAMPLES + ?GOODPUT_TRANSITION_SAMPLES
+        ),
+        arweave_sync_sim:run_for(RecoveryTicks),
         Measurement = arweave_sync_sim:run_for(20),
         assert_metric_utilization(
             {cps_by_peer, HealthyBytePeer}, HealthyPeerCPS, Measurement
@@ -3662,6 +3759,17 @@ first_store() ->
     [StoreID | _] = arweave_sim:store_ids(),
     StoreID.
 
+%% @doc Build a finite offer of consecutive chunks served by one peer.
+peer_burst_tasks(StoreID, StoreStart, Peer, FirstIndex, Count) ->
+    [
+        #task{
+            offset = StoreStart + Index * ?DATA_CHUNK_SIZE,
+            store_id = StoreID,
+            sources = [#task_source{peer = Peer}]
+        }
+     || Index <- lists:seq(FirstIndex, FirstIndex + Count - 1)
+    ].
+
 %% @doc Return the byte range of the first configured simulation store.
 first_store_range() ->
     [{_StoreID, StoreRange} | _] = arweave_sim:store_ranges(),
@@ -3905,6 +4013,7 @@ non_serving_peers(Count) ->
      || N <- lists:seq(1, Count)
     ]).
 
+testcase_timeout(test_completed_peer_bursts_are_sampled) -> 60;
 testcase_timeout(test_steady_state_no_monopoly) -> 600;
 testcase_timeout(test_timeout_resilience) -> 600;
 testcase_timeout(test_rate_limit_settles_and_recovers) -> 400;
