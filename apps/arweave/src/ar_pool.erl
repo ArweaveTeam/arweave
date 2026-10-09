@@ -202,6 +202,11 @@ handle_cast(Cast, State) ->
     ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
     {noreply, State}.
 
+handle_info({event, solution, {_, #{ source := {pool, Ref} }}},
+        #state{ request_pid_by_ref = Map } = State)
+        when not is_map_key(Ref, Map) ->
+    {noreply, State};
+
 handle_info({event, solution,
              {rejected, #{ reason := mining_address_banned, source := {pool, Ref} }}}, State) ->
     #state{ request_pid_by_ref = Map } = State,
