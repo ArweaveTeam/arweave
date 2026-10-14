@@ -17,9 +17,9 @@
 
 -define(HANDLER_TIMEOUT, ?DEFAULT_HTTP_HANDLER_TIMEOUT_MS).
 -define(GET_DATA_ROOTS_SEMAPHORE_TIMEOUT, 5 * 1000).
-%% A chunk request that cannot start within five seconds gets a 503, so clients
-%% syncing from a saturated node see the overload and lower their concurrency
-%% instead of queueing deeper.
+%% A GET /chunk or /chunk2 request that cannot start within five seconds gets
+%% a 503, so clients syncing from a saturated node see the overload and lower
+%% their concurrency instead of queueing deeper.
 -define(GET_CHUNK_SEMAPHORE_TIMEOUT, 5 * 1000).
 
 -define(MAX_SERIALIZED_RECENT_HASH_LIST_DIFF, 2400). % 50 * 48.
@@ -212,8 +212,6 @@ add_cors_headers(Req, Response) ->
 acquire_get_data_roots_semaphore() ->
     acquire_http_semaphore(get_data_roots, ?GET_DATA_ROOTS_SEMAPHORE_TIMEOUT).
 
-acquire_http_semaphore(get_chunk) ->
-    acquire_http_semaphore(get_chunk, ?GET_CHUNK_SEMAPHORE_TIMEOUT);
 acquire_http_semaphore(Name) ->
     acquire_http_semaphore(Name, ?DEFAULT_HTTP_SEMAPHORE_TIMEOUT_MS).
 
@@ -2278,12 +2276,17 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 
 acquire_chunk_semaphore(Semaphore, Packing, Req) ->
     maybe
-        ok ?= acquire_http_semaphore(Semaphore),
+        ok ?= acquire_chunk_http_semaphore(Semaphore),
         {Packing, ok}
     else
         {error, timeout} ->
             {none, {reply, timeout_response(Req)}}
     end.
+
+acquire_chunk_http_semaphore(get_chunk) ->
+    acquire_http_semaphore(get_chunk, ?GET_CHUNK_SEMAPHORE_TIMEOUT);
+acquire_chunk_http_semaphore(Name) ->
+    acquire_http_semaphore(Name).
 
 get_chunk_response_headers(Proof) ->
     case maps:get(absolute_end_offset, Proof, not_found) of

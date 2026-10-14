@@ -3,6 +3,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 get_chunk_below_strict_threshold_test_() ->
     ar_test_util:with_mocked(
@@ -29,6 +30,15 @@ get_chunk_above_strict_threshold_small_tail_test_() ->
     ar_test_util:with_mocked(
         [strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
         fun test_get_chunk_above_strict_threshold_small_tail/0,
+        ?TEST_NODE_TIMEOUT
+    ).
+
+chunk_semaphore_timeouts_test_() ->
+    ar_test_util:with_mocked(
+        [{ar_semaphore, acquire, fun(Name, Timeout) ->
+            meck:passthrough([Name, Timeout])
+        end}],
+        fun test_chunk_semaphore_timeouts/0,
         ?TEST_NODE_TIMEOUT
     ).
 
@@ -103,6 +113,32 @@ test_get_chunk_above_strict_threshold_small_tail() ->
     ?assert(SecondEndOffset > Threshold),
     fetch_and_assert_chunk(FirstEndOffset, FirstProof),
     fetch_and_assert_chunk(SecondEndOffset, SecondProof).
+
+test_chunk_semaphore_timeouts() ->
+    Wallet = setup_node(),
+    Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
+    {TX, _} = tx_with_chunks(Wallet, Chunks),
+    B = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [TX]),
+    [{AbsoluteEndOffset, Proof}] =
+        ar_test_data_sync:build_proofs(B, TX, Chunks),
+    post_and_wait_for_chunks([{AbsoluteEndOffset, Proof}]),
+    meck:expect(ar_semaphore, acquire, fun
+        (get_chunk, _Timeout) -> {error, timeout};
+        (Name, Timeout) -> meck:passthrough([Name, Timeout])
+    end),
+    meck:reset(ar_semaphore),
+    ?assertMatch({ok, {{<<"503">>, _}, _, _, _, _}},
+        ar_test_node:get_chunk(main, AbsoluteEndOffset)),
+    ?assertMatch({ok, {{<<"503">>, _}, _, _, _, _}},
+        ar_test_node:get_chunk_proof(main, AbsoluteEndOffset)),
+    ?assertMatch({ok, {{<<"503">>, _}, _, _, _, _}},
+        ar_test_node:get_unconfirmed_chunk(main,
+            arweave_lib_util:encode(TX#tx.id), ?DATA_CHUNK_SIZE)),
+    %% Only GET /chunk gives up after five seconds. GET /chunk_proof and
+    %% GET /unconfirmed_chunk wait as long as before.
+    ?assertEqual(1, meck:num_calls(ar_semaphore, acquire, [get_chunk, 5000])),
+    ?assertEqual(2, meck:num_calls(ar_semaphore, acquire,
+        [get_chunk, ?DEFAULT_HTTP_SEMAPHORE_TIMEOUT_MS])).
 
 fetch_and_assert_chunk(AbsoluteEndOffset, ExpectedProof) ->
     ChunkSize =
