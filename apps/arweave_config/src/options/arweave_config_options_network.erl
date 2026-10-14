@@ -270,27 +270,8 @@ specs() ->
                 <<"HTTP protocol for requests to peers: http2 or http.">>,
             long_description =>
                 <<"With http2, try HTTP/2 first. If a peer does not accept "
-                  "HTTP/2, fall back to HTTP/1.1 and try HTTP/2 again an "
-                  "hour later. With http, always use HTTP/1.1.">>,
-            handle_set => fun
-                (_K, V, _S, _A) when V == http2; V == http ->
-                    {store, V};
-                (_K, V, _S, _A) ->
-                    {error, {invalid_http_protocol, V}}
-            end
-        },
-        #{
-            enabled => true,
-            option_key => [network, client, http, protocol],
-            runtime => true,
-            default => ?DEFAULT_HTTP_CLIENT_PROTOCOL,
-            type => atom,
-            short_description =>
-                <<"HTTP protocol for requests to peers: http2 or http.">>,
-            long_description =>
-                <<"With http2, try HTTP/2 first. If a peer does not accept "
-                  "HTTP/2, fall back to HTTP/1.1 and try HTTP/2 again an "
-                  "hour later. With http, always use HTTP/1.1.">>,
+                  "HTTP/2, fall back to HTTP/1.1 and try HTTP/2 again six "
+                  "hours later. With http, always use HTTP/1.1.">>,
             handle_set => fun
                 (_K, V, _S, _A) when V == http2; V == http ->
                     {store, V};
