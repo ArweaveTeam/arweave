@@ -2303,7 +2303,7 @@ store_chunk2(ChunkArgs, Args, State) ->
                                     false ->
                                         %% Repair the broken footprint record.
                                         arweave_storage:add_footprint(PaddedOffset, Packing, StoreID);
-                                    true ->
+                                    _ ->
                                         ok
                                 end
                         end,

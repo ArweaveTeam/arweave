@@ -86,6 +86,25 @@ queued_writes_release_cache_test_() ->
         {ar_kv, put, fun(_, _, _) -> ok end}
     ]).
 
+%% @doc A duplicate write is skipped when the footprint record also has the
+%% chunk.
+recorded_footprint_already_stored_test_() ->
+    with_storage(fun recorded_footprint_already_stored/0, [
+        {arweave_storage, is_storage_supported, fun(_, _, _) -> true end},
+        {arweave_storage, delete_footprint, fun(_, _) -> ok end},
+        {arweave_storage, delete_sync_record, fun(_, _, _, _) -> ok end},
+        {arweave_storage, is_recorded, fun
+            (_, _, {ar_data_sync, footprint}, _) -> {true, unpacked};
+            (_, _, _, _) -> true
+        end},
+        {arweave_storage, add_footprint, fun(_, _, _) -> ok end},
+        {arweave_storage, put_chunk, fun(_, _, _, _) ->
+            {error, already_stored}
+        end},
+        {ar_tx_blacklist, is_byte_blacklisted, fun(_) -> false end},
+        {ar_kv, put, fun(_, _, _) -> ok end}
+    ]).
+
 %% @doc Missing entropy is generated before retrying a write; failed generation
 %% stops the retry.
 missing_entropy_repair_test_() ->
@@ -291,6 +310,35 @@ queued_writes_release_cache() ->
     ?assertEqual(Completed + 1, ar_chunk_cache:completed(?DEFAULT_MODULE)),
     ?assertEqual(active, cache_reference_status(PendingCacheRef)),
     ?assertEqual(no_result, take_store_result(PendingRef)).
+
+%% @doc A drained duplicate write reports already_stored and leaves the
+%% footprint record alone.
+recorded_footprint_already_stored() ->
+    {ok, CacheRef} = ar_chunk_cache:reserve(?MODULE),
+    Ref = make_ref(),
+    %% The second chunk is below the mocked two-chunk mature-data bound.
+    Offset = 2 * ?DATA_CHUNK_SIZE,
+    ChunkArgs = {unpacked, <<0>>, Offset, tx_root, ?DATA_CHUNK_SIZE},
+    Args = {unpacked, <<0>>, ?DATA_CHUNK_SIZE, data_root, tx_path, none, none},
+    State = #data_sync_state{
+        store_id = ?DEFAULT_MODULE,
+        footprint_limit = 2,
+        store_chunk_queue = gb_sets:from_list(
+            [{Offset, 0, make_ref(), ChunkArgs, Args, {self(), Ref, CacheRef}}]
+        )
+    },
+    %% A fresh entry one chunk below the raised threshold drains the aged one.
+    meck:expect(ar_disk_pool, get_threshold, fun() -> 4 * ?DATA_CHUNK_SIZE end),
+    {ok, PendingCacheRef} = ar_chunk_cache:reserve(?MODULE),
+    PendingArgs = setelement(
+        6, setelement(2, chunk_args(), 3 * ?DATA_CHUNK_SIZE), unpacked
+    ),
+    {noreply, _} = ar_data_sync:handle_cast(
+        {store_chunk, PendingArgs, {self(), make_ref(), PendingCacheRef}}, State
+    ),
+    ?assertEqual({skipped, already_stored}, take_store_result(Ref)),
+    ?assertNot(meck:called(arweave_storage, add_footprint, '_')),
+    ?assertEqual({error, expired}, cache_reference_status(CacheRef)).
 
 %% @doc Capture storage casts without starting a data-sync process.
 start_local_writer() ->
