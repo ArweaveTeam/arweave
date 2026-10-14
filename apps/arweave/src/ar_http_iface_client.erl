@@ -756,8 +756,7 @@ post_cm_partition_table_to_pool(Peer, Payload) ->
                                                         connect_timeout => 2000
                                                        })).
 
-%% @doc Fetch data_root metadata for the block that starts at or before the given offset,
-%% and validate it against the local block index. Also recompute the TXRoot from entries.
+%% @doc Fetch data_root metadata for the block that starts at or before the given offset.
 get_data_roots(Peer, Offset) ->
     Path = "/data_roots/" ++ integer_to_list(Offset),
     Response = ar_http:req(#{
@@ -768,18 +767,18 @@ get_data_roots(Peer, Offset) ->
                              connect_timeout => 2000,
                              headers => p2p_headers()
                             }),
-    handle_get_data_roots_response(Response, Offset).
+    handle_get_data_roots_response(Response).
 
-handle_get_data_roots_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Offset) ->
+handle_get_data_roots_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
     case ar_serialize:binary_to_data_roots(Body) of
-        {ok, {TXRoot, BlockSize, DataRootEntries}} ->
-            ar_data_roots:validate_data_roots(TXRoot, BlockSize, DataRootEntries, Offset);
+        {ok, DataRoots} ->
+            {ok, DataRoots};
         _ ->
             {error, invalid_response}
     end;
-handle_get_data_roots_response({ok, {{<<"404">>, _}, _, _, _, _}}, _Offset) ->
+handle_get_data_roots_response({ok, {{<<"404">>, _}, _, _, _, _}}) ->
     {error, not_found};
-handle_get_data_roots_response(Other, _Offset) ->
+handle_get_data_roots_response(Other) ->
     {error, Other}.
 
 get_peer_and_path_from_url(URL) ->

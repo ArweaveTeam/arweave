@@ -1,4 +1,5 @@
 -module(ar_data_root_sync).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
@@ -6,6 +7,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+
+-include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
                 store_id,
@@ -21,6 +24,14 @@
 -define(DATA_ROOTS_SYNC_SCAN_INTERVAL_MS, 2000).
 -else.
 -define(DATA_ROOTS_SYNC_SCAN_INTERVAL_MS, 600_000). % 10 minutes.
+-endif.
+
+%% How long we wait before resuming a scan stopped because the block index
+%% changed under it, for example during a reorg.
+-ifdef(AR_TEST).
+-define(DATA_ROOTS_SYNC_RETRY_DELAY_MS, 500).
+-else.
+-define(DATA_ROOTS_SYNC_RETRY_DELAY_MS, 5_000).
 -endif.
 
 %% Emit a log every time this many missing blocks have been fetched.
@@ -96,7 +107,7 @@ sync_block_data_roots(#state{ store_id = StoreID, range_start = RangeStart,
             true ->
                 {?DATA_ROOTS_SYNC_SCAN_INTERVAL_MS, RangeStart};
             false ->
-                {0, Cursor2}
+                {?DATA_ROOTS_SYNC_RETRY_DELAY_MS, Cursor2}
         end,
     {Delay, State#state{ scan_cursor = Cursor3 }}.
 
@@ -107,23 +118,32 @@ sync_block_data_roots(StoreID, Cursor, End, _RangeStart, Stats) when Cursor >= E
                {synced_pct, synced_pct(Synced, Scanned)}]),
     {ok, Cursor};
 sync_block_data_roots(StoreID, Cursor, End, RangeStart, {Scanned, Synced, Missing} = Stats) ->
-    {BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Cursor),
-    case BlockStart >= End of
-        true ->
+    case ar_block_index:get_block_bounds(Cursor) of
+        not_found ->
+            %% The block index ends below End, for example during a reorg.
+            %% Resume from Cursor later.
+            {ok, Cursor};
+        {BlockStart, _BlockEnd, _TXRoot} when BlockStart >= End ->
             sync_block_data_roots(StoreID, End, End, RangeStart, Stats);
-        false ->
-            Stats2 =
-                case ar_data_roots:are_synced(BlockStart, BlockEnd, TXRoot, ?DEFAULT_MODULE) of
-                    true ->
-                        {Scanned + 1, Synced + 1, Missing};
-                    false ->
-                        maybe_fetch_and_store(BlockStart, BlockEnd),
-                        FetchedStats = {Scanned + 1, Synced, Missing + 1},
-                        maybe_log_data_root_sync_progress(StoreID, BlockEnd, End, RangeStart,
-                                                          FetchedStats),
-                        FetchedStats
-                end,
-            sync_block_data_roots(StoreID, BlockEnd, End, RangeStart, Stats2)
+        {BlockStart, BlockEnd, TXRoot} = Bounds ->
+            case ar_data_roots:are_synced(BlockStart, BlockEnd, TXRoot, ?DEFAULT_MODULE) of
+                true ->
+                    sync_block_data_roots(StoreID, BlockEnd, End, RangeStart,
+                        {Scanned + 1, Synced + 1, Missing});
+                false ->
+                    case maybe_fetch_and_store(Bounds) of
+                        block_changed ->
+                            %% Resume from Cursor later to sync the block
+                            %% that replaced this one.
+                            {ok, Cursor};
+                        ok ->
+                            Stats2 = {Scanned + 1, Synced, Missing + 1},
+                            maybe_log_data_root_sync_progress(StoreID, BlockEnd, End,
+                                                              RangeStart, Stats2),
+                            sync_block_data_roots(StoreID, BlockEnd, End, RangeStart,
+                                Stats2)
+                    end
+            end
     end.
 
 %% @doc Emit a progress log every ?DATA_ROOTS_SYNC_PROGRESS_BLOCKS
@@ -154,7 +174,7 @@ synced_pct(_Synced, 0) ->
 synced_pct(Synced, Total) ->
     min(100, Synced * 100 div Total).
 
-maybe_fetch_and_store(BlockStart, BlockEnd) ->
+maybe_fetch_and_store({BlockStart, BlockEnd, _TXRoot} = Bounds) ->
     Peers = ar_peers:get_peers(current),
     %% Shuffle eligible peers so repeated fetches do not always hit them in the same order.
     Peers2 = arweave_util:shuffle_list(lists:filter(
@@ -163,25 +183,118 @@ maybe_fetch_and_store(BlockStart, BlockEnd) ->
                                     end,
                                     Peers
                                    )),
-    case fetch_data_roots_from_peers(Peers2, BlockStart) of
-        {ok, {TXRoot, BlockSize, DataRootEntries}} ->
-            BlockSize = BlockEnd - BlockStart,
+    case fetch_data_roots_from_peers(Peers2, Bounds) of
+        {ok, {TXRoot, _BlockSize, DataRootEntries}} ->
             ar_data_roots:store_block_async(
-              BlockStart, BlockEnd, TXRoot, DataRootEntries, ?DEFAULT_MODULE);
+              BlockStart, BlockEnd, TXRoot, DataRootEntries, ?DEFAULT_MODULE),
+            ok;
+        {error, block_changed} ->
+            block_changed;
         _ ->
             ok
     end.
 
-fetch_data_roots_from_peers([], _Offset) ->
+fetch_data_roots_from_peers([], _Bounds) ->
     {error, not_found};
-fetch_data_roots_from_peers([Peer | Rest], Offset) ->
-    case ar_http_iface_client:get_data_roots(Peer, Offset) of
-        {ok, _} = Reply ->
+fetch_data_roots_from_peers([Peer | Rest], {BlockStart, _, _} = Bounds) ->
+    case fetch_data_roots(Peer, Bounds) of
+        {ok, _DataRoots} = Reply ->
             Reply;
+        {error, block_changed} = Error ->
+            Error;
         {error, Error} ->
             ?LOG_DEBUG([{event, fetch_data_roots_from_peers_error},
                         {peer, Peer},
-                        {offset, Offset},
+                        {offset, BlockStart},
                         {error, io_lib:format("~p", [Error])}]),
-            fetch_data_roots_from_peers(Rest, Offset)
+            fetch_data_roots_from_peers(Rest, Bounds)
     end.
+
+%% @doc Fetch the data roots of the block with the given bounds from Peer and
+%% validate them against the block. Return {error, block_changed} if the block
+%% index no longer has the block after the fetch, for example after a reorg.
+fetch_data_roots(Peer, {BlockStart, _BlockEnd, _TXRoot} = Bounds) ->
+    maybe
+        {ok, {TXRoot, BlockSize, DataRootEntries} = DataRoots} ?=
+            ar_http_iface_client:get_data_roots(Peer, BlockStart),
+        Bounds ?= ar_block_index:get_block_bounds(BlockStart),
+        {ok, _} ?= ar_data_roots:validate_data_roots(TXRoot, BlockSize,
+            DataRootEntries, BlockStart, Bounds),
+        {ok, DataRoots}
+    else
+        not_found ->
+            {error, block_changed};
+        {_, _, _} ->
+            {error, block_changed};
+        {error, _} = Error ->
+            Error
+    end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+sync_resyncs_block_changed_during_fetch_test_() ->
+    %% A reorg during the first fetch replaces the block at offset 0.
+    Orphaned = {0, 100, <<"orphaned">>},
+    Current = {0, 200, <<"current">>},
+    DataRoots = {<<"current">>, 200, []},
+    ar_test_util:with_mocked(
+        data_roots_fetch_mocks([Orphaned, Current, Current, Current],
+            DataRoots),
+        fun() ->
+            ?assertEqual({ok, 0},
+                sync_block_data_roots(?DEFAULT_MODULE, 0, 200, 0, {0, 0, 0})),
+            ?assertEqual(nothing,
+                receive Message -> Message after 0 -> nothing end),
+            ?assertEqual({ok, 200},
+                sync_block_data_roots(?DEFAULT_MODULE, 0, 200, 0, {0, 0, 0})),
+            ?assertEqual({stored, Current},
+                receive Message2 -> Message2 after 0 -> nothing end)
+        end).
+
+sync_resyncs_block_gone_during_fetch_test_() ->
+    ar_test_util:with_mocked(
+        data_roots_fetch_mocks([{0, 100, <<"orphaned">>}, not_found],
+            {<<"orphaned">>, 100, []}),
+        fun() ->
+            ?assertEqual({ok, 0},
+                sync_block_data_roots(?DEFAULT_MODULE, 0, 100, 0, {0, 0, 0})),
+            ?assertEqual(nothing,
+                receive Message -> Message after 0 -> nothing end)
+        end).
+
+sync_retries_where_block_index_ends_test_() ->
+    State = #state{ store_id = ?DEFAULT_MODULE, range_start = 0,
+                    range_end = 100, scan_cursor = 0 },
+    ar_test_util:with_mocked([
+        {ar_disk_pool, get_threshold, fun() -> 100 end},
+        {ar_block_index, get_block_bounds, fun(_) -> not_found end}
+    ], fun() ->
+        ?assertEqual({?DATA_ROOTS_SYNC_RETRY_DELAY_MS, State},
+            sync_block_data_roots(State))
+    end).
+
+%% @doc Mocks for fetching DataRoots from one peer, with the block index
+%% answering the lookups of offset 0 with Lookups in order. Storing sends
+%% {stored, Bounds} to the caller.
+data_roots_fetch_mocks(Lookups, DataRoots) ->
+    Calls = atomics:new(1, []),
+    [
+        {ar_block_index, get_block_bounds, fun(0) ->
+            lists:nth(atomics:add_get(Calls, 1, 1), Lookups)
+        end},
+        {ar_data_roots, are_synced, fun(_, _, _, _) -> false end},
+        {ar_data_roots, validate_data_roots, fun(_, _, _, _, _) ->
+            {ok, DataRoots}
+        end},
+        {ar_data_roots, store_block_async,
+            fun(BlockStart, BlockEnd, TXRoot, _, _) ->
+                self() ! {stored, {BlockStart, BlockEnd, TXRoot}},
+                ok
+            end},
+        {ar_peers, get_peers, fun(current) -> [{127, 0, 0, 1, 1984}] end},
+        {ar_peers, get_peer_release,
+            fun(_) -> ?DATA_ROOTS_SYNC_RELEASE_NUMBER end},
+        {ar_http_iface_client, get_data_roots, fun(_, 0) -> {ok, DataRoots} end}
+    ].
