@@ -7,6 +7,7 @@
     initialize/1,
     continue_initialization/5,
     resume_initialization/1,
+    retry_initialization/2,
     mark_initialized/1,
     is_initialized/1,
     get_intervals/3,
@@ -85,6 +86,8 @@ add_async(Tag, Offset, Packing, StoreID) ->
 initialize(StoreID) ->
     StateDB = state_db(StoreID),
     case read_initialization_cursor(StateDB) of
+        {error, Reason} ->
+            schedule_retry(initialize, StoreID, Reason);
         not_found ->
             case write_initialization_cursor(StateDB, <<"start">>) of
                 ok -> do_initialize(StoreID, start);
@@ -100,29 +103,63 @@ initialize(StoreID) ->
 continue_initialization(
     StoreID, Cursor, EstimateReported, WriteIntervals, State
 ) ->
-    case read_initialization_cursor(state_db(StoreID)) == Cursor of
-        false ->
-            %% A newer chain advanced the cursor or marked the record complete.
-            State;
-        true ->
+    case read_initialization_cursor(state_db(StoreID)) of
+        Cursor ->
             {Status, Next, Intervals} = walk_initialization(StoreID, Cursor),
             {Added, State2} = WriteIntervals(Intervals, State),
-            ok = initialization_step_written(StoreID, #{
-                status => Status,
-                cursor => Cursor,
-                next => Next,
-                added => Added,
-                estimate_reported => EstimateReported
-            }),
-            State2
+            case Added == length(Intervals) of
+                true ->
+                    ok = initialization_step_written(StoreID, #{
+                        status => Status,
+                        cursor => Cursor,
+                        next => Next,
+                        added => Added,
+                        estimate_reported => EstimateReported
+                    });
+                false ->
+                    %% The failed intervals are not in the WAL. Keep the
+                    %% persisted cursor and repeat the step.
+                    schedule_initialization_step(
+                        max(
+                            ?INITIALIZATION_RETRY_MS,
+                            next_initialization_step_ms(Added)
+                        ),
+                        Cursor,
+                        EstimateReported
+                    )
+            end,
+            State2;
+        {error, Reason} ->
+            ?LOG_WARNING([
+                {event, footprint_record_initialization_read_failed},
+                {store_id, StoreID}, {cursor, Cursor}, {reason, Reason}
+            ]),
+            schedule_initialization_step(
+                ?INITIALIZATION_RETRY_MS, Cursor, EstimateReported
+            ),
+            State;
+        _ ->
+            %% A newer chain advanced the cursor or marked the record complete.
+            State
     end.
 
 %% @doc Resume a requested migration after the store's sync records load.
 resume_initialization(StoreID) ->
     case read_initialization_cursor(state_db(StoreID)) of
+        {error, Reason} ->
+            schedule_retry(resume_initialization, StoreID, Reason);
         not_found -> ok;
         complete -> ok;
         Cursor -> do_initialize(StoreID, Cursor)
+    end.
+
+%% @doc Repeat initialize/1 or resume_initialization/1 after a failed cursor
+%% read or write.
+retry_initialization(Function, StoreID)
+  when Function == initialize; Function == resume_initialization ->
+    case ?MODULE:Function(StoreID) of
+        ok -> ok;
+        {error, Reason} -> schedule_retry(Function, StoreID, Reason)
     end.
 
 %% @doc Mark the footprint record complete from the store's sync record server.
@@ -318,8 +355,23 @@ read_initialization_cursor(StateDB) ->
         {ok, <<"start">>} -> start;
         {ok, <<"complete">>} -> complete;
         {ok, CursorBin} -> binary:decode_unsigned(CursorBin);
-        not_found -> not_found
+        not_found -> not_found;
+        {error, _} = Error -> Error
     end.
+
+schedule_retry(Function, StoreID, Reason) ->
+    ?LOG_WARNING([
+        {event, footprint_record_initialization_retry},
+        {store_id, StoreID}, {function, Function}, {reason, Reason}
+    ]),
+    {ok, _} = ?DEP(clock):apply_after(
+        ?INITIALIZATION_RETRY_MS,
+        gen_server,
+        cast,
+        [self(), {retry_footprint_record_initialization, Function}],
+        #{skip_on_shutdown => false}
+    ),
+    ok.
 
 do_initialize(StoreID, Cursor) ->
     {RangeStart, RangeEnd} = store_range(StoreID),

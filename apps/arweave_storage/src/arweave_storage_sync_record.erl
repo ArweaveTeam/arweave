@@ -497,6 +497,14 @@ handle_call(Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast(
+    {retry_footprint_record_initialization, Function},
+    #state{store_id = StoreID} = State
+) ->
+    ok = arweave_storage_footprint_record:retry_initialization(
+        Function, StoreID
+    ),
+    {noreply, State};
+handle_cast(
     {continue_footprint_record_initialization, Cursor, EstimateReported},
     #state{store_id = StoreID} = State
 ) ->

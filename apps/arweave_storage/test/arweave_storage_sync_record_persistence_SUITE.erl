@@ -16,6 +16,8 @@ all() -> [
     data_sizes_shared_partition,
     footprint_record_built_by_its_server,
     footprint_initialization_retries_cursor_write,
+    footprint_initialization_retries_failed_add,
+    footprint_initialization_retries_cursor_read,
     footprint_initialization_marked_complete,
     footprint_initialization_resumes_before_first_step,
     footprint_initialization_resumes_from_persisted_cursor
@@ -534,6 +536,79 @@ footprint_initialization_retries_cursor_write(_Config) ->
             ?assert(arweave_storage:is_footprint_record_initialized(StoreID)),
             %% One failed completion write followed by one successful retry.
             ?assertEqual(2, atomics:get(Attempts, 1)),
+            ?assertEqual(PID, whereis(Name)),
+            ?assertEqual(length(Chunks), footprint_record_size(StoreID))
+        after
+            stop_supervised_sync_record(StoreID)
+        end
+    end).
+
+footprint_initialization_retries_failed_add(_Config) ->
+    StoreID = test_footprint_add_retry,
+    StateDB = {sync_record, StoreID},
+    Parent = self(),
+    %% Armed once the byte record is in place, so only the footprint
+    %% initialization's own WAL write fails.
+    Armed = atomics:new(1, []),
+    Mocks = [{ar_kv, [{put, fun(DB, Key, Value) ->
+        IsWALEntry = DB == StateDB andalso Key /= <<"wal">>
+            andalso Key /= <<"sync_records">>
+            andalso Key /= <<"footprint_record_init_cursor">>,
+        case IsWALEntry andalso atomics:compare_exchange(Armed, 1, 1, 2) of
+            ok ->
+                Parent ! {failed_wal_entry, Value},
+                {error, enospc};
+            _ -> meck:passthrough([DB, Key, Value])
+        end
+    end}]}],
+    with_disk_store(StoreID, Mocks, fun() ->
+        Name = arweave_storage_sync_record:name(StoreID),
+        {ok, PID} = start_supervised_sync_record(StoreID),
+        try
+            Chunks = [{?DATA_CHUNK_SIZE, unpacked}],
+            arweave_storage_ct_util:add_chunks_to_sync_record(Chunks, StoreID),
+            atomics:put(Armed, 1, 1),
+            ok = arweave_storage:initialize_footprint_record(StoreID),
+            Value = receive {failed_wal_entry, V} -> V end,
+            ok = ar_test_await:until(footprint_add_retried, fun() ->
+                arweave_storage:is_footprint_record_initialized(StoreID)
+            end),
+            %% The step was repeated, so the failed entry was written again
+            %% before the cursor was marked complete.
+            ?assertEqual(2, meck:num_calls(ar_kv, put, [StateDB, '_', Value])),
+            ?assertEqual(PID, whereis(Name)),
+            ?assertEqual(length(Chunks), footprint_record_size(StoreID))
+        after
+            stop_supervised_sync_record(StoreID)
+        end
+    end).
+
+footprint_initialization_retries_cursor_read(_Config) ->
+    StoreID = test_footprint_read_retry,
+    StateDB = {sync_record, StoreID},
+    CursorKey = <<"footprint_record_init_cursor">>,
+    %% Armed after the store loads, so the first cursor read of the
+    %% initialization request fails.
+    Armed = atomics:new(1, []),
+    Mocks = [{ar_kv, [{get, fun(DB, Key) ->
+        case {DB, Key} == {StateDB, CursorKey} andalso
+                atomics:compare_exchange(Armed, 1, 1, 2) of
+            ok -> {error, io_error};
+            _ -> meck:passthrough([DB, Key])
+        end
+    end}]}],
+    with_disk_store(StoreID, Mocks, fun() ->
+        Name = arweave_storage_sync_record:name(StoreID),
+        {ok, PID} = start_supervised_sync_record(StoreID),
+        try
+            Chunks = [{?DATA_CHUNK_SIZE, unpacked}],
+            arweave_storage_ct_util:add_chunks_to_sync_record(Chunks, StoreID),
+            atomics:put(Armed, 1, 1),
+            ok = arweave_storage:initialize_footprint_record(StoreID),
+            ?assertEqual(2, atomics:get(Armed, 1)),
+            ok = ar_test_await:until(footprint_read_retried, fun() ->
+                arweave_storage:is_footprint_record_initialized(StoreID)
+            end),
             ?assertEqual(PID, whereis(Name)),
             ?assertEqual(length(Chunks), footprint_record_size(StoreID))
         after
