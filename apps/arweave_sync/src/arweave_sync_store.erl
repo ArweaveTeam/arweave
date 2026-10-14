@@ -634,7 +634,9 @@ sample_write_rate(CachedChunkCount, NowMs, State) ->
     } = State,
     case SampleStartedMs of
         undefined when CachedChunkCount > 0 ->
+            %% Writes observed before the sample starts are not part of it.
             State#store_state{
+                completed_writes_since_sample = 0,
                 sample_started_ms = NowMs
             };
         undefined ->

@@ -22,7 +22,8 @@ all() ->
         stores_with_room_by_peer_lists_task_and_footprint_sources,
         pop_work_returns_queued_task,
         work_removed_from_a_pass_returns_in_the_next_pass,
-        write_rate_uses_tick_samples
+        write_rate_uses_tick_samples,
+        write_rate_ignores_writes_before_first_sample
     ].
 
 init_per_testcase(_Case, Config) ->
@@ -463,3 +464,16 @@ write_rate_uses_tick_samples(_Config) ->
         State4#store_state{sample_driven = true}
     ),
     ?assertEqual(50.0, State5#store_state.write_rate).
+
+write_rate_ignores_writes_before_first_sample(_Config) ->
+    %% Repacking wrote 5000 chunks while the store had no sync work.
+    State0 = #store_state{completed_writes_since_sample = 5000},
+    State1 = arweave_sync_store:sample_write_rate(1, 1_000, State0),
+    %% 100 writes over the 10 s sample are 10 chunks/s.
+    State2 = arweave_sync_store:sample_write_rate(
+        1, 11_000, State1#store_state{
+            completed_writes_since_sample =
+                State1#store_state.completed_writes_since_sample + 100
+        }
+    ),
+    ?assertEqual(10.0, State2#store_state.write_rate).
