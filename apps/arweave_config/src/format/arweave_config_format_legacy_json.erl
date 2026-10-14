@@ -430,11 +430,21 @@ parse_options([{<<"max_block_propagation_peers">>, Value} | Rest], Opts)
 parse_options([{<<"max_block_propagation_peers">>, Value} | _], _Opts) ->
     {error, {bad_type, max_block_propagation_peers, number}, Value};
 
+parse_options([{<<"sync_jobs">>, Value} | Rest], Opts)
+  when is_integer(Value) ->
+    arweave_config_deprecated:set(sync_jobs, [sync, jobs], Value),
+    parse_options(Rest, Opts);
 parse_options([{<<"sync_jobs">>, Value} | _], _Opts) ->
-    {error, {removed_option, sync_jobs,
-             "fetch concurrency is sized automatically; use "
-             "sync_max_download_rate (bytes per second, 0 to disable "
-             "syncing) to bound sync throughput"}, Value};
+    {error, {bad_type, sync_jobs, number}, Value};
+parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, Value} | Rest],
+        Opts) when is_integer(Value), Value >= 0 ->
+    arweave_config_deprecated:set(data_discovery_max_concurrent_peer_scans,
+        [sync, max_concurrent_peer_scans], Value),
+    parse_options(Rest, Opts);
+parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, Value} | _],
+        _Opts) ->
+    {error, {bad_type, data_discovery_max_concurrent_peer_scans, number},
+        Value};
 parse_options([{<<"sync_max_download_rate">>, Value} | Rest], Opts)
   when is_integer(Value), Value >= 0 ->
     _ = arweave_config:set([sync, max_download_rate], Value),

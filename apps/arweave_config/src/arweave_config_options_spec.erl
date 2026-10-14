@@ -9,8 +9,10 @@
 -compile(warnings_as_errors).
 -export([
     all/0,
+    environment_convert/1,
     group_order/0,
     is_function_exported/3,
+    long_argument_convert/1,
     normalize_specs/1,
     option_modules/0
 ]).

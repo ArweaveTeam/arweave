@@ -291,13 +291,10 @@ parse(["max_block_propagation_peers", Num | Rest]) ->
     V = list_to_integer(Num),
     _ = arweave_config:set([gossip, block, max_peers], V),
     parse(Rest);
-parse(["sync_jobs", _Num | _Rest]) ->
-    io:format("~nsync_jobs has been removed. Fetch concurrency is sized "
-        "automatically; use sync_max_download_rate (bytes per second, 0 "
-        "to disable syncing) to bound sync throughput.~n"),
-    {error, [
-        {arweave_config_help, print, []}
-    ]};
+parse(["sync_jobs", Num | Rest]) ->
+    arweave_config_deprecated:set(sync_jobs, [sync, jobs],
+        list_to_integer(Num)),
+    parse(Rest);
 parse(["sync_max_download_rate", "infinity" | Rest]) ->
     _ = arweave_config:set([sync, max_download_rate], infinity),
     parse(Rest);

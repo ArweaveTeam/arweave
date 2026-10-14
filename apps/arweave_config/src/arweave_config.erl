@@ -180,8 +180,9 @@ set(Key, Value) ->
 %% @doc Boot-time bulk mutator. Apply a leaf map emitted by the format
 %% parsers to the options registry.
 %%
-%% Only canonical option_key paths are accepted. Legacy field names
-%% are handled by the legacy parsers before values reach this function.
+%% Only canonical option_key paths are accepted, except that a renamed or
+%% removed option is replaced by arweave_config_deprecated first. Legacy field
+%% names are handled by the legacy parsers before values reach this function.
 %%
 %% Fails fast on the first set that returns an error and reports the
 %% offending key. Map iteration order is unspecified, so when more
@@ -203,7 +204,7 @@ load(Map) when is_map(Map) ->
                     ok -> ok;
                     Else -> {error, {Key, Else}}
                 end
-        end, ok, Map).
+        end, ok, arweave_config_deprecated:translate_map(Map)).
 
 %% @doc Switch to runtime mode. Validators run against the assembled
 %% config first; if any rejects, the transition is refused and the
