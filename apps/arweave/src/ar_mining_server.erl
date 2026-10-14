@@ -27,6 +27,8 @@
                 paused                      = true,
                 workers                     = #{},
                 active_sessions             = sets:new(),
+                current_session = undefined, % Session admitted most recently.
+                skipped_steps = 0, % VDF steps dropped in a row.
                 seeds                       = #{},
                 diff_pair                   = not_set,
                 chunk_cache_limit           = 0,
@@ -53,6 +55,10 @@
 -define(IDEAL_STEPS_PER_PARTITION, 20).
 
 -define(FETCH_POA_FROM_PEERS_TIMEOUT_MS, 10000).
+
+%% Warn after this many VDF steps in a row are dropped, about a minute of steps
+%% at the mainnet rate of one per second.
+-define(SKIPPED_STEPS_WARNING_INTERVAL, 60).
 
 %%%===================================================================
 %%% Public interface.
@@ -236,6 +242,8 @@ handle_cast({start_mining, Args}, State) ->
     {noreply, State#state{
                 paused = false,
                 active_sessions = sets:new(),
+                current_session = undefined,
+                skipped_steps = 0,
                 diff_pair = DiffPair,
                 merkle_rebase_threshold = RebaseThreshold,
                 allow_replica_2_9_mining = allow_replica_2_9_mining(Height) }};
@@ -256,8 +264,8 @@ handle_cast(set_cache_size, State) ->
 handle_cast({add_pool_job, Args}, State) ->
     {SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff} = Args,
     State2 = set_seed(SessionKey, Seed, State),
-    handle_computed_output(
-      SessionKey, StepNumber, Output, PartitionUpperBound, PartialDiff, State2);
+    handle_computed_output(pool, SessionKey, StepNumber, Output,
+                           PartitionUpperBound, PartialDiff, State2);
 
 handle_cast({compute_h2_for_peer, Candidate}, State) ->
     #mining_candidate{ partition_number2 = Partition2,
@@ -319,8 +327,8 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
             {noreply, State};
         false ->
             {SessionKey, StepNumber, Output, PartitionUpperBound} = Args,
-            handle_computed_output(
-              SessionKey, StepNumber, Output, PartitionUpperBound, not_set, State)
+            handle_computed_output(vdf, SessionKey, StepNumber, Output,
+                                   PartitionUpperBound, not_set, State)
     end;
 
 handle_info({event, nonce_limiter, {valid, _}}, State) ->
@@ -378,35 +386,30 @@ set_difficulty(DiffPair, State) ->
      ),
     State#state{ diff_pair = DiffPair }.
 
-maybe_update_sessions(SessionKey, State) ->
-    CurrentActiveSessions = State#state.active_sessions,
-    case sets:is_element(SessionKey, CurrentActiveSessions) of
+%% @doc Make SessionKey active unless it is a stale pool job. The active set
+%% holds the session admitted most recently and the one admitted before it.
+maybe_update_sessions(Source, SessionKey, State) ->
+    #state{ active_sessions = ActiveSessions,
+            current_session = CurrentSession } = State,
+    case sets:is_element(SessionKey, ActiveSessions)
+            orelse is_stale_session(Source, SessionKey, CurrentSession) of
         true ->
             State;
         false ->
-            NewActiveSessions = build_active_session_set(SessionKey, CurrentActiveSessions),
-            case sets:to_list(sets:subtract(NewActiveSessions, CurrentActiveSessions)) of
-                [] ->
-                    State;
-                _ ->
-                    update_sessions(NewActiveSessions, CurrentActiveSessions, State)
-            end
+            NewActiveSessions = sets:from_list(
+                [SessionKey | [CurrentSession || CurrentSession /= undefined]]),
+            State2 = update_sessions(NewActiveSessions, ActiveSessions, State),
+            State2#state{ current_session = SessionKey }
     end.
 
-build_active_session_set(SessionKey, CurrentActiveSessions) ->
-    CandidateSessions = [SessionKey | sets:to_list(CurrentActiveSessions)],
-    SortedSessions = lists:sort(
-                       fun({_, StartIntervalA, _}, {_, StartIntervalB, _}) ->
-                               StartIntervalA > StartIntervalB
-                       end, CandidateSessions),
-    build_active_session_set(SortedSessions).
-
-build_active_session_set([A, B | _]) ->
-    sets:from_list([A, B]);
-build_active_session_set([A]) ->
-    sets:from_list([A]);
-build_active_session_set([]) ->
-    sets:new().
+%% @doc Return true for a pool job from an older reset interval than the
+%% current session, since pool jobs may arrive out of order.
+is_stale_session(pool, {_, StartInterval, _}, {_, CurrentStartInterval, _}) ->
+    StartInterval < CurrentStartInterval;
+%% The local VDF emits steps only for sessions it treats as live, which after a
+%% reorg can be a session with a lower interval than the current one.
+is_stale_session(_Source, _SessionKey, _CurrentSession) ->
+    false.
 
 update_sessions(NewActiveSessions, CurrentActiveSessions, State) ->
     AddedSessions = sets:to_list(sets:subtract(NewActiveSessions, CurrentActiveSessions)),
@@ -1138,8 +1141,8 @@ fetch_poa_from_peer(Peer, RecallByte) ->
             not_found
     end.
 
-handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
-                       PartialDiff, State) ->
+handle_computed_output(Source, SessionKey, StepNumber, Output,
+                       PartitionUpperBound, PartialDiff, State) ->
     true = is_integer(StepNumber),
     ar_mining_stats:vdf_computed(),
 
@@ -1152,14 +1155,15 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
                      State
              end,
 
-    State3 = maybe_update_sessions(SessionKey, State2),
+    State3 = maybe_update_sessions(Source, SessionKey, State2),
 
     case sets:is_element(SessionKey, State3#state.active_sessions) of
         false ->
             ?LOG_DEBUG([{event, mining_debug_skipping_vdf_output}, {reason, stale_session},
                         {step_number, StepNumber},
                         {session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-                        {active_sessions, encode_sessions(sets:to_list(State#state.active_sessions))}]);
+                        {active_sessions, encode_sessions(sets:to_list(State#state.active_sessions))}]),
+            {noreply, record_skipped_step(SessionKey, State3)};
         true ->
             {NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
             Candidate = #mining_candidate{
@@ -1179,9 +1183,27 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
                         {step_number, StepNumber}, {output, arweave_util:safe_encode(Output)},
                         {start_interval_number, StartIntervalNumber},
                         {session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-                        {partition_upper_bound, PartitionUpperBound}])
+                        {partition_upper_bound, PartitionUpperBound}]),
+            {noreply, State3#state{ skipped_steps = 0 }}
+    end.
+
+%% @doc Count a dropped VDF step and warn while steps keep being dropped,
+%% since a miner that drops every step finds no blocks.
+record_skipped_step(SessionKey, State) ->
+    #state{ skipped_steps = PrevSkippedSteps,
+            active_sessions = ActiveSessions } = State,
+    arweave_metrics:counter_inc(mining_vdf_steps_skipped_total),
+    SkippedSteps = PrevSkippedSteps + 1,
+    case SkippedSteps rem ?SKIPPED_STEPS_WARNING_INTERVAL of
+        0 ->
+            ?LOG_WARNING([{event, mining_vdf_steps_skipped},
+                {consecutive_steps, SkippedSteps},
+                {session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+                {active_sessions, encode_sessions(sets:to_list(ActiveSessions))}]);
+        _ ->
+            ok
     end,
-    {noreply, State3}.
+    State#state{ skipped_steps = SkippedSteps }.
 
 read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
     PoAReply = read_poa(RecallByte, Packing),

@@ -40,6 +40,32 @@ cleanup_all(Config) ->
 
 %% @doc Setup the environment so we can control VDF step generation.
 setup_pool_client() ->
+    start_controlled_vdf_node(#{
+        [pool, is_client] => true,
+        [pool, server_address] => <<"http://localhost:2002">>,
+        [pool, api_key] => <<"pool_secret">>
+    }).
+
+cleanup_pool_client(Config) ->
+    ok = arweave_config:restore(Config).
+
+setup_pool_job() ->
+    {setup_pool_client(), setup_one()}.
+
+cleanup_pool_job({Config, _}) ->
+    cleanup_one(ok),
+    cleanup_pool_client(Config).
+
+%% @doc Start a solo miner that reads VDF from an unreachable server, so the
+%% only VDF output its mining server sees is what the test sends.
+setup_vdf_session() ->
+    {start_controlled_vdf_node(#{}), setup_one()}.
+
+cleanup_vdf_session({Config, _}) ->
+    cleanup_one(ok),
+    ok = arweave_config:restore(Config).
+
+start_controlled_vdf_node(ExtraConfig) ->
     [B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
     RewardAddr = ar_test_node:generate_address(main),
     Config = arweave_config:snapshot(),
@@ -51,20 +77,14 @@ setup_pool_client() ->
             {spora_2_6, RewardAddr}}
     ],
     ar_test_node:start(B0, RewardAddr,
-        #{
+        maps:merge(#{
             [storage_modules] => StorageModules,
             [peers, vdf_server] => [arweave_util:format_peer(vdf_server())],
-            [pool, is_client] => true,
-            [pool, server_address] => <<"http://localhost:2002">>,
-            [pool, api_key] => <<"pool_secret">>,
             %% The cm validator requires mining.enabled when
             %% pool.is_client is true.
             [mining, enabled] => true
-        }),
+        }, ExtraConfig)),
     Config.
-
-cleanup_pool_client(Config) ->
-    ok = arweave_config:restore(Config).
 
 setup_one() ->
     ets:new(mock_counter, [set, public, named_table]),
@@ -92,13 +112,31 @@ chunk_cache_size_test_() ->
         ]}
     }.
 
+%% Each test starts a fresh node: the mining server keeps its sessions between
+%% tests, and a session left behind by one test would decide what the next one
+%% accepts.
 pool_job_test_() ->
-    {setup, fun setup_pool_client/0, fun cleanup_pool_client/1,
-        {foreach, fun setup_one/0, fun cleanup_one/1,
+    {foreach, fun setup_pool_job/0, fun cleanup_pool_job/1,
         [
             ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_get_current_sesssion()],
-            fun test_pool_job_no_cached_sessions/0, 120)
-        ]}
+                fun test_pool_job_no_cached_sessions/0, 120),
+            ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_get_current_sesssion()],
+                fun test_pool_job_same_interval_session/0, 120)
+        ]
+    }.
+
+vdf_session_test_() ->
+    {foreach, fun setup_vdf_session/0, fun cleanup_vdf_session/1,
+        [
+            ar_test_node:test_with_all_nodes_mocked([mock_add_task()],
+                fun test_vdf_session_next_interval/0, 120),
+            ar_test_node:test_with_all_nodes_mocked([mock_add_task()],
+                fun test_vdf_session_fork_across_reset_then_retarget/0, 120),
+            ar_test_node:test_with_all_nodes_mocked([mock_add_task()],
+                fun test_vdf_session_returns_to_lower_interval/0, 120),
+            ar_test_node:test_with_all_nodes_mocked([mock_add_task()],
+                fun test_vdf_session_known_session_keeps_set/0, 120)
+        ]
     }.
 
 %% ------------------------------------------------------------------------------------------------
@@ -211,6 +249,127 @@ test_pool_job_no_cached_sessions() ->
     ?assertEqual(sets:from_list([SessionKey2, SessionKey3]), ar_mining_server:active_sessions()),
     ?assertEqual([], mined_steps()).
 
+%% @doc A pool job with a new key for the current interval (a new seed, or a VDF
+%% difficulty change) is mined, while one from an older interval is dropped.
+test_pool_job_same_interval_session() ->
+    SessionKey1 = {<<"session1">>, 1, 1},
+    SessionKey2 = {<<"session2">>, 1, 1},
+    SessionKey3 = {<<"session2">>, 1, 2},
+    OlderSessionKey = {<<"session0">>, 0, 1},
+    Output = crypto:strong_rand_bytes(32),
+    PartitionUpperBound = ?WEAVE_SIZE,
+    Seed = crypto:strong_rand_bytes(32),
+    PartialDiff = {1, 1},
+    %% Every step is mined twice, once per stored partition (1 and 2).
+    ar_mining_server:add_pool_job(
+        SessionKey1, 1, Output, PartitionUpperBound, Seed, PartialDiff),
+    ?assertEqual([SessionKey1], active_session_list()),
+    ?assertEqual([1, 1], lists:sort(mined_steps())),
+
+    ar_mining_server:add_pool_job(
+        SessionKey2, 2, Output, PartitionUpperBound, Seed, PartialDiff),
+    ?assertEqual(lists:sort([SessionKey1, SessionKey2]), active_session_list()),
+    ?assertEqual([2, 2], lists:sort(mined_steps())),
+
+    ar_mining_server:add_pool_job(
+        SessionKey3, 3, Output, PartitionUpperBound, Seed, PartialDiff),
+    ?assertEqual(lists:sort([SessionKey2, SessionKey3]), active_session_list()),
+    ?assertEqual([3, 3], lists:sort(mined_steps())),
+
+    SkippedBefore = skipped_step_count(),
+    ar_mining_server:add_pool_job(
+        OlderSessionKey, 4, Output, PartitionUpperBound, Seed, PartialDiff),
+    ?assertEqual(lists:sort([SessionKey2, SessionKey3]), active_session_list()),
+    ?assertEqual([], mined_steps()),
+    ?assertEqual(SkippedBefore + 1, skipped_step_count()).
+
+%% ------------------------------------------------------------------------------------------------
+%% vdf_session_test_
+%% ------------------------------------------------------------------------------------------------
+
+%% Interval numbers, seeds and VDF difficulties in these tests are arbitrary:
+%% the mining server only compares them for equality and order. Every step is
+%% mined twice, once per stored partition (1 and 2).
+
+test_vdf_session_next_interval() ->
+    Session9 = {<<"seed_a">>, 9, 1000},
+    Session10 = {<<"seed_b">>, 10, 1000},
+    Session11 = {<<"seed_c">>, 11, 1000},
+    ok = start_mining(),
+
+    send_vdf_step(Session9, 1),
+    ?assertEqual([Session9], active_session_list()),
+    ?assertEqual([1, 1], lists:sort(mined_steps())),
+
+    send_vdf_step(Session10, 2),
+    ?assertEqual(lists:sort([Session9, Session10]), active_session_list()),
+    ?assertEqual([2, 2], lists:sort(mined_steps())),
+
+    send_vdf_step(Session11, 3),
+    ?assertEqual(lists:sort([Session10, Session11]), active_session_list()),
+    ?assertEqual([3, 3], lists:sort(mined_steps())).
+
+%% @doc Replay the session keys miners saw before the mainnet stall at height
+%% 2021040: a fork across the reset gave interval 10 a session seeded by the
+%% orphaned branch (Session1) and one seeded by the canonical branch (Session2),
+%% then a VDF difficulty retarget gave the canonical seed a new key (Session3).
+test_vdf_session_fork_across_reset_then_retarget() ->
+    Session0 = {<<"seed_0">>, 9, 1000},
+    Session1 = {<<"seed_1">>, 10, 1000},
+    Session2 = {<<"seed_2">>, 10, 1000},
+    Session3 = {<<"seed_2">>, 10, 999},
+    ok = start_mining(),
+
+    send_vdf_step(Session0, 1),
+    send_vdf_step(Session1, 2),
+    send_vdf_step(Session2, 3),
+    ?assertEqual(lists:sort([Session1, Session2]), active_session_list()),
+    ?assertEqual([1, 1, 2, 2, 3, 3], lists:sort(mined_steps())),
+
+    send_vdf_step(Session3, 4),
+    ?assertEqual(lists:sort([Session2, Session3]), active_session_list()),
+    ?assertEqual([4, 4], lists:sort(mined_steps())),
+
+    send_vdf_step(Session3, 5),
+    ?assertEqual(lists:sort([Session2, Session3]), active_session_list()),
+    ?assertEqual([5, 5], lists:sort(mined_steps())).
+
+%% @doc A reorg onto a block that has not crossed the reset moves the local VDF
+%% back to a session with a lower interval than every active one.
+test_vdf_session_returns_to_lower_interval() ->
+    Session1 = {<<"seed_1">>, 10, 1000},
+    Session2 = {<<"seed_2">>, 10, 1000},
+    LowerSession = {<<"seed_0">>, 9, 1000},
+    ok = start_mining(),
+
+    send_vdf_step(Session1, 1),
+    send_vdf_step(Session2, 2),
+    ?assertEqual([1, 1, 2, 2], lists:sort(mined_steps())),
+
+    send_vdf_step(LowerSession, 3),
+    ?assertEqual(lists:sort([Session2, LowerSession]), active_session_list()),
+    ?assertEqual([3, 3], lists:sort(mined_steps())).
+
+%% @doc A late step from the older active session is mined without changing the
+%% set, and the next new session replaces that older one, not the newer one.
+test_vdf_session_known_session_keeps_set() ->
+    Session9 = {<<"seed_a">>, 9, 1000},
+    Session10 = {<<"seed_b">>, 10, 1000},
+    Session11 = {<<"seed_c">>, 11, 1000},
+    ok = start_mining(),
+
+    send_vdf_step(Session9, 1),
+    send_vdf_step(Session10, 2),
+    ?assertEqual([1, 1, 2, 2], lists:sort(mined_steps())),
+
+    send_vdf_step(Session9, 3),
+    ?assertEqual(lists:sort([Session9, Session10]), active_session_list()),
+    ?assertEqual([3, 3], lists:sort(mined_steps())),
+
+    send_vdf_step(Session11, 4),
+    ?assertEqual(lists:sort([Session10, Session11]), active_session_list()),
+    ?assertEqual([4, 4], lists:sort(mined_steps())).
+
 
 %% ------------------------------------------------------------------------------------------------
 %% Helpers
@@ -312,6 +471,33 @@ increment_mock_counter(Mock) ->
 
 vdf_server() ->
     {127,0,0,1,2001}.
+
+%% @doc Start mining and wait until the mining server accepts VDF output.
+start_mining() ->
+    ar_test_node:mine(),
+    ar_test_await:until(mining_started,
+        fun() -> not ar_mining_server:is_paused() end).
+
+%% @doc Deliver a VDF step to the mining server the way ar_events does, and
+%% return once the server has handled it: a call from this process is served
+%% only after the message sent before it.
+send_vdf_step(SessionKey, StepNumber) ->
+    Output = crypto:strong_rand_bytes(32),
+    ar_mining_server ! {event, nonce_limiter,
+        {computed_output, {SessionKey, StepNumber, Output, ?WEAVE_SIZE}}},
+    _ = ar_mining_server:is_paused(),
+    ok.
+
+active_session_list() ->
+    lists:sort(sets:to_list(ar_mining_server:active_sessions())).
+
+skipped_step_count() ->
+    case prometheus_counter:value(mining_vdf_steps_skipped_total) of
+        undefined ->
+            0;
+        Count ->
+            Count
+    end.
 
 mined_steps() ->
     Steps = lists:reverse(ets:foldl(

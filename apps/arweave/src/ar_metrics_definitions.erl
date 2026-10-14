@@ -370,6 +370,11 @@ all_metrics() ->
             {name, mining_vdf_step},
             {help, "Incremented each time the mining server processes a VDF step."}
         ]},
+        {prometheus_counter, [
+            {name, mining_vdf_steps_skipped_total},
+            {help, "The total number of VDF steps the mining server dropped "
+                    "because their session was not active."}
+        ]},
 
         %% VDF.
         {prometheus_histogram, [
