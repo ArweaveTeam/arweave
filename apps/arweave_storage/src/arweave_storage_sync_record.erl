@@ -82,6 +82,9 @@
     partitions,
     %% The number of entries in the write-ahead log.
     wal,
+    %% Whether the ETS tables hold a change the write-ahead log failed to
+    %% record, so the next snapshot must run even with an empty log.
+    unlogged_change = false,
     %% Whether the sync record is in memory only.
     in_memory = false
 }).
@@ -513,7 +516,7 @@ handle_cast(
         fun add_footprint_record_intervals/2, State
     ),
     {noreply, State2};
-handle_cast(store_state, #state{wal = 0} = State) ->
+handle_cast(store_state, #state{wal = 0, unlogged_change = false} = State) ->
     %% Nothing changed since the last snapshot.
     schedule_store_state(?STORE_SYNC_RECORD_FREQUENCY_MS),
     {noreply, State};
@@ -940,7 +943,7 @@ read_sync_records_from_ets(StoreID) ->
 
 store_state(#state{in_memory = true}) ->
     ok;
-store_state(#state{wal = 0} = State) ->
+store_state(#state{wal = 0, unlogged_change = false} = State) ->
     {ok, State};
 store_state(State) ->
     #state{state_db = StateDB, store_id = StoreID} = State,
@@ -971,7 +974,7 @@ store_state(State) ->
             {Error2, State};
         ok ->
             publish_data_sizes(SyncRecordByIDType, State),
-            {ok, State#state{wal = 0}}
+            {ok, State#state{wal = 0, unlogged_change = false}}
     end.
 
 %% @doc Add a step's intervals through the WAL and count successful writes.
@@ -1091,7 +1094,7 @@ update_write_ahead_log(OpParams, StateDB, State) ->
         )
     of
         {error, _Reason} = Error ->
-            {Error, State};
+            {Error, State#state{unlogged_change = true}};
         ok ->
             case
                 ?DEP(kv):put(
@@ -1101,6 +1104,6 @@ update_write_ahead_log(OpParams, StateDB, State) ->
                 ok ->
                     {ok, State#state{wal = WAL + 1}};
                 Error2 ->
-                    {Error2, State}
+                    {Error2, State#state{unlogged_change = true}}
             end
     end.

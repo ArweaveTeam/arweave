@@ -11,6 +11,7 @@ all() -> [
     get_after_add,
     persistence_roundtrip,
     snapshots_take_turns,
+    snapshot_after_failed_wal_write,
     data_sizes_published_on_load,
     data_sizes_split_by_partition,
     data_sizes_shared_partition,
@@ -36,6 +37,7 @@ end_per_testcase(Name, Config) ->
     arweave_storage_ct_util:stop_record(test_sync_record_get),
     arweave_storage_ct_util:stop_record(test_sync_record_persist),
     arweave_storage_ct_util:stop_record(test_sync_record_turn),
+    arweave_storage_ct_util:stop_record(test_sync_record_unlogged),
     arweave_storage_ct_util:stop_record(test_sync_record_sizes),
     arweave_storage_ct_util:stop_record(test_sync_record_split),
     arweave_storage_ct_util:stop_record(test_sync_record_left),
@@ -350,6 +352,48 @@ snapshots_take_turns(_Config) ->
         ),
         ?assertEqual(Period, receive_scheduled(PID)),
         kill(PID)
+    end).
+
+snapshot_after_failed_wal_write(_Config) ->
+    Parent = self(),
+    StoreID = test_sync_record_unlogged,
+    Record = {test_sync_record_unlogged_id, byte},
+    StateDB = {sync_record, StoreID},
+    %% While armed, every WAL entry write fails.
+    Armed = atomics:new(1, []),
+    Mocks = [
+        {ar_timer, [
+            {apply_after, fun(Delay, _M, _F, _A, _O) ->
+                Parent ! {scheduled, self(), Delay},
+                {ok, make_ref()}
+            end}
+        ]},
+        {ar_kv, [{put, fun(DB, Key, Value) ->
+            IsWALEntry = DB == StateDB andalso Key /= <<"wal">>
+                andalso Key /= <<"sync_records">>,
+            case IsWALEntry andalso atomics:get(Armed, 1) == 1 of
+                true -> {error, enospc};
+                false -> meck:passthrough([DB, Key, Value])
+            end
+        end}]}
+    ],
+    with_disk_store(StoreID, Mocks, fun() ->
+        {ok, PID} = arweave_storage_ct_util:start_sync_record(StoreID),
+        ok = arweave_storage_sync_record:add(4, 0, unpacked, Record, StoreID),
+        gen_server:cast(PID, store_state),
+        _ = sys:get_state(PID),
+        ?assertEqual({ok, 0}, wal_count(StateDB)),
+        atomics:put(Armed, 1, 1),
+        ?assertEqual({error, enospc},
+            arweave_storage_sync_record:delete(4, 2, Record, StoreID)),
+        ?assertEqual({ok, 0}, wal_count(StateDB)),
+        gen_server:cast(PID, store_state),
+        _ = sys:get_state(PID),
+        kill(PID),
+        {ok, PID2} = arweave_storage_ct_util:start_sync_record(StoreID),
+        ?assertEqual([{2, 0}], arweave_lib_intervals:to_list(
+            arweave_storage_sync_record:get(any_packing, Record, StoreID))),
+        kill(PID2)
     end).
 
 %% @doc A restarted store publishes the data sizes of its snapshot at once
