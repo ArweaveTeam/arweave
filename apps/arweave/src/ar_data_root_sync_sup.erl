@@ -23,7 +23,8 @@ start_link() ->
 
 init([]) ->
     Workers = register_workers(),
-    {ok, {{one_for_one, 5, 10}, Workers}}.
+    Verification = ?CHILD(ar_data_root_verification, worker),
+    {ok, {{one_for_one, 5, 10}, Workers ++ [Verification]}}.
 
 register_workers() ->
     lists:map(

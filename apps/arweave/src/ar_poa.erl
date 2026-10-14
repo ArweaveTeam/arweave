@@ -54,12 +54,13 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 
 %% @doc Validate a data path for local chunk admission. This is NOT used in block validation.
 validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) ->
-    case has_redundant_rebase_marker_for_chunk(DataRoot, Offset, TXSize, DataPath, Chunk) of
+    case has_ambiguous_rebase_marker_for_chunk(DataRoot, Offset, TXSize,
+            DataPath, Chunk) of
         true ->
-            log_invalid_data_path(redundant_rebase_marker, Peer,
-                                  [{data_root, arweave_util:encode(DataRoot)}, {offset, Offset}, {tx_size, TXSize}]),
-            %% Conservatively reject paths with redundant rebase markers as there's no
-            %% productive case for their use.
+            log_invalid_data_path(ambiguous_rebase_marker, Peer,
+                                  [{previous_log_code, redundant_rebase_marker},
+                                   {data_root, arweave_util:encode(DataRoot)},
+                                   {offset, Offset}, {tx_size, TXSize}]),
             false;
         false ->
             validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk, Peer)
@@ -115,14 +116,19 @@ validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) ->
             end
     end.
 
-%%% @doc Return true if we recognize there is at least one redundant rebase marker.
-%%% Strip all rebase markers from the proof and return true if the resulting
-%% proof *still* validates.
-has_redundant_rebase_marker_for_chunk(DataRoot, Offset, TXSize, DataPath, Chunk) ->
-    ar_merkle:has_redundant_rebase_marker(
+%% @doc Return true if the proof's rebase markers can be removed to prove the
+%% chunk at a different range (see ar_merkle:has_ambiguous_rebase_marker/2).
+has_ambiguous_rebase_marker_for_chunk(DataRoot, Offset, TXSize, DataPath,
+        Chunk) ->
+    ar_merkle:has_ambiguous_rebase_marker(
       DataPath,
-      fun(StrippedDataPath) ->
-              validate_data_path2(DataRoot, Offset, TXSize, StrippedDataPath, Chunk) =/= false
+      fun(Path) ->
+              case validate_data_path2(DataRoot, Offset, TXSize, Path, Chunk) of
+                  {true, _Base, _Strict, _Rebase, EndOffset} ->
+                      EndOffset;
+                  false ->
+                      false
+              end
       end).
 
 log_invalid_data_path(_Reason, not_set, _Logs) ->

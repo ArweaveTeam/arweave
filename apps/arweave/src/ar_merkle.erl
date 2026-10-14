@@ -4,8 +4,8 @@
 -test_category([fast, vdf]).
 
 -export([generate_tree/1, generate_path/3, has_leading_rebase_marker/1,
-         has_positive_leaf_size/3, has_redundant_rebase_marker/2,
-         has_redundant_rebase_marker/5, strip_rebase_markers/1,
+         has_positive_leaf_size/3, has_ambiguous_rebase_marker/2,
+         has_ambiguous_rebase_marker/5, strip_rebase_markers/1,
          validate_path/4, validate_path/5, extract_note/1, extract_root/1]).
 
 -export([get/2, get_branch_id/3, get_leaf_id/2, hash/1, note_to_binary/1]).
@@ -80,15 +80,46 @@ strip_rebase_markers(
 strip_rebase_markers(InvalidLeftover) ->
     InvalidLeftover.
 
-has_redundant_rebase_marker(DataPath, ValidateStrippedPath) ->
+%% @doc Return true if DataPath has rebase markers and the path with all of
+%% them removed proves the chunk at a different range. Validate(Path) returns
+%% the range Path proves, or false if it proves no chunk. The markers are not
+%% part of the data root, so a path whose markers can be removed to move the
+%% chunk lets a peer store it at the wrong offset. Markers whose removal leaves
+%% the range unchanged, or leaves a path that proves no chunk, are harmless.
+%% Return false if DataPath itself proves no chunk, so that the caller's own
+%% validation reports why. The stripped path is validated first: for genuine
+%% rebased proofs it proves no chunk, which settles the result in one call.
+has_ambiguous_rebase_marker(DataPath, Validate) ->
     StrippedDataPath = strip_rebase_markers(DataPath),
-    StrippedDataPath =/= DataPath andalso ValidateStrippedPath(StrippedDataPath).
+    StrippedDataPath =/= DataPath andalso
+        case Validate(StrippedDataPath) of
+            false ->
+                false;
+            StrippedRange ->
+                case Validate(DataPath) of
+                    false ->
+                        false;
+                    Range ->
+                        StrippedRange =/= Range
+                end
+        end.
 
-has_redundant_rebase_marker(DataRoot, Offset, TXSize, DataPath, Ruleset) ->
-    has_redundant_rebase_marker(
+has_ambiguous_rebase_marker(DataRoot, Offset, TXSize, DataPath, Ruleset) ->
+    has_ambiguous_rebase_marker(
       DataPath,
-      fun(StrippedDataPath) ->
-              validate_path(DataRoot, Offset, TXSize, StrippedDataPath, Ruleset) =/= false
+      fun(Path) ->
+              case validate_path(DataRoot, Offset, TXSize, Path, Ruleset) of
+                  {_ChunkID, StartOffset, EndOffset} ->
+                      case has_positive_leaf_size(Offset, TXSize, Path) of
+                          true ->
+                              {StartOffset, EndOffset};
+                          false ->
+                              %% A leaf of non-positive size proves no chunk.
+                              false
+                      end;
+                  false ->
+                      false
+              end
       end).
 
 validate_path(ID, Dest, LeftBound, RightBound, Path, basic_ruleset) ->
@@ -1178,6 +1209,157 @@ extract_root_test() ->
        extract_root(<<"xq9sgKgCXuKDsuvWfvxXppFbyCIXLVMwsWdMmGZriUHxRvDm7t2Q3PVDEdTGOfZX7uN1IhBjhtDqXMNtKzhqIQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa9A7mcQUkyuoaIo_qRduBL_p-XlU_dzIqVYcXMFasjf4OCRIyTw3csFFwYRKSgeyf7YNXx6n01o0FOMvlwla1NXxqdwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANJAAA3eRGTycNGG3Q4XLbM4x9ECqmes8Hd4ESCnTS8ZeP21cFJT1Rxl9vcjEPfiOrjuX3DI3TRG14QDfgkbhlm4h5zgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANcV6Imnwec2_eDdsgKp62wLWhxxel6X6MCZl5yS0rj_3QzGj-qV-sEuZ53LI89xsdU01jmW2QMbg35XmlzUSuoUycVgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANSAAA6NyGgTjcP-ZX9Ow1fbYjQ2zq1AZ1r9YsklRJM6lnGt-og-RPhF2n5yfly3_z-0Bv7xd0NIcRShH73k0BEW74RAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANVAI7fUMYNbs5OkT0SSzuOMGqJNquL6cAw9uU9IoG7c1J767Lq6Et3qS8-h2X0_Z4gS8qV_rdFTF7S0zMVDhiSQ0engAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANXKFkAOSmAhslJzNYlGrcRfM3K6OcrHI97ylEL1o3w9bBsNaORXPJWSCwIcxw785DdTUGFO9kdLojL_OEpQI86e3yngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANYC4cMmxvHLQUKiyEzl25B59PwaDjmX2aOuLYJUoSK8czahTn0VfpvdFyKvemVFtym9VakvjRzA1VZ5HuwJmTY1U_1gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANYAAAwdEhKYxHaxpumHVBkZefzfrsKEGXKGxKd8ej4eSrJacAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADWAuHA">>)),
     ok.
 
+%% The rule itself: markers are rejected only when removing them moves the
+%% chunk to another range.
+ambiguous_rebase_marker_test() ->
+    Marked = << 0:(?HASH_SIZE * 8), 1:(?HASH_SIZE * 8), 2:(?HASH_SIZE * 8),
+            3:(?NOTE_SIZE * 8), 4:(?HASH_SIZE * 8), 5:(?NOTE_SIZE * 8) >>,
+    Unmarked = strip_rebase_markers(Marked),
+    Range = fun(Ranges) ->
+        fun(Path) -> maps:get(Path, Ranges) end
+    end,
+    ?assertEqual(true, has_ambiguous_rebase_marker(Marked,
+            Range(#{ Marked => {10, 20}, Unmarked => {0, 10} }))),
+    ?assertEqual(false, has_ambiguous_rebase_marker(Marked,
+            Range(#{ Marked => {10, 20}, Unmarked => {10, 20} }))),
+    ?assertEqual(false, has_ambiguous_rebase_marker(Marked,
+            Range(#{ Marked => {10, 20}, Unmarked => false }))),
+    %% An invalid proof is left to the caller's validation to report.
+    ?assertEqual(false, has_ambiguous_rebase_marker(Marked,
+            Range(#{ Marked => false, Unmarked => {0, 10} }))),
+    ?assertEqual(false, has_ambiguous_rebase_marker(Unmarked,
+            Range(#{ Unmarked => {0, 10} }))).
+
+%% Proofs generated for rebased trees are accepted for sync and upload,
+%% including every chunk of a rebased subtree at offset 0 and a later rebased
+%% subtree of a single chunk.
+rebased_tree_proofs_test() ->
+    C = ?DATA_CHUNK_SIZE,
+    lists:foreach(
+        fun(Items) ->
+            {Chunks, Nested} = rebased_tree(Items),
+            {Root, Tree} = generate_tree(Nested),
+            {_, _, TXSize} = lists:last(Chunks),
+            lists:foreach(
+                fun({Chunk, Start, End}) ->
+                    Path = generate_path(Root, Start, Tree),
+                    Case = {Items, Start},
+                    ?assertMatch({_, Start, End}, validate_path(Root, Start,
+                            TXSize, Path, offset_rebase_support_ruleset), Case),
+                    ?assertEqual(false, has_ambiguous_rebase_marker(Root, Start,
+                            TXSize, Path, offset_rebase_support_ruleset), Case),
+                    ?assertMatch({true, _, _, _, End},
+                            ar_poa:validate_data_path(Root, Start, TXSize, Path,
+                                    Chunk), Case)
+                end,
+                Chunks)
+        end,
+        [[[C, C], [C, C]], [[C], [C], [C]], [[C, C], [1000]],
+         [[C], [C, 1000]]]).
+
+%% A marker inserted into a proof of a tree without rebasing is accepted only
+%% where it changes nothing.
+inserted_rebase_marker_test() ->
+    C = ?DATA_CHUNK_SIZE,
+    Chunk1 = binary:copy(<< 1 >>, C),
+    Chunk2 = binary:copy(<< 2 >>, C),
+    {Root, Tree} = generate_tree([{ar_tx:generate_chunk_id(Chunk1), C},
+            {ar_tx:generate_chunk_id(Chunk2), 2 * C}]),
+    Path = generate_path(Root, 0, Tree),
+    Marked = << 0:(?HASH_SIZE * 8), Path/binary >>,
+    ?assertEqual(validate_path(Root, 0, 2 * C, Path,
+            offset_rebase_support_ruleset),
+            validate_path(Root, 0, 2 * C, Marked,
+                    offset_rebase_support_ruleset)),
+    ?assertEqual(false, has_ambiguous_rebase_marker(Root, 0, 2 * C, Marked,
+            offset_rebase_support_ruleset)).
+
+%% Proofs with rebase markers inserted or removed at random places, accepted by
+%% the sync or the upload checks, prove a chunk of the tree at its own range.
+mutated_rebase_marker_proofs_keep_ranges_test_() ->
+    {timeout, 120, fun test_mutated_rebase_marker_proofs_keep_ranges/0}.
+
+test_mutated_rebase_marker_proofs_keep_ranges() ->
+    C = ?DATA_CHUNK_SIZE,
+    rand:seed(exsss, {1513, 1513, 1513}),
+    Trees = [flat_tree(Sizes) || Sizes <- [[C], [C, 1000], [C, C, C, 1000]]]
+        ++ [rebased_tree(Items) || Items <- [[[C, C], [C, C]], [[C], [C], [C]],
+            [[C, C], [1000]], [[C], [C, 1000]], [[1000], [C, C]],
+            [[C, C, 1000], [C]]]],
+    Accepted = lists:sum(
+        [count_accepted_mutations(Root, Tree, Chunks)
+         || {Chunks, Leaves} <- Trees,
+            {Root, Tree} <- [generate_tree(Leaves)]]),
+    %% Some mutated proofs must pass, or the test checks nothing.
+    ?assert(Accepted > 0).
+
+count_accepted_mutations(Root, Tree, Chunks) ->
+    {_, _, TXSize} = lists:last(Chunks),
+    Ranges = [{ar_tx:generate_chunk_id(Chunk), Start, End}
+              || {Chunk, Start, End} <- Chunks],
+    lists:sum(
+        [begin
+            Dest = Start + rand:uniform(End - Start) - 1,
+            Mutated = mutate_rebase_markers(Path, rand:uniform(3)),
+            Case = {Start, Dest, Path, Mutated},
+            SyncResult = case validate_path(Root, Dest, TXSize, Mutated,
+                                            offset_rebase_support_ruleset) of
+                false ->
+                    false;
+                Proven ->
+                    not has_ambiguous_rebase_marker(Root, Dest, TXSize, Mutated,
+                            offset_rebase_support_ruleset)
+                        andalso has_positive_leaf_size(Dest, TXSize, Mutated)
+                        andalso Proven
+            end,
+            case SyncResult of
+                false ->
+                    ok;
+                _ ->
+                    ?assert(lists:member(SyncResult, Ranges), Case)
+            end,
+            UploadResult = ar_poa:validate_data_path(Root, Dest, TXSize,
+                    Mutated, Chunk),
+            case UploadResult of
+                false ->
+                    ok;
+                {true, _, _, _, UploadEnd} ->
+                    ?assertEqual(End, UploadEnd, Case)
+            end,
+            case Mutated /= Path andalso
+                    (SyncResult /= false orelse UploadResult /= false) of
+                true -> 1;
+                false -> 0
+            end
+         end
+         || {Chunk, Start, End} <- Chunks,
+            Path <- [generate_path(Root, Start, Tree)],
+            _ <- lists:seq(1, 200)]).
+
+%% Insert a rebase marker, or remove one if the path has any, Count times, at
+%% random hash-aligned positions.
+mutate_rebase_markers(Path, 0) ->
+    Path;
+mutate_rebase_markers(Path, Count) ->
+    Positions = lists:seq(0, byte_size(Path) div ?HASH_SIZE),
+    Markers = [P || P <- Positions,
+        (P + 1) * ?HASH_SIZE =< byte_size(Path),
+        binary:part(Path, P * ?HASH_SIZE, ?HASH_SIZE)
+            == << 0:(?HASH_SIZE * 8) >>],
+    Path2 =
+        case Markers /= [] andalso rand:uniform(2) == 1 of
+            true ->
+                P = lists:nth(rand:uniform(length(Markers)), Markers),
+                << Before:(P * ?HASH_SIZE)/binary, _:?HASH_SIZE/binary,
+                   After/binary >> = Path,
+                << Before/binary, After/binary >>;
+            false ->
+                P = lists:nth(rand:uniform(length(Positions)), Positions),
+                << Before:(P * ?HASH_SIZE)/binary, After/binary >> = Path,
+                << Before/binary, 0:(?HASH_SIZE * 8), After/binary >>
+        end,
+    mutate_rebase_markers(Path2, Count - 1).
+
 reject_invalid_tree_path_test_() ->
     {timeout, 30, fun test_reject_invalid_tree_path/0}.
 
@@ -1194,6 +1376,43 @@ test_reject_invalid_tree_path() ->
          ar_merkle:generate_path(MR, RandomTarget+1, Tree)
         )
       ).
+
+%% Build a tree of rebased items from lists of chunk sizes. Every item starts
+%% at a chunk boundary. Return the {Chunk, StartOffset, EndOffset} of every
+%% chunk and the nested leaves for generate_tree/1.
+rebased_tree(Items) ->
+    {Chunks, Nested, _} = lists:foldl(
+        fun(Sizes, {ChunksIn, NestedIn, Base}) ->
+            {ItemChunks, Leaves, ItemEnd} = lists:foldl(
+                fun(Size, {CIn, LIn, End}) ->
+                    Chunk = crypto:strong_rand_bytes(Size),
+                    {CIn ++ [{Chunk, Base + End, Base + End + Size}],
+                     LIn ++ [{ar_tx:generate_chunk_id(Chunk), End + Size}],
+                     End + Size}
+                end,
+                {[], [], 0},
+                Sizes),
+            Padded = (ItemEnd + ?DATA_CHUNK_SIZE - 1) div ?DATA_CHUNK_SIZE
+                    * ?DATA_CHUNK_SIZE,
+            {ChunksIn ++ ItemChunks, NestedIn ++ [Leaves], Base + Padded}
+        end,
+        {[], [], 0},
+        Items),
+    {Chunks, Nested}.
+
+%% Build a tree without rebasing from a list of chunk sizes, returning the same
+%% shape as rebased_tree/1.
+flat_tree(Sizes) ->
+    {Chunks, Leaves, _} = lists:foldl(
+        fun(Size, {ChunksIn, LeavesIn, End}) ->
+            Chunk = crypto:strong_rand_bytes(Size),
+            {ChunksIn ++ [{Chunk, End, End + Size}],
+             LeavesIn ++ [{ar_tx:generate_chunk_id(Chunk), End + Size}],
+             End + Size}
+        end,
+        {[], [], 0},
+        Sizes),
+    {Chunks, Leaves}.
 
 assert_node({Id, Type, Data, ExpectedOffset, IsRebased}, Node) ->
     ?assertEqual(Id, Node#node.id),

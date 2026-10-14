@@ -1958,11 +1958,13 @@ do_additional_validation(ChunkProof, DataPath, Peer) ->
       } = ChunkProof,
     TXSize = TXEndOffset - TXStartOffset,
     TXRelativeOffset = SeekByte - BlockStartOffset - TXStartOffset,
-    case ar_merkle:has_redundant_rebase_marker(
+    case ar_merkle:has_ambiguous_rebase_marker(
            DataRoot, TXRelativeOffset, TXSize, DataPath, Ruleset) of
         true ->
-            log_invalid_fetched_data_path(redundant_rebase_marker, Peer,
-                                          [{data_root, arweave_util:encode(DataRoot)},
+            log_invalid_fetched_data_path(ambiguous_rebase_marker, Peer,
+                                          [{previous_log_code,
+                                            redundant_rebase_marker},
+                                           {data_root, arweave_util:encode(DataRoot)},
                                            {offset, TXRelativeOffset}, {tx_size, TXSize}]),
             false;
         false ->

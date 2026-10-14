@@ -26,6 +26,12 @@ data_roots_sync_from_peer_test_() ->
     ar_test_node:test_with_all_nodes_mocked(data_roots_sync_mocks(),
         fun test_data_roots_sync_from_peer/0).
 
+%% Data roots stored with sizes and offsets that do not match the transaction
+%% paths are removed by the verification process and synced again from a peer.
+data_roots_verification_resyncs_mismatching_entries_test_() ->
+    ar_test_node:test_with_all_nodes_mocked(data_roots_sync_mocks(),
+        fun test_data_roots_verification_resyncs_mismatching_entries/0).
+
 %% Data roots pushed with HTTP: GET /data_roots from miner, POST /data_roots to peer; assert metadata via GET.
 data_roots_http_post_test_() ->
     ar_test_node:test_with_all_nodes_mocked(data_roots_sync_mocks(),
@@ -125,6 +131,45 @@ test_data_roots_sync_from_peer() ->
             end,
         Blocks
     ).
+
+test_data_roots_verification_resyncs_mismatching_entries() ->
+    Wallet = {_, Pub} = ar_wallet:new(),
+    [B0] = ar_weave:init([{ar_wallet:to_address(Pub),
+                           ?AR(2_000_000_000_000_000), <<>>}]),
+    start_main_and_peer_then_disconnect(peer1, B0),
+    {B, _} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
+    %% Mine enough blocks for B to fall below the disk pool threshold, so that
+    %% data roots syncing covers it.
+    mine_empty_blocks_on_peer_after(peer1, B, 11),
+    join_main_on_peer1(B#block.height + 11, true),
+    ok = ar_test_await:data_roots_available(main, B),
+    {ok, PeerDataRoots} = ar_test_await:http_data_roots(peer1, B),
+    BlockStart = block_start(B),
+    ?assert(BlockStart < ar_test_node:remote_call(main, ar_disk_pool,
+                                                  get_threshold, [])),
+    %% Replace the stored data roots of B on main with a first entry that
+    %% starts one byte later and is one byte shorter.
+    {ok, {TXRoot, BlockSize, [{DataRoot, TXSize, TXStart, TXPath} | Entries]}} =
+        ar_test_node:remote_call(main, ar_data_roots, get_block, [BlockStart]),
+    Forged = [{DataRoot, TXSize - 1, TXStart + 1, TXPath} | Entries],
+    {ok, _} = ar_test_node:remote_call(main, ar_data_roots, remove_range,
+            [BlockStart, BlockStart + BlockSize, ?DEFAULT_MODULE]),
+    {ok, _} = ar_test_node:remote_call(main, ar_data_roots, store_block,
+            [BlockStart, BlockSize, TXRoot, Forged, ?DEFAULT_MODULE]),
+    %% The verification runs while data roots syncing is enabled. It keeps a
+    %% copy of the removed entries, and syncing fetches them again.
+    ok = ar_test_await:until(mismatching_data_roots_removed,
+        fun() ->
+            ar_test_node:remote_call(main, ar_data_roots, get_removed_block,
+                                     [BlockStart, ?DEFAULT_MODULE])
+                == {ok, {TXRoot, BlockSize, Forged}}
+        end, 60_000),
+    ok = ar_test_await:until(mismatching_data_roots_resynced,
+        fun() ->
+            ar_test_node:remote_call(main, ar_data_roots, verify_stored_block,
+                                     [BlockStart, ?DEFAULT_MODULE]) == ok
+        end, 60_000),
+    ?assertEqual({ok, PeerDataRoots}, ar_test_await:http_data_roots(main, B)).
 
 test_data_roots_http_post() ->
     Wallet = {_, Pub} = ar_wallet:new(),

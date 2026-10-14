@@ -32,6 +32,9 @@
          id/2,
          index_key/3,
          get_block/1,
+         verify_stored_block/2,
+         verify_stored_blocks/4,
+         get_removed_block/2,
          validate_data_roots/4,
          validate_data_roots/5,
          are_synced/2,
@@ -52,6 +55,12 @@
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+%% The prefix of the migrations index keys under which remove_block/3 keeps the
+%% removed entries of a block.
+-define(REMOVED_BLOCK_KEY_PREFIX, <<"data_root_verification_removed_block">>).
+%% Each store finishes its pending removal before starting another batch.
+-define(PENDING_REMOVAL_KEY, <<"data_root_verification_pending_removal">>).
 
 -type data_root_entry() :: {DataRoot :: binary(), TXSize :: non_neg_integer(),
                             TXStartOffset :: non_neg_integer(), TXPath :: binary()}.
@@ -199,25 +208,275 @@ do_get_block(Offset, {BlockStart, BlockEnd, TXRoot}) ->
         {ok, Bin} ->
             {TXRoot2, BlockSize, DataRootIDs} = binary_to_term(Bin, [safe]),
             true = TXRoot2 == TXRoot,
-            DataRootEntriesLists = sets:fold(
-                                     fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
-                                             %% List of lists is intended. We'll keep one result list per key and
-                                             %% flatten once after the fold.
-                                             [get_all_in_range(DataRoot, TXSize, BlockStart, BlockEnd,
-                                                               ?DEFAULT_MODULE) | Acc]
-                                     end,
-                                     [],
-                                     DataRootIDs
-                                    ),
-            DataRootEntries = lists:append(DataRootEntriesLists),
-            SortedDataRootEntries = lists:sort(
-                                      fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
-                                          {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
-                                              TXStart1 < TXStart2
-                                      end,
-                                      DataRootEntries
-                                     ),
-            {ok, {TXRoot, BlockSize, SortedDataRootEntries}}
+            case get_block_entries(BlockStart, BlockEnd, DataRootIDs,
+                                   ?DEFAULT_MODULE) of
+                {ok, Entries} ->
+                    {ok, {TXRoot, BlockSize, Entries}};
+                Error ->
+                    Error
+            end
+    end.
+
+%% @doc Check the data root entries stored for the block starting at
+%% BlockStart against its transaction paths, the way validate_data_roots/4
+%% checks entries received from a peer. Return ok, not_found,
+%% {invalid, Reason} if the entries do not match, or {error, Reason} if they
+%% could not be read.
+verify_stored_block(BlockStart, StoreID) ->
+    maybe
+        {ok, Bin} ?= get_keys(BlockStart, StoreID),
+        {TXRoot, BlockSize, DataRootIDs} = binary_to_term(Bin, [safe]),
+        {ok, Entries} ?= get_block_entries(BlockStart, BlockStart + BlockSize,
+                                           DataRootIDs, StoreID),
+        case verify_data_root_entries(Entries, TXRoot, BlockStart, BlockSize,
+                                      0, 0) of
+            ok ->
+                ok;
+            {error, Reason} ->
+                {invalid, Reason}
+        end
+    end.
+
+%% @doc Check up to Count stored blocks starting at or after Cursor and
+%% before End with verify_stored_block/2. Remove the entries of the blocks
+%% whose sizes and start offsets do not match their transaction paths, so that
+%% data root syncing fetches them again, and keep the entries of blocks that
+%% fail for another reason. Return {more | done, NextCursor, Checked,
+%% Mismatches}, where Mismatches lists {BlockStart, BlockEnd, Reason,
+%% removed | kept}, or {error, Reason} if no block could be checked.
+verify_stored_blocks(Cursor, _End, 0, _StoreID) ->
+    {more, Cursor, 0, []};
+verify_stored_blocks(Cursor, End, Count, StoreID) ->
+    case resume_block_removal(StoreID) of
+        none ->
+            verify_stored_blocks(Cursor, End, Count, StoreID, 0, []);
+        {ok, BlockStart, BlockEnd} ->
+            Mismatch = {BlockStart, BlockEnd, invalid_tx_start_offset, removed},
+            verify_stored_blocks(Cursor, End, Count, StoreID, 1, [Mismatch]);
+        {error, _} = Error ->
+            Error
+    end.
+
+verify_stored_blocks(Cursor, _End, Count, _StoreID, Checked, Mismatches)
+        when Checked == Count ->
+    {more, Cursor, Checked, lists:reverse(Mismatches)};
+verify_stored_blocks(Cursor, End, Count, StoreID, Checked, Mismatches) ->
+    case ar_kv:get_next(keys_db(StoreID), << Cursor:?OFFSET_KEY_BITSIZE >>) of
+        {ok, << BlockStart:?OFFSET_KEY_BITSIZE >>, _Bin}
+                when BlockStart >= End ->
+            {done, BlockStart, Checked, lists:reverse(Mismatches)};
+        none ->
+            {done, Cursor, Checked, lists:reverse(Mismatches)};
+        {ok, << BlockStart:?OFFSET_KEY_BITSIZE >>, Bin} ->
+            {_TXRoot, BlockSize, _DataRootIDs} = binary_to_term(Bin, [safe]),
+            BlockEnd = BlockStart + BlockSize,
+            case verify_and_remove_stored_block(BlockStart, BlockEnd,
+                                                StoreID) of
+                ok ->
+                    verify_stored_blocks(BlockStart + 1, End, Count, StoreID,
+                                         Checked + 1, Mismatches);
+                {Action, Reason} when Action == removed; Action == kept ->
+                    verify_stored_blocks(BlockStart + 1, End, Count, StoreID,
+                                         Checked + 1,
+                                         [{BlockStart, BlockEnd, Reason,
+                                           Action} | Mismatches]);
+                {error, _} = Error when Checked == 0 ->
+                    Error;
+                {error, _} ->
+                    %% Report the progress made so far. The next call starts
+                    %% at this block and returns the error.
+                    {more, BlockStart, Checked, lists:reverse(Mismatches)}
+            end;
+        {error, _} = Error when Checked == 0 ->
+            Error;
+        {error, _} ->
+            {more, Cursor, Checked, lists:reverse(Mismatches)}
+    end.
+
+%% @doc Remove the entries of the given stored block if their sizes and start
+%% offsets do not match its transaction paths, keeping a copy in the migrations
+%% index. Return ok, {removed, Reason}, {kept, Reason} or {error, Reason}.
+%%
+%% Peers could only make the node store entries whose sizes and start offsets
+%% disagree with otherwise valid paths (invalid_tx_start_offset): every other
+%% mismatch was already rejected when the entries were received, so entries
+%% failing for another reason are kept for an operator to look into.
+verify_and_remove_stored_block(BlockStart, BlockEnd, StoreID) ->
+    case verify_stored_block(BlockStart, StoreID) of
+        {invalid, invalid_tx_start_offset} ->
+            remove_block(BlockStart, BlockEnd, StoreID);
+        {invalid, Reason} ->
+            {kept, Reason};
+        {error, _} = Error ->
+            Error;
+        _ ->
+            ok
+    end.
+
+%% @doc Back up a block's entries and journal their removal before deleting them.
+remove_block(BlockStart, BlockEnd, StoreID) ->
+    maybe
+        {ok, Bin} ?= get_keys(BlockStart, StoreID),
+        {TXRoot, BlockSize, DataRootIDs} = binary_to_term(Bin, [safe]),
+        {ok, Entries} ?= get_block_entries(BlockStart, BlockEnd, DataRootIDs,
+                                           StoreID),
+        ok ?= ar_kv:put(ar_data_sync:migration_db(StoreID),
+                        removed_block_key(BlockStart),
+                        term_to_binary({TXRoot, BlockSize, Entries})),
+        Pending = {entries, BlockStart, BlockEnd, Bin},
+        ok ?= write_pending_removal(Pending, StoreID),
+        {ok, BlockStart, BlockEnd} ?= do_remove_block(Pending, StoreID),
+        {removed, invalid_tx_start_offset}
+    else
+        not_found ->
+            {error, not_found};
+        {error, _} = Error ->
+            Error
+    end.
+
+%% @doc Resume an interrupted removal from its saved entries and phase. Name
+%% the block in the error: verification cannot go on until the removal ends.
+resume_block_removal(StoreID) ->
+    case ar_kv:get(ar_data_sync:migration_db(StoreID), ?PENDING_REMOVAL_KEY) of
+        not_found ->
+            none;
+        {ok, Bin} ->
+            Pending = binary_to_term(Bin, [safe]),
+            case do_remove_block(Pending, StoreID) of
+                {error, Reason} ->
+                    {error, {pending_removal, element(2, Pending), Reason}};
+                Reply ->
+                    Reply
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+do_remove_block({entries, BlockStart, BlockEnd, BlockKey}, StoreID) ->
+    maybe
+        {ok, Entries} ?= get_pending_entries(BlockStart, BlockEnd, BlockKey,
+                                             StoreID),
+        %% Keep the block key until every entry is gone so syncing skips it.
+        %% Use exact keys: a neighboring block's forged start may be in this
+        %% block's range, even though its proven end belongs to its own block.
+        ok ?= remove_entries(Entries, StoreID),
+        Pending = {block_key, BlockStart, BlockEnd, BlockKey},
+        ok ?= write_pending_removal(Pending, StoreID),
+        do_remove_block(Pending, StoreID)
+    end;
+do_remove_block({block_key, BlockStart, BlockEnd, BlockKey}, StoreID) ->
+    maybe
+        %% Once the key is deleted, syncing may store fresh entries. A retry
+        %% must not delete entries again. Preserve a changed block key too.
+        ok ?= remove_block_key(BlockStart, BlockKey, StoreID),
+        ok ?= ar_kv:delete(ar_data_sync:migration_db(StoreID),
+                           ?PENDING_REMOVAL_KEY),
+        {ok, BlockStart, BlockEnd}
+    end.
+
+%% @doc Return the entries of a pending removal from its backup, or read them
+%% again, restoring the backup, if it is gone and the journaled block key is
+%% still stored: the key lists the entries the removal started from.
+get_pending_entries(BlockStart, BlockEnd, BlockKey, StoreID) ->
+    case get_removed_block(BlockStart, StoreID) of
+        {ok, {_TXRoot, _BlockSize, Entries}} ->
+            {ok, Entries};
+        not_found ->
+            case get_keys(BlockStart, StoreID) of
+                {ok, BlockKey} ->
+                    restore_removal_backup(BlockStart, BlockEnd, BlockKey,
+                                           StoreID);
+                {error, _} = Error ->
+                    Error;
+                _ ->
+                    {error, missing_removal_backup}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+restore_removal_backup(BlockStart, BlockEnd, BlockKey, StoreID) ->
+    {TXRoot, BlockSize, DataRootIDs} = binary_to_term(BlockKey, [safe]),
+    maybe
+        {ok, Entries} ?= get_block_entries(BlockStart, BlockEnd, DataRootIDs,
+                                           StoreID),
+        ok ?= ar_kv:put(ar_data_sync:migration_db(StoreID),
+                        removed_block_key(BlockStart),
+                        term_to_binary({TXRoot, BlockSize, Entries})),
+        {ok, Entries}
+    end.
+
+write_pending_removal(Pending, StoreID) ->
+    ar_kv:put(ar_data_sync:migration_db(StoreID), ?PENDING_REMOVAL_KEY,
+              term_to_binary(Pending)).
+
+remove_block_key(BlockStart, BlockKey, StoreID) ->
+    case get_keys(BlockStart, StoreID) of
+        {ok, BlockKey} ->
+            ar_kv:delete(keys_db(StoreID), << BlockStart:?OFFSET_KEY_BITSIZE >>);
+        {error, _} = Error ->
+            Error;
+        _ ->
+            ok
+    end.
+
+remove_entries([], _StoreID) ->
+    ok;
+remove_entries([{DataRoot, TXSize, TXStart, _TXPath} | Entries], StoreID) ->
+    case ar_kv:delete(index_db(StoreID),
+                      index_key(DataRoot, TXSize, TXStart)) of
+        ok ->
+            remove_entries(Entries, StoreID);
+        Error ->
+            Error
+    end.
+
+removed_block_key(BlockStart) ->
+    << ?REMOVED_BLOCK_KEY_PREFIX/binary, BlockStart:?OFFSET_KEY_BITSIZE >>.
+
+%% @doc Return the entries remove_block/3 copied for the block starting at
+%% BlockStart, as {ok, {TXRoot, BlockSize, Entries}}, or not_found.
+get_removed_block(BlockStart, StoreID) ->
+    case ar_kv:get(ar_data_sync:migration_db(StoreID),
+                   removed_block_key(BlockStart)) of
+        {ok, Bin} ->
+            {ok, binary_to_term(Bin, [safe])};
+        Reply ->
+            Reply
+    end.
+
+%% @doc Return the data root entries of the given IDs ending after BlockStart
+%% and at or before BlockEnd, sorted by their end offsets, or {error, Reason}
+%% if they could not be read. The end offsets, unlike the start offsets, are
+%% proven by the transaction paths, so entries stored by earlier releases with
+%% start offsets out of order or before the block are read too.
+get_block_entries(BlockStart, BlockEnd, DataRootIDs, StoreID) ->
+    Read = sets:fold(
+             fun(_DataRootID, {error, _} = Error) ->
+                     Error;
+                (<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
+                 {ok, Acc}) ->
+                     case read_entries_in_range(DataRoot, TXSize,
+                                                max(0, BlockStart - TXSize + 1),
+                                                BlockEnd - TXSize + 1,
+                                                StoreID) of
+                         {ok, Entries} ->
+                             {ok, Entries ++ Acc};
+                         Error ->
+                             Error
+                     end
+             end,
+             {ok, []},
+             DataRootIDs),
+    case Read of
+        {ok, Entries} ->
+            {ok, lists:sort(
+                   fun({_, TXSize1, TXStart1, _}, {_, TXSize2, TXStart2, _}) ->
+                           TXStart1 + TXSize1 < TXStart2 + TXSize2
+                   end,
+                   Entries)};
+        Error ->
+            Error
     end.
 
 %% @doc Validate the given data roots against the local block index.
@@ -456,9 +715,20 @@ remove(DataRootID, Start, End, StoreID) ->
     end.
 
 %% @doc Get all the matching data root tuples matching DataRoom in the provided range
-get_all_in_range(_DataRoot, _TXSize, Start, Cursor, _StoreID) when Cursor =< Start ->
-    [];
 get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
+    case read_entries_in_range(DataRoot, TXSize, Start, Cursor, StoreID) of
+        {ok, Entries} ->
+            Entries;
+        {error, _} ->
+            []
+    end.
+
+%% @doc Like get_all_in_range/5, but return {ok, Entries} or {error, Reason}
+%% instead of hiding a read error behind an empty list.
+read_entries_in_range(_DataRoot, _TXSize, Start, Cursor, _StoreID)
+        when Cursor =< Start ->
+    {ok, []};
+read_entries_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
     StartIndexKey = index_key(DataRoot, TXSize, Start),
     EndIndexKey = index_key(DataRoot, TXSize, Cursor - 1),
     case ar_kv:get_range(index_db(StoreID), StartIndexKey, EndIndexKey) of
@@ -475,15 +745,15 @@ get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
                                 [],
                                 Range
                                ),
-            lists:sort(
-              fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
-                  {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
-                      TXStart1 > TXStart2
-              end,
-              DataRootEntries
-             );
-        _ ->
-            []
+            {ok, lists:sort(
+                   fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
+                       {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
+                           TXStart1 > TXStart2
+                   end,
+                   DataRootEntries
+                  )};
+        {error, _} = Error ->
+            Error
     end.
 
 %%%===================================================================
@@ -515,7 +785,9 @@ verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | DataRootEn
             case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize, TXPath) of
                 false ->
                     {error, invalid_tx_path};
-                {DataRoot, ExpectedTXStartOffset, TXEndOffset} ->
+                {DataRoot, ExpectedTXStartOffset, TXEndOffset}
+                        when TXStartOffset - BlockStart
+                            == ExpectedTXStartOffset ->
                     PaddedTXSize = get_padded_size(TXSize, BlockStart),
                     PaddedEndOffset = get_padded_size(TXEndOffset, BlockStart),
                     verify_data_root_entries(
@@ -526,6 +798,12 @@ verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | DataRootEn
                       PaddedEndOffset,
                       Total + PaddedTXSize
                      );
+                {DataRoot, ExpectedTXStartOffset, TXEndOffset} ->
+                    %% The path proves where the transaction ends and, through
+                    %% the previous entry, where it starts. A size and start
+                    %% offset that only add up to the right end would index
+                    %% the transaction under the wrong size.
+                    {error, invalid_tx_start_offset};
                 _ ->
                     {error, invalid_tx_path}
             end
@@ -815,6 +1093,218 @@ validate_data_roots_rejects_invalid_tx_path_test() ->
       end
      ).
 
+%% A size and start offset that keep the end offset the path proves, and the
+%% block total, but split the transactions differently.
+validate_data_roots_rejects_shifted_tx_start_offset_test() ->
+    BlockStart = 0,
+    Offset = 1,
+    {TXRoot, BlockSize, [{DataRoot1, 10, 0, TXPath1},
+            {DataRoot2, 20, 10, TXPath2}]} =
+        make_valid_data_root_entries(BlockStart, [10, 20]),
+    ShiftedEntries = [{DataRoot1, 5, 5, TXPath1}, {DataRoot2, 25, 5, TXPath2}],
+    with_mocked_block_bounds(
+      BlockStart,
+      BlockStart + BlockSize,
+      TXRoot,
+      fun() ->
+              ?assertEqual(
+                 {error, invalid_tx_start_offset},
+                 validate_data_roots(TXRoot, BlockSize, ShiftedEntries, Offset)
+                )
+      end
+     ).
+
+%% The data doctor's check of stored blocks accepts entries built from the
+%% block and reports entries stored with a shifted split.
+verify_stored_block_test_() ->
+    {timeout, 30, fun test_verify_stored_block/0}.
+
+test_verify_stored_block() ->
+    with_test_index_and_keys_db(
+      fun(StoreID) ->
+              {TXRoot, BlockSize, Entries} =
+                  make_valid_data_root_entries(0, [10, 20, 30]),
+              [{DataRoot1, 10, 0, TXPath1}, {DataRoot2, 20, 10, TXPath2},
+               {DataRoot3, 30, 30, TXPath3}] = Entries,
+              {ok, _} = store_block(0, BlockSize, TXRoot, Entries, StoreID),
+              ?assertEqual(ok, verify_stored_block(0, StoreID)),
+              %% The same block stored again at another offset, with the first
+              %% transaction shrunk and the last one grown by the same amount.
+              Start = 1000,
+              Shifted = fun(S) ->
+                  [{DataRoot1, 5, S + 5, TXPath1},
+                   {DataRoot2, 20, S + 10, TXPath2},
+                   {DataRoot3, 35, S + 25, TXPath3}]
+              end,
+              {ok, _} = store_block(Start, BlockSize, TXRoot, Shifted(Start),
+                                    StoreID),
+              ?assertEqual({invalid, invalid_tx_start_offset},
+                           verify_stored_block(Start, StoreID)),
+              ?assertEqual(not_found, verify_stored_block(2000, StoreID)),
+              %% Check the stored blocks one at a time, below the offset of a
+              %% third block, which is left unchecked.
+              {ok, _} = store_block(2000, BlockSize, TXRoot, Shifted(2000),
+                                    StoreID),
+              ?assertEqual({more, 1, 1, []},
+                           verify_stored_blocks(0, 2000, 1, StoreID)),
+              ?assertEqual({more, Start + 1, 1,
+                            [{Start, Start + BlockSize,
+                              invalid_tx_start_offset, removed}]},
+                           verify_stored_blocks(1, 2000, 1, StoreID)),
+              ?assertEqual({done, 2000, 0, []},
+                           verify_stored_blocks(Start + 1, 2000, 1, StoreID)),
+              %% The mismatching block is removed, with a copy kept in the
+              %% migrations index, and the others are kept.
+              ?assertEqual(ok, verify_stored_block(0, StoreID)),
+              ?assertEqual(not_found, verify_stored_block(Start, StoreID)),
+              ?assertEqual({ok, {TXRoot, BlockSize, Shifted(Start)}},
+                           get_removed_block(Start, StoreID)),
+              ?assertEqual(not_found, get_removed_block(0, StoreID)),
+              ?assertEqual({ok, []}, read_entries_in_range(DataRoot1, 5, Start,
+                                                          Start + BlockSize,
+                                                          StoreID)),
+              ?assertEqual({invalid, invalid_tx_start_offset},
+                           verify_stored_block(2000, StoreID)),
+              ?assertEqual({done, 2000 + 1, 1,
+                            [{2000, 2000 + BlockSize,
+                              invalid_tx_start_offset, removed}]},
+                           verify_stored_blocks(2000, 10000, 10, StoreID)),
+              %% Entries failing for another reason, here a missing first
+              %% transaction, are kept.
+              Missing = [{DataRoot2, 20, 3000 + 10, TXPath2},
+                         {DataRoot3, 30, 3000 + 30, TXPath3}],
+              {ok, _} = store_block(3000, BlockSize, TXRoot, Missing, StoreID),
+              ?assertMatch({done, _, 1, [{3000, _, invalid_tx_path, kept}]},
+                           verify_stored_blocks(3000, 10000, 10, StoreID)),
+              ?assertMatch({invalid, invalid_tx_path},
+                           verify_stored_block(3000, StoreID))
+      end).
+
+%% Shifted entries the old validation accepted, in the order they were sent,
+%% are removed even when their start offsets are out of transaction order or
+%% before the block.
+verify_stored_blocks_removes_unordered_shifted_entries_test_() ->
+    {timeout, 30,
+     fun test_verify_stored_blocks_removes_unordered_shifted_entries/0}.
+
+test_verify_stored_blocks_removes_unordered_shifted_entries() ->
+    with_test_index_and_keys_db(
+      fun(StoreID) ->
+              {TXRoot, BlockSize, Entries} =
+                  make_valid_data_root_entries(0, [10, 20, 30]),
+              [{DataRoot1, 10, 0, TXPath1}, {DataRoot2, 20, 10, TXPath2},
+               {DataRoot3, 30, 30, TXPath3}] = Entries,
+              %% The second transaction starts before the first one.
+              Unordered = fun(S) ->
+                  [{DataRoot1, 1, S + 9, TXPath1},
+                   {DataRoot2, 29, S + 1, TXPath2},
+                   {DataRoot3, 30, S + 30, TXPath3}]
+              end,
+              %% The first transaction starts before the block.
+              BeforeBlock = fun(S) ->
+                  [{DataRoot1, 15, S - 5, TXPath1},
+                   {DataRoot2, 15, S + 15, TXPath2},
+                   {DataRoot3, 30, S + 30, TXPath3}]
+              end,
+              lists:foreach(
+                fun({Start, Shifted}) ->
+                        ShiftedEntries = Shifted(Start),
+                        {ok, _} = store_block(Start, BlockSize, TXRoot,
+                                              ShiftedEntries, StoreID),
+                        ?assertEqual({invalid, invalid_tx_start_offset},
+                                     verify_stored_block(Start, StoreID)),
+                        ?assertEqual({done, Start + 1, 1,
+                                      [{Start, Start + BlockSize,
+                                        invalid_tx_start_offset, removed}]},
+                                     verify_stored_blocks(Start, Start + 1, 10,
+                                                          StoreID)),
+                        ?assertEqual(not_found,
+                                     verify_stored_block(Start, StoreID)),
+                        ?assertEqual([],
+                                     [Entry || {DataRoot, TXSize, TXStart, _}
+                                                   = Entry <- ShiftedEntries,
+                                               ar_kv:get(index_db(StoreID),
+                                                         index_key(DataRoot,
+                                                                   TXSize,
+                                                                   TXStart))
+                                                   /= not_found])
+                end,
+                [{1000, Unordered}, {2000, BeforeBlock}])
+      end).
+
+%% A removal that fails halfway is resumed before data roots syncing can retry.
+verify_stored_blocks_failed_removal_resyncs_test_() ->
+    {timeout, 30, fun test_verify_stored_blocks_failed_removal_resyncs/0}.
+
+test_verify_stored_blocks_failed_removal_resyncs() ->
+    with_test_index_and_keys_db(
+      fun(StoreID) ->
+              {TXRoot, BlockSize, Entries} =
+                  make_valid_data_root_entries(0, [10, 20, 30]),
+              [{DataRoot1, 10, 0, TXPath1}, {DataRoot2, 20, 10, TXPath2},
+               {DataRoot3, 30, 30, TXPath3}] = Entries,
+              Start = 1000,
+              End = Start + BlockSize,
+              Shifted = [{DataRoot1, 5, Start + 5, TXPath1},
+                         {DataRoot2, 20, Start + 10, TXPath2},
+                         {DataRoot3, 35, Start + 25, TXPath3}],
+              {ok, _} = store_block(Start, BlockSize, TXRoot, Shifted, StoreID),
+              IndexDB = index_db(StoreID),
+              FailingKey = index_key(DataRoot2, 20, Start + 10),
+              Self = self(),
+              ok = meck:new(ar_kv, [passthrough]),
+              try
+                  meck:expect(ar_kv, delete,
+                      fun(DB, Key) when DB == IndexDB, Key == FailingKey ->
+                              Self ! {synced_while_removing,
+                                      are_synced(Start, End, TXRoot, StoreID)},
+                              {error, injected};
+                         (DB, Key) ->
+                              meck:passthrough([DB, Key])
+                      end),
+                  ?assertEqual({error, injected},
+                               verify_stored_blocks(Start, End, 10, StoreID))
+              after
+                  ok = meck:unload(ar_kv)
+              end,
+              %% The block key blocks syncing until the pending removal ends.
+              ?assertEqual({synced_while_removing, true},
+                           receive {synced_while_removing, _} = M -> M
+                           after 0 -> timeout end),
+              ?assertEqual(true, are_synced(Start, End, TXRoot, StoreID)),
+              ?assertEqual({ok, {TXRoot, BlockSize, Shifted}},
+                           get_removed_block(Start, StoreID)),
+              ?assertMatch({done, _, 1, [{Start, End, _, removed}]},
+                           verify_stored_blocks(Start, End, 10, StoreID)),
+              ?assertEqual(false, are_synced(Start, End, TXRoot, StoreID)),
+              ?assertEqual(not_found, get_entry(id(DataRoot3, 35), StoreID)),
+              Synced = [{DataRoot1, 10, Start, TXPath1},
+                        {DataRoot2, 20, Start + 10, TXPath2},
+                        {DataRoot3, 30, Start + 30, TXPath3}],
+              {ok, _} = store_block(Start, BlockSize, TXRoot, Synced, StoreID),
+              ?assertEqual(true, are_synced(Start, End, TXRoot, StoreID)),
+              ?assertEqual(ok, verify_stored_block(Start, StoreID))
+      end).
+
+%% Above the strict data split threshold every transaction is padded to whole
+%% chunks, so an entry can be shortened within its last chunk without changing
+%% the padded total. Only the start offset check rejects it.
+verify_padded_entries_test() ->
+    BlockStart = ar_block:strict_data_split_threshold(),
+    {TXRoot, BlockSize, Entries} =
+        make_padded_data_root_entries(BlockStart, [1000, 2000, 0, 300000]),
+    ?assertEqual(4 * ?DATA_CHUNK_SIZE, BlockSize),
+    ?assertMatch([{_, 1000, BlockStart, _},
+                  {_, 2000, _, _},
+                  {_, 300000, _, _}], Entries),
+    ?assertEqual(ok, verify_data_root_entries(Entries, TXRoot, BlockStart,
+                                              BlockSize, 0, 0)),
+    [{DataRoot1, 1000, Start1, TXPath1} | Rest] = Entries,
+    Shortened = [{DataRoot1, 999, Start1 + 1, TXPath1} | Rest],
+    ?assertEqual({error, invalid_tx_start_offset},
+                 verify_data_root_entries(Shortened, TXRoot, BlockStart,
+                                          BlockSize, 0, 0)).
+
 validate_data_roots_rejects_invalid_zero_tx_size_test() ->
     BlockStart = 0,
     Offset = 1,
@@ -882,6 +1372,31 @@ with_test_index_db(Fun) ->
         ok = ar_kv:test_destroy(DBName)
     end.
 
+with_test_index_and_keys_db(Fun) ->
+    with_test_index_db(
+      fun(StoreID) ->
+              {ar_data_roots_test, Unique} = StoreID,
+              KeysDBName = "ar_data_roots_test_keys_" ++ Unique,
+              MigrationDBName = "ar_data_roots_test_migrations_" ++ Unique,
+              ok = ar_kv:test_destroy(KeysDBName),
+              ok = ar_kv:test_destroy(MigrationDBName),
+              ok = ar_kv:open(#{
+                     path => filename:join(ar_kv:test_db_path(), KeysDBName),
+                     name => keys_db(StoreID) }),
+              ok = ar_kv:open(#{
+                     path => filename:join(ar_kv:test_db_path(),
+                                           MigrationDBName),
+                     name => ar_data_sync:migration_db(StoreID) }),
+              try
+                  Fun(StoreID)
+              after
+                  _ = ar_kv:test_close(keys_db(StoreID)),
+                  _ = ar_kv:test_close(ar_data_sync:migration_db(StoreID)),
+                  ok = ar_kv:test_destroy(KeysDBName),
+                  ok = ar_kv:test_destroy(MigrationDBName)
+              end
+      end).
+
 ensure_test_kv_started() ->
     case ar_kv_sup:start_link() of
         {ok, _} ->
@@ -905,6 +1420,26 @@ with_mocked_block_bounds(BlockStart, BlockEnd, TXRoot, Fun) ->
     after
         ok = meck:unload(ar_block_index)
     end.
+
+%% @doc Build the data root entries of a block placed after the 2.5 fork, where
+%% each transaction is followed by a padding leaf up to the next chunk
+%% boundary, the way ar_block:generate_size_tagged_list_from_txs/2 builds it.
+make_padded_data_root_entries(BlockStart, TXSizes) ->
+    {SizeTaggedTXs, _} =
+        lists:foldl(
+          fun(0, {Acc, End}) ->
+                  {[{{dummy, << End:256 >>}, End} | Acc], End};
+             (TXSize, {Acc, Start}) ->
+                  End = Start + TXSize,
+                  PaddedEnd = ar_poa:get_padded_offset(End, 0),
+                  {[{{padding, ?PADDING_NODE_DATA_ROOT}, PaddedEnd},
+                    {{dummy, << End:256 >>}, End} | Acc], PaddedEnd}
+          end,
+          {[], 0},
+          TXSizes),
+    {TXRoot, BlockSize, Entries} =
+        build_block_data_root_entries(BlockStart, lists:reverse(SizeTaggedTXs)),
+    {TXRoot, BlockSize, lists:reverse(Entries)}.
 
 make_valid_data_root_entries(BlockStart, TXSizes) ->
     SizeTaggedTXs =
