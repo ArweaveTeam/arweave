@@ -3,6 +3,10 @@
 %% The peer queue holds about four seconds of the peer's goodput.
 -define(QUEUE_TARGET_DURATION_MS, 4000).
 
+%% A peer's missed fetches count toward its load until this many ticks after
+%% the tick they happened in, one minute in production.
+-define(MISS_WINDOW_TICKS, 6).
+
 %%%===================================================================
 %%% Records.
 %%%===================================================================
@@ -30,7 +34,10 @@
     fetching_count = 0,
     %% The goodput of the peer's most recent goodput samples, newest first, up
     %% to GOODPUT_WINDOW_SAMPLES of them; their mean sizes the peer queue.
-    recent_goodputs = []
+    recent_goodputs = [],
+    %% The missed fetches of the peer's most recent ticks, newest first, up to
+    %% MISS_WINDOW_TICKS of them; they count toward the peer's load.
+    recent_misses = []
 }).
 
 -record(state, {
@@ -59,6 +66,10 @@
     task_count = 0,
     concurrency_cap = ?CONCURRENCY_CAP_INITIAL,
     queue_max_length = ?CONCURRENCY_CAP_INITIAL,
+    %% The peer's missed fetches in its miss window, counted as tasks in its
+    %% load, so a peer that answers instantly without the chunk does not look
+    %% idle.
+    misses = 0,
     %% StoreID => #store_load{}.
     stores = #{}
 }).

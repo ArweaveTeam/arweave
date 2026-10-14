@@ -101,14 +101,18 @@
     state = queued :: queued | bound | draining
 }).
 
-%% The worker time that fetch attempts take, split by outcome. The scheduler
-%% sums these values per peer, so that peer concurrency reacts to how much time
-%% failures cost rather than to how many there are.
+%% The worker time that fetch attempts take, split by outcome, and the count
+%% of missed fetches. The scheduler sums these values per peer, so that peer
+%% concurrency reacts to how much time failures cost rather than to how many
+%% there are, and a peer's misses weigh on its load.
 -record(fetch_timing, {
     productive_ms = 0 :: non_neg_integer(),
     reject_ms = 0 :: non_neg_integer(),
     timeout_ms = 0 :: non_neg_integer(),
-    client_error_ms = 0 :: non_neg_integer()
+    client_error_ms = 0 :: non_neg_integer(),
+    %% Fetches that failed without a rejection or a timeout: a 404, another
+    %% error status, or a refused connection.
+    misses = 0 :: non_neg_integer()
 }).
 
 %%%===================================================================

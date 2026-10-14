@@ -33,7 +33,9 @@ all() ->
         drained_peer_still_advances_probe,
         worker_time_pressure_isolated,
         flat_driven_goodput_bounds_concurrency,
-        slow_peer_cap_limited_by_rate
+        slow_peer_cap_limited_by_rate,
+        misses_count_toward_load,
+        trim_returns_newest_excess
     ].
 
 init_per_testcase(_Case, Config) ->
@@ -607,6 +609,40 @@ slow_peer_cap_limited_by_rate(_Config) ->
     %% cap, and each later window doubles it again: 8 * 2^5.
     ?assertEqual(8 * 32,
         lists:last(caps_at_latency({7, 7, 7, 7, 7}, 1000, Ticks))).
+
+misses_count_toward_load(_Config) ->
+    Peer = {8, 8, 8, 8, 8},
+    State = arweave_sync_peer:add_fetch_result(Peer, 0,
+        #fetch_timing{misses = 4}, arweave_sync_peer:new()),
+    %% Four misses count as four tasks against a fresh peer's limit of
+    %% sixteen: a cap of eight and a queue of eight.
+    ?assertEqual(0.25, arweave_sync_peer:load(Peer,
+        arweave_sync_peer:snapshot(#{}, #{}, State))),
+    Ticked = lists:foldl(
+        fun(Tick, Acc) ->
+            arweave_sync_peer:tick([], Tick * ?TICK_INTERVAL_MS, Acc)
+        end,
+        State,
+        lists:seq(1, ?MISS_WINDOW_TICKS)),
+    ?assertEqual(0.25, arweave_sync_peer:load(Peer,
+        arweave_sync_peer:snapshot(#{}, #{}, Ticked))),
+    Expired = arweave_sync_peer:tick([],
+        (?MISS_WINDOW_TICKS + 1) * ?TICK_INTERVAL_MS, Ticked),
+    ?assertEqual(0.0, arweave_sync_peer:load(Peer,
+        arweave_sync_peer:snapshot(#{}, #{}, Expired))).
+
+trim_returns_newest_excess(_Config) ->
+    Peer = {9, 9, 9, 9, 9},
+    Tasks = [#task{offset = N * ?DATA_CHUNK_SIZE, peer = Peer, store_id = store}
+        || N <- lists:seq(1, 10)],
+    Plan = arweave_sync_peer:enqueue_tasks(Peer, Tasks,
+        arweave_sync_peer:snapshot(#{}, #{}, arweave_sync_peer:new())),
+    State = arweave_sync_peer:commit_plan(Plan, arweave_sync_peer:new()),
+    {Trimmed, State2} = arweave_sync_peer:trim_queues(State),
+    %% A peer without measured goodput keeps a queue of eight, the oldest.
+    ?assertEqual(lists:nthtail(8, Tasks), Trimmed),
+    ?assertEqual(lists:sublist(Tasks, 8),
+        arweave_sync_peer:queued_tasks(State2)).
 
 %%====================================================================
 %% Helpers

@@ -822,11 +822,31 @@ tick(State, NowMs) ->
     PeerState = State2#state.peer_state,
     ActivePeers = arweave_sync_peer:active_peers(PeerState),
     PeerState2 = arweave_sync_peer:tick(ActivePeers, NowMs, PeerState),
+    %% Queues longer than their peers now serve give their excess back.
+    {Trimmed, PeerState3} = arweave_sync_peer:trim_queues(PeerState2),
+    State3 = return_tasks(Trimmed, State2#state{peer_state = PeerState3}),
     %% Unfinished assignments are also active in the next interval.
-    State2#state{
+    State3#state{
         peer_state = arweave_sync_peer:mark_peers_active(
-            peers_with_work(State2), PeerState2
+            peers_with_work(State3), PeerState3
         )
+    }.
+
+%% @doc Put tasks taken out of peer queues back in their stores' work queues.
+%% A footprint task is dropped instead, because only the footprint's bound
+%% peer can serve its chunk.
+return_tasks(Tasks, State) ->
+    lists:foldl(fun return_task/2, State, Tasks).
+
+return_task(#task{footprint = none} = Task, State) ->
+    State#state{
+        stores = arweave_sync_store:return_bound_task(Task, State#state.stores)
+    };
+return_task(Task, State) ->
+    #state{stores = Stores, footprints = Footprints} = State,
+    State#state{
+        stores = arweave_sync_store:drop_bound_task(Task, Stores),
+        footprints = arweave_sync_footprint:task_completed(Task, Footprints)
     }.
 
 %% @doc Return peers with unfinished chunk or footprint work.
@@ -938,7 +958,7 @@ on_task_fetch_completed(TaskRef, BytesFetched, FetchTiming, State) ->
             },
             case {BytesFetched, Task#task.state} of
                 {0, _} ->
-                    finish_task(Task, State3);
+                    retry_or_finish_task(Task, FetchTiming, State3);
                 {_, fetching} ->
                     %% The store claim stays until the asynchronous write
                     %% finishes. The footprint's entropy slot stays too,
@@ -954,6 +974,35 @@ on_task_fetch_completed(TaskRef, BytesFetched, FetchTiming, State) ->
         not_found ->
             State
     end.
+
+%% @doc Put a task whose fetch failed at its peer back in its store's work
+%% queue without that peer as a source. Finish it instead when the failure was
+%% not the peer's, when no other source is left, or when it is a footprint task,
+%% whose chunk only the footprint's bound peer can serve.
+retry_or_finish_task(#task{ footprint = none } = Task, FetchTiming, State) ->
+    #task{ peer = Peer, sources = Sources, task_ref = TaskRef } = Task,
+    OtherSources = [Source || #task_source{ peer = SourcePeer } = Source
+        <- Sources, SourcePeer =/= Peer],
+    case is_peer_failure(FetchTiming) andalso OtherSources =/= [] of
+        true ->
+            #state{tasks = Tasks, stores = Stores} = State,
+            State#state{
+                tasks = maps:remove(TaskRef, Tasks),
+                stores = arweave_sync_store:retry_task(
+                    Task#task{sources = OtherSources}, Stores)
+            };
+        false ->
+            finish_task(Task, State)
+    end;
+retry_or_finish_task(Task, _FetchTiming, State) ->
+    finish_task(Task, State).
+
+%% @doc Return whether the fetch failed at the peer: a rejection, a timeout, a
+%% client error or a miss. A full chunk cache or a worker crash is not the
+%% peer's failure.
+is_peer_failure(#fetch_timing{reject_ms = RejectMs, timeout_ms = TimeoutMs,
+        client_error_ms = ClientErrorMs, misses = Misses}) ->
+    RejectMs + TimeoutMs + ClientErrorMs + Misses > 0.
 
 %% @doc Release the footprint's entropy slot once the chunk is unpacked.
 on_task_unpacked(TaskRef, State) ->

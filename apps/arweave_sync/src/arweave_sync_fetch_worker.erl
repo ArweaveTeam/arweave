@@ -154,7 +154,7 @@ timed_fetch(Peer, FetchOffset, Packing) ->
             _ ->
                 case is_rejection(Result) of
                     true -> #fetch_timing{reject_ms = ElapsedMs};
-                    false -> #fetch_timing{}
+                    false -> #fetch_timing{misses = 1}
                 end
         end,
     {Result, FetchTiming}.

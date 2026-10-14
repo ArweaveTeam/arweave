@@ -19,6 +19,8 @@ all() ->
         bound_footprint_owner_is_an_active_peer,
         activity_includes_assigned_and_completed_work,
         refreshed_footprint_counts_only_new_sources,
+        failed_fetch_moves_to_other_sources,
+        tick_returns_excess_queued_tasks,
         reservation_binding_claims_only_enqueued_tasks,
         fragmented_partial_intervals_claim_each_request,
         overlapping_partial_intervals_defer_duplicate_request,
@@ -277,6 +279,86 @@ refreshed_footprint_counts_only_new_sources(_Config) ->
             ?assertEqual(#{NewPeer => [store1]},
                 arweave_sync_store:stores_with_room_by_peer(
                     Plan#dispatch_plan.stores))
+        end
+    ).
+
+failed_fetch_moves_to_other_sources(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        [
+            {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end}
+        ],
+        fun() ->
+            Failed = {1, 1, 1, 1, 1},
+            Other = {2, 2, 2, 2, 2},
+            Sources = [#task_source{peer = Failed}, #task_source{peer = Other}],
+            {TaskRef, State} = fetching_state(Failed, Sources),
+            Missed = arweave_sync_scheduler:on_task_fetch_completed(
+                TaskRef, 0, #fetch_timing{misses = 1}, State),
+            ?assertEqual(#{}, Missed#state.tasks),
+            %% The task waits in the store queue again, still claimed, with
+            %% only the other source.
+            Stores = Missed#state.stores,
+            ?assertEqual(1, arweave_sync_store:queued_count(store1, Stores)),
+            ?assertEqual(1,
+                arweave_sync_store:queued_task_count(store1, Stores)),
+            ?assertEqual(1, arweave_sync_store:claimed_chunks(store1, Stores)),
+            Plan = arweave_sync_scheduler:snapshot(Missed),
+            ?assertEqual(#{Other => [store1]},
+                arweave_sync_store:stores_with_room_by_peer(
+                    Plan#dispatch_plan.stores)),
+            %% A failure at the only source drops the task and its claim.
+            {LastRef, LastState} = fetching_state(Failed,
+                [#task_source{peer = Failed}]),
+            Dropped = arweave_sync_scheduler:on_task_fetch_completed(
+                LastRef, 0, #fetch_timing{timeout_ms = 40_000}, LastState),
+            ?assertEqual(0, arweave_sync_store:claimed_chunks(store1,
+                Dropped#state.stores)),
+            %% A full chunk cache is not the peer's failure, so the task
+            %% finishes as before.
+            CacheFull = arweave_sync_scheduler:on_task_fetch_completed(
+                TaskRef, 0, #fetch_timing{}, State),
+            ?assertEqual(0, arweave_sync_store:claimed_chunks(store1,
+                CacheFull#state.stores)),
+            ?assertEqual(0, arweave_sync_store:queued_count(store1,
+                CacheFull#state.stores))
+        end
+    ).
+
+tick_returns_excess_queued_tasks(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        [
+            {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end}
+        ],
+        fun() ->
+            Peer = {3, 3, 3, 3, 3},
+            Footprint = #footprint{
+                store_id = store1, partition = 0, footprint = 1
+            },
+            ByteTasks = [#task{offset = N * ?DATA_CHUNK_SIZE, store_id = store1,
+                sources = [#task_source{peer = Peer}]} || N <- lists:seq(0, 8)],
+            FootprintTask = #task{offset = 100 * ?DATA_CHUNK_SIZE,
+                store_id = store1, footprint = Footprint,
+                sources = [#task_source{peer = Peer, footprint = Footprint}]},
+            Reservation = arweave_sync_footprint:test_reservation(store1,
+                Footprint, [#task_source{peer = Peer, footprint = Footprint,
+                    intervals = arweave_lib_intervals:new()}], Peer, 1, bound),
+            State0 = bound_state(Peer, ByteTasks, FootprintTask,
+                #state{footprints =
+                    arweave_sync_footprint:test_state([Reservation])}),
+            ?assertEqual(10, arweave_sync_store:claimed_chunks(store1,
+                State0#state.stores)),
+            State = arweave_sync_scheduler:tick(State0, 1000),
+            %% A fresh peer keeps a queue of eight. The ninth byte task goes
+            %% back to the store queue with its claim, and the footprint task
+            %% is dropped with its claim and its reservation.
+            Stores = State#state.stores,
+            ?assertEqual(8, length(
+                arweave_sync_peer:queued_tasks(State#state.peer_state))),
+            ?assertEqual(1, arweave_sync_store:queued_count(store1, Stores)),
+            ?assertEqual(9, arweave_sync_store:claimed_chunks(store1, Stores)),
+            ?assertEqual(9,
+                arweave_sync_store:queued_task_count(store1, Stores)),
+            ?assertEqual(#{}, State#state.footprints)
         end
     ).
 
@@ -1776,6 +1858,44 @@ bind_and_start(State, Plan) ->
     arweave_sync_scheduler:start_fetches(
         State, arweave_sync_scheduler:bind_to_peers(Plan)
     ).
+
+%% Return a state in which a task with Sources, claimed for store1, is
+%% fetching from Peer, and the task's reference.
+fetching_state(Peer, Sources) ->
+    Queued = #task{offset = 0, store_id = store1, sources = Sources},
+    {ok, 1, State} = arweave_sync_scheduler:admit_work(store1, Queued,
+        #state{}),
+    Plan = arweave_sync_store:snapshot(#{}, #{}, [], State#state.stores),
+    Plan2 = arweave_sync_store:start_bound_task(Queued,
+        arweave_sync_store:bind_task(Queued, Plan)),
+    TaskRef = make_ref(),
+    Fetching = Queued#task{peer = Peer, task_ref = TaskRef, state = fetching},
+    {TaskRef, State#state{stores = arweave_sync_store:commit_plan(Plan2),
+        tasks = #{TaskRef => Fetching}}}.
+
+%% Return State with ByteTasks admitted for store1 and FootprintTask claimed
+%% for its footprint, all queued on Peer in that order.
+bound_state(Peer, ByteTasks, FootprintTask, State) ->
+    State2 = lists:foldl(
+        fun(Task, Acc) ->
+            {ok, 1, Acc2} = arweave_sync_scheduler:admit_work(store1, Task,
+                Acc),
+            Acc2
+        end,
+        State,
+        ByteTasks),
+    Plan = lists:foldl(fun arweave_sync_store:bind_task/2,
+        arweave_sync_store:snapshot(#{}, #{}, [], State2#state.stores),
+        ByteTasks),
+    Plan2 = arweave_sync_store:enqueue_bound_tasks([FootprintTask], Plan),
+    PeerPlan = arweave_sync_peer:enqueue_tasks(Peer,
+        [Task#task{peer = Peer} || Task <- ByteTasks ++ [FootprintTask]],
+        arweave_sync_peer:snapshot(#{}, #{}, State2#state.peer_state)),
+    State2#state{
+        stores = arweave_sync_store:commit_plan(Plan2),
+        peer_state = arweave_sync_peer:commit_plan(PeerPlan,
+            State2#state.peer_state)
+    }.
 
 %% Build a sync task the way arweave_sync_chunk_picker does - peer-neutral, with the
 %% offering peer as its one source. seed/1 routes each candidate through the

@@ -64,6 +64,7 @@
         admission_headroom/2, claim_limit/2,
         chunks_in_claim/1, claimed_chunks/2,
         admit/3, release_claim/3,
+        return_bound_task/2, retry_task/2, drop_bound_task/2,
         queues_empty/1, queued_task_count/2,
         claims_empty/1,
         replace_sources/4,
@@ -596,6 +597,32 @@ release_claim(StoreID, Offset, States) ->
         claimed_chunks = max(0, State#store_state.claimed_chunks - 1)
     },
     put_state(State2, States).
+
+%% @doc Put a task taken out of a peer queue back in its store's work queue.
+%% The task keeps its claim and still counts as queued.
+return_bound_task(#task{ store_id = StoreID } = Task, States) ->
+    State = get_state(StoreID, States),
+    put_state(enqueue_task(unbound_task(Task), State), States).
+
+%% @doc Put a task whose fetch failed back in its store's work queue, so
+%% another of its sources can serve it. The task keeps its claim.
+retry_task(#task{ store_id = StoreID } = Task, States) ->
+    State = get_state(StoreID, States),
+    State2 = State#store_state{
+        queued_task_count = State#store_state.queued_task_count + 1
+    },
+    put_state(enqueue_task(unbound_task(Task), State2), States).
+
+%% @doc Drop a task taken out of a peer queue and release its claim.
+drop_bound_task(#task{ store_id = StoreID, offset = Offset }, States) ->
+    State = get_state(StoreID, States),
+    State2 = State#store_state{
+        queued_task_count = max(0, State#store_state.queued_task_count - 1)
+    },
+    release_claim(StoreID, Offset, put_state(State2, States)).
+
+unbound_task(Task) ->
+    Task#task{ peer = undefined, task_ref = undefined, state = queued }.
 
 %%%===================================================================
 %%% Tick.

@@ -71,7 +71,7 @@
     has_capacity/3, queue_capacity/2,
     priority/3, compare_priorities/2, best_source/3,
     %% Peer queues.
-    queued_tasks/1, queue_lengths/1, has_queued_tasks/1,
+    queued_tasks/1, queue_lengths/1, has_queued_tasks/1, trim_queues/1,
     %% Fetch results.
     add_fetch_result/4
 ]).
@@ -172,6 +172,7 @@ tick_peer(Peer, NowMs, PeerState) ->
     %% Start the next interval with fresh inputs.
     PeerState2#peer{
         fetch_timing = #fetch_timing{},
+        recent_misses = add_recent_misses(PeerState),
         last_tick = Tick,
         active = false,
         driven = false
@@ -181,6 +182,7 @@ tick_peer(Peer, NowMs, PeerState) ->
 idle_peer(NowMs, PeerState) ->
     PeerState#peer{
         fetch_timing = #fetch_timing{},
+        recent_misses = add_recent_misses(PeerState),
         last_tick = {PeerState#peer.fetched_bytes, NowMs},
         active = false,
         driven = false
@@ -239,6 +241,17 @@ add_recent_goodput(Sample, _FetchingCount,
         #peer{ recent_goodputs = Goodputs } = PeerState) ->
     PeerState#peer{ recent_goodputs = lists:sublist(
         [goodput(Sample) | Goodputs], ?GOODPUT_WINDOW_SAMPLES) }.
+
+%% @doc Add the misses since the previous tick to the peer's miss window.
+add_recent_misses(#peer{ fetch_timing = FetchTiming,
+        recent_misses = Misses }) ->
+    lists:sublist([FetchTiming#fetch_timing.misses | Misses],
+        ?MISS_WINDOW_TICKS).
+
+%% @doc Return the peer's misses in its miss window, including those since the
+%% previous tick.
+misses(#peer{ fetch_timing = FetchTiming, recent_misses = Misses }) ->
+    FetchTiming#fetch_timing.misses + lists:sum(Misses).
 
 %% @doc Return the peer's mean goodput over its last ?GOODPUT_WINDOW_SAMPLES
 %% goodput samples, used to size its queue. The mean smooths over one bursty
@@ -329,7 +342,8 @@ new_peer_plan(#peer{ control = Control } = PeerState) ->
     #peer_plan{
         concurrency_cap = max(?CONCURRENCY_CAP_MIN,
             arweave_sync_peer_cap:cap(Control)),
-        queue_max_length = queue_max_length(recent_goodput(PeerState))
+        queue_max_length = queue_max_length(recent_goodput(PeerState)),
+        misses = misses(PeerState)
     }.
 
 %% @doc Record each peer's interval activity and current fetching count.
@@ -578,10 +592,10 @@ peer_concurrency_cap(#peer_plan{ concurrency_cap = ConcurrencyCap }) ->
 load(Peer, Plan) ->
     peer_load(peer_plan(Peer, Plan)).
 
-peer_load(#peer_plan{ task_count = TaskCount } =
+peer_load(#peer_plan{ task_count = TaskCount, misses = Misses } =
         PeerPlan) ->
     case peer_task_limit(PeerPlan) of
-        Limit when Limit > 0 -> TaskCount / Limit;
+        Limit when Limit > 0 -> (TaskCount + Misses) / Limit;
         _ -> 1.0
     end.
 
@@ -783,6 +797,27 @@ best_source(StoreID, Sources, Plan) ->
 %%% Peer queues.
 %%%===================================================================
 
+%% @doc Take the newest tasks beyond each peer queue's length limit out of the
+%% queue and return them, so that work bound to a peer that slowed down or
+%% stopped answering can move to other peers. Fetches already started stay.
+trim_queues(#state{ peers = Peers } = State) ->
+    {Trimmed, Peers2} = maps:fold(
+        fun(Peer, #peer{ queue = Queue } = PeerState, {TaskAcc, PeerAcc}) ->
+            MaxLength = queue_max_length(recent_goodput(PeerState)),
+            case queue:len(Queue) > MaxLength of
+                true ->
+                    {Kept, Excess} = queue:split(MaxLength, Queue),
+                    {queue:to_list(Excess) ++ TaskAcc,
+                        maps:put(Peer, PeerState#peer{ queue = Kept },
+                            PeerAcc)};
+                false ->
+                    {TaskAcc, PeerAcc}
+            end
+        end,
+        {[], Peers},
+        Peers),
+    {Trimmed, State#state{ peers = Peers2 }}.
+
 %% @doc Return the tasks in every peer queue.
 queued_tasks(#state{ peers = Peers }) ->
     maps:fold(
@@ -831,5 +866,6 @@ merge_fetch_timing(#fetch_timing{} = A, #fetch_timing{} = B) ->
         reject_ms = A#fetch_timing.reject_ms + B#fetch_timing.reject_ms,
         timeout_ms = A#fetch_timing.timeout_ms + B#fetch_timing.timeout_ms,
         client_error_ms = A#fetch_timing.client_error_ms
-            + B#fetch_timing.client_error_ms
+            + B#fetch_timing.client_error_ms,
+        misses = A#fetch_timing.misses + B#fetch_timing.misses
     }.

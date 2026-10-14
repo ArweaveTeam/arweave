@@ -186,7 +186,15 @@ test_404_rates_error_and_does_not_store(_Config) ->
             {error, {ok, {{<<"404">>, <<>>}, [], <<>>, undefined, undefined}}}
         end,
         fun() ->
-            ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
+            TaskRef = {self(), make_ref()},
+            Task = (task(0))#task{task_ref = TaskRef},
+            ?assertEqual(ok, arweave_sync_fetch_worker:run(Task)),
+            receive
+                {'$gen_cast', {task_fetch_completed, TaskRef, 0, Timing}} ->
+                    ?assertEqual(#fetch_timing{misses = 1}, Timing)
+            after 0 ->
+                ?assert(false)
+            end,
             ?assertEqual(
                 0,
                 meck:num_calls(arweave_sync_chunk_writer, store_fetched_chunk, '_')
