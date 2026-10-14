@@ -34,8 +34,16 @@ may_conclude_accumulation_test_() ->
 multi_module_chunk_cache_accounting_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_multi_module_chunk_cache_accounting/0}.
 
-concurrent_duplicate_chunk_counted_once_test_() ->
-    {timeout, ?TEST_NODE_TIMEOUT, fun test_concurrent_duplicate_chunk_counted_once/0}.
+concurrent_duplicate_chunk_stored_once_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT, fun test_concurrent_duplicate_chunk_stored_once/0}.
+
+concurrent_duplicate_chunk_stored_after_failed_write_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT,
+        fun test_concurrent_duplicate_chunk_stored_after_failed_write/0}.
+
+duplicate_chunk_admitted_before_first_write_stored_once_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT,
+        fun test_duplicate_chunk_admitted_before_first_write_stored_once/0}.
 
 %% -------------------------------------------------------------------
 %% Helpers
@@ -402,11 +410,114 @@ parse_disk_pool_chunk(Bin) ->
 
 %% -------------------------------------------------------------------
 %% A chunk submitted again while its first submission is still being
-%% stored should be written to the disk pool once. Every write adds the
-%% chunk to disk_pool_size, which only the removal of the indexed copy
-%% gives back.
+%% stored should be refused as in flight, without being written. A retry
+%% after the first write completes should be accepted without writing the
+%% chunk again. Every write adds the chunk to disk_pool_size, which only
+%% the removal of the indexed copy gives back.
 %% -------------------------------------------------------------------
-test_concurrent_duplicate_chunk_counted_once() ->
+test_concurrent_duplicate_chunk_stored_once() ->
+    JSON = post_tx_and_build_chunk_json(),
+    Test = self(),
+    Calls = atomics:new(1, []),
+    Mocks = [hold_first_put_chunk_data(Test, Calls, passthrough)],
+    ar_test_node:run_with_mocked([main], Mocks, fun() ->
+        post_chunk_async(first_reply, JSON),
+        Writer = receive {holding_first_write, Pid} -> Pid end,
+        ?assertMatch(
+            {ok, {{<<"409">>, _}, _, <<"{\"error\":\"chunk_in_flight\"}">>, _, _}},
+            ar_test_node:post_chunk(main, JSON)),
+        Writer ! release_first_write,
+        receive {first_reply, FirstReply} ->
+            ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, FirstReply)
+        end,
+        ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
+            ar_test_node:post_chunk(main, JSON)),
+        ?assertEqual(1, atomics:get(Calls, 1))
+    end).
+
+%% -------------------------------------------------------------------
+%% When the first submission of a chunk fails to store it, a retry of a
+%% submission refused as in flight should store the chunk.
+%% -------------------------------------------------------------------
+test_concurrent_duplicate_chunk_stored_after_failed_write() ->
+    JSON = post_tx_and_build_chunk_json(),
+    Test = self(),
+    Calls = atomics:new(1, []),
+    Mocks = [hold_first_put_chunk_data(Test, Calls, {error, injected})],
+    ar_test_node:run_with_mocked([main], Mocks, fun() ->
+        post_chunk_async(first_reply, JSON),
+        Writer = receive {holding_first_write, Pid} -> Pid end,
+        ?assertMatch({ok, {{<<"409">>, _}, _, _, _, _}},
+            ar_test_node:post_chunk(main, JSON)),
+        Writer ! release_first_write,
+        receive {first_reply, FirstReply} ->
+            ?assertMatch({ok, {{<<"500">>, _}, _, _, _, _}}, FirstReply)
+        end,
+        ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
+            ar_test_node:post_chunk(main, JSON)),
+        ?assertEqual(2, atomics:get(Calls, 1))
+    end).
+
+%% -------------------------------------------------------------------
+%% A submission admitted before a concurrent submission of the same chunk
+%% stored it, and given the claim only after that, should find the stored
+%% chunk rather than write it again. The data root is confirmed and has
+%% no disk pool state, so each submission would otherwise derive its own
+%% data root timestamp and with it its own disk pool index key.
+%% -------------------------------------------------------------------
+test_duplicate_chunk_admitted_before_first_write_stored_once() ->
+    Addr = ar_test_node:generate_address(main),
+    StorageModules = [{0, 10 * ?PARTITION_SIZE,
+        ar_test_node:storage_module_packing(Addr, 0)}],
+    Wallet = ar_test_data_sync:setup_main_node(
+        #{ addr => Addr, [storage_modules] => StorageModules }),
+    #{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+        ar_test_data_sync:make_fixed_data_tx(
+            Wallet,
+            [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+        ),
+    ar_test_node:assert_post_tx_to_peer(main, TX),
+    ar_test_node:mine(main),
+    ?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
+    {ok, _} = ar_test_await:tx_offset_known(TX#tx.id),
+    %% Simulate the expiry of the disk pool state of the confirmed data root.
+    DataRootID = ar_data_roots:id(DataRoot, ?DATA_CHUNK_SIZE),
+    ar_disk_pool:delete_data_root_state(DataRootID),
+    JSON = build_chunk_json(DataRoot, DataTree, Chunks),
+    Test = self(),
+    Validations = atomics:new(1, []),
+    Writes = atomics:new(1, []),
+    Mocks = [
+        %% Hold the first submission after its admission, before the claim.
+        {ar_poa, validate_data_path,
+            fun(Root, Offset, TXSize, DataPath, Chunk, Peer) ->
+                case atomics:add_get(Validations, 1, 1) of
+                    1 ->
+                        Test ! {holding_first_validation, self()},
+                        receive release_first_validation -> ok end;
+                    _ ->
+                        ok
+                end,
+                meck:passthrough([Root, Offset, TXSize, DataPath, Chunk, Peer])
+            end},
+        {ar_data_sync, put_chunk_data, fun(Key, StoreID, Value) ->
+            atomics:add(Writes, 1, 1),
+            meck:passthrough([Key, StoreID, Value])
+        end}
+    ],
+    ar_test_node:run_with_mocked([main], Mocks, fun() ->
+        post_chunk_async(first_reply, JSON),
+        Validator = receive {holding_first_validation, Pid} -> Pid end,
+        ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
+            ar_test_node:post_chunk(main, JSON)),
+        Validator ! release_first_validation,
+        receive {first_reply, FirstReply} ->
+            ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, FirstReply)
+        end,
+        ?assertEqual(1, atomics:get(Writes, 1))
+    end).
+
+post_tx_and_build_chunk_json() ->
     Wallet = ar_test_data_sync:setup_main_node(),
     #{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
         ar_test_data_sync:make_fixed_data_tx(
@@ -414,38 +525,37 @@ test_concurrent_duplicate_chunk_counted_once() ->
             [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
         ),
     ar_test_node:assert_post_tx_to_peer(main, TX),
+    build_chunk_json(DataRoot, DataTree, Chunks).
+
+build_chunk_json(DataRoot, DataTree, Chunks) ->
     [{_ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
         DataRoot,
         DataTree,
         Chunks,
         #{ proof_offset => end_offset }
     ),
-    JSON = ar_serialize:jsonify(Proof),
+    ar_serialize:jsonify(Proof).
+
+post_chunk_async(Tag, JSON) ->
     Test = self(),
-    Calls = atomics:new(1, []),
-    %% Hold the first submission between its duplicate check and its write.
-    Mocks = [
-        {ar_data_sync, put_chunk_data, fun(Key, StoreID, Value) ->
-            case atomics:add_get(Calls, 1, 1) of
-                1 ->
-                    Test ! {holding_first_write, self()},
-                    receive release_first_write -> ok end;
-                _ ->
-                    ok
-            end,
-            meck:passthrough([Key, StoreID, Value])
-        end}
-    ],
-    ar_test_node:run_with_mocked([main], Mocks, fun() ->
-        spawn_link(fun() ->
-            Test ! {first_reply, ar_test_node:post_chunk(main, JSON)}
-        end),
-        Writer = receive {holding_first_write, Pid} -> Pid end,
-        ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-            ar_test_node:post_chunk(main, JSON)),
-        Writer ! release_first_write,
-        receive {first_reply, FirstReply} ->
-            ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, FirstReply)
-        end,
-        ?assertEqual(1, atomics:get(Calls, 1))
-    end).
+    spawn_link(fun() -> Test ! {Tag, ar_test_node:post_chunk(main, JSON)} end).
+
+%% @doc Mock ar_data_sync:put_chunk_data/3 to hold the first write, between
+%% the duplicate check and the write, until released, and then either write
+%% the chunk or return FirstResult.
+hold_first_put_chunk_data(Test, Calls, FirstResult) ->
+    {ar_data_sync, put_chunk_data, fun(Key, StoreID, Value) ->
+        case atomics:add_get(Calls, 1, 1) of
+            1 ->
+                Test ! {holding_first_write, self()},
+                receive release_first_write -> ok end,
+                case FirstResult of
+                    passthrough ->
+                        meck:passthrough([Key, StoreID, Value]);
+                    _ ->
+                        FirstResult
+                end;
+            _ ->
+                meck:passthrough([Key, StoreID, Value])
+        end
+    end}.

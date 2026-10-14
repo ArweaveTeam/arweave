@@ -2509,6 +2509,8 @@ add_chunk_reply_to_response(Reply, Req) ->
             {400, #{}, jiffy:encode(#{ error => disk_full }), Req};
         {error, failed_to_store_chunk} ->
             {500, #{}, <<>>, Req};
+        {error, chunk_in_flight} ->
+            {409, #{}, jiffy:encode(#{ error => chunk_in_flight }), Req};
         {error, invalid_proof} ->
             {400, #{}, jiffy:encode(#{ error => invalid_proof }), Req}
     end.

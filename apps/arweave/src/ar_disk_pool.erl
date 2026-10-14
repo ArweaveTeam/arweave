@@ -118,15 +118,21 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, Peer) ->
                  },
     DataRootID = ar_data_roots:id(DataRoot, TXSize),
     DataRootEntry = ar_data_roots:get_entry(DataRootID, ?DEFAULT_MODULE),
-    DataRootInDiskPool = get_data_root_state(DataRootID),
     maybe
-        {ok, DiskPoolDataRootValue} ?=
-            check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool),
+        {ok, _} ?= check_admission(Metadata, Offset, DataRootEntry,
+                                   get_data_root_state(DataRootID)),
         {ok, RelativeEndOffset, Validation} ?=
             validate_proof(Metadata, Offset, TXSize, Chunk, Peer),
         DataPathHash = crypto:hash(sha256, DataPath),
         ok ?= with_chunk_claim({DataRootID, DataPathHash}, fun() ->
                   maybe
+                      ok = init_data_root_state(DataRootID, DataRootEntry),
+                      %% Admit the chunk again: a concurrent submission of
+                      %% it may have stored it, changing the data root
+                      %% state, since this one was admitted.
+                      {ok, DiskPoolDataRootValue} ?=
+                          check_admission(Metadata, Offset, DataRootEntry,
+                                          get_data_root_state(DataRootID)),
                       {ok, DiskPoolChunkKey} ?=
                           check_not_already_synced(Metadata, DataRootID, DataRootEntry,
                                                    RelativeEndOffset, DataPathHash,
@@ -207,11 +213,12 @@ validate_proof(Metadata, Offset, TXSize, Chunk, Peer) ->
 
 %% @doc Run Fun while holding the claim on storing the chunk with the given
 %% key, so that concurrent submissions of one chunk store and count it once.
-%% Return ok without running Fun when another process holds the claim.
+%% Return {error, chunk_in_flight} without running Fun when another process
+%% holds the claim.
 with_chunk_claim(Key, Fun) ->
     case claim_chunk(Key) of
         false ->
-            ok;
+            {error, chunk_in_flight};
         true ->
             try
                 Fun()
@@ -240,6 +247,16 @@ claim_chunk(Key) ->
                     end
             end
     end.
+
+%% @doc Give a data root known from the data root index a disk pool state if it
+%% has none, so that concurrent submissions of its chunks key them by the same
+%% timestamp.
+init_data_root_state(DataRootID, {ok, _DataRootEntry}) ->
+    ets:insert_new(ar_disk_pool_data_roots,
+                   {DataRootID, {0, os:system_time(microsecond), sets:new()}}),
+    ok;
+init_data_root_state(_DataRootID, _DataRootEntry) ->
+    ok.
 
 check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
                          DataPathHash, DiskPoolDataRootValue = {_, Timestamp, _}) ->
