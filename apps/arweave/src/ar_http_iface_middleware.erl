@@ -225,29 +225,40 @@ timeout_response(Req) ->
     {503, #{}, jiffy:encode(#{ error => timeout }), Req}.
 
 %% @doc Validate and store POST /data_roots entries under the data roots
-%% semaphore, taken only after the client has sent the whole body.
-store_data_roots(DataRoots, Offset, BlockStart, BlockEnd, Req) ->
-    {TXRoot, BlockSize, DataRootEntries} = DataRoots,
+%% semaphore, taken only after the client has sent the whole body. Look the
+%% block up again here because a reorg may have replaced it during the read.
+store_data_roots(DataRoots, Offset, Req) ->
     case acquire_get_data_roots_semaphore() of
         {error, timeout} ->
             timeout_response(Req);
         ok ->
-            case ar_data_roots:validate_data_roots(
-                    TXRoot, BlockSize, DataRootEntries, Offset) of
-                {ok, _} ->
-                    case catch ar_data_roots:store_block_sync(
-                            BlockStart, BlockEnd, TXRoot, DataRootEntries,
-                            ?DEFAULT_MODULE) of
-                        ok ->
-                            {200, #{}, <<>>, Req};
-                        {'EXIT', _} ->
-                            timeout_response(Req);
-                        {error, Reason} ->
-                            {503, #{}, jiffy:encode(#{ error => Reason }), Req}
-                    end;
-                {error, Reason} ->
-                    {400, #{}, jiffy:encode(#{ error => Reason }), Req}
+            case ar_block_index:get_block_bounds(Offset) of
+                not_found ->
+                    {404, #{}, jiffy:encode(#{ error => not_found }), Req};
+                Bounds ->
+                    validate_and_store_data_roots(DataRoots, Offset, Bounds,
+                        Req)
             end
+    end.
+
+validate_and_store_data_roots(DataRoots, Offset, Bounds, Req) ->
+    {TXRoot, BlockSize, DataRootEntries} = DataRoots,
+    {BlockStart, BlockEnd, _ExpectedTXRoot} = Bounds,
+    case ar_data_roots:validate_data_roots(
+            TXRoot, BlockSize, DataRootEntries, Offset, Bounds) of
+        {ok, _} ->
+            case catch ar_data_roots:store_block_sync(
+                    BlockStart, BlockEnd, TXRoot, DataRootEntries,
+                    ?DEFAULT_MODULE) of
+                ok ->
+                    {200, #{}, <<>>, Req};
+                {'EXIT', _} ->
+                    timeout_response(Req);
+                {error, Reason} ->
+                    {503, #{}, jiffy:encode(#{ error => Reason }), Req}
+            end;
+        {error, Reason} ->
+            {400, #{}, jiffy:encode(#{ error => Reason }), Req}
     end.
 
 -ifdef(TESTNET).
@@ -611,26 +622,29 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
             Offset when Offset < 0 ->
                 {reply, {400, #{}, jiffy:encode(#{ error => negative_offset }), Req}};
             Offset ->
-                {BlockStart, BlockEnd, ExpectedTXRoot} =
-                    ar_block_index:get_block_bounds(Offset),
-                case ar_data_roots:are_synced(BlockStart, BlockEnd,
-                        ExpectedTXRoot, ?DEFAULT_MODULE) of
-                    true ->
-                        {reply, {200, #{}, <<>>, Req}};
-                    false ->
-                        {Offset, BlockStart, BlockEnd}
+                case ar_block_index:get_block_bounds(Offset) of
+                    not_found ->
+                        {reply, {404, #{},
+                            jiffy:encode(#{ error => not_found }), Req}};
+                    {BlockStart, BlockEnd, ExpectedTXRoot} ->
+                        case ar_data_roots:are_synced(BlockStart, BlockEnd,
+                                ExpectedTXRoot, ?DEFAULT_MODULE) of
+                            true ->
+                                {reply, {200, #{}, <<>>, Req}};
+                            false ->
+                                Offset
+                        end
                 end
         end,
     case ReadOffset of
         {reply, Reply} ->
             Reply;
-        {Offset2, BlockStart2, BlockEnd2} ->
+        Offset2 ->
             case read_complete_body(Req, Pid) of
                 {ok, Body, Req2} ->
                     case ar_serialize:binary_to_data_roots(Body) of
                         {ok, DataRoots} ->
-                            store_data_roots(DataRoots, Offset2, BlockStart2,
-                                BlockEnd2, Req2);
+                            store_data_roots(DataRoots, Offset2, Req2);
                         _ ->
                             {400, #{}, jiffy:encode(#{ error => invalid_format }), Req2}
                     end;

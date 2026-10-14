@@ -33,6 +33,7 @@
          index_key/3,
          get_block/1,
          validate_data_roots/4,
+         validate_data_roots/5,
          are_synced/2,
          are_synced/4,
          is_synced/2,
@@ -182,40 +183,57 @@ get_block(Offset) ->
         true ->
             {error, not_found};
         false ->
-            {BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
-            true = Offset >= BlockStart andalso Offset < BlockEnd,
-            case get_keys(BlockStart, ?DEFAULT_MODULE) of
+            case ar_block_index:get_block_bounds(Offset) of
                 not_found ->
                     {error, not_found};
-                {ok, Bin} ->
-                    {TXRoot2, BlockSize, DataRootIDs} = binary_to_term(Bin, [safe]),
-                    true = TXRoot2 == TXRoot,
-                    DataRootEntriesLists = sets:fold(
-                                             fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
-                                                     %% List of lists is intended. We'll keep one result list per key and
-                                                     %% flatten once after the fold.
-                                                     [get_all_in_range(DataRoot, TXSize, BlockStart, BlockEnd,
-                                                                       ?DEFAULT_MODULE) | Acc]
-                                             end,
-                                             [],
-                                             DataRootIDs
-                                            ),
-                    DataRootEntries = lists:append(DataRootEntriesLists),
-                    SortedDataRootEntries = lists:sort(
-                                              fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
-                                                  {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
-                                                      TXStart1 < TXStart2
-                                              end,
-                                              DataRootEntries
-                                             ),
-                    {ok, {TXRoot, BlockSize, SortedDataRootEntries}}
+                Bounds ->
+                    do_get_block(Offset, Bounds)
             end
+    end.
+
+do_get_block(Offset, {BlockStart, BlockEnd, TXRoot}) ->
+    true = Offset >= BlockStart andalso Offset < BlockEnd,
+    case get_keys(BlockStart, ?DEFAULT_MODULE) of
+        not_found ->
+            {error, not_found};
+        {ok, Bin} ->
+            {TXRoot2, BlockSize, DataRootIDs} = binary_to_term(Bin, [safe]),
+            true = TXRoot2 == TXRoot,
+            DataRootEntriesLists = sets:fold(
+                                     fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
+                                             %% List of lists is intended. We'll keep one result list per key and
+                                             %% flatten once after the fold.
+                                             [get_all_in_range(DataRoot, TXSize, BlockStart, BlockEnd,
+                                                               ?DEFAULT_MODULE) | Acc]
+                                     end,
+                                     [],
+                                     DataRootIDs
+                                    ),
+            DataRootEntries = lists:append(DataRootEntriesLists),
+            SortedDataRootEntries = lists:sort(
+                                      fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
+                                          {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
+                                              TXStart1 < TXStart2
+                                      end,
+                                      DataRootEntries
+                                     ),
+            {ok, {TXRoot, BlockSize, SortedDataRootEntries}}
     end.
 
 %% @doc Validate the given data roots against the local block index.
 %% Also recompute the TXRoot from entries and verify Merkle paths.
 validate_data_roots(TXRoot, BlockSize, DataRootEntries, Offset) ->
-    {BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
+    case ar_block_index:get_block_bounds(Offset) of
+        not_found ->
+            {error, not_found};
+        Bounds ->
+            validate_data_roots(TXRoot, BlockSize, DataRootEntries, Offset,
+                Bounds)
+    end.
+
+%% @doc Validate the given data roots against the given block bounds.
+validate_data_roots(TXRoot, BlockSize, DataRootEntries, Offset,
+        {BlockStart, BlockEnd, ExpectedTXRoot}) ->
     maybe
         ok ?=
             case Offset >= BlockStart andalso Offset < BlockEnd of
