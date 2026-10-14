@@ -159,33 +159,11 @@ handle_call(Request, _From, State) ->
 handle_cast({cache_jobs, #jobs{ jobs = [] }}, State) ->
     {noreply, State};
 handle_cast({cache_jobs, Jobs}, State) ->
-    #jobs{ jobs = JobList, partial_diff = PartialDiff,
-           next_seed = NextSeed, seed = Seed,
-           interval_number = IntervalNumber,
-           next_vdf_difficulty = NextVDFDifficulty } = Jobs,
-    SessionKey = {NextSeed, IntervalNumber, NextVDFDifficulty},
-    SessionKeys = State#state.session_keys,
-    SessionKeys2 =
-        case lists:member(SessionKey, SessionKeys) of
-            true ->
-                SessionKeys;
-            false ->
-                [SessionKey | SessionKeys]
-        end,
-    JobList2 = [{Job#job.output, Job#job.global_step_number,
-                 Job#job.partition_upper_bound, Seed, PartialDiff} || Job <- JobList],
-    PrevJobList = maps:get(SessionKey, State#state.jobs_by_session_key, []),
-    JobList3 = JobList2 ++ PrevJobList,
-    JobsBySessionKey = maps:put(SessionKey, JobList3, State#state.jobs_by_session_key),
-    {SessionKeys3, JobsBySessionKey2} =
-        case length(SessionKeys2) == 3 of
-            true ->
-                [SK1, SK2, RemoveKey] = SessionKeys2,
-                {[SK1, SK2], maps:remove(RemoveKey, JobsBySessionKey)};
-            false ->
-                {SessionKeys2, JobsBySessionKey}
-        end,
-    {noreply, State#state{ session_keys = SessionKeys3,
+    #state{ session_keys = SessionKeys,
+            jobs_by_session_key = JobsBySessionKey } = State,
+    {SessionKeys2, JobsBySessionKey2} =
+        add_jobs_to_cache(Jobs, SessionKeys, JobsBySessionKey),
+    {noreply, State#state{ session_keys = SessionKeys2,
                            jobs_by_session_key = JobsBySessionKey2 }};
 
 handle_cast({post_partial_solution, Solution}, State) ->
@@ -285,6 +263,26 @@ terminate(Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+%% @doc Cache a batch of jobs and make its session the most recent of the two
+%% kept, so a session the pool returns to is the one served again.
+add_jobs_to_cache(Jobs, SessionKeys, JobsBySessionKey) ->
+    #jobs{ jobs = JobList, partial_diff = PartialDiff,
+           next_seed = NextSeed, seed = Seed,
+           interval_number = IntervalNumber,
+           next_vdf_difficulty = NextVDFDifficulty } = Jobs,
+    SessionKey = {NextSeed, IntervalNumber, NextVDFDifficulty},
+    JobList2 = [{Job#job.output, Job#job.global_step_number,
+                 Job#job.partition_upper_bound, Seed, PartialDiff} || Job <- JobList],
+    PrevJobList = maps:get(SessionKey, JobsBySessionKey, []),
+    JobsBySessionKey2 = maps:put(SessionKey, JobList2 ++ PrevJobList, JobsBySessionKey),
+    case [SessionKey | lists:delete(SessionKey, SessionKeys)] of
+        [SessionKey1, SessionKey2, RemovedSessionKey] ->
+            {[SessionKey1, SessionKey2],
+             maps:remove(RemovedSessionKey, JobsBySessionKey2)};
+        SessionKeys2 ->
+            {SessionKeys2, JobsBySessionKey2}
+    end.
 
 get_jobs(PrevOutput, SessionKeys, JobCache) ->
     case SessionKeys of
@@ -717,6 +715,30 @@ get_jobs_test() ->
                  get_jobs(o2, [{ns, in, nvd}, {ns2, in2, nvd2}],
                           #{ {ns, in, nvd} => [{o, gsn, u, s, d}, {o2, gsn2, u2, s, d}],
                              {ns2, in2, nvd2} => [{o2, gsn2, u2, s2, d2}] })).
+
+add_jobs_to_cache_test() ->
+    Jobs = fun({NextSeed, Interval, NextVDFDifficulty}, Output) ->
+        #jobs{ jobs = [#job{ output = Output, global_step_number = 1,
+                             partition_upper_bound = 1 }],
+               partial_diff = d, seed = s, next_seed = NextSeed,
+               interval_number = Interval, next_vdf_difficulty = NextVDFDifficulty }
+    end,
+    SessionA = {a, 10, 1},
+    SessionB = {b, 10, 1},
+    SessionC = {c, 11, 1},
+    {Keys1, Cache1} = add_jobs_to_cache(Jobs(SessionA, o1), [], #{}),
+    ?assertEqual([SessionA], Keys1),
+    {Keys2, Cache2} = add_jobs_to_cache(Jobs(SessionB, o2), Keys1, Cache1),
+    ?assertEqual([SessionB, SessionA], Keys2),
+    %% The pool returns to session A, so its jobs are the ones served again.
+    {Keys3, Cache3} = add_jobs_to_cache(Jobs(SessionA, o3), Keys2, Cache2),
+    ?assertEqual([SessionA, SessionB], Keys3),
+    ?assertMatch(#jobs{ jobs = [#job{ output = o3 }], next_seed = a },
+                 get_jobs(o1, Keys3, Cache3)),
+    %% A third session evicts the least recent one with its jobs.
+    {Keys4, Cache4} = add_jobs_to_cache(Jobs(SessionC, o4), Keys3, Cache3),
+    ?assertEqual([SessionC, SessionA], Keys4),
+    ?assertEqual(lists:sort([SessionA, SessionC]), lists:sort(maps:keys(Cache4))).
 
 process_partial_solution_test_() ->
     ar_test_node:test_with_all_nodes_mocked([

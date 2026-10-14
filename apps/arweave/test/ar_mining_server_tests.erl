@@ -121,7 +121,7 @@ pool_job_test_() ->
             ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_get_current_sesssion()],
                 fun test_pool_job_no_cached_sessions/0, 120),
             ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_get_current_sesssion()],
-                fun test_pool_job_same_interval_session/0, 120)
+                fun test_pool_job_follows_pool_session/0, 120)
         ]
     }.
 
@@ -244,18 +244,19 @@ test_pool_job_no_cached_sessions() ->
     ?assertEqual(sets:from_list([SessionKey2, SessionKey3]), ar_mining_server:active_sessions()),
     ?assertEqual([10, 10, 12, 12],lists:sort(mined_steps())),
 
+    %% The pool can move back to an older session, for example after a reorg.
     ar_mining_server:add_pool_job(
         SessionKey1, 4, Output, PartitionUpperBound, Seed1, PartialDiff),
-    ?assertEqual(sets:from_list([SessionKey2, SessionKey3]), ar_mining_server:active_sessions()),
-    ?assertEqual([], mined_steps()).
+    ?assertEqual(lists:sort([SessionKey1, SessionKey3]), active_session_list()),
+    ?assertEqual([4, 4], lists:sort(mined_steps())).
 
-%% @doc A pool job with a new key for the current interval (a new seed, or a VDF
-%% difficulty change) is mined, while one from an older interval is dropped.
-test_pool_job_same_interval_session() ->
+%% @doc Pool jobs are mined for every session the pool moves to: a new seed or
+%% VDF difficulty in the same interval, or a lower interval.
+test_pool_job_follows_pool_session() ->
     SessionKey1 = {<<"session1">>, 1, 1},
     SessionKey2 = {<<"session2">>, 1, 1},
     SessionKey3 = {<<"session2">>, 1, 2},
-    OlderSessionKey = {<<"session0">>, 0, 1},
+    LowerSessionKey = {<<"session0">>, 0, 1},
     Output = crypto:strong_rand_bytes(32),
     PartitionUpperBound = ?WEAVE_SIZE,
     Seed = crypto:strong_rand_bytes(32),
@@ -276,12 +277,10 @@ test_pool_job_same_interval_session() ->
     ?assertEqual(lists:sort([SessionKey2, SessionKey3]), active_session_list()),
     ?assertEqual([3, 3], lists:sort(mined_steps())),
 
-    SkippedBefore = skipped_step_count(),
     ar_mining_server:add_pool_job(
-        OlderSessionKey, 4, Output, PartitionUpperBound, Seed, PartialDiff),
-    ?assertEqual(lists:sort([SessionKey2, SessionKey3]), active_session_list()),
-    ?assertEqual([], mined_steps()),
-    ?assertEqual(SkippedBefore + 1, skipped_step_count()).
+        LowerSessionKey, 4, Output, PartitionUpperBound, Seed, PartialDiff),
+    ?assertEqual(lists:sort([SessionKey3, LowerSessionKey]), active_session_list()),
+    ?assertEqual([4, 4], lists:sort(mined_steps())).
 
 %% ------------------------------------------------------------------------------------------------
 %% vdf_session_test_
@@ -490,14 +489,6 @@ send_vdf_step(SessionKey, StepNumber) ->
 
 active_session_list() ->
     lists:sort(sets:to_list(ar_mining_server:active_sessions())).
-
-skipped_step_count() ->
-    case prometheus_counter:value(mining_vdf_steps_skipped_total) of
-        undefined ->
-            0;
-        Count ->
-            Count
-    end.
 
 mined_steps() ->
     Steps = lists:reverse(ets:foldl(
