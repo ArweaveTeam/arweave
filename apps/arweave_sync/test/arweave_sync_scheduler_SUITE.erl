@@ -18,6 +18,7 @@ all() ->
         local_writes_do_not_consume_peer_capacity,
         bound_footprint_owner_is_an_active_peer,
         activity_includes_assigned_and_completed_work,
+        refreshed_footprint_counts_only_new_sources,
         reservation_binding_claims_only_enqueued_tasks,
         fragmented_partial_intervals_claim_each_request,
         overlapping_partial_intervals_defer_duplicate_request,
@@ -252,6 +253,32 @@ activity_includes_assigned_and_completed_work(_Config) ->
             sync_peer_goodput_bytes_per_second,
             [arweave_lib_util:format_peer(Peer)]))
     end, Peers).
+
+refreshed_footprint_counts_only_new_sources(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        [
+            {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end}
+        ],
+        fun() ->
+            OldPeer = {1, 1, 1, 1, 1},
+            NewPeer = {2, 2, 2, 2, 2},
+            Footprint = #footprint{
+                store_id = store1, partition = 0, footprint = 1
+            },
+            Offer = fun(Peer) ->
+                arweave_sync_footprint:new_reservation(store1, Footprint,
+                    [#task_source{peer = Peer, footprint = Footprint}])
+            end,
+            {ok, _Claimed, State} = arweave_sync_scheduler:admit_work(
+                store1, Offer(OldPeer), #state{}),
+            {ok, 0, State2} = arweave_sync_scheduler:admit_work(
+                store1, Offer(NewPeer), State),
+            Plan = arweave_sync_scheduler:snapshot(State2),
+            ?assertEqual(#{NewPeer => [store1]},
+                arweave_sync_store:stores_with_room_by_peer(
+                    Plan#dispatch_plan.stores))
+        end
+    ).
 
 %% @doc Binding a footprint replaces its speculative claim with claims for
 %% enqueued tasks only.

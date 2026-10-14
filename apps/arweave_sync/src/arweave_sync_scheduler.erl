@@ -342,6 +342,14 @@ admit_work(StoreID, #task{} = Task, State) ->
 admit_work(StoreID, Reservation, State) ->
     #state{stores = Stores, footprints = Footprints} = State,
     case arweave_sync_footprint:admit(Reservation, Footprints) of
+        {refreshed, Queued, Footprints2} ->
+            Stores2 = arweave_sync_store:replace_sources(StoreID,
+                arweave_sync_footprint:sources(Queued),
+                arweave_sync_footprint:sources(Reservation), Stores),
+            {ok, 0, State#state{
+                stores = Stores2,
+                footprints = Footprints2
+            }};
         {ok, 0, Footprints2} ->
             {ok, 0, State#state{footprints = Footprints2}};
         {ok, ClaimedChunks, Footprints2} ->

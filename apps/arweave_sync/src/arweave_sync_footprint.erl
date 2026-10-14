@@ -13,7 +13,8 @@
 %%% arweave_sync_scheduler drives this module in a cycle:
 %%% 1. Admission (admit/2), when the sweeper offers a reservation: a new
 %%%    reservation is added, and arweave_sync_store claims a whole footprint
-%%%    for it; a queued one gets the new sources.
+%%%    for it; a queued one gets the new sources, which arweave_sync_store
+%%%    then counts in place of the old ones.
 %%% 2. Entropy competition (has_entropy_capacity/3,
 %%%    compete_for_entropy_capacity/4), for each queued reservation the
 %%%    scheduler takes from a work queue: the reservation takes a free entropy
@@ -166,12 +167,14 @@ peers(Footprints) ->
 %%%===================================================================
 
 %% @doc Add a new reservation, or refresh a queued one for the same footprint.
-%% A claim of zero means the footprint was already tracked.
+%% A claim of zero means the footprint was already tracked. A refresh returns
+%% the queued reservation it replaced.
 admit(Reservation, Reservations) ->
     Footprint = key(Reservation),
     case maps:get(Footprint, Reservations, none) of
-        #footprint_reservation{ state = queued } ->
-            {ok, 0, maps:put(Footprint, Reservation, Reservations)};
+        #footprint_reservation{ state = queued } = Queued ->
+            {refreshed, Queued,
+                maps:put(Footprint, Reservation, Reservations)};
         #footprint_reservation{} ->
             {ok, 0, Reservations};
         none ->

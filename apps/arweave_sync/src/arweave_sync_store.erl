@@ -66,7 +66,7 @@
         admit/3, release_claim/3,
         queues_empty/1, queued_task_count/2,
         claims_empty/1,
-        source_peers/1,
+        replace_sources/4,
         record_write_completed/2, sample_write_rates/2,
         fair_share/1, pipeline_limit/3,
         snapshot/4, refresh_work/2, commit_plan/1,
@@ -137,19 +137,15 @@ claims_empty_for_store(#store_state{
     ClaimedChunks =:= 0 andalso ReservationChunks =:= 0
         andalso arweave_lib_intervals:is_empty(Claimed).
 
-%% @doc Return the distinct source peers of the units of work in every store's
-%% work queue.
-source_peers(States) ->
-    PeerSet = maps:fold(
-        fun(_StoreID, State, Peers) ->
-            maps:fold(
-                fun(Peer, _Count, Acc) -> maps:put(Peer, true, Acc) end,
-                Peers,
-                State#store_state.queued_peer_counts)
-        end,
-        #{},
-        States),
-    maps:keys(PeerSet).
+%% @doc Count the new sources of a refreshed queued reservation in place of
+%% its old ones.
+replace_sources(StoreID, OldSources, NewSources, States) ->
+    State = get_state(StoreID, States),
+    PeerCounts = adjust_peer_counts(
+        OldSources, -1, State#store_state.queued_peer_counts),
+    put_state(State#store_state{
+        queued_peer_counts = adjust_peer_counts(NewSources, 1, PeerCounts)
+    }, States).
 
 %%%===================================================================
 %%% Admission.

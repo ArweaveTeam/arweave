@@ -57,7 +57,8 @@ admit_replaces_unbound_source_snapshot(_Config) ->
         Footprint,
         [#task_source{peer = new_peer, footprint = Footprint}]
     ),
-    {ok, 0, Reservations2} = arweave_sync_footprint:admit(Updated, Reservations),
+    {refreshed, Original, Reservations2} =
+        arweave_sync_footprint:admit(Updated, Reservations),
     ?assertEqual(
         arweave_sync_footprint:sources(Updated),
         arweave_sync_footprint:sources(maps:get(Footprint, Reservations2))
