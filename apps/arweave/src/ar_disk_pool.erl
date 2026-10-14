@@ -124,15 +124,19 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, Peer) ->
             check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool),
         {ok, RelativeEndOffset, Validation} ?=
             validate_proof(Metadata, Offset, TXSize, Chunk, Peer),
-        ok ?= maybe
-                  {ok, DataPathHash, DiskPoolChunkKey} ?=
-                      check_not_already_synced(Metadata, DataRootID, DataRootEntry,
-                                               RelativeEndOffset, DiskPoolDataRootValue),
-                  ok ?=
-                      persist_chunk(Metadata, Chunk, TXSize, DataRootID, RelativeEndOffset,
-                                    Validation, DataPathHash, DiskPoolChunkKey,
-                                    DiskPoolDataRootValue)
-              end,
+        DataPathHash = crypto:hash(sha256, DataPath),
+        ok ?= with_chunk_claim({DataRootID, DataPathHash}, fun() ->
+                  maybe
+                      {ok, DiskPoolChunkKey} ?=
+                          check_not_already_synced(Metadata, DataRootID, DataRootEntry,
+                                                   RelativeEndOffset, DataPathHash,
+                                                   DiskPoolDataRootValue),
+                      ok ?=
+                          persist_chunk(Metadata, Chunk, TXSize, DataRootID,
+                                        RelativeEndOffset, Validation, DataPathHash,
+                                        DiskPoolChunkKey, DiskPoolDataRootValue)
+                  end
+              end),
         case is_estimated_long_term_chunk(DataRootEntry, RelativeEndOffset) of
             false ->
                 temporary;
@@ -201,10 +205,45 @@ validate_proof(Metadata, Offset, TXSize, Chunk, Peer) ->
             {ok, EndOffset, {PassesBase, PassesStrict, PassesRebase}}
     end.
 
+%% @doc Run Fun while holding the claim on storing the chunk with the given
+%% key, so that concurrent submissions of one chunk store and count it once.
+%% Return ok without running Fun when another process holds the claim.
+with_chunk_claim(Key, Fun) ->
+    case claim_chunk(Key) of
+        false ->
+            ok;
+        true ->
+            try
+                Fun()
+            after
+                ets:delete_object(ar_disk_pool_chunks_in_flight, {Key, self()})
+            end
+    end.
+
+claim_chunk(Key) ->
+    case ets:insert_new(ar_disk_pool_chunks_in_flight, {Key, self()}) of
+        true ->
+            true;
+        false ->
+            case ets:lookup(ar_disk_pool_chunks_in_flight, Key) of
+                [] ->
+                    claim_chunk(Key);
+                [{_, Pid} = Claim] ->
+                    case is_process_alive(Pid) of
+                        true ->
+                            false;
+                        false ->
+                            %% A process killed while holding the claim
+                            %% did not release it.
+                            ets:delete_object(ar_disk_pool_chunks_in_flight, Claim),
+                            claim_chunk(Key)
+                    end
+            end
+    end.
+
 check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
-                         DiskPoolDataRootValue = {_, Timestamp, _}) ->
-    #chunk_metadata{ data_root = DataRoot, data_path = DataPath } = Metadata,
-    DataPathHash = crypto:hash(sha256, DataPath),
+                         DataPathHash, DiskPoolDataRootValue = {_, Timestamp, _}) ->
+    #chunk_metadata{ data_root = DataRoot } = Metadata,
     DiskPoolChunkKey = << Timestamp:256, DataPathHash/binary >>,
     case ar_kv:get(index_db(?DEFAULT_MODULE), DiskPoolChunkKey) of
         {ok, _DiskPoolChunk} ->
@@ -213,7 +252,7 @@ check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
         not_found ->
             case DataRootEntry of
                 not_found ->
-                    {ok, DataPathHash, DiskPoolChunkKey};
+                    {ok, DiskPoolChunkKey};
                 {ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}} ->
                     {_, _, TXIDSet} = DiskPoolDataRootValue,
                     HasPendingTXs = not sets:is_empty(TXIDSet),
@@ -221,7 +260,7 @@ check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
                         orelse not chunk_offsets_synced(
                                      DataRootID, EndOffset, TXStartOffset) of
                         true ->
-                            {ok, DataPathHash, DiskPoolChunkKey};
+                            {ok, DiskPoolChunkKey};
                         false ->
                             ok
                     end

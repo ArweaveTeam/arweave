@@ -34,6 +34,9 @@ may_conclude_accumulation_test_() ->
 multi_module_chunk_cache_accounting_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_multi_module_chunk_cache_accounting/0}.
 
+concurrent_duplicate_chunk_counted_once_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT, fun test_concurrent_duplicate_chunk_counted_once/0}.
+
 %% -------------------------------------------------------------------
 %% Helpers
 %% -------------------------------------------------------------------
@@ -396,3 +399,53 @@ parse_disk_pool_chunk(Bin) ->
         R ->
             R
     end.
+
+%% -------------------------------------------------------------------
+%% A chunk submitted again while its first submission is still being
+%% stored should be written to the disk pool once. Every write adds the
+%% chunk to disk_pool_size, which only the removal of the indexed copy
+%% gives back.
+%% -------------------------------------------------------------------
+test_concurrent_duplicate_chunk_counted_once() ->
+    Wallet = ar_test_data_sync:setup_main_node(),
+    #{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+        ar_test_data_sync:make_fixed_data_tx(
+            Wallet,
+            [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+        ),
+    ar_test_node:assert_post_tx_to_peer(main, TX),
+    [{_ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+        DataRoot,
+        DataTree,
+        Chunks,
+        #{ proof_offset => end_offset }
+    ),
+    JSON = ar_serialize:jsonify(Proof),
+    Test = self(),
+    Calls = atomics:new(1, []),
+    %% Hold the first submission between its duplicate check and its write.
+    Mocks = [
+        {ar_data_sync, put_chunk_data, fun(Key, StoreID, Value) ->
+            case atomics:add_get(Calls, 1, 1) of
+                1 ->
+                    Test ! {holding_first_write, self()},
+                    receive release_first_write -> ok end;
+                _ ->
+                    ok
+            end,
+            meck:passthrough([Key, StoreID, Value])
+        end}
+    ],
+    ar_test_node:run_with_mocked([main], Mocks, fun() ->
+        spawn_link(fun() ->
+            Test ! {first_reply, ar_test_node:post_chunk(main, JSON)}
+        end),
+        Writer = receive {holding_first_write, Pid} -> Pid end,
+        ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
+            ar_test_node:post_chunk(main, JSON)),
+        Writer ! release_first_write,
+        receive {first_reply, FirstReply} ->
+            ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, FirstReply)
+        end,
+        ?assertEqual(1, atomics:get(Calls, 1))
+    end).
