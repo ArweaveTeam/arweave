@@ -32,7 +32,8 @@ all() ->
         tick_covers_active_peers,
         drained_peer_still_advances_probe,
         worker_time_pressure_isolated,
-        flat_driven_goodput_bounds_concurrency
+        flat_driven_goodput_bounds_concurrency,
+        slow_peer_cap_limited_by_rate
     ].
 
 init_per_testcase(_Case, Config) ->
@@ -546,8 +547,10 @@ drained_peer_still_advances_probe(_Config) ->
         State0,
         lists:seq(1, ?PROBE_WINDOW_SAMPLES)
     ),
-    %% A full baseline window starts the fresh peer's doubled probe.
-    ExpectedCap = 2 * Cap,
+    %% A full baseline window starts the fresh peer's probe. Nine chunks per
+    %% ten-second tick support at most nine fetches in flight, so the doubled
+    %% step stops at nine.
+    ExpectedCap = Cap + 1,
     ?assertMatch({ExpectedCap, _}, limits(Peer, State)).
 
 %% Worker-time pressure is isolated by peer, and a clean interval after a
@@ -590,9 +593,47 @@ flat_driven_goodput_bounds_concurrency(_Config) ->
         Caps
     ).
 
+slow_peer_cap_limited_by_rate(_Config) ->
+    %% Five probe windows, each a skipped transition sample plus a full
+    %% window, give an unlimited peer four doublings.
+    Ticks = 5 * (?PROBE_WINDOW_SAMPLES + 1),
+    %% Answering in 40 s, the peer delivers a quarter of its cap per 10 s
+    %% tick: two chunks at the initial cap of eight. Two chunks in ten
+    %% seconds is below the initial cap, so the cap never grows.
+    ?assertEqual(lists:duplicate(Ticks, ?CONCURRENCY_CAP_INITIAL),
+        caps_at_latency({6, 6, 6, 6, 6}, 40_000, Ticks)),
+    %% Answering in 1 s, the peer delivers ten times its cap per tick, so
+    %% the limit stays above the cap. The first window doubles the initial
+    %% cap, and each later window doubles it again: 8 * 2^5.
+    ?assertEqual(8 * 32,
+        lists:last(caps_at_latency({7, 7, 7, 7, 7}, 1000, Ticks))).
+
 %%====================================================================
 %% Helpers
 %%====================================================================
+
+%% @doc Return the peer's cap after each of Ticks driven ten-second ticks in
+%% which every fetch takes LatencyMs, so it completes Cap * 10 s / LatencyMs
+%% chunks per tick.
+caps_at_latency(Peer, LatencyMs, Ticks) ->
+    InitialState = arweave_sync_peer:mark_peers_active(
+        [Peer], arweave_sync_peer:new()),
+    State0 = arweave_sync_peer:tick([Peer], 0, InitialState),
+    {_State, Caps} = lists:foldl(
+        fun(Tick, {State, Acc}) ->
+            {Cap, _QueueMaxLength} = limits(Peer, State),
+            Chunks = Cap * ?TICK_INTERVAL_MS div LatencyMs,
+            State1 = arweave_sync_peer:add_fetch_result(Peer,
+                Chunks * ?DATA_CHUNK_SIZE,
+                #fetch_timing{productive_ms = Chunks * LatencyMs}, State),
+            State2 = arweave_sync_peer:tick([Peer], Tick * ?TICK_INTERVAL_MS,
+                mark_driven(Peer, State1)),
+            {Cap2, _} = limits(Peer, State2),
+            {State2, [Cap2 | Acc]}
+        end,
+        {State0, []},
+        lists:seq(1, Ticks)),
+    lists:reverse(Caps).
 
 %% @doc A one-second sample at Rate bytes/ms.
 sample(Rate) ->

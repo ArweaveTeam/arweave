@@ -26,7 +26,9 @@ all() ->
         recurring_slowdowns_do_not_stop_growth,
         settled_probes_preserve_throughput,
         cut_floors_at_seed,
-        probes_rest_after_a_losing_cut
+        probes_rest_after_a_losing_cut,
+        rate_limit_bounds_probe,
+        driven_cap_cut_to_rate_limit
     ].
 
 %%====================================================================
@@ -356,6 +358,26 @@ probes_rest_after_a_losing_cut(_Config) ->
     ),
     Next = add_samples(100.0, ?PROBE_WINDOW_SAMPLES, Waiting),
     ?assertMatch(#cap_control{phase = up, cap = 225, baseline_cap = 200}, Next).
+
+rate_limit_bounds_probe(_Config) ->
+    %% The first step from 16 would reach 24, but the limit stops it at 17.
+    Limited = add_samples(100.0, ?PROBE_WINDOW_SAMPLES,
+        arweave_sync_peer_cap:limit(17, #cap_control{cap = 16, step = 8})),
+    ?assertMatch(#cap_control{phase = up, cap = 17, baseline_cap = 16},
+        Limited),
+    %% A cap at its limit has no higher cap to try, so the probe ends.
+    AtLimit = add_samples(100.0, ?PROBE_WINDOW_SAMPLES,
+        arweave_sync_peer_cap:limit(16, #cap_control{cap = 16, step = 8})),
+    ?assertMatch(#cap_control{phase = hold, cap = 16}, AtLimit).
+
+driven_cap_cut_to_rate_limit(_Config) ->
+    Control = arweave_sync_peer_cap:limit(10, #cap_control{cap = 40}),
+    ?assertEqual(Control,
+        arweave_sync_peer_cap:update(sample(100.0), 0.0, false, Control)),
+    ?assertMatch(
+        #cap_control{cap = 10, phase = hold,
+            skip = ?GOODPUT_TRANSITION_SAMPLES},
+        arweave_sync_peer_cap:update(sample(100.0), 0.0, true, Control)).
 
 %%====================================================================
 %% Helpers

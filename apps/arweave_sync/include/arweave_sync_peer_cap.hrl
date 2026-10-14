@@ -35,6 +35,12 @@
 %% - probe: steps that try a higher cap and, if that gains nothing, a lower
 %%   one. A probe whose step down costs goodput is followed by a rest.
 
+%% A cap never grows beyond the chunks the peer delivers in
+%% MAX_INFLIGHT_DURATION_MS at its recent goodput, nor stays above it while the
+%% peer is driven. More fetches than that only wait at the peer, so a peer that
+%% answers slowly keeps a small cap however its goodput scales with the cap.
+-define(MAX_INFLIGHT_DURATION_MS, 10_000).
+
 %% A peer this node has not measured yet starts at CONCURRENCY_CAP_INITIAL:
 %% low enough to be polite to an unknown peer, yet high enough to measure the
 %% peer's goodput. A step down never goes below this cap.
@@ -85,5 +91,7 @@
     baseline_cap = undefined,
     baseline_goodput = undefined,
     %% Per-tick rates, in bytes/ms, for the window the probe is measuring.
-    window_samples = []
+    window_samples = [],
+    %% The highest cap the peer's recent goodput supports, set by limit/2.
+    max_cap = infinity
 }).

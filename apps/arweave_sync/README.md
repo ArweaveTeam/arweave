@@ -353,6 +353,12 @@ The probe reads two metrics:
   When the higher cap gains nothing, it tries a lower one. Goodput also sets
   the peer's queue length (see
   [Each peer's queue length](#each-peers-queue-length)).
+- **Rate limit.** The cap never grows beyond the chunks the peer delivers
+  in ten seconds at its recent goodput, and a driven peer above that
+  limit is cut to it. More fetches than that only wait at the peer. Without
+  the limit, a peer that answers every request slowly would gain goodput in
+  proportion to its cap, so probing would raise its cap without end and the
+  peer would hold more and more of the work.
 - **Failure pressure:** the share of fetch time spent on rejections (429 and
   503), timeouts and client errors. Any pressure cuts the cap at once, whether
   or not the peer is driven, and probing starts again from the cut cap.

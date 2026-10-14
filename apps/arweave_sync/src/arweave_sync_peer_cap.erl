@@ -24,13 +24,17 @@
 %%%   ?PROBE_REST_SAMPLES goodput samples before the next probe.
 %%% - A new peer starts at ?CONCURRENCY_CAP_INITIAL, and its first probe
 %%%   doubles from there. Failure cuts can go lower, to ?CONCURRENCY_CAP_MIN.
+%%% - The cap never steps above the limit set by limit/2, the chunks the peer
+%%%   delivers in ?MAX_INFLIGHT_DURATION_MS, and a driven peer above the
+%%%   limit is cut to it. Otherwise a peer that answers every request slowly
+%%%   would gain goodput in proportion to its cap and probe it up without end.
 %%% - Probing cannot see competition: when several clients share a saturated
 %%%   peer, each one gains goodput by queueing deeper, at the others' expense.
 %%%   Only the serving side can stop that, with 429s from its rate limits and
 %%%   503s for chunk requests it cannot start within a few seconds.
 -module(arweave_sync_peer_cap).
 
--export([new/0, update/4, cap/1, phase/1]).
+-export([new/0, limit/2, update/4, cap/1, phase/1]).
 -export_type([control/0]).
 
 -include("arweave_sync_peer_cap.hrl").
@@ -44,6 +48,10 @@
 %% @doc Return the cap control for a peer this node has not measured yet.
 new() ->
     #cap_control{}.
+
+%% @doc Set the highest cap the peer's recent goodput supports.
+limit(MaxCap, Control) ->
+    Control#cap_control{ max_cap = MaxCap }.
 
 %% @doc Return how many fetches this node may run against the peer at once.
 cap(#cap_control{ cap = Cap }) ->
@@ -71,7 +79,14 @@ update(Sample, FailurePressure, Driven, Control) ->
             %% Start a new probe from the reduced cap, beginning with a
             %% baseline window.
             #cap_control{ cap = Cap, step = base_step(Cap),
-                skip = ?GOODPUT_TRANSITION_SAMPLES };
+                skip = ?GOODPUT_TRANSITION_SAMPLES,
+                max_cap = Control#cap_control.max_cap };
+        false when Driven,
+                Control#cap_control.cap > Control#cap_control.max_cap ->
+            %% Start a new probe from the limit, like a failure cut.
+            MaxCap = Control#cap_control.max_cap,
+            #cap_control{ cap = MaxCap, step = base_step(MaxCap),
+                skip = ?GOODPUT_TRANSITION_SAMPLES, max_cap = MaxCap };
         false when Driven, Sample =/= undefined ->
             add_probe_sample(Sample, Control);
         false ->
@@ -109,13 +124,13 @@ add_probe_sample(
 
 %% @doc Start an up or down phase: move the cap one step in that direction, so
 %% the new cap can be compared with the old one. A cap at
-%% ?CONCURRENCY_CAP_INITIAL has no lower cap to try, so a step down from there
-%% ends the probe.
+%% ?CONCURRENCY_CAP_INITIAL has no lower cap to try, and a cap at its limit no
+%% higher one, so such a step ends the probe.
 %%
 %% BaselineGoodput: the goodput measured at the cap before the step.
 start_phase(Phase, BaselineGoodput,
-        #cap_control{ cap = Cap, step = Step } = Control) ->
-    case step(Phase, Cap, Step) of
+        #cap_control{ cap = Cap, step = Step, max_cap = MaxCap } = Control) ->
+    case step(Phase, Cap, Step, MaxCap) of
         Cap ->
             hold(Cap, ?GOODPUT_TRANSITION_SAMPLES, Control);
         StepCap ->
@@ -128,11 +143,11 @@ start_phase(Phase, BaselineGoodput,
             })
     end.
 
-step(up, Cap, Step) ->
-    Cap + Step;
-step(down, Cap, _Step) when Cap =< ?CONCURRENCY_CAP_INITIAL ->
+step(up, Cap, Step, MaxCap) ->
+    max(Cap, min(Cap + Step, MaxCap));
+step(down, Cap, _Step, _MaxCap) when Cap =< ?CONCURRENCY_CAP_INITIAL ->
     Cap;
-step(down, Cap, Step) ->
+step(down, Cap, Step, _MaxCap) ->
     max(?CONCURRENCY_CAP_INITIAL, Cap - Step).
 
 %% @doc Return a probe's first step.

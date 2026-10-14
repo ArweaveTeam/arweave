@@ -162,10 +162,11 @@ tick_peer(Peer, NowMs, PeerState) ->
     Tick = {FetchedBytes, NowMs},
     Sample = sample_goodput(LastTick, Tick),
     {FailurePressure, FailureMs} = failure_pressure(FetchTiming),
+    PeerState1 = add_recent_goodput(Sample, FetchingCount, PeerState),
+    MaxCap = max_cap(recent_goodput(PeerState1)),
     Control2 = arweave_sync_peer_cap:update(Sample, FailurePressure, Driven,
-        Control),
-    PeerState2 = add_recent_goodput(Sample, FetchingCount,
-        PeerState#peer{ control = Control2 }),
+        arweave_sync_peer_cap:limit(MaxCap, Control)),
+    PeerState2 = PeerState1#peer{ control = Control2 },
     log_cap_decision(Peer, arweave_sync_peer_cap:cap(Control), PeerState2,
         goodput(Sample), FailurePressure, FailureMs, Driven, FetchTiming),
     %% Start the next interval with fresh inputs.
@@ -246,6 +247,12 @@ recent_goodput(#peer{ recent_goodputs = [] }) ->
     0.0;
 recent_goodput(#peer{ recent_goodputs = Goodputs }) ->
     lists:sum(Goodputs) / length(Goodputs).
+
+%% @doc Return the highest cap that Goodput supports: the chunks the peer
+%% delivers in ?MAX_INFLIGHT_DURATION_MS, to the nearest chunk.
+max_cap(Goodput) ->
+    max(?CONCURRENCY_CAP_INITIAL,
+        round(Goodput * ?MAX_INFLIGHT_DURATION_MS / ?DATA_CHUNK_SIZE)).
 
 %% @doc Return how many tasks may wait behind active fetches: about
 %% ?QUEUE_TARGET_DURATION_MS of the peer's goodput.
