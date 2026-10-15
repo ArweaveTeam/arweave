@@ -204,7 +204,16 @@ handle_cast({job_result, Peer, Result}, State) ->
         end,
     {noreply, State2};
 handle_cast({remove_peer, Peer, Reason}, State) ->
-    do_remove_peer(Peer, Reason, State);
+    case is_peer_tracked(Peer, State) of
+        true ->
+            do_remove_peer(Peer, Reason, State);
+        false ->
+            %% Rows are recorded only for tracked peers (rows left by an
+            %% earlier discovery process expire with their TTL), so do not
+            %% scan both tables for an untracked one. Any client can trigger
+            %% removals by rotating its x-p2p-port.
+            {noreply, State}
+    end;
 handle_cast(Cast, State) ->
     ?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
     {noreply, State}.

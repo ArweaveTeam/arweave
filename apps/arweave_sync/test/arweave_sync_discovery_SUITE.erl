@@ -21,6 +21,7 @@ all() ->
         enqueue_sync_bucket_jobs_deduplicates_active_peers,
         remove_jobs_keeps_other_peers,
         removed_peer_job_results_are_ignored,
+        untracked_peer_removal_keeps_caches,
         take_next_job_prefers_less_loaded_peer,
         take_next_job_limits_byte_peer_store_mode,
         take_next_job_allows_bounded_footprint_concurrency,
@@ -429,6 +430,27 @@ removed_peer_job_results_are_ignored(_Config) ->
             arweave_sync_discovery:sync_bucket_key(byte, 0, Peer)
         )
     ).
+
+%% @doc Removing an untracked peer does not touch the caches, so a client that
+%% rotates its x-p2p-port cannot make discovery scan them.
+untracked_peer_removal_keeps_caches(_Config) ->
+    arweave_sync_discovery:reset_all_caches(),
+    Peer = {10, 0, 0, 2, 1984},
+    Key = arweave_sync_discovery:sync_bucket_key(byte, 0, Peer),
+    arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 1.0),
+    State = #state{},
+    ?assertEqual(
+        {noreply, State},
+        arweave_sync_discovery:handle_cast(
+            {remove_peer, Peer, rotated}, State
+        )
+    ),
+    ?assert(ets:member(?SYNC_BUCKET_CACHE_TABLE, Key)),
+    TrackedState = arweave_sync_discovery:add_peer(Peer, State),
+    _ = arweave_sync_discovery:handle_cast(
+        {remove_peer, Peer, rotated}, TrackedState
+    ),
+    ?assertNot(ets:member(?SYNC_BUCKET_CACHE_TABLE, Key)).
 
 %% @doc Selection prefers the least-loaded peer before considering store load.
 take_next_job_prefers_less_loaded_peer(_Config) ->
