@@ -27,6 +27,11 @@
 
 -define(MAX_DISCOVERY_PEERS, 1000).
 
+%% How long discovery leaves a peer alone after the peer rejects a chunk
+%% interval request with 429. 2.9.6 peers ask clients to wait 30 s and do not
+%% send the rate limit headers the client throttling follows.
+-define(PEER_COOLDOWN_MS, 30_000).
+
 %% A short queue keeps pending chunk interval jobs close to the sweep
 %% frontier, so their results are still useful when they arrive.
 -define(MAX_PENDING_CHUNK_INTERVAL_JOBS, 1024).
@@ -77,6 +82,9 @@
 
 -record(state, {
     tracked_peers = sets:new(),
+    %% The monotonic time until which discovery does not request chunk
+    %% intervals from a peer, by peer.
+    cooldowns = #{},
     jobs = #{
         %% Sync bucket jobs, at most one per peer.
         sync_bucket => #discovery_jobs{},

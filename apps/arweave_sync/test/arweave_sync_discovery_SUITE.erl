@@ -23,6 +23,7 @@ all() ->
         remove_jobs_keeps_other_peers,
         removed_peer_job_results_are_ignored,
         untracked_peer_removal_keeps_caches,
+        rejected_peer_cools_down,
         take_next_job_prefers_less_loaded_peer,
         take_next_job_limits_byte_peer_store_mode,
         take_next_job_allows_bounded_footprint_concurrency,
@@ -478,6 +479,32 @@ untracked_peer_removal_keeps_caches(_Config) ->
         {remove_peer, Peer, rotated}, TrackedState
     ),
     ?assertNot(ets:member(?SYNC_BUCKET_CACHE_TABLE, Key)).
+
+%% @doc A peer that rejects a chunk interval request with 429 keeps its cached
+%% row and is not asked again until its cooldown has passed.
+rejected_peer_cools_down(_Config) ->
+    arweave_sync_discovery:reset_all_caches(),
+    Peer = {10, 0, 0, 9, 1984},
+    Intervals = arweave_lib_intervals:from_list([{?DATA_CHUNK_SIZE, 0}]),
+    arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 1.0),
+    arweave_sync_discovery:store_row(chunk_interval, byte, 0, Peer, Intervals),
+    TrackedState = arweave_sync_discovery:add_peer(Peer, #state{}),
+    Rejected = {chunk_intervals, ?DEFAULT_MODULE, 0, byte,
+        {error, too_many_requests}},
+    {noreply, State} = arweave_sync_discovery:handle_cast(
+        {job_result, Peer, Rejected}, TrackedState),
+    ?assertEqual({hit, Intervals},
+        arweave_sync_discovery:chunk_interval_lookup(byte, Peer, 0)),
+    %% A missing row is not requested while the peer cools down.
+    ets:delete_all_objects(?CHUNK_INTERVAL_CACHE_TABLE),
+    JobKey = {chunk_interval, Peer, ?DEFAULT_MODULE, byte,
+        arweave_sync_discovery:interval_location(byte, 0)},
+    Cooling = arweave_sync_discovery:warm_peer_ranges(
+        ?DEFAULT_MODULE, [Peer], 0, State),
+    ?assertNot(arweave_sync_discovery:job_exists(JobKey, Cooling)),
+    Cooled = arweave_sync_discovery:warm_peer_ranges(
+        ?DEFAULT_MODULE, [Peer], 0, State#state{cooldowns = #{}}),
+    ?assert(arweave_sync_discovery:job_exists(JobKey, Cooled)).
 
 %% @doc Selection prefers the least-loaded peer before considering store load.
 take_next_job_prefers_less_loaded_peer(_Config) ->

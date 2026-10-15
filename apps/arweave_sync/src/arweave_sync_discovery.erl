@@ -49,6 +49,7 @@
 -export([
     add_peer/2,
     track_peers/2,
+    warm_peer_ranges/4,
     chunk_interval_key/3,
     chunk_interval_lookup/3,
     compute_job_load/1,
@@ -515,6 +516,7 @@ warm_peer_ranges(StoreID, Peers, Offset, State) ->
 
 warm_peer_range(Mode, StoreID, Peer, Offset, State) ->
     maybe
+        true ?= not is_cooling_down(Peer, State),
         true ?= peer_supports(Mode, Peer),
         true ?= peer_has_sync_bucket(Mode, Peer, Offset),
         true ?= chunk_interval_refresh_needed(Mode, Peer, Offset),
@@ -1281,6 +1283,14 @@ record_job_result(
     State;
 record_job_result(
     Peer,
+    {chunk_intervals, _StoreID, _Offset, _Mode, {error, too_many_requests}},
+    State
+) ->
+    %% The peer turned the request away rather than failed to serve it: keep
+    %% the old row and stop asking the peer for a while.
+    cool_down(Peer, State);
+record_job_result(
+    Peer,
     {chunk_intervals, _StoreID, Offset, Mode, _Error},
     State
 ) ->
@@ -1333,6 +1343,24 @@ pid_to_job(Pid, Inflight) ->
 %%%===================================================================
 %%% Jobs: termination.
 %%%===================================================================
+
+%% @doc Stop requesting chunk intervals from Peer for ?PEER_COOLDOWN_MS and
+%% drop its chunk interval jobs, which it would reject as well.
+cool_down(Peer, State) ->
+    #state{cooldowns = Cooldowns, jobs = JobsByKind} = State,
+    Now = ?DEP(clock):monotonic_ms(),
+    Active = maps:filter(fun(_Peer, Until) -> Until > Now end, Cooldowns),
+    State#state{
+        cooldowns = Active#{Peer => Now + ?PEER_COOLDOWN_MS},
+        jobs = maps:update_with(chunk_interval,
+            fun(Jobs) -> remove_jobs(Peer, Jobs) end, JobsByKind)
+    }.
+
+is_cooling_down(Peer, #state{cooldowns = Cooldowns}) ->
+    case maps:find(Peer, Cooldowns) of
+        {ok, Until} -> Until > ?DEP(clock):monotonic_ms();
+        error -> false
+    end.
 
 remove_jobs(Peer, Jobs) ->
     #discovery_jobs{
