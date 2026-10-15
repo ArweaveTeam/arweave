@@ -21,6 +21,7 @@ all() ->
         refreshed_footprint_counts_only_new_sources,
         failed_fetch_moves_to_other_sources,
         tick_returns_excess_queued_tasks,
+        tick_returns_tasks_of_store_without_disk_space,
         reservation_binding_claims_only_enqueued_tasks,
         fragmented_partial_intervals_claim_each_request,
         overlapping_partial_intervals_defer_duplicate_request,
@@ -197,6 +198,14 @@ bound_footprint_owner_is_an_active_peer(_Config) ->
 
 %% @doc Ticks sample assigned and completed work while excluding candidates.
 activity_includes_assigned_and_completed_work(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        [
+            {ar_data_sync, is_disk_space_sufficient, fun(_) -> true end}
+        ],
+        fun do_activity_includes_assigned_and_completed_work/0
+    ).
+
+do_activity_includes_assigned_and_completed_work() ->
     QueuedPeer = {1, 1, 1, 1, 1},
     WritingPeer = {2, 2, 2, 2, 2},
     CompletedPeer = {3, 3, 3, 3, 3},
@@ -369,6 +378,42 @@ tick_returns_excess_queued_tasks(_Config) ->
             ?assertEqual(9, arweave_sync_store:claimed_chunks(store1, Stores)),
             ?assertEqual(9,
                 arweave_sync_store:queued_task_count(store1, Stores)),
+            ?assertEqual(#{}, State#state.footprints)
+        end
+    ).
+
+%% @doc A store that cannot write gives back the tasks it queued at peers, so
+%% that they do not hold the peers' queues and its footprint's slot.
+tick_returns_tasks_of_store_without_disk_space(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        [
+            {ar_data_sync, is_disk_space_sufficient, fun(_) -> false end}
+        ],
+        fun() ->
+            Peer = {3, 3, 3, 3, 3},
+            Footprint = #footprint{
+                store_id = store1, partition = 0, footprint = 1
+            },
+            ByteTasks = [#task{offset = N * ?DATA_CHUNK_SIZE, store_id = store1,
+                sources = [#task_source{peer = Peer}]} || N <- lists:seq(0, 8)],
+            FootprintTask = #task{offset = 100 * ?DATA_CHUNK_SIZE,
+                store_id = store1, footprint = Footprint,
+                sources = [#task_source{peer = Peer, footprint = Footprint}]},
+            Reservation = arweave_sync_footprint:test_reservation(store1,
+                Footprint, [#task_source{peer = Peer, footprint = Footprint,
+                    intervals = arweave_lib_intervals:new()}], Peer, 1, bound),
+            Bound = bound_state(Peer, ByteTasks, FootprintTask,
+                #state{footprints =
+                    arweave_sync_footprint:test_state([Reservation])}),
+            State = arweave_sync_scheduler:tick(Bound, 1000),
+            %% The byte tasks go back to the store queue with their claims,
+            %% and the footprint task is dropped with its claim and its
+            %% reservation.
+            Stores = State#state.stores,
+            ?assertEqual([],
+                arweave_sync_peer:queued_tasks(State#state.peer_state)),
+            ?assertEqual(9, arweave_sync_store:queued_count(store1, Stores)),
+            ?assertEqual(9, arweave_sync_store:claimed_chunks(store1, Stores)),
             ?assertEqual(#{}, State#state.footprints)
         end
     ).

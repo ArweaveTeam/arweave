@@ -72,6 +72,7 @@
     priority/3, compare_priorities/2, best_source/3,
     %% Peer queues.
     queued_tasks/1, queue_lengths/1, has_queued_tasks/1, trim_queues/1,
+    take_store_tasks/2,
     %% Fetch results.
     add_fetch_result/4
 ]).
@@ -829,6 +830,28 @@ trim_queues(#state{ peers = Peers } = State) ->
         {[], Peers},
         Peers),
     {Trimmed, State#state{ peers = Peers2 }}.
+
+%% @doc Take the tasks of the given stores out of every peer queue.
+take_store_tasks([], State) ->
+    {[], State};
+take_store_tasks(StoreIDs, #state{ peers = Peers } = State) ->
+    IsTaken = fun(#task{ store_id = StoreID }) ->
+        lists:member(StoreID, StoreIDs)
+    end,
+    {Taken, Peers2} = maps:fold(
+        fun(Peer, #peer{ queue = Queue } = PeerState, {TaskAcc, PeerAcc}) ->
+            case lists:partition(IsTaken, queue:to_list(Queue)) of
+                {[], _} ->
+                    {TaskAcc, PeerAcc};
+                {PeerTaken, Kept} ->
+                    {PeerTaken ++ TaskAcc,
+                        maps:put(Peer, PeerState#peer{
+                            queue = queue:from_list(Kept) }, PeerAcc)}
+            end
+        end,
+        {[], Peers},
+        Peers),
+    {Taken, State#state{ peers = Peers2 }}.
 
 %% @doc Return the tasks in every peer queue.
 queued_tasks(#state{ peers = Peers }) ->

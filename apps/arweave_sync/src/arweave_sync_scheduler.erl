@@ -825,13 +825,25 @@ tick(State, NowMs) ->
     %% Peers that timed out or missed give back the queued work beyond what
     %% they now serve.
     {Trimmed, PeerState3} = arweave_sync_peer:trim_queues(PeerState2),
-    State3 = return_tasks(Trimmed, State2#state{peer_state = PeerState3}),
+    %% Stores that cannot write give back their queued work, which would
+    %% otherwise hold the peers' queues and the footprint slots until the
+    %% stores can write again. Their work binds again once they can.
+    {Stranded, PeerState4} = arweave_sync_peer:take_store_tasks(
+        stores_without_disk_space(State2), PeerState3
+    ),
+    State3 = return_tasks(
+        Trimmed ++ Stranded, State2#state{peer_state = PeerState4}
+    ),
     %% Unfinished assignments are also active in the next interval.
     State3#state{
         peer_state = arweave_sync_peer:mark_peers_active(
-            peers_with_work(State3), PeerState3
+            peers_with_work(State3), PeerState4
         )
     }.
+
+stores_without_disk_space(#state{stores = Stores}) ->
+    [StoreID || StoreID <- maps:keys(Stores),
+        ?DEP(data_sync):is_disk_space_sufficient(StoreID) =/= true].
 
 %% @doc Put tasks taken out of peer queues back in their stores' work queues.
 %% A footprint task is dropped instead, because only the footprint's bound
