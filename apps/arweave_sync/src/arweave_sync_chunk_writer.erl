@@ -224,7 +224,22 @@ reject(Ref, Reason, Peer, Byte, #state{store_id = StoreID} = State) ->
         {byte, Byte},
         {store_id, StoreID}
     ]),
+    warn_invalid_proof(Reason, Peer, Byte),
     finish(Ref, {error, Reason}, State).
+
+%% @doc Warn the peer about an invalid proof below the disk pool threshold.
+%% Above it, a reorg can make an honest peer's proof fail against this node's
+%% block index.
+warn_invalid_proof(got_invalid_proof_from_peer, Peer, Byte) ->
+    case Byte < ?DEP(disk_pool):get_threshold() of
+        true ->
+            ?DEP(peers):issue_warning(
+                Peer, chunk, got_invalid_proof_from_peer);
+        false ->
+            ok
+    end;
+warn_invalid_proof(_Reason, _Peer, _Byte) ->
+    ok.
 
 %%%===================================================================
 %%% Write.

@@ -11,6 +11,7 @@ all() ->
         terminal_outcomes,
         invalid_proof_and_unpack_failure,
         validation_exception_skips_chunk,
+        invalid_proof_warns_below_threshold,
         unpack_then_store,
         duplicate_replies,
         data_sync_down_fails_waiting_writes,
@@ -155,6 +156,23 @@ validation_exception_skips_chunk(_) ->
     ?assertEqual({task_write_failed, TaskRef}, take_task_result()),
     ?assertEqual(pong, gen_server:call(ChunkWriter, ping)),
     ?assertEqual(0, ar_chunk_cache:cached_size(store1)).
+
+%% @doc An invalid proof warns the peer only below the disk pool threshold,
+%% where a reorg cannot change the block index.
+invalid_proof_warns_below_threshold(_) ->
+    ChunkWriter = start_chunk_writer(store1),
+    lists:foreach(
+        fun({Threshold, ExpectedWarnings}) ->
+            responses(#{disk_pool_threshold => Threshold}),
+            TaskRef = {self(), make_ref()},
+            %% The fetched byte is 0.
+            fetched(store1, ?PEER, 0, false, TaskRef),
+            ?assertEqual({task_write_failed, TaskRef}, take_task_result()),
+            ?assertEqual(ExpectedWarnings, take_warnings())
+        end,
+        [{1, [{?PEER, got_invalid_proof_from_peer}]}, {0, []}]
+    ),
+    ?assertEqual(pong, gen_server:call(ChunkWriter, ping)).
 
 %% @doc A packed chunk keeps its cache reference through unpacking and
 %% storage, ignoring old timeouts.
@@ -420,6 +438,12 @@ take_task_result() ->
     receive
         {'$gen_cast', Result} -> Result
     end.
+take_warnings() ->
+    receive
+        {warning, Peer, Reason} -> [{Peer, Reason} | take_warnings()]
+    after 0 ->
+        []
+    end.
 take_unpack() ->
     receive
         {unpack, PID, Ref, ChunkArgs} -> {PID, Ref, ChunkArgs}
@@ -453,7 +477,9 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, Peer) ->
 request_unpack(Ref, ReplyTo, ChunkArgs, _CacheRef) ->
     persistent_term:get({?MODULE, testcase}) ! {unpack, ReplyTo, Ref, ChunkArgs},
     response(request_unpack, ok).
-issue_warning(_, chunk, _) -> ok.
+issue_warning(Peer, chunk, Reason) ->
+    persistent_term:get({?MODULE, testcase}) ! {warning, Peer, Reason},
+    ok.
 
 fetched(StoreID, Peer, Byte, Proof, TaskRef) ->
     {ok, CacheRef} = ar_chunk_cache:reserve(StoreID),
