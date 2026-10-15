@@ -889,35 +889,44 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
           ({{TXID, _}, TXEndOffset}, PreviousOffset) ->
               AbsoluteEndOffset = BlockStartOffset + TXEndOffset,
               TXSize = TXEndOffset - PreviousOffset,
-              AbsoluteStartOffset = AbsoluteEndOffset - TXSize,
-              case ar_kv:put({tx_offset_index, StoreID},
-                             << AbsoluteStartOffset:?OFFSET_KEY_BITSIZE >>, TXID) of
-                  ok ->
-                      case ar_kv:put({tx_index, StoreID}, TXID,
-                                     term_to_binary({AbsoluteEndOffset, TXSize})) of
-                          ok ->
-                              ar_events:send(tx, {registered_offset, TXID, AbsoluteEndOffset,
-                                                  TXSize}),
-                              ar_tx_blacklist:notify_about_added_tx(TXID, AbsoluteEndOffset,
-                                                                    AbsoluteStartOffset),
-                              TXEndOffset;
-                          {error, Reason} ->
-                              ?LOG_ERROR([{event, failed_to_update_tx_index},
-                                          {reason, io_lib:format("~p", [Reason])},
-                                          {tx, arweave_lib_util:encode(TXID)}]),
-                              TXEndOffset
-                      end;
-                  {error, Reason} ->
-                      ?LOG_ERROR([{event, failed_to_update_tx_offset_index},
-                                  {reason, io_lib:format("~p", [Reason])},
-                                  {tx, arweave_lib_util:encode(TXID)}]),
-                      TXEndOffset
-              end
+              index_tx(TXID, AbsoluteEndOffset, TXSize, StoreID),
+              TXEndOffset
       end,
       0,
       SizeTaggedTXs
      ),
     ok.
+
+%% @doc Record the transaction's offsets and announce them, unless the
+%% transaction is indexed at these offsets already: its listeners heard about
+%% it then.
+index_tx(TXID, AbsoluteEndOffset, TXSize, StoreID) ->
+    Value = term_to_binary({AbsoluteEndOffset, TXSize}),
+    case ar_kv:get({tx_index, StoreID}, TXID) of
+        {ok, Value} ->
+            ok;
+        _ ->
+            AbsoluteStartOffset = AbsoluteEndOffset - TXSize,
+            OffsetKey = << AbsoluteStartOffset:?OFFSET_KEY_BITSIZE >>,
+            case ar_kv:put({tx_offset_index, StoreID}, OffsetKey, TXID) of
+                ok ->
+                    case ar_kv:put({tx_index, StoreID}, TXID, Value) of
+                        ok ->
+                            ar_events:send(tx, {registered_offset, TXID,
+                                                AbsoluteEndOffset, TXSize}),
+                            ar_tx_blacklist:notify_about_added_tx(TXID,
+                                AbsoluteEndOffset, AbsoluteStartOffset);
+                        {error, Reason} ->
+                            ?LOG_ERROR([{event, failed_to_update_tx_index},
+                                        {reason, io_lib:format("~p", [Reason])},
+                                        {tx, arweave_lib_util:encode(TXID)}])
+                    end;
+                {error, Reason} ->
+                    ?LOG_ERROR([{event, failed_to_update_tx_offset_index},
+                                {reason, io_lib:format("~p", [Reason])},
+                                {tx, arweave_lib_util:encode(TXID)}])
+            end
+    end.
 
 %% @doc Run the data_root_offset_index repair scan for the given block
 %% index and storage module. Removes tx_index ranges for any
@@ -1272,6 +1281,45 @@ test_add_block_indexes_txs_of_synced_data_roots() ->
                         end,
                         [{<< 1:256 >>, 10, 10}, {<< 2:256 >>, 30, 20},
                          {<< 3:256 >>, 60, 30}])
+                  end)
+              end)
+      end).
+
+reindexing_a_block_notifies_once_test_() ->
+    {timeout, 30, fun test_reindexing_a_block_notifies_once/0}.
+
+%% @doc A block the tip already indexed is indexed again by header syncing; its
+%% transactions are announced once.
+test_reindexing_a_block_notifies_once() ->
+    with_test_index_and_keys_db(
+      fun(StoreID) ->
+              with_test_tx_index_dbs(StoreID, fun() ->
+                  Start = 1000,
+                  SizeTaggedTXs = [{{<< N:256 >>, << N:256 >>}, End}
+                                   || {N, End} <- [{1, 10}, {2, 30}, {3, 60}]],
+                  {TXRoot, BlockSize, _Entries} =
+                      build_block_data_root_entries(Start, SizeTaggedTXs),
+                  H = << 0:384 >>,
+                  B = #block{ indep_hash = H, height = 1,
+                              weave_size = Start + BlockSize,
+                              block_size = BlockSize, tx_root = TXRoot },
+                  ar_test_util:run_with_mocked([
+                      {ar_block_index, get_element_by_height,
+                          fun(1) -> {H, Start + BlockSize, TXRoot} end},
+                      {ar_events, send, fun(_, _) -> ok end},
+                      {ar_tx_blacklist, notify_about_added_tx,
+                          fun(_, _, _) -> ok end}
+                  ], fun() ->
+                      {ok, _} = add_block_data_roots(SizeTaggedTXs, Start,
+                                                     StoreID),
+                      ok = update_tx_index(SizeTaggedTXs, Start, StoreID),
+                      ok = add_block(B, SizeTaggedTXs, StoreID),
+                      %% One announcement for each of the three transactions.
+                      ?assertEqual(3, meck:num_calls(ar_events, send,
+                          [tx, {registered_offset, '_', '_', '_'}])),
+                      ?assertEqual(3, meck:num_calls(ar_tx_blacklist,
+                                                     notify_about_added_tx,
+                                                     '_'))
                   end)
               end)
       end).
