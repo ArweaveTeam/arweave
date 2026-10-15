@@ -84,20 +84,32 @@ start(normal, _Args) ->
     %% enable/disable feature lists, promotes start_from_state, etc.).
     ok = arweave_config:normalize(),
 
-    %% Boot-time prerequisites that must be in place before any
-    %% supervisor child starts reading config.
+    %% Configure logger
     LogDir = arweave_config:get([log_dir]),
     filelib:ensure_dir(LogDir ++ "/"),
+    maybe_install_dumb_term_logger(),
+    ar_logger:init(),
+
+    %% Reject a configuration that breaks a rule spanning several options
+    %% before anything starts, as bootstrap rejects an invalid option.
+    %% arweave_config:runtime/0 checks again once the node has started.
+    case arweave_config_validate:run() of
+        ok ->
+            start_node();
+        {error, Reason} = Error ->
+            report_invalid_config(Reason),
+            Error
+    end.
+
+start_node() ->
+    %% Boot-time prerequisites that must be in place before any
+    %% supervisor child starts reading config.
     warn_if_single_scheduler(),
     maybe_run_vdf_benchmark(),
-    maybe_install_dumb_term_logger(),
 
     %% Set erlang socket backend
     SocketBackend = arweave_config:get([network, server, socket, backend]),
     persistent_term:put({kernel, inet_backend}, SocketBackend),
-
-    %% Configure logger
-    ar_logger:init(),
 
     ?LOG_INFO("========== Starting Arweave Node  =========="),
     arweave_config:log(),
@@ -134,7 +146,7 @@ start(normal, _Args) ->
         ok ->
             ok;
         {error, Reason} ->
-            io:format("~nConfiguration validation failed: ~p~n~n", [Reason]),
+            report_invalid_config(Reason),
             %% Exit immediately rather than via init:stop/1: a graceful app
             %% shutdown tears down the config registry ETS (it dies with its
             %% owner) while ar_sup's workers are still terminating, so they
@@ -145,6 +157,17 @@ start(normal, _Args) ->
     end,
 
     Result.
+
+%% @doc Print and log why the configuration was rejected.
+report_invalid_config(Reason) ->
+    Message =
+        case is_binary(Reason) of
+            true -> Reason;
+            false -> io_lib:format("~p", [Reason])
+        end,
+    io:format("~nConfiguration validation failed: ~s~n~n", [Message]),
+    ?LOG_ERROR([{event, invalid_configuration},
+        {reason, iolist_to_binary(Message)}]).
 
 set_mining_address() ->
     MiningAddr = arweave_config:get([mining, address]),
@@ -308,8 +331,15 @@ stop_dependencies() ->
     lists:foreach(fun(Dep) -> application:stop(Dep) end, lists:reverse(Deps)).
 
 start_dependencies() ->
-    {ok, _} = application:ensure_all_started(arweave, permanent),
-    ok.
+    case application:ensure_all_started(arweave, permanent) of
+        {ok, _} ->
+            ok;
+        {error, _} = Error ->
+            %% start/2 has reported why, for example a rejected
+            %% configuration, and nothing was left running.
+            init:stop(1),
+            Error
+    end.
 
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
 %% for validating a block, will be blocked on initializing a RandomX dataset,
