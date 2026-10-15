@@ -6,6 +6,20 @@
 -include("ar.hrl").
 -include_lib("arweave_storage/include/arweave_storage.hrl").
 
+%% @doc Verify mode starts no chunk copy, so that no chunk is written into a
+%% module being verified.
+no_chunk_copy_in_verify_mode_test() ->
+    HasChunkCopy = fun(Mode) ->
+        arweave_config:internal_with_test_config(fun() ->
+            ok = arweave_config:internal_force_config(#{[verify, mode] => Mode}),
+            {ok, {_, Children}} = ar_data_sync_sup:init([]),
+            lists:any(fun(#{id := ID}) -> ID == ar_chunk_copy end, Children)
+        end)
+    end,
+    ?assert(HasChunkCopy(false)),
+    ?assertNot(HasChunkCopy(log)),
+    ?assertNot(HasChunkCopy(purge)).
+
 %% @doc Local copying still acquires its device lock and dispatches with
 %% downloads disabled.
 copy_with_downloads_disabled_test_() ->

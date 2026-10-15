@@ -29,7 +29,17 @@ init([]) ->
     %% ar_data_sync_default's init_kv) is available during ar_disk_pool's init.
     DiskPool = ?CHILD(ar_disk_pool, worker),
     Children =
-        [DataRoots, ?CHILD(ar_chunk_copy, worker)] ++
+        [DataRoots] ++ chunk_copy_children() ++
             ar_data_sync:register_workers() ++
             [DiskPool],
     {ok, {{one_for_one, 5, 10}, Children}}.
+
+%% @doc Copy chunks between storage modules unless the node verifies them,
+%% so that no chunk is written into a module being verified.
+chunk_copy_children() ->
+    case arweave_config:get([verify, mode]) of
+        false ->
+            [?CHILD(ar_chunk_copy, worker)];
+        _ ->
+            []
+    end.
