@@ -72,67 +72,70 @@ run_test(EndpointType) ->
     %% Fetch from a real peer through the HTTP client, but insert under a
     %% synthetic peer so discovery for peer1 cannot skew the row count.
     TablePeer = table_peer(EndpointType),
-    ar_test_node:run_with_mocked([peer1], [
-        {arweave_storage, get_serialized_buckets, fun
-            (Index) when Index =:= Mode -> {ok, SerializedBuckets};
-            (Index) -> meck:passthrough([Index])
-        end},
-        %% Discovery tracks exactly the peers it collects, so a collection
-        %% during the test must keep the synthetic peer tracked.
+    %% Discovery on main tracks exactly the peers it collects, so a
+    %% collection during the test must keep the synthetic peer tracked.
+    ar_test_node:run_with_mocked([main], [
         {ar_peers, get_peers, fun
             (current) -> [TablePeer];
             (Ranking) -> meck:passthrough([Ranking])
         end}
     ], fun() ->
-        FetchPeer = ar_test_node:peer_ip(peer1),
-        gen_server:cast(arweave_sync_discovery, {track_peers, [TablePeer]}),
-        _ = sys:get_state(arweave_sync_discovery, infinity),
-        ok = ar_test_await:until(sync_bucket_jobs_finished, fun() ->
-            arweave_sync_discovery:inflight_count() =:= 0
-        end),
-        _ = sys:get_state(arweave_sync_discovery, infinity),
-        ets:delete_all_objects(?SYNC_BUCKET_CACHE_TABLE),
-        {FetchMs, {ok, Buckets}} = timer:tc(
-            ar_http_iface_client, Endpoint, [FetchPeer]
-        ),
-        BeforePeerRows = peer_rows(Mode, TablePeer),
-        {_, BeforeTableMemoryWords, BeforeEtsMemory, BeforeTotalMemory,
-            BeforeRSS} = memory_snapshot(?SYNC_BUCKET_CACHE_TABLE),
-        {InsertMs, ok} = timer:tc(fun() ->
-            gen_server:cast(
-                arweave_sync_discovery,
-                {job_result, TablePeer, {sync_buckets, Mode, Buckets}}
-            ),
+        ar_test_node:run_with_mocked([peer1], [
+            {arweave_storage, get_serialized_buckets, fun
+                (Index) when Index =:= Mode -> {ok, SerializedBuckets};
+                (Index) -> meck:passthrough([Index])
+            end}
+        ], fun() ->
+            FetchPeer = ar_test_node:peer_ip(peer1),
+            gen_server:cast(arweave_sync_discovery, {track_peers, [TablePeer]}),
             _ = sys:get_state(arweave_sync_discovery, infinity),
-            ok
-        end),
-        {_, AfterTableMemoryWords, AfterEtsMemory, AfterTotalMemory,
-            AfterRSS} = memory_snapshot(?SYNC_BUCKET_CACHE_TABLE),
-        RowsInserted = peer_rows(Mode, TablePeer) - BeforePeerRows,
-        MemoryWords = AfterTableMemoryWords - BeforeTableMemoryWords,
-        WordSize = erlang:system_info(wordsize),
-        MemoryBytes = MemoryWords * WordSize,
-        EtsMemoryBytes = AfterEtsMemory - BeforeEtsMemory,
-        TotalMemoryBytes = AfterTotalMemory - BeforeTotalMemory,
-        RSSBytes = memory_delta(AfterRSS, BeforeRSS),
-        print_measurement(#{
-            endpoint_type => EndpointType,
-            serialized_bytes => byte_size(SerializedBuckets),
-            bucket_size => BucketSize,
-            coarse_bucket_count => BucketCount,
-            expanded_bucket_count => UnboundedExpandedBucketCount,
-            expected_rows => ExpectedRows,
-            fetch_decode_us => FetchMs,
-            insert_us => InsertMs,
-            rows_inserted => RowsInserted,
-            ets_memory_words => MemoryWords,
-            ets_memory_bytes => MemoryBytes,
-            erlang_ets_memory_bytes => EtsMemoryBytes,
-            total_memory_bytes => TotalMemoryBytes,
-            rss_bytes => RSSBytes
-        }),
-        ?assertEqual(ExpectedRows, RowsInserted),
-        ets:delete_all_objects(?SYNC_BUCKET_CACHE_TABLE)
+            ok = ar_test_await:until(sync_bucket_jobs_finished, fun() ->
+                arweave_sync_discovery:inflight_count() =:= 0
+            end),
+            _ = sys:get_state(arweave_sync_discovery, infinity),
+            ets:delete_all_objects(?SYNC_BUCKET_CACHE_TABLE),
+            {FetchMs, {ok, Buckets}} = timer:tc(
+                ar_http_iface_client, Endpoint, [FetchPeer]
+            ),
+            BeforePeerRows = peer_rows(Mode, TablePeer),
+            {_, BeforeTableMemoryWords, BeforeEtsMemory, BeforeTotalMemory,
+                BeforeRSS} = memory_snapshot(?SYNC_BUCKET_CACHE_TABLE),
+            {InsertMs, ok} = timer:tc(fun() ->
+                gen_server:cast(
+                    arweave_sync_discovery,
+                    {job_result, TablePeer, {sync_buckets, Mode, Buckets}}
+                ),
+                _ = sys:get_state(arweave_sync_discovery, infinity),
+                ok
+            end),
+            {_, AfterTableMemoryWords, AfterEtsMemory, AfterTotalMemory,
+                AfterRSS} = memory_snapshot(?SYNC_BUCKET_CACHE_TABLE),
+            RowsInserted = peer_rows(Mode, TablePeer) - BeforePeerRows,
+            MemoryWords = AfterTableMemoryWords - BeforeTableMemoryWords,
+            WordSize = erlang:system_info(wordsize),
+            MemoryBytes = MemoryWords * WordSize,
+            EtsMemoryBytes = AfterEtsMemory - BeforeEtsMemory,
+            TotalMemoryBytes = AfterTotalMemory - BeforeTotalMemory,
+            RSSBytes = memory_delta(AfterRSS, BeforeRSS),
+            print_measurement(#{
+                endpoint_type => EndpointType,
+                serialized_bytes => byte_size(SerializedBuckets),
+                bucket_size => BucketSize,
+                coarse_bucket_count => BucketCount,
+                expanded_bucket_count => UnboundedExpandedBucketCount,
+                expected_rows => ExpectedRows,
+                fetch_decode_us => FetchMs,
+                insert_us => InsertMs,
+                rows_inserted => RowsInserted,
+                ets_memory_words => MemoryWords,
+                ets_memory_bytes => MemoryBytes,
+                erlang_ets_memory_bytes => EtsMemoryBytes,
+                total_memory_bytes => TotalMemoryBytes,
+                rss_bytes => RSSBytes
+            }),
+            ?assertEqual(ExpectedRows, RowsInserted),
+            ets:delete_all_objects(?SYNC_BUCKET_CACHE_TABLE)
+        end)
     end).
 
 table_peer(sync) ->
