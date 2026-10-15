@@ -73,7 +73,7 @@ ignore_removed_legacy_option(Name) ->
     case [Option || Option <- removed_legacy_options(),
             atom_to_binary(Option) =:= Name] of
         [Option] ->
-            warn(Option, ignored, <<"The option no longer exists.">>),
+            warn(Option, ignored, removed_legacy_option_reason(Option)),
             true;
         [] ->
             false
@@ -114,11 +114,20 @@ options() ->
         || Name <- [listener_shutdown, max_connections, num_acceptors]].
 
 removed_legacy_options() ->
-    [cm_in_batch_timeout, custom_domains, disk_space, gateway,
+    [cm_in_batch_timeout, custom_domain, custom_domains, disk_space, gateway,
         max_gateway_connections, max_poa_option_depth,
         mining_server_chunk_cache_size_limit, p3, packing_rate,
         requests_per_minute_limit, requests_per_minute_limit_by_ip,
-        tx_propagation_parallelization, tx_validators].
+        tls_cert_file, tls_key_file, tx_propagation_parallelization,
+        tx_validators].
+
+removed_legacy_option_reason(Option)
+        when Option == requests_per_minute_limit;
+            Option == requests_per_minute_limit_by_ip ->
+    <<"Set request limits with the limiter.<group> options, and exempt "
+        "trusted clients by listing them in peers.local.">>;
+removed_legacy_option_reason(_Option) ->
+    <<"The option no longer exists.">>.
 
 lookup(Key) ->
     Name = key_name(Key),

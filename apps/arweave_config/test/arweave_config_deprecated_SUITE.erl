@@ -171,8 +171,10 @@ removed_legacy_options_ignored(_Config) ->
         ?assertEqual(lists:sort([{Option, ignored} || Option <- JSONOptions]),
             lists:sort(Warnings()))
     end),
-    %% 2.9.6 took custom_domains and p3 from the configuration file only.
-    CLIOptions = JSONOptions -- [custom_domains, p3],
+    %% 2.9.6 took custom_domains and p3 from the configuration file only, and
+    %% custom_domain and the TLS files from the command line only.
+    CLIOptions = (JSONOptions -- [custom_domains, p3])
+        ++ [custom_domain, tls_cert_file, tls_key_file],
     with_warnings(fun(Warnings) ->
         arweave_config:internal_with_test_config(fun() ->
             ?assertEqual(ok, arweave_config_format_legacy_cli:parse(
