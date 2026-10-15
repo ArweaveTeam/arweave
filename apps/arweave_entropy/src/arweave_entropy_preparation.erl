@@ -27,14 +27,22 @@
     cursor,
     prepare_status = undefined,
     %% Footprints of each partition the module keeps.
-    footprint_limit
+    footprint_limit,
+    %% Failed attempts to prepare the footprint at the cursor.
+    failed_attempts = 0
 }).
 
 -ifdef(AR_TEST).
 -define(DEVICE_LOCK_WAIT, 100).
+-define(FOOTPRINT_RETRY_DELAY_MS, 10).
 -else.
 -define(DEVICE_LOCK_WAIT, 5_000).
+-define(FOOTPRINT_RETRY_DELAY_MS, 500).
 -endif.
+
+%% Retries of a footprint that failed to prepare, each after twice the delay
+%% of the previous one, before the cursor moves past its bucket.
+-define(FOOTPRINT_RETRIES, 5).
 
 %% Idle time after which the server hibernates and drops its dead heap.
 -define(IDLE_HIBERNATE_MS, 10_000).
@@ -339,7 +347,7 @@ do_prepare_entropy(State) ->
                 Packing,
                 StoreID
             ),
-            State#state{cursor = NextCursor};
+            State#state{cursor = NextCursor, failed_attempts = 0};
         beyond_limit ->
             %% The rest of this sector is past the footprint limit: move to
             %% the next sector rather than finish. The module's first bucket
@@ -353,19 +361,9 @@ do_prepare_entropy(State) ->
                 arweave_lib_footprint:get_next_sector_start(BucketEndOffset),
             gen_server:cast(self(), prepare_entropy),
             store_prepare_cursor(NextCursor, StoreID),
-            State#state{cursor = NextCursor};
+            State#state{cursor = NextCursor, failed_attempts = 0};
         {error, Error} ->
-            %% Retry the footprint rather than record the store as prepared
-            %% past it.
-            ?LOG_ERROR([
-                {event, failed_to_store_entropy},
-                {cursor, Start},
-                {store_id, StoreID},
-                {reason, io_lib:format("~p", [Error])}
-            ]),
-            {ok, _} = timer:apply_after(
-                500, gen_server, cast, [self(), prepare_entropy]),
-            State;
+            retry_or_skip_footprint(Error, BucketEndOffset, State);
         ok ->
             NextCursor = advance_entropy_offset(
                 BucketEndOffset,
@@ -374,7 +372,45 @@ do_prepare_entropy(State) ->
             ),
             gen_server:cast(self(), prepare_entropy),
             store_prepare_cursor(NextCursor, StoreID),
-            State#state{cursor = NextCursor}
+            State#state{cursor = NextCursor, failed_attempts = 0}
+    end.
+
+%% @doc Retry a footprint that failed to prepare with a growing delay, then
+%% move past its bucket. A chunk later written to a bucket left without
+%% entropy gets its entropy generated at write time.
+retry_or_skip_footprint(Error, BucketEndOffset, State) ->
+    #state{
+        cursor = Start,
+        store_id = StoreID,
+        failed_attempts = FailedAttempts
+    } = State,
+    case FailedAttempts < ?FOOTPRINT_RETRIES of
+        true ->
+            ?LOG_WARNING([
+                {event, failed_to_store_entropy},
+                {cursor, Start},
+                {store_id, StoreID},
+                {failed_attempts, FailedAttempts + 1},
+                {reason, io_lib:format("~p", [Error])}
+            ]),
+            Delay = ?FOOTPRINT_RETRY_DELAY_MS bsl FailedAttempts,
+            {ok, _} = timer:apply_after(
+                Delay, gen_server, cast, [self(), prepare_entropy]),
+            State#state{failed_attempts = FailedAttempts + 1};
+        false ->
+            ?LOG_ERROR([
+                {event, skipping_entropy_footprint},
+                {cursor, Start},
+                {store_id, StoreID},
+                {failed_attempts, FailedAttempts + 1},
+                {reason, io_lib:format("~p", [Error])}
+            ]),
+            %% The bucket's entropy is not recorded, so the next unsynced
+            %% entropy interval would start at this bucket again.
+            NextCursor = BucketEndOffset + ?DATA_CHUNK_SIZE,
+            gen_server:cast(self(), prepare_entropy),
+            store_prepare_cursor(NextCursor, StoreID),
+            State#state{cursor = NextCursor, failed_attempts = 0}
     end.
 
 %% @doc What to do with the bucket: nothing more past the module end, move

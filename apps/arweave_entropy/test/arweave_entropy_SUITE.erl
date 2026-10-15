@@ -3,6 +3,7 @@
 -compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave_lib/include/arweave_lib_constants.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 suite() -> [{timetrap, {seconds, 30}}].
 
@@ -14,7 +15,8 @@ all() ->
         slice_is_detached_from_entropy,
         failed_generation_releases_lock,
         concurrent_generation_is_shared,
-        dead_generator_does_not_block_reuse
+        dead_generator_does_not_block_reuse,
+        failing_footprint_is_skipped
     ].
 
 init_per_suite(Config) ->
@@ -232,6 +234,79 @@ concurrent_generation_is_shared(_) ->
 %%====================================================================
 
 %% @doc The host modules the suite mocks.
+%% @doc A footprint that keeps failing to store is retried a bounded number of
+%% times, after which preparation moves past it and completes.
+failing_footprint_is_skipped(_) ->
+    StoreID = test_prepare_store,
+    Addr = <<0:256>>,
+    Packing = {replica_2_9, Addr},
+    Failing = arweave_lib_constants:get_chunk_bucket_end(?DATA_CHUNK_SIZE),
+    ModuleEnd = Failing + 2 * ?DATA_CHUNK_SIZE,
+    Parent = self(),
+    Mocks = [ar_device_lock, ar_footprint_limit, ar_serialize, ar,
+        arweave_storage, arweave_entropy_generation],
+    meck:new(Mocks, [passthrough, no_link]),
+    try
+        meck:expect(ar_device_lock, acquire_lock, fun(_, _, _) -> active end),
+        meck:expect(ar_device_lock, release_lock, fun(_, _) -> ok end),
+        meck:expect(ar_device_lock, set_device_lock_metric,
+            fun(_, _, _) -> ok end),
+        meck:expect(ar_footprint_limit, get, fun(_) -> undefined end),
+        meck:expect(ar_footprint_limit, is_beyond, fun(_, _) -> false end),
+        meck:expect(ar_serialize, encode_packing, fun(_, _) -> <<"p">> end),
+        meck:expect(ar, console, fun(_, _) -> ok end),
+        meck:expect(arweave_storage, store_info, fun(_) ->
+            #store_info{id = StoreID, label = "test_prepare_store",
+                packing = Packing, effective_range = {0, ModuleEnd}}
+        end),
+        meck:expect(arweave_storage, read_entropy_cursor,
+            fun(_, _) -> Failing end),
+        meck:expect(arweave_storage, entropy_context,
+            fun(_, _) -> {false, Addr} end),
+        meck:expect(arweave_storage, is_entropy_recorded,
+            fun(_, _, _) -> false end),
+        meck:expect(arweave_storage, store_entropy_footprint,
+            fun(_, Fold) -> Fold(fun(_, _, _, _, _) -> ok end, ok) end),
+        meck:expect(arweave_storage, write_entropy_cursor, fun(_, _) -> ok end),
+        meck:expect(arweave_storage, get_next_unsynced_entropy_interval,
+            fun(_, _, _) -> not_found end),
+        meck:expect(arweave_storage, set_entropy_complete, fun(ID) ->
+            Parent ! {entropy_complete, ID},
+            ok
+        end),
+        %% Pass the bucket through as its entropy so that the store step can
+        %% fail for one bucket only.
+        meck:expect(arweave_entropy_generation, generate_entropies,
+            fun(_, BucketEndOffset, false) -> [BucketEndOffset] end),
+        meck:expect(arweave_entropy_generation, generate_entropy_keys,
+            fun(_, _) -> [] end),
+        meck:expect(arweave_entropy_generation, entropy_offsets,
+            fun(_, _) -> [] end),
+        meck:expect(arweave_entropy_generation, map_entropies,
+            fun([Bucket], _, _, _, _, _, _, _) when Bucket == Failing ->
+                    {error, eio};
+                (_, _, _, _, _, _, _, Acc) ->
+                    Acc
+            end),
+        Name = arweave_entropy_preparation:name(StoreID),
+        {ok, PID} = arweave_entropy_preparation:start_link(
+            Name, {StoreID, Packing}),
+        unlink(PID),
+        try
+            ?assertEqual(StoreID, receive
+                {entropy_complete, ID} -> ID
+            after 5_000 -> timeout
+            end),
+            %% One attempt and five retries.
+            ?assertEqual(6, meck:num_calls(arweave_entropy_generation,
+                map_entropies, [[Failing], '_', '_', '_', '_', '_', '_', '_']))
+        after
+            gen_server:stop(PID)
+        end
+    after
+        meck:unload(Mocks)
+    end.
+
 mocked_modules() ->
     [arweave_lib_replica_2_9, ar_packing_server, ar_mine_randomx].
 
