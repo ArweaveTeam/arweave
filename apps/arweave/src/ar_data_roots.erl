@@ -855,22 +855,24 @@ shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) -
 %%% Public: Block lifecycle helpers.
 %%%===================================================================
 
-%% @doc If the block's data roots aren't already indexed for this StoreID,
-%% record them and update the per-tx offset/index. Idempotent.
+%% @doc Record the block's data roots unless this StoreID has them already, and
+%% update the per-tx offset/index. Idempotent.
 add_block(B, SizeTaggedTXs, StoreID) ->
     #block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B,
     case ar_block_index:get_element_by_height(B#block.height) of
         {H, WeaveSize, TXRoot} ->
+            BlockStart = B#block.weave_size - B#block.block_size,
             case are_synced(B, StoreID) of
                 false ->
-                    BlockStart = B#block.weave_size - B#block.block_size,
-                    {ok, _} =
-                        add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
-                    ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID),
-                    ok;
+                    {ok, _} = add_block_data_roots(
+                        SizeTaggedTXs, BlockStart, StoreID);
                 _ ->
                     ok
-            end;
+            end,
+            %% Data-roots syncing stores a block's data roots without its
+            %% transaction identifiers, so index the transactions even when
+            %% the data roots are there already.
+            ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID);
         _ ->
             ok
     end.
@@ -1233,6 +1235,47 @@ test_verify_stored_blocks_removes_unordered_shifted_entries() ->
       end).
 
 %% A removal that fails halfway is resumed before data roots syncing can retry.
+add_block_indexes_txs_of_synced_data_roots_test_() ->
+    {timeout, 30, fun test_add_block_indexes_txs_of_synced_data_roots/0}.
+
+%% @doc Data-roots syncing stores a block's data roots without its transactions,
+%% so adding the block afterwards still records them in the transaction index.
+test_add_block_indexes_txs_of_synced_data_roots() ->
+    with_test_index_and_keys_db(
+      fun(StoreID) ->
+              with_test_tx_index_dbs(StoreID, fun() ->
+                  Start = 1000,
+                  SizeTaggedTXs = [{{<< N:256 >>, << N:256 >>}, End}
+                                   || {N, End} <- [{1, 10}, {2, 30}, {3, 60}]],
+                  {TXRoot, BlockSize, Entries} =
+                      build_block_data_root_entries(Start, SizeTaggedTXs),
+                  {ok, _} = store_block(Start, BlockSize, TXRoot, Entries,
+                                        StoreID),
+                  H = << 0:384 >>,
+                  B = #block{ indep_hash = H, height = 1,
+                              weave_size = Start + BlockSize,
+                              block_size = BlockSize, tx_root = TXRoot },
+                  ar_test_util:run_with_mocked([
+                      {ar_block_index, get_element_by_height,
+                          fun(1) -> {H, Start + BlockSize, TXRoot} end},
+                      {ar_events, send, fun(_, _) -> ok end},
+                      {ar_tx_blacklist, notify_about_added_tx,
+                          fun(_, _, _) -> ok end}
+                  ], fun() ->
+                      ?assertEqual(true, are_synced(B, StoreID)),
+                      ok = add_block(B, SizeTaggedTXs, StoreID),
+                      lists:foreach(
+                        fun({TXID, End, Size}) ->
+                                ?assertEqual(
+                                   {ok, term_to_binary({Start + End, Size})},
+                                   ar_kv:get({tx_index, StoreID}, TXID))
+                        end,
+                        [{<< 1:256 >>, 10, 10}, {<< 2:256 >>, 30, 20},
+                         {<< 3:256 >>, 60, 30}])
+                  end)
+              end)
+      end).
+
 verify_stored_blocks_failed_removal_resyncs_test_() ->
     {timeout, 30, fun test_verify_stored_blocks_failed_removal_resyncs/0}.
 
@@ -1396,6 +1439,31 @@ with_test_index_and_keys_db(Fun) ->
                   ok = ar_kv:test_destroy(MigrationDBName)
               end
       end).
+
+%% @doc Run Fun with the transaction index databases of StoreID open.
+with_test_tx_index_dbs(StoreID, Fun) ->
+    {ar_data_roots_test, Unique} = StoreID,
+    Names = [{"ar_data_roots_test_tx_index_" ++ Unique, {tx_index, StoreID}},
+             {"ar_data_roots_test_tx_offset_index_" ++ Unique,
+              {tx_offset_index, StoreID}}],
+    lists:foreach(
+      fun({DBName, Name}) ->
+              ok = ar_kv:test_destroy(DBName),
+              ok = ar_kv:open(#{
+                     path => filename:join(ar_kv:test_db_path(), DBName),
+                     name => Name })
+      end,
+      Names),
+    try
+        Fun()
+    after
+        lists:foreach(
+          fun({DBName, Name}) ->
+                  _ = ar_kv:test_close(Name),
+                  ok = ar_kv:test_destroy(DBName)
+          end,
+          Names)
+    end.
 
 ensure_test_kv_started() ->
     case ar_kv_sup:start_link() of
