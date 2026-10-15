@@ -638,11 +638,28 @@ trim_returns_newest_excess(_Config) ->
     Plan = arweave_sync_peer:enqueue_tasks(Peer, Tasks,
         arweave_sync_peer:snapshot(#{}, #{}, arweave_sync_peer:new())),
     State = arweave_sync_peer:commit_plan(Plan, arweave_sync_peer:new()),
-    {Trimmed, State2} = arweave_sync_peer:trim_queues(State),
-    %% A peer without measured goodput keeps a queue of eight, the oldest.
-    ?assertEqual(lists:nthtail(8, Tasks), Trimmed),
-    ?assertEqual(lists:sublist(Tasks, 8),
-        arweave_sync_peer:queued_tasks(State2)).
+    %% A peer that neither timed out nor missed keeps its whole queue.
+    Healthy = arweave_sync_peer:tick([Peer], ?TICK_INTERVAL_MS, State),
+    ?assertEqual({[], Healthy}, arweave_sync_peer:trim_queues(Healthy)),
+    lists:foreach(
+        fun(FetchTiming) ->
+            Failing = arweave_sync_peer:tick([Peer], ?TICK_INTERVAL_MS,
+                arweave_sync_peer:add_fetch_result(Peer, 0, FetchTiming,
+                    State)),
+            {Trimmed, State2} = arweave_sync_peer:trim_queues(Failing),
+            %% A peer without measured goodput keeps a queue of eight, the
+            %% oldest.
+            ?assertEqual(lists:nthtail(8, Tasks), Trimmed),
+            ?assertEqual(lists:sublist(Tasks, 8),
+                arweave_sync_peer:queued_tasks(State2))
+        end,
+        [#fetch_timing{timeout_ms = ?FETCH_TIMEOUT_MS},
+            #fetch_timing{misses = 1}]),
+    %% Rejections and client errors do not mark a peer as failing.
+    Rejecting = arweave_sync_peer:tick([Peer], ?TICK_INTERVAL_MS,
+        arweave_sync_peer:add_fetch_result(Peer, 0,
+            #fetch_timing{reject_ms = 100, client_error_ms = 100}, State)),
+    ?assertMatch({[], _}, arweave_sync_peer:trim_queues(Rejecting)).
 
 %%====================================================================
 %% Helpers

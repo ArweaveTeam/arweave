@@ -342,15 +342,26 @@ tick_returns_excess_queued_tasks(_Config) ->
             Reservation = arweave_sync_footprint:test_reservation(store1,
                 Footprint, [#task_source{peer = Peer, footprint = Footprint,
                     intervals = arweave_lib_intervals:new()}], Peer, 1, bound),
-            State0 = bound_state(Peer, ByteTasks, FootprintTask,
+            Bound = bound_state(Peer, ByteTasks, FootprintTask,
                 #state{footprints =
                     arweave_sync_footprint:test_state([Reservation])}),
             ?assertEqual(10, arweave_sync_store:claimed_chunks(store1,
-                State0#state.stores)),
+                Bound#state.stores)),
+            %% A healthy peer keeps its queue.
+            Healthy = arweave_sync_scheduler:tick(Bound, 1000),
+            ?assertEqual(10, length(
+                arweave_sync_peer:queued_tasks(Healthy#state.peer_state))),
+            ?assertEqual(0, arweave_sync_store:queued_count(store1,
+                Healthy#state.stores)),
+            State0 = Bound#state{peer_state =
+                arweave_sync_peer:add_fetch_result(Peer, 0,
+                    #fetch_timing{timeout_ms = ?FETCH_TIMEOUT_MS},
+                    Bound#state.peer_state)},
             State = arweave_sync_scheduler:tick(State0, 1000),
-            %% A fresh peer keeps a queue of eight. The ninth byte task goes
-            %% back to the store queue with its claim, and the footprint task
-            %% is dropped with its claim and its reservation.
+            %% A peer that timed out keeps a queue of eight, the size for a
+            %% peer without measured goodput. The ninth byte task goes back
+            %% to the store queue with its claim, and the footprint task is
+            %% dropped with its claim and its reservation.
             Stores = State#state.stores,
             ?assertEqual(8, length(
                 arweave_sync_peer:queued_tasks(State#state.peer_state))),

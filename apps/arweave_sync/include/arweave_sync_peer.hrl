@@ -37,7 +37,10 @@
     recent_goodputs = [],
     %% The missed fetches of the peer's most recent ticks, newest first, up to
     %% MISS_WINDOW_TICKS of them; they count toward the peer's load.
-    recent_misses = []
+    recent_misses = [],
+    %% Whether the peer timed out or missed a fetch since the previous tick.
+    %% Only such a peer's queue is trimmed.
+    failing = false
 }).
 
 -record(state, {

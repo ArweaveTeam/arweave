@@ -822,7 +822,8 @@ tick(State, NowMs) ->
     PeerState = State2#state.peer_state,
     ActivePeers = arweave_sync_peer:active_peers(PeerState),
     PeerState2 = arweave_sync_peer:tick(ActivePeers, NowMs, PeerState),
-    %% Queues longer than their peers now serve give their excess back.
+    %% Peers that timed out or missed give back the queued work beyond what
+    %% they now serve.
     {Trimmed, PeerState3} = arweave_sync_peer:trim_queues(PeerState2),
     State3 = return_tasks(Trimmed, State2#state{peer_state = PeerState3}),
     %% Unfinished assignments are also active in the next interval.

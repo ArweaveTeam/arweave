@@ -173,6 +173,7 @@ tick_peer(Peer, NowMs, PeerState) ->
     PeerState2#peer{
         fetch_timing = #fetch_timing{},
         recent_misses = add_recent_misses(PeerState),
+        failing = is_failing(FetchTiming),
         last_tick = Tick,
         active = false,
         driven = false
@@ -183,6 +184,7 @@ idle_peer(NowMs, PeerState) ->
     PeerState#peer{
         fetch_timing = #fetch_timing{},
         recent_misses = add_recent_misses(PeerState),
+        failing = false,
         last_tick = {PeerState#peer.fetched_bytes, NowMs},
         active = false,
         driven = false
@@ -241,6 +243,12 @@ add_recent_goodput(Sample, _FetchingCount,
         #peer{ recent_goodputs = Goodputs } = PeerState) ->
     PeerState#peer{ recent_goodputs = lists:sublist(
         [goodput(Sample) | Goodputs], ?GOODPUT_WINDOW_SAMPLES) }.
+
+%% @doc Return whether the peer timed out or missed a fetch. Rejections and
+%% client errors do not count: the peer is limiting this node, or this node's
+%% own HTTP client dropped the request.
+is_failing(#fetch_timing{ timeout_ms = TimeoutMs, misses = Misses }) ->
+    TimeoutMs > 0 orelse Misses > 0.
 
 %% @doc Add the misses since the previous tick to the peer's miss window.
 add_recent_misses(#peer{ fetch_timing = FetchTiming,
@@ -797,22 +805,26 @@ best_source(StoreID, Sources, Plan) ->
 %%% Peer queues.
 %%%===================================================================
 
-%% @doc Take the newest tasks beyond each peer queue's length limit out of the
-%% queue and return them, so that work bound to a peer that slowed down or
-%% stopped answering can move to other peers. Fetches already started stay.
+%% @doc Take the newest tasks beyond the length limit out of the queue of each
+%% peer that timed out or missed a fetch since the previous tick, and return
+%% them, so that work bound to a peer that stopped answering can move to other
+%% peers. The queue of a healthy peer stays, even when its goodput dips.
+%% Fetches already started stay.
 trim_queues(#state{ peers = Peers } = State) ->
     {Trimmed, Peers2} = maps:fold(
-        fun(Peer, #peer{ queue = Queue } = PeerState, {TaskAcc, PeerAcc}) ->
-            MaxLength = queue_max_length(recent_goodput(PeerState)),
-            case queue:len(Queue) > MaxLength of
-                true ->
-                    {Kept, Excess} = queue:split(MaxLength, Queue),
-                    {queue:to_list(Excess) ++ TaskAcc,
-                        maps:put(Peer, PeerState#peer{ queue = Kept },
-                            PeerAcc)};
-                false ->
-                    {TaskAcc, PeerAcc}
-            end
+        fun(_Peer, #peer{ failing = false }, Acc) ->
+                Acc;
+           (Peer, #peer{ queue = Queue } = PeerState, {TaskAcc, PeerAcc}) ->
+                MaxLength = queue_max_length(recent_goodput(PeerState)),
+                case queue:len(Queue) > MaxLength of
+                    true ->
+                        {Kept, Excess} = queue:split(MaxLength, Queue),
+                        {queue:to_list(Excess) ++ TaskAcc,
+                            maps:put(Peer, PeerState#peer{ queue = Kept },
+                                PeerAcc)};
+                    false ->
+                        {TaskAcc, PeerAcc}
+                end
         end,
         {[], Peers},
         Peers),
