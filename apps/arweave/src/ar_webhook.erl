@@ -12,6 +12,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -define(NUMBER_OF_TRIES, 10).
 -define(WAIT_BETWEEN_TRIES, 30 * 1000).
@@ -472,8 +473,7 @@ cache_add_tx_offset_data([{TXID, Start, End} | Data], Cache) ->
         timestamp_txid = Set,
         end_offset_txid_start_offset = OffsetSet,
         txid_to_start_offset_end_offset = OffsetMap,
-        txid_to_status = StatusMap,
-        size = Size
+        txid_to_status = StatusMap
     } = Cache,
     Timestamp = erlang:monotonic_time(microsecond),
     Set2 =
@@ -509,7 +509,8 @@ cache_add_tx_offset_data([{TXID, Start, End} | Data], Cache) ->
         end_offset_txid_start_offset = OffsetSet2,
         txid_to_start_offset_end_offset = OffsetMap2,
         txid_to_status = maps:remove(TXID, StatusMap),
-        size = Size + 1
+        %% A repeated transaction replaces its entry.
+        size = map_size(Map2)
     },
     Cache3 = maybe_remove_oldest(Cache2),
     cache_add_tx_offset_data(Data, Cache3).
@@ -689,3 +690,19 @@ process_removed_tx_data([{TXID, _Start, _End} | Data], State) ->
             State2 = State#state{ tx_offset_cache = Cache2 },
             process_removed_tx_data(Data, State2)
     end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+-ifdef(AR_TEST).
+
+repeated_tx_offset_counts_once_test() ->
+    TXID = << 1:256 >>,
+    Cache = cache_add_tx_offset_data([{TXID, 0, 10}], #tx_offset_cache{}),
+    Cache2 = cache_add_tx_offset_data([{TXID, 0, 10}], Cache),
+    ?assertEqual(1, Cache2#tx_offset_cache.size),
+    ?assertEqual(#{ TXID => {0, 10} },
+                 Cache2#tx_offset_cache.txid_to_start_offset_end_offset).
+
+-endif.
