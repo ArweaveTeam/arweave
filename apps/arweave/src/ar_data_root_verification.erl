@@ -179,7 +179,8 @@ log_mismatch({BlockStart, BlockEnd, Reason, kept}) ->
 %% @doc Return whether data-roots syncing will fetch the given block again:
 %% it only scans the ranges of the configured storage modules.
 resync_expectation(BlockStart, BlockEnd) ->
-    case ar_storage_module:get_all(BlockStart, BlockEnd) of
+    case arweave_storage:intersecting_stores(
+            BlockStart, BlockEnd, any_packing) of
         [] ->
             no_storage_module;
         _ ->

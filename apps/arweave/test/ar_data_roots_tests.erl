@@ -8,7 +8,7 @@
 
 neighboring_shifted_entries_test_() ->
     with_store(?FUNCTION_NAME, fun(StoreID) ->
-        Start = ar_block:strict_data_split_threshold() + ?DATA_CHUNK_SIZE,
+        Start = arweave_lib_constants:strict_data_split_threshold() + ?DATA_CHUNK_SIZE,
         BlockSize = ?DATA_CHUNK_SIZE,
         End = Start + BlockSize,
         DataRoot = << 1:256 >>,

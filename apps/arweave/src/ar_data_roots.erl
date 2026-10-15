@@ -1290,7 +1290,7 @@ test_verify_stored_blocks_failed_removal_resyncs() ->
 %% chunks, so an entry can be shortened within its last chunk without changing
 %% the padded total. Only the start offset check rejects it.
 verify_padded_entries_test() ->
-    BlockStart = ar_block:strict_data_split_threshold(),
+    BlockStart = arweave_lib_constants:strict_data_split_threshold(),
     {TXRoot, BlockSize, Entries} =
         make_padded_data_root_entries(BlockStart, [1000, 2000, 0, 300000]),
     ?assertEqual(4 * ?DATA_CHUNK_SIZE, BlockSize),
@@ -1424,7 +1424,7 @@ make_padded_data_root_entries(BlockStart, TXSizes) ->
                   {[{{dummy, << End:256 >>}, End} | Acc], End};
              (TXSize, {Acc, Start}) ->
                   End = Start + TXSize,
-                  PaddedEnd = ar_poa:get_padded_offset(End, 0),
+                  PaddedEnd = arweave_lib_constants:get_padded_offset(End, 0),
                   {[{{padding, ?PADDING_NODE_DATA_ROOT}, PaddedEnd},
                     {{dummy, << End:256 >>}, End} | Acc], PaddedEnd}
           end,
