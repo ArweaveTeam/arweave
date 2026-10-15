@@ -135,6 +135,63 @@ load_peers_skips_failing_peers_test_() ->
         ets:delete(ar_peers, {peer_ip, {3, 3, 3, 3}})
     end, 30).
 
+%% @doc The saved peers file keeps the version 3 records 2.9.6 reads, so that a
+%% node can roll back, and the current reader restores the same performance.
+saved_peers_load_in_2_9_6_test_() ->
+    Peer = {1, 2, 3, 4, 1984},
+    Performance = #performance{
+        release = 100,
+        total_bytes = 1000,
+        total_throughput = 40.0,
+        total_transfers = 4,
+        average_throughput = 8.0,
+        average_success = 0.5
+    },
+    ar_test_util:with_mocked([
+        {ar_storage, write_term, fun
+            (peers, Term) -> self() ! {saved_peers, Term}, ok;
+            (Name, Term) -> meck:passthrough([Name, Term])
+        end},
+        {ar_http_iface_client, get_info, fun
+            (P, network) when P == Peer -> <<?NETWORK_NAME>>;
+            (P, Type) -> meck:passthrough([P, Type])
+        end}
+    ], fun() ->
+        ets:insert(ar_peers, {{peer, Peer}, Performance}),
+        try
+            ar_peers:store_peers(),
+            {0, Records, _Tags} = receive {saved_peers, Term} -> Term end,
+            {Peer, Saved} = lists:keyfind(Peer, 1, Records),
+            ?assertEqual(
+                {performance, 3, 100, 1000, 40.0, 4, 0.0, 8.0, 0.5, 5.0, 4.0},
+                Saved),
+            ?assertEqual(version_3, load_peer_2_9_6(Saved)),
+            ets:delete(ar_peers, {peer, Peer}),
+            ok = ar_peers:load_peer({Peer, Saved}),
+            ?assertEqual(Performance, ar_peers:get_or_init_performance(Peer))
+        after
+            ets:delete(ar_peers, {peer, Peer}),
+            ets:delete(ar_peers, {peer_ip, {1, 2, 3, 4}})
+        end
+    end).
+
+%% @doc The record match of ar_peers:load_peer/1 in N.2.9.6. It has no
+%% catch-all clause, so any other shape stops 2.9.6 from starting.
+load_peer_2_9_6(Performance) ->
+    case Performance of
+        {performance, _TotalBytes, _TotalLatency, _Transfers, _Failures,
+                _Rating} ->
+            legacy;
+        {performance, _TotalBytes, _TotalLatency, _Transfers, _Failures,
+                _Rating, _Release} ->
+            legacy;
+        {performance, 3, _Release, _TotalBytes, _TotalThroughput,
+                _TotalTransfers, _AverageLatency, _AverageThroughput,
+                _AverageSuccess, LifetimeRating, CurrentRating}
+                when is_number(LifetimeRating), is_number(CurrentRating) ->
+            version_3
+    end.
+
 table_survives_peer_restart_test_() ->
     ar_test_util:with_mocked([
         {ar_storage, read_term, fun

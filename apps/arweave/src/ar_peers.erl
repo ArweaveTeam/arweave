@@ -36,7 +36,7 @@
 -ifdef(AR_TEST).
 -export([expire_inbound_peers/0, get_or_init_performance/1, get_peer_rating/2,
     load_peer/1, load_peers/1, maybe_rotate_peer_ports/1, observe_inbound_peer/3, remove_peer/2,
-    set_ranked_peers/2, update_rating/2, update_rating/4]).
+    set_ranked_peers/2, store_peers/0, update_rating/2, update_rating/4]).
 -endif.
 
 %% The frequency in seconds of re-resolving DNS of peers configured by domain names.
@@ -872,8 +872,8 @@ do_load_peer({Peer, Performance}) ->
                         average_success = AverageSuccess
                     });
                 #performance{ version = 5 } ->
-                    %% Going forward whenever we change the #performance record we should
-                    %% increment the version field so we can match on it when doing a load.
+                    %% Written only by development builds; store_peers/0 saves
+                    %% version 3 so that a node can roll back to 2.9.6.
                     set_performance(Peer, Performance)
             end,
             ok;
@@ -1193,7 +1193,7 @@ store_peers() ->
             Records =
                 ets:foldl(
                   fun   ({{peer, Peer}, Performance}, Acc) ->
-                          [{Peer, Performance} | Acc];
+                          [{Peer, to_saved_performance(Performance)} | Acc];
                         (_, Acc) ->
                           Acc
                   end,
@@ -1215,6 +1215,22 @@ store_peers() ->
             %% (they ignored the total-rating slot too).
             ar_storage:write_term(peers, {0, Records, Tags})
     end.
+
+%% @doc Convert a performance record to the version 3 tuple 2.9.6 reads, so a
+%% node can roll back to it. The ratings are derived as 2.9.6 derives them.
+to_saved_performance(Performance) ->
+    #performance{
+        release = Release,
+        total_bytes = TotalBytes,
+        total_throughput = TotalThroughput,
+        total_transfers = TotalTransfers,
+        average_throughput = AverageThroughput,
+        average_success = AverageSuccess
+    } = Performance,
+    {performance, 3, Release, TotalBytes, TotalThroughput, TotalTransfers,
+        0.0, AverageThroughput, AverageSuccess,
+        get_peer_rating(lifetime, Performance),
+        get_peer_rating(current, Performance)}.
 
 %%--------------------------------------------------------------------
 %% @hidden
