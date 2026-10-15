@@ -2269,27 +2269,8 @@ store_chunk2(ChunkArgs, Args, State) ->
             ProcessAlreadyStored =
                 case StoreIndex of
                     {error, already_stored} ->
-                        case arweave_storage:is_recorded(
-                            PaddedOffset,
-                            Packing,
-                            {ar_data_sync, byte},
-                            StoreID
-                        ) of
-                            false ->
-                                do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
-                                                               StoreID, undefined,
-                                                               chunk_already_stored_but_not_in_sync_record});
-                            true ->
-                                case arweave_storage:is_recorded(
-                arweave_lib_footprint:get_footprint_offset(PaddedOffset),
-                any_packing, {ar_data_sync, footprint}, StoreID) of
-                                    false ->
-                                        %% Repair the broken footprint record.
-                                        arweave_storage:add_footprint(PaddedOffset, Packing, StoreID);
-                                    _ ->
-                                        ok
-                                end
-                        end,
+                        repair_already_stored(AbsoluteEndOffset, ChunkSize,
+                                              Packing, StoreID),
                         already_stored;
                     Else ->
                         Else
@@ -2312,6 +2293,36 @@ store_chunk2(ChunkArgs, Args, State) ->
                                               DataPathHash, StoreID),
                     {error, Reason}
             end
+    end.
+
+%% @doc Reconcile the records of a chunk the chunk storage already holds.
+%% The byte record is checked with any packing because a replica.2.9 module
+%% records the chunk under its {replica_2_9, Addr} packing, not under the
+%% unpacked_padded packing the write arrived with.
+repair_already_stored(AbsoluteEndOffset, ChunkSize, Packing, StoreID) ->
+    PaddedOffset =
+        arweave_lib_constants:get_chunk_padded_offset(AbsoluteEndOffset),
+    case arweave_storage:is_recorded(PaddedOffset, any_packing,
+            {ar_data_sync, byte}, StoreID) of
+        false ->
+            do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
+                StoreID, undefined,
+                chunk_already_stored_but_not_in_sync_record});
+        true ->
+            repair_footprint_record(PaddedOffset, Packing, StoreID);
+        {true, RecordedPacking} ->
+            repair_footprint_record(PaddedOffset, RecordedPacking, StoreID)
+    end.
+
+repair_footprint_record(PaddedOffset, Packing, StoreID) ->
+    FootprintOffset =
+        arweave_lib_footprint:get_footprint_offset(PaddedOffset),
+    case arweave_storage:is_recorded(FootprintOffset, any_packing,
+            {ar_data_sync, footprint}, StoreID) of
+        false ->
+            arweave_storage:add_footprint(PaddedOffset, Packing, StoreID);
+        _ ->
+            ok
     end.
 
 log_failed_to_store_chunk(already_stored,

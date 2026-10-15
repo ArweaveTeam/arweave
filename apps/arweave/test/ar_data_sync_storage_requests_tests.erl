@@ -103,6 +103,23 @@ recorded_footprint_already_stored_test_() ->
         {ar_kv, put, fun(_, _, _) -> ok end}
     ]).
 
+%% @doc A duplicate write into a replica.2.9 module keeps a chunk the byte
+%% record holds under the module packing and repairs the footprint record with
+%% that packing.
+replica_2_9_already_stored_test_() ->
+    with_storage(fun replica_2_9_already_stored/0, already_stored_mocks(fun
+        (_, any_packing, {ar_data_sync, byte}, _) ->
+            {true, {replica_2_9, <<0:256>>}};
+        (_, _, _, _) ->
+            false
+    end)).
+
+%% @doc A duplicate write of a chunk missing from the byte record invalidates
+%% the chunk storage records so that the chunk can be stored again.
+unrecorded_already_stored_test_() ->
+    with_storage(fun unrecorded_already_stored/0,
+        already_stored_mocks(fun(_, _, _, _) -> false end)).
+
 %% @doc Missing entropy is generated before retrying a write; failed generation
 %% stops the retry.
 missing_entropy_repair_test_() ->
@@ -337,6 +354,73 @@ recorded_footprint_already_stored() ->
     ?assertEqual({skipped, already_stored}, take_store_result(Ref)),
     ?assertNot(meck:called(arweave_storage, add_footprint, '_')),
     ?assertEqual({error, expired}, cache_reference_status(CacheRef)).
+
+%% @doc The unpacked_padded duplicate is skipped, its records are kept and
+%% the footprint record is repaired with the recorded replica.2.9 packing.
+replica_2_9_already_stored() ->
+    ?assertEqual({skipped, already_stored},
+        drain_already_stored(unpacked_padded)),
+    ?assertNot(meck:called(arweave_storage, add_sync_record,
+        ['_', '_', '_', {invalid_chunks, byte}, '_'])),
+    ?assert(meck:called(arweave_storage, add_footprint,
+        [2 * ?DATA_CHUNK_SIZE, {replica_2_9, <<0:256>>}, ?DEFAULT_MODULE])).
+
+%% @doc The unrecorded duplicate is skipped and its chunk invalidated.
+unrecorded_already_stored() ->
+    ?assertEqual({skipped, already_stored},
+        drain_already_stored(unpacked_padded)),
+    ?assert(meck:called(arweave_storage, add_sync_record,
+        ['_', '_', '_', {invalid_chunks, byte}, '_'])),
+    ?assertNot(meck:called(arweave_storage, add_footprint, '_')).
+
+%% @doc Mock a chunk storage that already holds every chunk.
+already_stored_mocks(IsRecorded) ->
+    [
+        {arweave_storage, is_storage_supported, fun(_, _, _) -> true end},
+        {arweave_storage, is_recorded, IsRecorded},
+        {arweave_storage, delete_chunk_records, fun(_, _, _) -> ok end},
+        {arweave_storage, delete_sync_record, fun(_, _, _, _) -> ok end},
+        {arweave_storage, delete_entropy_record, fun(_, _, _) -> ok end},
+        {arweave_storage, add_sync_record, fun(_, _, _, _, _) -> ok end},
+        {arweave_storage, add_footprint, fun(_, _, _) -> ok end},
+        {arweave_storage, put_chunk, fun(_, _, _, _) ->
+            {error, already_stored}
+        end},
+        {ar_tx_blacklist, is_byte_blacklisted, fun(_) -> false end},
+        {ar_kv, get, fun
+            ({chunks_index, ?DEFAULT_MODULE}, _) -> not_found;
+            (DB, Key) -> meck:passthrough([DB, Key])
+        end},
+        {ar_kv, put, fun(_, _, _) -> ok end}
+    ].
+
+%% @doc Drain one aged write of a chunk with the given packing and return its
+%% storage result.
+drain_already_stored(Packing) ->
+    {ok, CacheRef} = ar_chunk_cache:reserve(?MODULE),
+    Ref = make_ref(),
+    %% The second chunk is below the mocked two-chunk mature-data bound.
+    Offset = 2 * ?DATA_CHUNK_SIZE,
+    ChunkArgs = {Packing, <<0>>, Offset, tx_root, ?DATA_CHUNK_SIZE},
+    Args = {Packing, <<0>>, ?DATA_CHUNK_SIZE, data_root, tx_path, none, none},
+    State = #data_sync_state{
+        store_id = ?DEFAULT_MODULE,
+        footprint_limit = 2,
+        store_chunk_queue = gb_sets:from_list(
+            [{Offset, 0, make_ref(), ChunkArgs, Args, {self(), Ref, CacheRef}}]
+        )
+    },
+    %% A fresh entry one chunk below the raised threshold drains the aged one.
+    meck:expect(ar_disk_pool, get_threshold, fun() -> 4 * ?DATA_CHUNK_SIZE end),
+    {ok, PendingCacheRef} = ar_chunk_cache:reserve(?MODULE),
+    PendingArgs = setelement(
+        6, setelement(2, chunk_args(), 3 * ?DATA_CHUNK_SIZE), unpacked
+    ),
+    {noreply, _} = ar_data_sync:handle_cast(
+        {store_chunk, PendingArgs, {self(), make_ref(), PendingCacheRef}}, State
+    ),
+    ?assertEqual({error, expired}, cache_reference_status(CacheRef)),
+    take_store_result(Ref).
 
 %% @doc Capture storage casts without starting a data-sync process.
 start_local_writer() ->
