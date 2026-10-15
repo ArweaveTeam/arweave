@@ -16,6 +16,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 %% The frequency of refreshing the blacklist.
 -define(REFRESH_BLACKLISTS_FREQUENCY_MS, 10 * 60 * 1000).
@@ -267,6 +268,9 @@ handle_cast({orphaned_tx, TXID}, State) ->
 
 handle_cast({added_tx, TXID, End, Start}, State) ->
     case ets:lookup(ar_tx_blacklist, TXID) of
+        [{TXID, End, Start}] ->
+            %% The range is blocked already, or its takedown is pending.
+            {noreply, State};
         [{TXID}] ->
             ets:insert(ar_tx_blacklist, [{TXID, End, Start}]),
             ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
@@ -704,3 +708,65 @@ close_dets() ->
         end,
         Names
     ).
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+-ifdef(AR_TEST).
+
+duplicate_added_tx_keeps_range_blocked_test_() ->
+    {timeout, 30, fun test_duplicate_added_tx_keeps_range_blocked/0}.
+
+%% @doc A repeated notification for a transaction blacklisted at the same
+%% offsets keeps its range blocked, even when another takedown is taken first
+%% and the original takedown completes afterwards.
+test_duplicate_added_tx_keeps_range_blocked() ->
+    with_isolated_tables(fun() ->
+        ar_test_util:run_with_mocked([
+            {ar_data_sync, request_tx_data_removal, fun(_, _, _) -> ok end}
+        ], fun() ->
+            %% Other is the transaction taken first while both are pending.
+            ets:insert(ar_tx_blacklist_pending_data, [{<< 1:256 >>},
+                                                      {<< 2:256 >>}]),
+            Other = ets:first(ar_tx_blacklist_pending_data),
+            [Dup] = [<< 1:256 >>, << 2:256 >>] -- [Other],
+            ets:delete_all_objects(ar_tx_blacklist_pending_data),
+            ets:insert(ar_tx_blacklist, [{Other}, {Dup}]),
+            {noreply, State} = handle_cast({added_tx, Dup, 200, 100},
+                                           #ar_tx_blacklist_state{}),
+            DupRef = meck:capture(first, ar_data_sync,
+                                  request_tx_data_removal, '_', 2),
+            {noreply, State2} = handle_cast({added_tx, Other, 400, 300},
+                                            State),
+            {noreply, State3} = handle_cast({added_tx, Dup, 200, 100},
+                                            State2),
+            {noreply, _} = handle_info({removed_range, DupRef}, State3),
+            ?assert(is_byte_blacklisted(150)),
+            ?assert(is_byte_blacklisted(350))
+        end)
+    end).
+
+%% @doc Run Fun on empty blacklist tables, with the blacklist server, if any,
+%% suspended, and restore the tables afterwards.
+with_isolated_tables(Fun) ->
+    Names = [ar_tx_blacklist, ar_tx_blacklist_pending_headers,
+             ar_tx_blacklist_pending_data, ar_tx_blacklist_offsets,
+             ar_tx_blacklist_pending_restore_headers],
+    Created = [Name || Name <- Names, ets:info(Name) == undefined,
+                       ets:new(Name, [ordered_set, public, named_table])
+                           == Name],
+    Saved = [{Name, ets:tab2list(Name)} || Name <- Names -- Created],
+    Server = whereis(?MODULE),
+    [ok = sys:suspend(Server) || is_pid(Server)],
+    [ets:delete_all_objects(Name) || Name <- Names],
+    try
+        Fun()
+    after
+        [ets:delete(Name) || Name <- Created],
+        [begin ets:delete_all_objects(Name), ets:insert(Name, Objects) end
+         || {Name, Objects} <- Saved],
+        [ok = sys:resume(Server) || is_pid(Server)]
+    end.
+
+-endif.
