@@ -69,16 +69,22 @@ run_test(EndpointType) ->
     %% Iteration is bounded by the current weave size: a peer's payload can
     %% only expand into sub-buckets that fall within the weave we know about.
     ExpectedRows = expected_inserted_rows(EndpointType, UnboundedExpandedBucketCount),
+    %% Fetch from a real peer through the HTTP client, but insert under a
+    %% synthetic peer so discovery for peer1 cannot skew the row count.
+    TablePeer = table_peer(EndpointType),
     ar_test_node:run_with_mocked([peer1], [
         {arweave_storage, get_serialized_buckets, fun
             (Index) when Index =:= Mode -> {ok, SerializedBuckets};
             (Index) -> meck:passthrough([Index])
+        end},
+        %% Discovery tracks exactly the peers it collects, so a collection
+        %% during the test must keep the synthetic peer tracked.
+        {ar_peers, get_peers, fun
+            (current) -> [TablePeer];
+            (Ranking) -> meck:passthrough([Ranking])
         end}
     ], fun() ->
-        %% Fetch from a real peer through the HTTP client, but insert under a
-        %% synthetic peer so discovery for peer1 cannot skew the row count.
         FetchPeer = ar_test_node:peer_ip(peer1),
-        TablePeer = table_peer(EndpointType),
         gen_server:cast(arweave_sync_discovery, {track_peers, [TablePeer]}),
         _ = sys:get_state(arweave_sync_discovery, infinity),
         ok = ar_test_await:until(sync_bucket_jobs_finished, fun() ->
