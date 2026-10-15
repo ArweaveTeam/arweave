@@ -1319,10 +1319,12 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
                             {400, #{}, jiffy:encode(#{ error => invalid_field }), Req};
                         FieldAtom ->
                             {TXJSON} = ar_serialize:tx_to_json_struct(TX),
-                            case catch val_for_key(FieldAtom, TXJSON) of
-                                {'EXIT', _} ->
+                            case val_for_key(FieldAtom, TXJSON) of
+                                false ->
                                     {400, #{}, jiffy:encode(#{ error => invalid_field }),
                                      Req};
+                                Val when is_integer(Val) ->
+                                    {200, #{}, integer_to_binary(Val), Req};
                                 Val ->
                                     {200, #{}, Val, Req}
                             end

@@ -793,7 +793,26 @@ test_get_subfields_of_tx(_) ->
     ?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
     {ok, Body} = ar_test_await:http_tx_data(main, TX#tx.id),
     Orig = TX#tx.data,
-    ?assertEqual(Orig, arweave_lib_util:decode(Body)).
+    ?assertEqual(Orig, arweave_lib_util:decode(Body)),
+    EncodedTXID = binary_to_list(arweave_lib_util:encode(TX#tx.id)),
+    GetField =
+        fun(Field) ->
+            {ok, {{Status, _}, _, FieldBody, _, _}} = ar_http:req(#{
+                method => get,
+                peer => ar_test_node:peer_ip(main),
+                path => "/tx/" ++ EncodedTXID ++ "/" ++ Field
+            }),
+            {Status, FieldBody}
+        end,
+    %% format is an integer in the transaction JSON. new_tx/1 builds a
+    %% format 1 transaction.
+    ?assertEqual({<<"200">>, <<"1">>}, GetField("format")),
+    ?assertEqual({<<"200">>, integer_to_binary(TX#tx.reward)},
+        GetField("reward")),
+    %% owner_address is an existing atom but not a field of the
+    %% transaction JSON.
+    ?assertEqual({<<"400">>, <<"{\"error\":\"invalid_field\"}">>},
+        GetField("owner_address")).
 
 %% @doc Correctly check the status of pending is returned for a pending transaction
 test_get_pending_tx(_) ->
