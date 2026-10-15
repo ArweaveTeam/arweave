@@ -12,6 +12,7 @@ all() -> [
     persistence_roundtrip,
     snapshots_take_turns,
     snapshot_after_failed_wal_write,
+    footprint_record_id_snapshotted_at_start,
     data_sizes_published_on_load,
     data_sizes_split_by_partition,
     data_sizes_shared_partition,
@@ -38,6 +39,7 @@ end_per_testcase(Name, Config) ->
     arweave_storage_ct_util:stop_record(test_sync_record_persist),
     arweave_storage_ct_util:stop_record(test_sync_record_turn),
     arweave_storage_ct_util:stop_record(test_sync_record_unlogged),
+    arweave_storage_ct_util:stop_record(test_sync_record_rollback),
     arweave_storage_ct_util:stop_record(test_sync_record_sizes),
     arweave_storage_ct_util:stop_record(test_sync_record_split),
     arweave_storage_ct_util:stop_record(test_sync_record_left),
@@ -394,6 +396,30 @@ snapshot_after_failed_wal_write(_Config) ->
         ?assertEqual([{2, 0}], arweave_lib_intervals:to_list(
             arweave_storage_sync_record:get(any_packing, Record, StoreID))),
         kill(PID2)
+    end).
+
+%% @doc A store whose snapshot has no footprint record snapshots one at start.
+%% 2.9.6 decodes the snapshot first, which creates the record's ID atom, so it
+%% can replay the footprint record log entries written after the start, which
+%% it decodes with binary_to_term(_, [safe]).
+footprint_record_id_snapshotted_at_start(_Config) ->
+    StoreID = test_sync_record_rollback,
+    StateDB = {sync_record, StoreID},
+    %% No periodic snapshot runs.
+    Mocks = [{ar_timer, [
+        {apply_after, fun(_Delay, _M, _F, _A, _O) -> {ok, make_ref()} end}
+    ]}],
+    with_disk_store(StoreID, Mocks, fun() ->
+        {ok, PID} = arweave_storage_ct_util:start_sync_record(StoreID),
+        ok = arweave_storage_sync_record:add(
+            4, 0, unpacked, {ar_data_sync, footprint}, StoreID
+        ),
+        %% The entry is in the log only, as after an unclean stop.
+        ?assertEqual({ok, 1}, wal_count(StateDB)),
+        {ok, Snapshot} = ar_kv:get(StateDB, <<"sync_records">>),
+        {SyncRecordByID, _SyncRecordByIDType} = binary_to_term(Snapshot),
+        ?assert(maps:is_key(ar_data_sync_footprints, SyncRecordByID)),
+        kill(PID)
     end).
 
 %% @doc A restarted store publishes the data sizes of its snapshot at once

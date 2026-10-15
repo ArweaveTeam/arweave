@@ -473,7 +473,8 @@ init(StoreID) ->
             {ok, State};
         _ ->
             ok = ?DEP(kv):open(#{path => Dir, name => StateDB}),
-            {WAL, SyncRecordByIDType} = load_sync_records(StateDB, StoreID),
+            {WAL, SyncRecordByID, SyncRecordByIDType} =
+                load_sync_records(StateDB, StoreID),
             publish_data_sizes(SyncRecordByIDType, State),
             %% Spread the stores' first snapshots over a period instead of
             %% lining them all up at boot.
@@ -482,7 +483,9 @@ init(StoreID) ->
                     rand:uniform(?STORE_SYNC_RECORD_FREQUENCY_MS)
             ),
             ?LOG_INFO([{event, ar_sync_record_initialized}, {store_id, StoreID}]),
-            State2 = State#state{wal = WAL},
+            State2 = snapshot_footprint_record_id(
+                SyncRecordByID, State#state{wal = WAL}
+            ),
             ok = arweave_storage_footprint_record:resume_initialization(
                 StoreID
             ),
@@ -797,7 +800,7 @@ is_recorded2(Offset, Key, ID, StoreID) ->
 
 %% @doc Populate the ETS interval tables from the on-disk snapshot and replay
 %% the write-ahead log on top of them. Return the number of WAL entries and
-%% the snapshot's records by type.
+%% the snapshot's records by ID and by type.
 load_sync_records(StateDB, StoreID) ->
     {SyncRecordByID, SyncRecordByIDType} =
         case ?DEP(kv):get(StateDB, ?SYNC_RECORDS_KEY) of
@@ -808,7 +811,34 @@ load_sync_records(StateDB, StoreID) ->
         end,
     initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
     initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
-    {replay_write_ahead_log(StateDB, StoreID), SyncRecordByIDType}.
+    WAL = replay_write_ahead_log(StateDB, StoreID),
+    {WAL, SyncRecordByID, SyncRecordByIDType}.
+
+%% @doc Snapshot the records when the loaded snapshot has no footprint record,
+%% before the first footprint record write-ahead log entry. 2.9.6 decodes the
+%% snapshot with binary_to_term/1, which creates the record's ID atom, and then
+%% fails on that ID in the log, decoded with [safe], unless the snapshot
+%% created the atom. This keeps a node able to roll back to 2.9.6.
+snapshot_footprint_record_id(SyncRecordByID, State) ->
+    ID = record_id({ar_data_sync, footprint}),
+    case maps:is_key(ID, SyncRecordByID) of
+        true ->
+            State;
+        false ->
+            #state{store_id = StoreID} = State,
+            case ets:member(sync_records, {ID, StoreID}) of
+                true ->
+                    ok;
+                false ->
+                    initialize_sync_record_by_id_ets(
+                        #{ID => arweave_lib_intervals:new()}, StoreID
+                    )
+            end,
+            %% A one-time snapshot per store, so it does not wait for the
+            %% snapshot token.
+            {_, State2} = store_state(State#state{unlogged_change = true}),
+            State2
+    end.
 
 %% @doc Return [{Packing, PartitionNumber, Size}] for the ar_data_sync records
 %% of a snapshot, one entry per partition the storage module spans.
