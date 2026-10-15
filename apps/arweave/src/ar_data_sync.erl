@@ -860,15 +860,8 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
             %% The order is important - in case the VM crashes,
             %% we will not report false positives to peers,
             %% and the chunk can still be removed upon retry.
-            RemoveFromFootprint = arweave_storage:delete_footprint(PaddedOffset, StoreID),
-            RemoveFromSyncRecord =
-                case RemoveFromFootprint of
-                    ok ->
-                        arweave_storage:delete_sync_record(PaddedOffset,
-                                              PaddedStartOffset, {ar_data_sync, byte}, StoreID);
-                    Error ->
-                        Error
-                end,
+            RemoveFromSyncRecord = arweave_storage:delete_chunk_records(
+                PaddedOffset, PaddedStartOffset, StoreID),
             RemoveFromChunkStorage =
                 case RemoveFromSyncRecord of
                     ok ->
@@ -1463,14 +1456,8 @@ invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
     end.
 
 remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
-    Remove1 = arweave_storage:delete_footprint(PaddedEndOffset, StoreID),
-    Remove2 =
-        case Remove1 of
-            ok ->
-                arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_data_sync, byte}, StoreID);
-            Error ->
-                Error
-        end,
+    Remove2 = arweave_storage:delete_chunk_records(
+        PaddedEndOffset, StartOffset, StoreID),
     IsSmallChunkBeforeThreshold = PaddedEndOffset - StartOffset < ?DATA_CHUNK_SIZE,
     Remove3 =
         case {Remove2, IsSmallChunkBeforeThreshold} of
@@ -2255,12 +2242,8 @@ store_chunk2(ChunkArgs, Args, State) ->
                 %% The 2.9 chunk storage is write-once.
                 ok;
             _ ->
-                case arweave_storage:delete_footprint(PaddedOffset, StoreID) of
-                    ok ->
-                        arweave_storage:delete_sync_record(PaddedOffset, StartOffset, {ar_data_sync, byte}, StoreID);
-                    Error ->
-                        Error
-                end
+                arweave_storage:delete_chunk_records(
+                    PaddedOffset, StartOffset, StoreID)
         end,
     case CleanRecord of
         {error, Reason} ->

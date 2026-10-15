@@ -384,8 +384,7 @@ invalidate_sync_record(Type, Cursor, NextCursor, Logs, State) ->
     #state{ mode = Mode, store_id = StoreID } = State,
     case Mode of
         purge ->
-            arweave_storage:delete_footprint(NextCursor, StoreID),
-            arweave_storage:delete_sync_record(NextCursor, Cursor, {ar_data_sync, byte}, StoreID),
+            arweave_storage:delete_chunk_records(NextCursor, Cursor, StoreID),
             arweave_storage:delete_sync_record(NextCursor, Cursor, {ar_chunk_storage, byte}, StoreID);
         log ->
             ok

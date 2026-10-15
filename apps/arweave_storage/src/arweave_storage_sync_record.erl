@@ -10,6 +10,7 @@
     add/5,
     add_async/5, add_async/6,
     delete/4,
+    delete_chunk_records/3,
     cut/3,
     is_recorded/4,
     is_recorded_any/3,
@@ -158,6 +159,19 @@ delete(End, Start, Record, StoreID) ->
     ID = record_id(Record),
     GenServerID = name(StoreID),
     case catch gen_server:call(GenServerID, {delete, End, Start, ID}, 120000) of
+        {'EXIT', {timeout, {gen_server, call, _}}} ->
+            {error, timeout};
+        Reply ->
+            Reply
+    end.
+
+%% @doc Remove a chunk from the {ar_data_sync, footprint} record and then from
+%% the {ar_data_sync, byte} record in one call, so that a footprint record
+%% initialization step cannot run between the two and add the chunk back.
+%% Store the changes on disk before returning ok.
+delete_chunk_records(PaddedEndOffset, StartOffset, StoreID) ->
+    Request = {delete_chunk_records, PaddedEndOffset, StartOffset},
+    case catch gen_server:call(name(StoreID), Request, 120000) of
         {'EXIT', {timeout, {gen_server, call, _}}} ->
             {error, timeout};
         Reply ->
@@ -492,6 +506,21 @@ handle_call({add, End, Start, Packing, ID}, _From, State) ->
 handle_call({delete, End, Start, ID}, _From, State) ->
     {Reply, State2} = do_delete(End, Start, ID, State),
     {reply, Reply, State2};
+handle_call({delete_chunk_records, PaddedEndOffset, StartOffset}, _From,
+        State) ->
+    %% The footprint entry goes first: if the byte record update fails or the
+    %% node stops in between, the chunk is not advertised as stored.
+    FootprintOffset = arweave_lib_footprint:get_footprint_offset(
+        PaddedEndOffset),
+    case do_delete(FootprintOffset, FootprintOffset - 1,
+            record_id({ar_data_sync, footprint}), State) of
+        {ok, State2} ->
+            {Reply, State3} = do_delete(PaddedEndOffset, StartOffset,
+                record_id({ar_data_sync, byte}), State2),
+            {reply, Reply, State3};
+        {Error, State2} ->
+            {reply, Error, State2}
+    end;
 handle_call({cut, Offset, ID}, _From, State) ->
     {Reply, State2} = do_cut(Offset, ID, State),
     {reply, Reply, State2};

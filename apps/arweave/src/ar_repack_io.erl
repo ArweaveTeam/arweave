@@ -278,25 +278,19 @@ remove_from_sync_record(Offsets, StoreID) ->
     StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 
     DeleteEntropyRecord = arweave_storage:delete_entropy_record(PaddedEndOffset, StoreID),
-    DeleteFootprint =
+    DeleteSyncRecord =
         case DeleteEntropyRecord of
             ok ->
-                arweave_storage:delete_footprint(PaddedEndOffset, StoreID);
+                arweave_storage:delete_chunk_records(
+                    PaddedEndOffset, StartOffset, StoreID);
             Error ->
                 Error
-        end,
-    DeleteSyncRecord =
-        case DeleteFootprint of
-            ok ->
-                arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_data_sync, byte}, StoreID);
-            Error2 ->
-                Error2
         end,
     case DeleteSyncRecord of
         ok ->
             arweave_storage:delete_sync_record(PaddedEndOffset, StartOffset, {ar_chunk_storage, byte}, StoreID);
-        Error3 ->
-            Error3
+        Error2 ->
+            Error2
     end.
 
 add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->

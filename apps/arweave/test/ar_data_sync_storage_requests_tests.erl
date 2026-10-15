@@ -66,8 +66,7 @@ packing_completion_releases_cache_test_() ->
 queued_writes_release_cache_test_() ->
     with_storage(fun queued_writes_release_cache/0, [
         {arweave_storage, is_storage_supported, fun(_, _, _) -> true end},
-        {arweave_storage, delete_footprint, fun(_, _) -> ok end},
-        {arweave_storage, delete_sync_record, fun(_, _, _, _) -> ok end},
+        {arweave_storage, delete_chunk_records, fun(_, _, _) -> ok end},
         {arweave_storage, is_recorded, fun
             (_, _, {ar_data_sync, footprint}, _) -> false;
             (_, _, _, _) -> true
@@ -91,8 +90,7 @@ queued_writes_release_cache_test_() ->
 recorded_footprint_already_stored_test_() ->
     with_storage(fun recorded_footprint_already_stored/0, [
         {arweave_storage, is_storage_supported, fun(_, _, _) -> true end},
-        {arweave_storage, delete_footprint, fun(_, _) -> ok end},
-        {arweave_storage, delete_sync_record, fun(_, _, _, _) -> ok end},
+        {arweave_storage, delete_chunk_records, fun(_, _, _) -> ok end},
         {arweave_storage, is_recorded, fun
             (_, _, {ar_data_sync, footprint}, _) -> {true, unpacked};
             (_, _, _, _) -> true

@@ -39,6 +39,7 @@
     get_sync_record/3,
     add_sync_record/5,
     delete_sync_record/4,
+    delete_chunk_records/3,
     cut_sync_record/3,
     is_recorded/4,
     is_recorded_any/3,
@@ -337,6 +338,12 @@ add_footprint(Offset, Packing, StoreID) ->
 
 delete_footprint(Offset, StoreID) ->
     arweave_storage_footprint_record:delete(Offset, StoreID).
+
+%% @doc Remove a chunk from the footprint record and the
+%% {ar_data_sync, byte} record together.
+delete_chunk_records(PaddedEndOffset, StartOffset, StoreID) ->
+    arweave_storage_sync_record:delete_chunk_records(
+        PaddedEndOffset, StartOffset, StoreID).
 
 %% @doc Build the store's footprint record from its {ar_data_sync, byte} one
 %% unless it is built already.

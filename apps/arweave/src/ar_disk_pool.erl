@@ -1101,9 +1101,8 @@ delete_chunk(Iterator, Args, StoreID, DiskPool) ->
                             PaddedOffset = arweave_lib_constants:get_chunk_padded_offset(AbsoluteEndOffset),
                             StartOffset = arweave_lib_constants:get_chunk_padded_offset(
                                             AbsoluteEndOffset - ChunkSize),
-                            ok = arweave_storage:delete_footprint(PaddedOffset, StoreID),
-                            ok = arweave_storage:delete_sync_record(PaddedOffset, StartOffset, {ar_data_sync, byte},
-                                                       StoreID),
+                            ok = arweave_storage:delete_chunk_records(
+                                PaddedOffset, StartOffset, StoreID),
                             case arweave_storage:is_recorded(
                                 PaddedOffset,
                                 any_packing,

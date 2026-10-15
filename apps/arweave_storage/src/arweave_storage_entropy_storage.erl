@@ -496,10 +496,9 @@ do_store_entropy_locked(
                     {error, _} = Error ->
                         Error;
                     {_, UnpackedChunk} ->
-                        arweave_storage:delete_sync_record(
-                            PaddedEndOffset, StartOffset, {ar_data_sync, byte}, StoreID
+                        arweave_storage:delete_chunk_records(
+                            PaddedEndOffset, StartOffset, StoreID
                         ),
-                        arweave_storage:delete_footprint(PaddedEndOffset, StoreID),
                         PackedChunk = ?DEP(packing):encipher_replica_2_9_chunk(
                             UnpackedChunk, ChunkEntropy
                         ),

@@ -21,7 +21,8 @@ all() ->
         next_sector_start_clamps_to_partition,
         initialize_records_synced_chunks,
         initialize_skips_entropy_tail_offsets,
-        initialize_mid_partition_range
+        initialize_mid_partition_range,
+        initialization_step_does_not_restore_deleted_chunk
     ].
 
 init_per_suite(Config) -> arweave_storage_ct_util:init_suite(Config).
@@ -36,7 +37,8 @@ init_per_testcase(Name, Config) ->
             get_intervals,
             initialize_records_synced_chunks,
             initialize_skips_entropy_tail_offsets,
-            initialize_mid_partition_range
+            initialize_mid_partition_range,
+            initialization_step_does_not_restore_deleted_chunk
         ])
     of
         true ->
@@ -763,6 +765,53 @@ initialize_mid_partition_range(_Config) ->
             OutOfRange
         )
     end).
+
+%% @doc An initialization step queued while a chunk is being deleted runs
+%% after the deletion, so it does not add the chunk back to the footprint
+%% record, and the chunk stays absent from both records after a restart.
+initialization_step_does_not_restore_deleted_chunk(_Config) ->
+    StoreID = test_init_store,
+    Replica = {replica_2_9, <<"addr">>},
+    %% The fourth chunk, inside the store's first partition.
+    EndOffset = 4 * ?DATA_CHUNK_SIZE,
+    StartOffset = EndOffset - ?DATA_CHUNK_SIZE,
+    Range = {0, 4 * arweave_lib_constants:partition_size()},
+    arweave_storage_ct_util:with_disk_stores([StoreID], Range, [], fun() ->
+        {ok, _} = arweave_storage_ct_util:start_sync_record(StoreID),
+        arweave_storage_ct_util:add_chunks_to_sync_record(
+            [{EndOffset, Replica}], StoreID),
+        ok = arweave_storage:add_footprint(EndOffset, Replica, StoreID),
+        %% Request the initialization without scheduling its first step.
+        ok = ar_kv:put(arweave_storage_sync_record:state_db(StoreID),
+            <<"footprint_record_init_cursor">>, <<"start">>),
+        Server = whereis(arweave_storage_sync_record:name(StoreID)),
+        ok = sys:suspend(Server),
+        Parent = self(),
+        spawn_link(fun() ->
+            Parent ! {deleted, arweave_storage:delete_chunk_records(
+                EndOffset, StartOffset, StoreID)}
+        end),
+        ok = ar_test_await:until(delete_queued, fun() ->
+            element(2, erlang:process_info(Server, message_queue_len)) > 0
+        end),
+        gen_server:cast(Server,
+            {continue_footprint_record_initialization, start, false}),
+        ok = sys:resume(Server),
+        ?assertEqual({deleted, ok}, receive {deleted, _} = R -> R end),
+        ok = ar_test_await:until(footprint_record_initialized, fun() ->
+            arweave_storage:is_footprint_record_initialized(StoreID)
+        end),
+        assert_chunk_absent(EndOffset, StoreID),
+        arweave_storage_ct_util:stop_record(StoreID),
+        {ok, _} = arweave_storage_ct_util:start_sync_record(StoreID),
+        assert_chunk_absent(EndOffset, StoreID)
+    end).
+
+assert_chunk_absent(EndOffset, StoreID) ->
+    ?assertEqual(false, arweave_storage:is_recorded(
+        EndOffset, any_packing, {ar_data_sync, byte}, StoreID)),
+    ?assertEqual(false,
+        arweave_storage_footprint_record:is_recorded(EndOffset, StoreID)).
 
 %% Build the footprint record of a store covering Range whose
 %% {ar_data_sync, byte} record holds Chunks, through its sync record server as
