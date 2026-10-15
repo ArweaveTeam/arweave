@@ -10,6 +10,7 @@ all() ->
         independent_fetched_cache_refs,
         terminal_outcomes,
         invalid_proof_and_unpack_failure,
+        validation_exception_skips_chunk,
         unpack_then_store,
         duplicate_replies,
         data_sync_down_fails_waiting_writes,
@@ -144,6 +145,16 @@ invalid_proof_and_unpack_failure(_) ->
     after
         stop_data_sync(DataSync)
     end.
+
+%% @doc A proof check that raises, as it does for an offset a reorg removed
+%% from the block index, fails the task and leaves the chunk writer running.
+validation_exception_skips_chunk(_) ->
+    ChunkWriter = start_chunk_writer(store1),
+    TaskRef = {self(), make_ref()},
+    fetched(store1, ?PEER, 0, raise, TaskRef),
+    ?assertEqual({task_write_failed, TaskRef}, take_task_result()),
+    ?assertEqual(pong, gen_server:call(ChunkWriter, ping)),
+    ?assertEqual(0, ar_chunk_cache:cached_size(store1)).
 
 %% @doc A packed chunk keeps its cache reference through unpacking and
 %% storage, ignoring old timeouts.
@@ -419,6 +430,8 @@ store_chunk(DataSync, Args, ReplyTo, _CacheRef) ->
     gen_server:cast(DataSync, {store_chunk, Args, ReplyTo}).
 validate_fetched_chunk(_, _, false) ->
     false;
+validate_fetched_chunk(_, _, raise) ->
+    error({badmatch, not_found});
 validate_fetched_chunk(Peer, Byte, Packing) ->
     Status =
         case Packing of

@@ -175,7 +175,10 @@ handle_info({chunk, {unpack_error, Ref, _, Error}}, State) ->
 %%%===================================================================
 
 process_request(Ref, {fetched, Peer, Byte, Proof}, State) ->
-    case ?DEP(data_sync):validate_fetched_chunk(Peer, Byte, Proof) of
+    %% The proof is checked against the block index, which a reorg can
+    %% shorten while the fetch is in flight. A failed check must not stop
+    %% the chunk writer, because that restarts the whole sync runtime.
+    try ?DEP(data_sync):validate_fetched_chunk(Peer, Byte, Proof) of
         false ->
             reject(Ref, got_invalid_proof_from_peer, Peer, Byte, State);
         {valid, ChunkArgs, Args} ->
@@ -194,6 +197,16 @@ process_request(Ref, {fetched, Peer, Byte, Proof}, State) ->
                         State#state{unpacking = Unpacking#{Offset => Ref}}
                     )
             end
+    catch Class:Reason ->
+        ?LOG_WARNING([
+            {event, fetched_chunk_validation_failed},
+            {class, Class},
+            {reason, io_lib:format("~p", [Reason])},
+            {peer, arweave_lib_util:format_peer(Peer)},
+            {byte, Byte},
+            {store_id, State#state.store_id}
+        ]),
+        finish(Ref, {skipped, chunk_validation_failed}, State)
     end.
 
 request_unpack(Ref, ChunkArgs) ->

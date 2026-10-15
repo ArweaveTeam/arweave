@@ -141,8 +141,10 @@ handle_cast(start, State) ->
     %% SWEEP_RANGE_WARM_WAIT_MS has passed.
     {noreply, schedule_sweep(0, State)};
 %% A smaller weave size after a reorg needs no special handling: the cursors'
-%% live ends shrink with it. Work already submitted past the new bounds fails
-%% to fetch and releases its claims as usual.
+%% live ends shrink with it. Work already submitted past the new bounds can
+%% still fetch from a peer on the old fork. The chunk writer then skips the
+%% chunk, whose proof no longer matches the block index, and its claim is
+%% released as usual.
 handle_cast({set_weave_size, WeaveSize}, State) ->
     DiskPoolThreshold = ?DEP(disk_pool):get_threshold(),
     {noreply, State#state{
