@@ -90,6 +90,8 @@ get_peer_key(Req) ->
 path_to_limiter_ref([<<"chunk">> | _]) -> chunk;
 path_to_limiter_ref([<<"chunk2">> | _]) -> chunk;
 path_to_limiter_ref([<<"data_sync_record">> | _]) -> data_sync_record;
+path_to_limiter_ref([<<"footprints">> | _]) -> footprints;
+path_to_limiter_ref([<<"footprint_buckets">>]) -> footprints;
 path_to_limiter_ref([<<"recent_hash_list_diff">> | _]) -> recent_hash_list_diff;
 path_to_limiter_ref([<<"hash_list">>]) -> block_index;
 path_to_limiter_ref([<<"hash_list2">>]) -> block_index;

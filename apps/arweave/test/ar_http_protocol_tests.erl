@@ -180,6 +180,33 @@ http2_rate_limit_test() ->
         ok = arweave_config:set([peers, local], OldLocalPeers)
     end.
 
+%% @doc Footprint discovery requests are counted against their own limiter
+%% group, not the general group that block and transaction gossip uses.
+footprint_paths_use_footprints_limiter_test() ->
+    OldLocalPeers = arweave_config:get([peers, local]),
+    %% Use the endpoint's limiter, not the separate local-peer limiter.
+    ok = arweave_config:set([peers, local], []),
+    Paths = [<<"/footprints/0/0">>, <<"/footprint_buckets">>],
+    Routes = maps:from_list([{{<<"GET">>, Path}, fun echo/1} || Path <- Paths]),
+    Opts = #{middlewares => [ar_http_iface_rate_limiter_middleware,
+        cowboy_router, cowboy_handler]},
+    try
+        with_server(Routes, Opts, fun(Peer) ->
+            [begin
+                {ok, {{<<"200">>, _}, Headers, _, _, _}} = ar_http:req(#{
+                    method => get, peer => Peer,
+                    path => binary_to_list(Path), timeout => 3000,
+                    headers => [{<<"x-p2p-port">>,
+                        integer_to_binary(element(5, Peer))}]}),
+                Limit = proplists:get_value(<<"ratelimit-limit">>, Headers),
+                ?assertNotEqual(nomatch,
+                    binary:match(Limit, <<"policy=\"footprints ">>))
+             end || Path <- Paths]
+        end)
+    after
+        ok = arweave_config:set([peers, local], OldLocalPeers)
+    end.
+
 %%% Helpers
 
 %% @doc Start a request without blocking the test process.

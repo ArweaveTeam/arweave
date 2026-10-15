@@ -70,6 +70,21 @@
 -endif.
 -define(LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_INTERVAL, 30000).
 
+%% footprints
+%% The same per-peer budget as general, kept apart so that footprint
+%% discovery cannot use up the budget of block and transaction gossip.
+-ifdef(AR_TEST).
+-define(LIMITER_FOOTPRINTS_SLIDING_WINDOW_LIMIT, 0).
+-define(LIMITER_FOOTPRINTS_LEAKY_LIMIT, 45000).
+-else.
+-define(LIMITER_FOOTPRINTS_SLIDING_WINDOW_LIMIT, 3).
+-define(LIMITER_FOOTPRINTS_LEAKY_LIMIT, 450).
+-endif.
+-define(LIMITER_FOOTPRINTS_SLIDING_WINDOW_DURATION, 2000).
+-define(LIMITER_FOOTPRINTS_LEAKY_TICK_INTERVAL, 30000).
+-define(LIMITER_FOOTPRINTS_LEAKY_TICK_REDUCTION, 450).
+-define(LIMITER_FOOTPRINTS_CONCURRENCY_LIMIT, 150).
+
 %% recent_hash_list_diff
 -define(LIMITER_RECENT_HASH_LIST_DIFF_SLIDING_WINDOW_LIMIT, 0).
 -define(LIMITER_RECENT_HASH_LIST_DIFF_SLIDING_WINDOW_DURATION, 1000).
@@ -220,6 +235,8 @@ group_coverage_for(chunk) ->
     <<"Group covers: /chunk, /chunk2.">>;
 group_coverage_for(data_sync_record) ->
     <<"Group covers: /data_sync_record.">>;
+group_coverage_for(footprints) ->
+    <<"Group covers: /footprints, /footprint_buckets.">>;
 group_coverage_for(recent_hash_list_diff) ->
     <<"Group covers: /recent_hash_list_diff.">>;
 group_coverage_for(block_index) ->
@@ -444,6 +461,13 @@ production_groups() ->
             ?LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_INTERVAL,
             ?LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_REDUCTION,
             ?LIMITER_DATA_SYNC_RECORD_CONCURRENCY_LIMIT),
+        footprints => standard(
+            ?LIMITER_FOOTPRINTS_SLIDING_WINDOW_LIMIT,
+            ?LIMITER_FOOTPRINTS_SLIDING_WINDOW_DURATION,
+            ?LIMITER_FOOTPRINTS_LEAKY_LIMIT,
+            ?LIMITER_FOOTPRINTS_LEAKY_TICK_INTERVAL,
+            ?LIMITER_FOOTPRINTS_LEAKY_TICK_REDUCTION,
+            ?LIMITER_FOOTPRINTS_CONCURRENCY_LIMIT),
         recent_hash_list_diff => standard(
             ?LIMITER_RECENT_HASH_LIST_DIFF_SLIDING_WINDOW_LIMIT,
             ?LIMITER_RECENT_HASH_LIST_DIFF_SLIDING_WINDOW_DURATION,

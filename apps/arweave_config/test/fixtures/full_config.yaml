@@ -311,6 +311,7 @@ limiter:
     no_limit: false
     number_of_workers: 8
   data_sync_record: *limiter_full
+  footprints: *limiter_full
   recent_hash_list_diff: *limiter_full
   block_index: *limiter_full
   wallet_list: *limiter_full
