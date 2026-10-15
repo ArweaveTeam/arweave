@@ -505,9 +505,9 @@ do_large_module_aligned_sync_pack_mine(
     RangeEnd = ModuleSize,
 
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
-    %% ar_mining_stats attributes a large storage module's chunks to the
-    %% first partition only; assert on partition 0 alone.
-    ar_test_await:partition_at_size(SinkNode, 0, SinkPacking, 4456448),
+    %% The module spans partitions 0 and 1, and ar_mining_stats splits its
+    %% chunks between them.
+    ar_test_await:partitions_at_size(SinkNode, [0, 1], SinkPacking, 4456448),
     ok = ar_test_await:partition_empty(SinkNode, 1, unpacked_padded),
     ok = ar_test_await:partition_empty(SinkNode, 1, unpacked),
     ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 7, 2)),
@@ -576,7 +576,9 @@ do_large_module_unaligned_sync_pack_mine(
     RangeEnd = 2 * ModuleSize,
 
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
-    ar_test_await:partition_at_size(SinkNode, 1, SinkPacking, 3407872),
+    %% The module spans partitions 1 and 2, and ar_mining_stats splits its
+    %% chunks between them.
+    ar_test_await:partitions_at_size(SinkNode, [1, 2], SinkPacking, 3407872),
     ok = ar_test_await:partition_empty(SinkNode, 0, SinkPacking),
     ok = ar_test_await:partition_empty(SinkNode, 1, unpacked_padded),
     ok = ar_test_await:partition_empty(SinkNode, 1, unpacked),

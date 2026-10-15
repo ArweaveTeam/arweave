@@ -43,6 +43,7 @@
     tx_offset_known/1,              %% (TXID) -> {ok, Offset} | {error, _}
     partition_empty/3,              %% (Node, PartitionNumber, Packing)
     partition_at_size/4,            %% (Node, PartitionNumber, Packing, Size)
+    partitions_at_size/4,           %% (Node, PartitionNumbers, Packing, Size)
     disk_pool_chunk_count/1,        %% (Pred)
     sync_fetches_drained/1,         %% (SchedulerPID)
     application_stopped/2,          %% (App, Timeout)
@@ -379,6 +380,26 @@ partition_at_size(Node, PartitionNumber, Packing, Size) ->
         end),
     Size = on(Node, ar_mining_stats, get_partition_data_size,
         [PartitionNumber, Packing]).
+
+%% @doc Wait until the data sizes of `Node''s partitions `PartitionNumbers' add
+%% up to `Size', as partition_at_size/4 waits for one partition. A storage
+%% module spanning several partitions reports its data split between them.
+partitions_at_size(Node, PartitionNumbers, Packing, Size) ->
+    Read = fun() ->
+        lists:sum([on(Node, ar_mining_stats, get_partition_data_size,
+            [PartitionNumber, Packing]) || PartitionNumber <- PartitionNumbers])
+    end,
+    _ = do_until(partitions_at_size,
+        fun() ->
+            case Read() of
+                Size ->
+                    timer:sleep(250),
+                    Size =:= Read();
+                _ ->
+                    false
+            end
+        end),
+    Size = Read().
 
 %% @doc Wait until `Pred' holds for the current disk-pool chunk count
 %% (`length(ar_disk_pool:debug_get_chunks())').
