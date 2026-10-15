@@ -27,13 +27,17 @@
 
 -define(MAX_DISCOVERY_PEERS, 1000).
 
-%% How long discovery leaves a peer alone after a chunk interval request to
-%% the peer fails or is rejected with 429. 2.9.6 peers ask clients to wait
-%% 30 s and do not send the rate limit headers the client throttling follows.
--ifdef(AR_TEST).
--define(PEER_COOLDOWN_MS, 2_000).
--else.
+%% How long discovery leaves a peer alone after the peer rejects a chunk
+%% interval request with 429. 2.9.6 peers ask clients to wait 30 s and do not
+%% send the rate limit headers the client throttling follows.
 -define(PEER_COOLDOWN_MS, 30_000).
+
+%% How long discovery waits before requesting a chunk interval row again
+%% after the request for it failed.
+-ifdef(AR_TEST).
+-define(FAILED_ROW_RETRY_DELAY_MS, 2_000).
+-else.
+-define(FAILED_ROW_RETRY_DELAY_MS, 30_000).
 -endif.
 
 %% A short queue keeps pending chunk interval jobs close to the sweep
@@ -89,6 +93,10 @@
     %% The monotonic time until which discovery does not request chunk
     %% intervals from a peer, by peer.
     cooldowns = #{},
+    %% The monotonic time until which discovery does not request a chunk
+    %% interval row again after its request failed, by row key. Expired
+    %% entries are dropped during maintenance.
+    failed_rows = #{},
     jobs = #{
         %% Sync bucket jobs, at most one per peer.
         sync_bucket => #discovery_jobs{},

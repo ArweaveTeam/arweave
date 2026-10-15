@@ -517,6 +517,7 @@ warm_peer_ranges(StoreID, Peers, Offset, State) ->
 warm_peer_range(Mode, StoreID, Peer, Offset, State) ->
     maybe
         true ?= not is_cooling_down(Peer, State),
+        true ?= not is_failed_row(Mode, Peer, Offset, State),
         true ?= peer_supports(Mode, Peer),
         true ?= peer_has_sync_bucket(Mode, Peer, Offset),
         true ?= chunk_interval_refresh_needed(Mode, Peer, Offset),
@@ -831,7 +832,7 @@ run_maintenance(State) ->
     delete_expired_sync_buckets(),
     trim_chunk_interval_cache(),
     emit_metrics(State),
-    State.
+    delete_expired_failed_rows(State).
 
 delete_expired_sync_buckets() ->
     %% A row expires when the peer stops advertising the bucket or stops
@@ -1294,8 +1295,10 @@ record_job_result(
     {chunk_intervals, _StoreID, Offset, Mode, Error},
     State
 ) ->
-    %% The fetch failed, so stop serving the old row. Leave the peer alone for
-    %% a while too, or a blocked sweep range asks it again on every retry.
+    %% The fetch failed, so stop serving the old row. Do not request the row
+    %% again for a while, or a blocked sweep range asks on every retry. Other
+    %% locations of the peer stay available, so one slow or malformed response
+    %% does not hide the peer from every range queued meanwhile.
     ?LOG_DEBUG([
         {event, failed_to_fetch_chunk_intervals},
         {peer, arweave_lib_util:format_peer(Peer)},
@@ -1304,7 +1307,10 @@ record_job_result(
         {reason, io_lib:format("~p", [Error])}
     ]),
     delete_row(chunk_interval, Mode, Offset, Peer),
-    cool_down(Peer, State).
+    #state{failed_rows = FailedRows} = State,
+    Until = ?DEP(clock):monotonic_ms() + ?FAILED_ROW_RETRY_DELAY_MS,
+    Key = chunk_interval_key(Mode, Peer, Offset),
+    State#state{failed_rows = FailedRows#{Key => Until}}.
 
 finish_job(Pid, State) ->
     #state{jobs = JobsByKind} = State,
@@ -1352,7 +1358,7 @@ pid_to_job(Pid, Inflight) ->
 %%%===================================================================
 
 %% @doc Stop requesting chunk intervals from Peer for ?PEER_COOLDOWN_MS and
-%% drop its chunk interval jobs, which would likely fail as well.
+%% drop its chunk interval jobs, which it would reject as well.
 cool_down(Peer, State) ->
     #state{cooldowns = Cooldowns, jobs = JobsByKind} = State,
     Now = ?DEP(clock):monotonic_ms(),
@@ -1362,6 +1368,17 @@ cool_down(Peer, State) ->
         jobs = maps:update_with(chunk_interval,
             fun(Jobs) -> remove_jobs(Peer, Jobs) end, JobsByKind)
     }.
+
+is_failed_row(Mode, Peer, Offset, #state{failed_rows = FailedRows}) ->
+    case maps:find(chunk_interval_key(Mode, Peer, Offset), FailedRows) of
+        {ok, Until} -> Until > ?DEP(clock):monotonic_ms();
+        error -> false
+    end.
+
+delete_expired_failed_rows(#state{failed_rows = FailedRows} = State) ->
+    Now = ?DEP(clock):monotonic_ms(),
+    State#state{failed_rows = maps:filter(
+        fun(_Key, Until) -> Until > Now end, FailedRows)}.
 
 is_cooling_down(Peer, #state{cooldowns = Cooldowns}) ->
     case maps:find(Peer, Cooldowns) of
