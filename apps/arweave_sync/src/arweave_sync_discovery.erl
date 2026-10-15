@@ -209,10 +209,11 @@ handle_cast({remove_peer, Peer, Reason}, State) ->
         true ->
             do_remove_peer(Peer, Reason, State);
         false ->
-            %% Rows are recorded only for tracked peers (rows left by an
-            %% earlier discovery process expire with their TTL), so do not
-            %% scan both tables for an untracked one. Any client can trigger
-            %% removals by rotating its x-p2p-port.
+            %% Rows are recorded only for tracked peers, so do not scan both
+            %% tables for an untracked one. Rows of a peer that left the
+            %% collection, or that an earlier discovery process recorded,
+            %% expire with their TTL. Any client can trigger removals by
+            %% rotating its x-p2p-port.
             {noreply, State}
     end;
 handle_cast(Cast, State) ->

@@ -872,7 +872,7 @@ do_load_peer({Peer, Performance}) ->
                         average_success = AverageSuccess
                     });
                 #performance{ version = 5 } ->
-                    %% Written only by development builds; store_peers/0 saves
+                    %% Written only by development builds. store_peers/0 saves
                     %% version 3 so that a node can roll back to 2.9.6.
                     set_performance(Peer, Performance)
             end,

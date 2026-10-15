@@ -841,6 +841,7 @@ tick(State, NowMs) ->
         )
     }.
 
+%% @doc Return the stores whose disk cannot take writes.
 stores_without_disk_space(#state{stores = Stores}) ->
     [StoreID || StoreID <- maps:keys(Stores),
         ?DEP(data_sync):is_disk_space_sufficient(StoreID) =/= true].
