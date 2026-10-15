@@ -18,6 +18,7 @@ all() ->
         sync_jobs_count_is_ignored,
         legacy_sync_jobs,
         legacy_peer_scans_ignored,
+        removed_legacy_options_ignored,
         sync_cache_size_limit_converted
     ].
 
@@ -152,6 +153,39 @@ legacy_peer_scans_ignored(_Config) ->
         ?assertEqual([{data_discovery_max_concurrent_peer_scans, ignored}],
             Warnings())
     end).
+
+%% @doc A legacy configuration file or command line that sets options 2.9.6
+%% accepted and that no longer exist still loads, with a warning for each.
+removed_legacy_options_ignored(_Config) ->
+    JSONOptions = [cm_in_batch_timeout, custom_domains, disk_space, gateway,
+        max_gateway_connections, max_poa_option_depth,
+        mining_server_chunk_cache_size_limit, p3, packing_rate,
+        requests_per_minute_limit, requests_per_minute_limit_by_ip,
+        tx_propagation_parallelization, tx_validators],
+    with_warnings(fun(Warnings) ->
+        arweave_config:internal_with_test_config(fun() ->
+            ?assertEqual({ok, ok}, arweave_config_format_legacy_json:parse(
+                jiffy:encode(maps:from_list(
+                    [{Option, 1} || Option <- JSONOptions]))))
+        end),
+        ?assertEqual(lists:sort([{Option, ignored} || Option <- JSONOptions]),
+            lists:sort(Warnings()))
+    end),
+    %% 2.9.6 took custom_domains and p3 from the configuration file only.
+    CLIOptions = JSONOptions -- [custom_domains, p3],
+    with_warnings(fun(Warnings) ->
+        arweave_config:internal_with_test_config(fun() ->
+            ?assertEqual(ok, arweave_config_format_legacy_cli:parse(
+                lists:append([[atom_to_list(Option), "1"]
+                    || Option <- CLIOptions])))
+        end),
+        ?assertEqual([{Option, ignored} || Option <- CLIOptions], Warnings())
+    end),
+    ?assertMatch({error, _},
+        arweave_config_format_legacy_cli:parse(["no_such_option", "1"])),
+    ?assertMatch({error, unknown, _},
+        arweave_config_format_legacy_json:parse(
+            jiffy:encode(#{no_such_option => 1}))).
 
 sync_cache_size_limit_converted(_Config) ->
     arweave_config:internal_with_test_config(fun() ->

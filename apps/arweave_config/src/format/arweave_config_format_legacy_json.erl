@@ -1022,6 +1022,13 @@ parse_options([{<<"http_api.tcp.send_timeout">>, Timeout}|Rest], Opts) ->
             {error, {bad_value, 'http_api.tcp.send_timeout'}, Timeout}
     end;
 
+parse_options([{Name, _Value} = Opt | Rest], Opts) when is_binary(Name) ->
+    case arweave_config_deprecated:ignore_removed_legacy_option(Name) of
+        true ->
+            parse_options(Rest, Opts);
+        false ->
+            {error, unknown, Opt}
+    end;
 parse_options([Opt | _], _Opts) ->
     {error, unknown, Opt};
 parse_options([], _Opts) ->

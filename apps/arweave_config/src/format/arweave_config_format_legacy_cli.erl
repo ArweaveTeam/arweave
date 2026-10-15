@@ -817,7 +817,18 @@ parse(["chunk_storage_file_size", Num | Rest]) ->
     _ = arweave_config:set([chunk_storage_file_size], V),
     parse(Rest);
 
-parse([Arg | _Rest]) ->
+parse([Arg, _Value | Rest] = Args) ->
+    case arweave_config_deprecated:ignore_removed_legacy_option(
+            list_to_binary(Arg)) of
+        true ->
+            parse(Rest);
+        false ->
+            unknown_argument(Args)
+    end;
+parse(Args) ->
+    unknown_argument(Args).
+
+unknown_argument([Arg | _]) ->
     io:format("~nUnknown argument: ~s.~n", [Arg]),
     {error, [
         {arweave_config_help, print, []}

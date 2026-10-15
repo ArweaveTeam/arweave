@@ -4,7 +4,7 @@
 -module(arweave_config_deprecated).
 -compile(warnings_as_errors).
 -export([set/3, translate/3, translate_map/1, long_arguments/0,
-    environments/0]).
+    environments/0, ignore_removed_legacy_option/1]).
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("kernel/include/logger.hrl").
 
@@ -66,6 +66,19 @@ environments() ->
     [{arweave_config_options_spec:environment_convert(Key), Key}
         || {Key, _Replacement} <- options()].
 
+%% @doc Return true, with a warning, if Name, a binary, names an option of the
+%% legacy configuration file or command line that 2.9.6 accepted and that no
+%% longer has an effect.
+ignore_removed_legacy_option(Name) ->
+    case [Option || Option <- removed_legacy_options(),
+            atom_to_binary(Option) =:= Name] of
+        [Option] ->
+            warn(Option, ignored, <<"The option no longer exists.">>),
+            true;
+        [] ->
+            false
+    end.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -99,6 +112,13 @@ options() ->
     ++ [{[network, server, tcp, Name],
             {renamed, [network, server, http, Name]}}
         || Name <- [listener_shutdown, max_connections, num_acceptors]].
+
+removed_legacy_options() ->
+    [cm_in_batch_timeout, custom_domains, disk_space, gateway,
+        max_gateway_connections, max_poa_option_depth,
+        mining_server_chunk_cache_size_limit, p3, packing_rate,
+        requests_per_minute_limit, requests_per_minute_limit_by_ip,
+        tx_propagation_parallelization, tx_validators].
 
 lookup(Key) ->
     Name = key_name(Key),
