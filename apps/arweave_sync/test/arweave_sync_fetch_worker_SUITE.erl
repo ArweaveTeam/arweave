@@ -13,11 +13,11 @@ all() ->
         test_blacklist_past_end_skips_fetch,
         test_already_recorded_skips_fetch,
         test_recorded_prefix_continues_with_missing_chunk,
-        test_success_stores_and_rates_ok,
+        test_success_stores_without_rating,
         test_legacy_small_chunk_fetches_once,
         test_full_cache_skips_request,
-        test_404_rates_error_and_does_not_store,
-        test_generic_error_logs_and_rates_error,
+        test_404_counts_miss_and_does_not_store,
+        test_generic_error_logs_without_rating,
         test_timeout_is_not_retried,
         test_overload_not_booked_as_failure,
         test_fetch_crash_reports_zero_bytes,
@@ -105,32 +105,19 @@ test_recorded_prefix_continues_with_missing_chunk(_Config) ->
                 1,
                 meck:num_calls(arweave_sync_chunk_writer, store_fetched_chunk, '_')
             ),
-            ?assert(
-                meck:called(
-                    ar_peers,
-                    rate_fetched_data,
-                    [test_peer(), chunk, ok, '_', 100]
-                )
-            )
+            assert_not_rated()
         end
     ).
 
-%% @doc A successful response is handed to the chunk writer and credited by delivered
-%% bytes.
-test_success_stores_and_rates_ok(_Config) ->
+%% @doc A successful response is handed to the chunk writer without rating the
+%% peer.
+test_success_stores_without_rating(_Config) ->
     run_with_mocks(fun(_, _, _) -> chunk_reply(100) end, fun() ->
         ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
         ?assertEqual(
             1, meck:num_calls(arweave_sync_chunk_writer, store_fetched_chunk, '_')
         ),
-        %% Rated by delivered bytes (one 100-byte chunk).
-        ?assert(
-            meck:called(
-                ar_peers,
-                rate_fetched_data,
-                [test_peer(), chunk, ok, '_', 100]
-            )
-        )
+        assert_not_rated()
     end).
 
 %% @doc A legacy small chunk completes after one fetch without retrying the
@@ -148,13 +135,7 @@ test_legacy_small_chunk_fetches_once(_Config) ->
             1,
             meck:num_calls(arweave_sync_chunk_writer, store_fetched_chunk, '_')
         ),
-        ?assert(
-            meck:called(
-                ar_peers,
-                rate_fetched_data,
-                [test_peer(), chunk, ok, '_', 100]
-            )
-        )
+        assert_not_rated()
     end).
 
 %% @doc A full shared cache prevents the worker from starting an HTTP request.
@@ -179,8 +160,9 @@ test_full_cache_skips_request(_Config) ->
         end
     ).
 
-%% @doc A 404 records a peer error without a chunk writer handoff or failed-request logging.
-test_404_rates_error_and_does_not_store(_Config) ->
+%% @doc A 404 counts a miss without a chunk writer handoff, failed-request
+%% logging or a peer rating.
+test_404_counts_miss_and_does_not_store(_Config) ->
     run_with_mocks(
         fun(_, _, _) ->
             {error, {ok, {{<<"404">>, <<>>}, [], <<>>, undefined, undefined}}}
@@ -203,18 +185,13 @@ test_404_rates_error_and_does_not_store(_Config) ->
                 0,
                 meck:num_calls(ar_http_iface_client, log_failed_request, '_')
             ),
-            ?assert(
-                meck:called(
-                    ar_peers,
-                    rate_fetched_data,
-                    ['_', chunk, {error, '_'}, '_', '_']
-                )
-            )
+            assert_not_rated()
         end
     ).
 
-%% @doc A transport error is logged and rated without handing data to the chunk writer.
-test_generic_error_logs_and_rates_error(_Config) ->
+%% @doc A transport error is logged without a chunk writer handoff or a peer
+%% rating.
+test_generic_error_logs_without_rating(_Config) ->
     run_with_mocks(fun(_, _, _) -> {error, econnrefused} end, fun() ->
         ?assertEqual(ok, arweave_sync_fetch_worker:run(task(0))),
         ?assertEqual(
@@ -224,13 +201,7 @@ test_generic_error_logs_and_rates_error(_Config) ->
             1,
             meck:num_calls(ar_http_iface_client, log_failed_request, '_')
         ),
-        ?assert(
-            meck:called(
-                ar_peers,
-                rate_fetched_data,
-                ['_', chunk, {error, econnrefused}, '_', '_']
-            )
-        )
+        assert_not_rated()
     end).
 
 %% @doc A timed-out request reports zero bytes and timeout duration without
@@ -255,13 +226,7 @@ test_timeout_is_not_retried(_Config) ->
         after 0 ->
             ?assert(false)
         end,
-        ?assert(
-            meck:called(
-                ar_peers,
-                rate_fetched_data,
-                [test_peer(), chunk, {error, timeout}, '_', 0]
-            )
-        )
+        assert_not_rated()
     end).
 
 %% @doc A 429 or 503 feeds only the concurrency-cap channel: no delivery
@@ -279,7 +244,7 @@ assert_overload_not_booked_as_failure(Status) ->
             TaskRef = {self(), make_ref()},
             Task = (task(0))#task{task_ref = TaskRef},
             ?assertEqual(ok, arweave_sync_fetch_worker:run(Task)),
-            ?assertEqual(0, meck:num_calls(ar_peers, rate_fetched_data, '_')),
+            assert_not_rated(),
             receive
                 {'$gen_cast',
                     {task_fetch_completed, TaskRef, 0, #fetch_timing{
@@ -309,7 +274,7 @@ test_fetch_crash_reports_zero_bytes(_Config) ->
         ?assertEqual(
             0, meck:num_calls(arweave_sync_chunk_writer, store_fetched_chunk, '_')
         ),
-        ?assertEqual(0, meck:num_calls(ar_peers, rate_fetched_data, '_'))
+        assert_not_rated()
     end).
 
 %% @doc Packed-chunk requests use the destination store's configured packing.
@@ -341,6 +306,9 @@ test_packed_request_selects_store_packing(_Config) ->
 %%====================================================================
 %% Helpers
 %%====================================================================
+
+assert_not_rated() ->
+    ?assertEqual(0, meck:num_calls(ar_peers, rate_fetched_data, '_')).
 
 test_peer() -> {1, 2, 3, 4, 1984}.
 

@@ -28,7 +28,6 @@
     get_sync_record/3, get_sync_record/4,
     get_footprints/3,
     pick_peers/2,
-    rate_fetched_data/5,
     get_peer_release/1,
     get_peers/1,
     is_throttled/2,
@@ -94,11 +93,6 @@ is_throttled(Peer, _Path) ->
     #sim_peer{is_throttled = IsThrottled} =
         arweave_sim:world_value({peer, Peer}),
     IsThrottled.
-
-%% Peer goodput derives from completed fetches reported through the scheduler;
-%% ar_peers plays no part.
-rate_fetched_data(_Peer, _DataType, _Result, _ElapsedUs, _Bytes) ->
-    ok.
 
 get_chunk_binary(Name, Offset, _Packing) ->
     arweave_sim:get_chunk_binary(Name, Offset, ?FETCH_TIMEOUT_MS).

@@ -9,7 +9,7 @@
 %%%    chunk from the peer, and hand the fetched chunk and its cache reference
 %%%    to arweave_sync_chunk_writer.
 %%% 3. Report (run/1): send the bytes fetched and the fetch timing to the
-%%%    scheduler, and rate the peer in ar_peers.
+%%%    scheduler. Sync does not rate the peer in ar_peers.
 %%%
 %%% The worker exits normally even when the fetch fails. Only a crash in the
 %%% worker ends the process abnormally, and the scheduler logs the crash.
@@ -26,19 +26,14 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Fetch the task's chunk, report the result to the scheduler and rate the
-%% peer.
-run(#task{peer = Peer} = Task) ->
-    %% FetchTiming is measured with the scheduler's clock, while ar_peers rates
-    %% the peer by the wall-clock time from timer:tc.
-    {ElapsedUs, {Result, BytesFetched, FetchTiming}} =
-        timer:tc(fun() -> fetch_task(Task) end),
+%% @doc Fetch the task's chunk and report the result to the scheduler.
+run(Task) ->
+    {Result, BytesFetched, FetchTiming} = fetch_task(Task),
     arweave_sync_scheduler:report_fetch_completed(
         Task#task.task_ref,
         BytesFetched,
         FetchTiming
     ),
-    rate_peer(Peer, Result, ElapsedUs, BytesFetched),
     case Result of
         {worker_crash, Class, Reason, Stacktrace} ->
             erlang:raise(Class, Reason, Stacktrace);
@@ -168,32 +163,6 @@ get_target_packing(StoreID) ->
             end;
         false ->
             any
-    end.
-
-%%%===================================================================
-%%% Report.
-%%%===================================================================
-
-%% @doc Report the fetch result to ar_peers, except for a worker crash or a
-%% full chunk cache, which are not the peer's fault.
-rate_peer(Peer, ok, ElapsedUs, BytesFetched) ->
-    ?DEP(peers):rate_fetched_data(Peer, chunk, ok, ElapsedUs, BytesFetched);
-rate_peer(_Peer, {worker_crash, _, _, _}, _ElapsedUs, _BytesFetched) ->
-    ok;
-rate_peer(_Peer, cache_full, _ElapsedUs, _BytesFetched) ->
-    ok;
-rate_peer(Peer, Result, ElapsedUs, _BytesFetched) ->
-    %% A rejection means the peer is enforcing its rate or load limits, not
-    %% that it sent bad data or is unhealthy, and the scheduler already counts
-    %% the time a rejection costs. Healthy peers can reject many requests even
-    %% at small caps, so rating rejections as failures would push their
-    %% average_success below ?MINIMUM_SUCCESS and get them removed.
-    case is_rejection(Result) of
-        true ->
-            ok;
-        false ->
-            ?DEP(peers):rate_fetched_data(
-                Peer, chunk, Result, ElapsedUs, 0)
     end.
 
 %% @doc Return whether the peer declined the request under its rate limit
