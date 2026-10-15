@@ -119,11 +119,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast({update_serialized_sync_buckets, serialized_sync_buckets = Key}, State) ->
     #state{sync_buckets = SyncBuckets} = State,
-    {SyncBuckets2, SerializedSyncBuckets} = ?DEP(sync_buckets):serialize(
-        SyncBuckets,
-        ?MAX_SYNC_BUCKETS_SIZE
-    ),
-    ets:insert(?MODULE, {Key, SerializedSyncBuckets}),
+    SyncBuckets2 = cache_serialized_buckets(Key, SyncBuckets),
     {ok, _} = timer:apply_after(
         ?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
         gen_server,
@@ -133,9 +129,7 @@ handle_cast({update_serialized_sync_buckets, serialized_sync_buckets = Key}, Sta
     {noreply, State#state{sync_buckets = SyncBuckets2}};
 handle_cast({update_serialized_sync_buckets, serialized_footprint_buckets = Key}, State) ->
     #state{footprint_buckets = FootprintBuckets} = State,
-    {FootprintBuckets2, SerializedFootprintBuckets} =
-        ?DEP(sync_buckets):serialize(FootprintBuckets, ?MAX_SYNC_BUCKETS_SIZE),
-    ets:insert(?MODULE, {Key, SerializedFootprintBuckets}),
+    FootprintBuckets2 = cache_serialized_buckets(Key, FootprintBuckets),
     {ok, _} = timer:apply_after(
         ?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
         gen_server,
@@ -236,11 +230,7 @@ is_replica_2_9(_) -> false.
 
 cache_and_get_sync_buckets(SyncRecord, Key, SyncBuckets) ->
     SyncBuckets2 = ?DEP(sync_buckets):from_intervals(SyncRecord, SyncBuckets),
-    {SyncBuckets3, SerializedSyncBuckets} = ?DEP(sync_buckets):serialize(
-        SyncBuckets2,
-        ?MAX_SYNC_BUCKETS_SIZE
-    ),
-    ets:insert(?MODULE, {Key, SerializedSyncBuckets}),
+    SyncBuckets3 = cache_serialized_buckets(Key, SyncBuckets2),
     {ok, _} = timer:apply_after(
         ?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
         gen_server,
@@ -248,6 +238,26 @@ cache_and_get_sync_buckets(SyncRecord, Key, SyncBuckets) ->
         [?MODULE, {update_serialized_sync_buckets, Key}]
     ),
     SyncBuckets3.
+
+%% @doc Serialize the buckets and cache them under Key, returning the buckets
+%% they were serialized from. Buckets too large to share leave the cached copy
+%% unchanged.
+cache_serialized_buckets(Key, Buckets) ->
+    try ?DEP(sync_buckets):serialize(
+        Buckets, ?MAX_SYNC_BUCKETS_SIZE, base_bucket_size(Key)
+    ) of
+        {Buckets2, Serialized} ->
+            ets:insert(?MODULE, {Key, Serialized}),
+            Buckets2
+    catch throw:uncompressable_buckets ->
+        ?LOG_ERROR([{event, failed_to_serialize_sync_buckets}, {key, Key}]),
+        Buckets
+    end.
+
+base_bucket_size(serialized_sync_buckets) ->
+    ?DEFAULT_SYNC_BUCKET_SIZE;
+base_bucket_size(serialized_footprint_buckets) ->
+    ?NETWORK_FOOTPRINT_BUCKET_SIZE.
 
 %% @doc Add a run of footprint offsets as one range. A store's footprint
 %% record initialization reports runs spanning whole footprints and more, so
