@@ -24,6 +24,7 @@ chunk_cache_test_() ->
             {timeout, 30, fun shrink_preserves_existing_work/0},
             {timeout, 30, fun configured_capacity/0},
             {timeout, 30, fun repack_read_write_backpressure/0},
+            {timeout, 30, fun repack_read_duration_in_native_units/0},
             {timeout, 30, fun rejected_budget_keeps_live_limit/0}
         ]}}.
 
@@ -395,6 +396,46 @@ repack_read_write_backpressure() ->
                     ar_chunk_cache:release(Next)
             end,
             ?assertEqual(0, ar_chunk_cache:reserved_size())
+        after
+            gen_server:stop(IO)
+        end
+    end).
+
+%% @doc A repack read observes its duration in native time units, which the
+%% millisecond histogram converts itself.
+repack_read_duration_in_native_units() ->
+    Parent = self(),
+    ar_test_util:run_with_mocked([
+        {arweave_storage, get_chunk_range, fun(_, _, _) -> [] end},
+        {ar_data_sync, get_chunk_metadata_range, fun(_, _, _) -> {ok, #{}} end},
+        {arweave_metrics, histogram_observe, fun
+            (repack_read_duration_milliseconds, _, Value) ->
+                Parent ! {read_duration, Value},
+                ok;
+            (_, _, _) ->
+                ok
+        end}
+    ], fun() ->
+        {ok, IO} = ar_repack_io:start_link(
+            ar_repack_io:name(?DEFAULT_MODULE), ?DEFAULT_MODULE
+        ),
+        try
+            Step = ?DATA_CHUNK_SIZE,
+            Started = erlang:monotonic_time(),
+            ar_repack_io:read_footprint([Step], 1, 2 * Step, 1,
+                ?DEFAULT_MODULE),
+            CacheRef =
+                receive
+                    {'$gen_cast', {chunk_range_read, [Step], _, _, Held}} ->
+                        Held
+                end,
+            Elapsed = erlang:monotonic_time() - Started,
+            Duration = receive {read_duration, Value} -> Value end,
+            %% The mocked read takes well under a millisecond, which a
+            %% duration in milliseconds rounds down to zero.
+            ?assert(Duration > 0),
+            ?assert(Duration =< Elapsed),
+            ar_chunk_cache:release(CacheRef)
         after
             gen_server:stop(IO)
         end

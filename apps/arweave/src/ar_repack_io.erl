@@ -176,10 +176,10 @@ do_read_range({ReadRangeStart, ReadRangeEnd, Offsets}, Owner, CacheRef,
                     [{range_start, ReadRangeStart}, {reason, Reason}]),
                 #{}
         end,
+    %% The histogram converts native time units to milliseconds itself.
     arweave_metrics:histogram_observe(repack_read_duration_milliseconds,
         [(arweave_storage:store_info(StoreID))#store_info.label],
-        erlang:convert_time_unit(erlang:monotonic_time() - Started,
-            native, millisecond)),
+        erlang:monotonic_time() - Started),
     case ar_chunk_cache:transfer(CacheRef, Owner) of
         {ok, OwnedCacheRef} ->
             ar_chunk_cache:mark_cached(OwnedCacheRef),
