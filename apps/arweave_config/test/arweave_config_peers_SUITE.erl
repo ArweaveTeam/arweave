@@ -5,6 +5,7 @@
 %%%     legacy aggregator view.
 %%%   - Cross-instance validators (D3 invariants).
 -module(arweave_config_peers_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -19,8 +20,8 @@ init_per_testcase(hostname_peer_round_trip, Config) ->
     ok = arweave_config:start(),
     %% Resolve example.com deterministically so the eager-role test stays
     %% hermetic (no DNS).
-    meck:new(arweave_util, [passthrough]),
-    meck:expect(arweave_util, safe_parse_peer, fun(Peer) ->
+    meck:new(arweave_config_peer, [passthrough]),
+    meck:expect(arweave_config_peer, safe_parse_peer, fun(Peer) ->
         case iolist_to_binary([Peer]) of
             <<"example.com:1984">> -> {ok, [{1, 2, 3, 4, 1984}]};
             _ -> meck:passthrough([Peer])
@@ -32,13 +33,14 @@ init_per_testcase(_TestCase, Config) ->
     Config.
 
 end_per_testcase(hostname_peer_round_trip, _Config) ->
-    meck:unload(arweave_util),
+    meck:unload(arweave_config_peer),
     ok = arweave_config:stop();
 end_per_testcase(_TestCase, _Config) ->
     ok = arweave_config:stop().
 
 all() ->
         [
+        parse_peer,
         roundtrip_peers_list,
         roundtrip_cm_exit_peer,
         multi_role_peer_lists_correctly,
@@ -288,3 +290,38 @@ clear_and_replace_rejected_at_runtime(_Config) ->
         "clear-via-set must not delete entries at runtime"),
 
     ok.
+
+%% @doc Peer strings, tuples and host names parse into peer tuples; bad input
+%% throws.
+parse_peer(_Config) ->
+    ?assertThrow(
+        empty_peer_string,
+        arweave_config_peer:parse_peer("")
+    ),
+    ?assertThrow(
+        invalid_peer,
+        arweave_config_peer:parse_peer(1)
+    ),
+    ?assertEqual(
+        [{127, 0, 0, 1, 1985}],
+        arweave_config_peer:parse_peer({{127, 0, 0, 1}, 1985})
+    ),
+
+    Opts = #{module_resolve => ar_test_inet_mock},
+    ?assertEqual(
+        [{127, 0, 0, 1, 1984}],
+        arweave_config_peer:parse_peer("single.record.local", Opts)
+    ),
+    ?assertEqual(
+        [
+            {127, 0, 0, 2, 1984},
+            {127, 0, 0, 3, 1984},
+            {127, 0, 0, 4, 1984},
+            {127, 0, 0, 5, 1984}
+        ],
+        arweave_config_peer:parse_peer("multi.record.local", Opts)
+    ),
+    ?assertThrow(
+        {invalid_peer_string, _, _},
+        arweave_config_peer:parse_peer("error.test.local", Opts)
+    ).

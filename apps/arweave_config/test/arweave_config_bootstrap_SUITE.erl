@@ -1,5 +1,6 @@
 %%% @doc arweave configuration bootstrap test suite.
 -module(arweave_config_bootstrap_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").

@@ -1,8 +1,14 @@
 # Testing
 
-Read this before adding, modifying, or disabling any test.
+Read this before running, adding, modifying, or disabling any test.
 
 ## Running tests
+
+Tests in `apps/arweave` use EUnit. All tests in other applications must use
+Common Test, including tests for app-internal functions; do not embed EUnit
+testcases in those applications' source modules. Including `eunit.hrl` for
+assertion macros in CT suites or helpers is fine. Do not add `*_SUITE.erl`
+files under `apps/arweave`.
 
 Use `./bin/test` for EUnit-style test modules:
 
@@ -16,6 +22,16 @@ Use `./bin/test` for EUnit-style test modules:
 # Multiple modules and/or tests together
 ./bin/test ar_mining_io_tests ar_data_sync_root_tests:data_roots_syncs_from_peer_test_
 ```
+
+### Sandboxed agent environments
+
+`./bin/test` always starts the BEAM as a named distributed Erlang node, even for
+local `fast` modules such as `ar_merkle`. The launcher and EPMD must
+bind loopback TCP sockets. In an agent execution sandbox that restricts socket
+creation, request unsandboxed execution for `./bin/test` on the first attempt
+instead of waiting for the restricted run to fail. The usual pre-test symptom is
+an `inet_tcp` register/listen `eacces` error; it does not indicate a simulator or
+test failure.
 
 ### Concurrent test runs
 
@@ -63,14 +79,17 @@ The test profile uses smaller values for constants such as `?PARTITION_SIZE` and
 
 CI discovers EUnit test modules by scanning `apps/*/{src,test}/*.erl` for files
 containing a `*_test/0` or `*_test_/0` function head — there is no maintained
-list of modules. See `scripts/list_test_modules.sh`.
+list of modules. See `scripts/list_test_modules.sh`. Common Test suites are
+discovered the same way, as `apps/*/test/*_SUITE.erl`, by
+`scripts/list_ct_suites.sh`, and use the same attribute and convention:
+untagged is `slow` (a shard of its own), `fast` is batched.
 
 Test behavior is driven by two module attributes placed directly below the
 `-module(...)` declaration: `-test_category([...])` and `-test_peers([...])`.
 
 ```erlang
 %%% @doc Pure utility module — safe to batch with siblings.
--module(arweave_util).
+-module(ar_merkle).
 -test_category([fast]).
 ```
 
@@ -84,7 +103,7 @@ Categories are comma-separated; keep the attribute on a single line:
 | Category | Effect |
 |---|---|
 | (none — the default) | Module runs in its own shard in the main CI matrix (the `slow` path). Gets a fresh BEAM; peers are booted only if the module declares `-test_peers`. |
-| `fast` | Module runs in one of a small number of batched fast shards. Tests still get their own BEAM per module, but multiple modules share an artifact download. Use only when the module's tests don't share global state with siblings. |
+| `fast` | Module runs in one of a small number of batched fast shards. Tests still get their own BEAM per module, but multiple modules share an artifact download. A fast Common Test suite goes further and shares one CT run (one BEAM) with the other fast suites in its shard. Use only when the module's tests don't share global state with siblings. |
 | `vdf` | Module is part of the macOS VDF workflow's subset (see `x-test-vdf.yml`). Use for tests whose correctness matters to a VDF deployment. Orthogonal to `fast`/`slow`. |
 | `canary` | Module is run only by `x-test-canary.yml` (the always-fails canary check). Excluded from the main matrices. |
 
@@ -110,6 +129,12 @@ Tests run on a `main` node that is always started. Additional peer nodes
   in sync with what the test actually uses.
 
 ## Adding a new test
+
+Every magic number in a test — bounds, floors, margins, and expected values —
+must carry a brief comment deriving it. For example, explain that four equal
+peers split a 100 cps budget at roughly 25 each, so 10 is a wide floor under
+that split. A reviewer should never have to reverse-engineer where a constant
+came from.
 
 Just write it. The discovery script picks up any new file with EUnit test exports
 on the next CI run. New tests default to `slow` (their own shard) and to no
@@ -154,7 +179,7 @@ aren't booted.
 %% In a `-test_category([fast])' module:
 state_transition_test_() ->
     ar_test_util:with_mocked([
-        {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+        {arweave_lib_constants, strict_data_split_threshold, fun() -> 700_000 end}
     ], fun test_state_transitions/0, 30).
 ```
 
@@ -235,6 +260,32 @@ helper_function() ->
 ```
 
 ## Common Test suites
+
+### How CI runs them
+
+`x-common-test.yml` discovers every `apps/*/test/*_SUITE.erl` with
+`scripts/list_ct_suites.sh` and fans them out with the eunit convention: an
+untagged suite is `slow` and runs in a shard of its own; a suite tagged
+`-test_category([fast])` is sliced round-robin into a couple of batched shards
+with the other fast suites. A new suite is picked up on the next run in its
+own shard; tag it `fast` once you know it does not share global state with
+its siblings, which is what almost every suite here does. A calling workflow
+can skip whole applications with the `exclude_apps` input: the macOS workflow
+skips `arweave_sync`, because macOS nodes do not sync data.
+
+Each shard is a plain `rebar3 ct --suite <suites> --logdir logs/ct` against
+the build artifact, the same command `./bin/ct` runs locally. The
+fetch-build action runs `make --touch` over the native library Makefiles
+after extraction, so rebar3's compile pre-hook is a no-op per shard, as it
+is on a developer's machine; rebar3 re-fetches its plugins per shard (~10 s)
+because shipping them would add 6 MB to every artifact download.
+
+The push-triggered CI runs Common Test without `--cover`: cover instruments
+every executed line, which is a ~3x slowdown on the CPU-bound simulation
+suites. For a coverage report, dispatch the "Common Test with coverage (on
+demand)" workflow (`.github/workflows/common-test-cover.yml`); it runs every
+suite serially in one `rebar3 ct --cover` shard and uploads the report as a
+`coverage-common_test-*` artifact.
 
 ### Exports
 

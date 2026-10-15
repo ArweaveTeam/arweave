@@ -3,7 +3,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
 records_footprints_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_records_footprints/0}.
@@ -23,9 +22,9 @@ test_records_footprints() ->
     %% The partition 1 is not configured.
     ?assertEqual(not_found, ar_http_iface_client:get_footprints(Peer, 1, 0)),
     {ok, Footprint1} = ar_http_iface_client:get_footprints(Peer, 0, 0),
-    ?assertEqual(ar_intervals:from_list([{2, 0}]), Footprint1),
+    ?assertEqual(arweave_lib_intervals:from_list([{2, 0}]), Footprint1),
     {ok, Footprint1_1} = ar_http_iface_client:get_footprints(Peer, 0, 1),
-    ?assertEqual(ar_intervals:from_list([{5, 4}]), Footprint1_1),
+    ?assertEqual(arweave_lib_intervals:from_list([{5, 4}]), Footprint1_1),
     %% We have 2 footprints with 4 chunks in each in partition 0.
     ?assertEqual({error, footprint_number_too_large},
             ar_http_iface_client:get_footprints(Peer, 0, 2)),

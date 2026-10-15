@@ -7,6 +7,7 @@
 -export([init/1]).
 
 -include_lib("arweave/include/ar_sup.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -27,7 +28,8 @@ init([]) ->
         _ ->
             Workers = lists:map(
                 fun(StorageModule) ->
-                    StoreID = ar_storage_module:id(StorageModule),
+                    #store_info{id = StoreID} =
+                        arweave_storage:store_info(StorageModule),
                     Name = ar_verify_chunks:name(StoreID),
                     ?CHILD_WITH_ARGS(ar_verify_chunks, worker, Name, [Name, StoreID])
                 end,

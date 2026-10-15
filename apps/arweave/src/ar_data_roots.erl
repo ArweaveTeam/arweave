@@ -760,9 +760,9 @@ read_entries_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
 %%% Private: Validation
 %%%===================================================================
 get_padded_size(TXSize, BlockStart) ->
-    case BlockStart >= ar_block:strict_data_split_threshold() of
+    case BlockStart >= arweave_lib_constants:strict_data_split_threshold() of
         true ->
-            ar_poa:get_padded_offset(TXSize, 0);
+            arweave_lib_constants:get_padded_offset(TXSize, 0);
         false ->
             TXSize
     end.
@@ -902,13 +902,13 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
                           {error, Reason} ->
                               ?LOG_ERROR([{event, failed_to_update_tx_index},
                                           {reason, io_lib:format("~p", [Reason])},
-                                          {tx, arweave_util:encode(TXID)}]),
+                                          {tx, arweave_lib_util:encode(TXID)}]),
                               TXEndOffset
                       end;
                   {error, Reason} ->
                       ?LOG_ERROR([{event, failed_to_update_tx_offset_index},
                                   {reason, io_lib:format("~p", [Reason])},
-                                  {tx, arweave_util:encode(TXID)}]),
+                                  {tx, arweave_lib_util:encode(TXID)}]),
                       TXEndOffset
               end
       end,
@@ -1290,7 +1290,7 @@ test_verify_stored_blocks_failed_removal_resyncs() ->
 %% chunks, so an entry can be shortened within its last chunk without changing
 %% the padded total. Only the start offset check rejects it.
 verify_padded_entries_test() ->
-    BlockStart = ar_block:strict_data_split_threshold(),
+    BlockStart = arweave_lib_constants:strict_data_split_threshold(),
     {TXRoot, BlockSize, Entries} =
         make_padded_data_root_entries(BlockStart, [1000, 2000, 0, 300000]),
     ?assertEqual(4 * ?DATA_CHUNK_SIZE, BlockSize),
@@ -1409,17 +1409,10 @@ put_test_tx(StoreID, DataRoot, TXSize, TXStartOffset, TXPath) ->
     ar_kv:put(index_db(StoreID), index_key(DataRoot, TXSize, TXStartOffset), TXPath).
 
 with_mocked_block_bounds(BlockStart, BlockEnd, TXRoot, Fun) ->
-    meck:new(ar_block_index, [passthrough]),
-    meck:expect(
-      ar_block_index,
-      get_block_bounds,
-      fun(_) -> {BlockStart, BlockEnd, TXRoot} end
-     ),
-    try
-        Fun()
-    after
-        ok = meck:unload(ar_block_index)
-    end.
+    ar_test_util:run_with_mocked([
+        {ar_block_index, get_block_bounds,
+            fun(_) -> {BlockStart, BlockEnd, TXRoot} end}
+    ], Fun).
 
 %% @doc Build the data root entries of a block placed after the 2.5 fork, where
 %% each transaction is followed by a padding leaf up to the next chunk
@@ -1431,7 +1424,7 @@ make_padded_data_root_entries(BlockStart, TXSizes) ->
                   {[{{dummy, << End:256 >>}, End} | Acc], End};
              (TXSize, {Acc, Start}) ->
                   End = Start + TXSize,
-                  PaddedEnd = ar_poa:get_padded_offset(End, 0),
+                  PaddedEnd = arweave_lib_constants:get_padded_offset(End, 0),
                   {[{{padding, ?PADDING_NODE_DATA_ROOT}, PaddedEnd},
                     {{dummy, << End:256 >>}, End} | Acc], PaddedEnd}
           end,

@@ -1,5 +1,6 @@
 %%% @doc
 -module(arweave_config_store_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include("arweave_config.hrl").
 -include_lib("common_test/include/ct.hrl").

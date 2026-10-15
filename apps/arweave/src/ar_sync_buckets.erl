@@ -2,14 +2,13 @@
 -test_category([fast]).
 
 -export([new/0, new/1, from_intervals/1, from_intervals/2,
-        add/3, delete/3, cut/2, get/3, serialize/2,
+        add/3, delete/3, cut/2, get/3, serialize/2, serialize/3,
         deserialize/2, foreach/4,
         get_default_sync_bucket_size/0, get_network_data_bucket_size/0,
         get_network_footprint_bucket_size/0]).
 
 -include_lib("arweave/include/ar_sync_buckets.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
--include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_sync/include/arweave_sync.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -28,15 +27,15 @@ new() ->
 new(Size) ->
     {Size, #{}}.
 
-%% @doc Initialize buckets from a set of intervals (see ar_intervals).
+%% @doc Initialize buckets from a set of intervals (see arweave_lib_intervals).
 %% The bucket size is ?DEFAULT_SYNC_BUCKET_SIZE.
 from_intervals(Intervals) ->
     from_intervals(Intervals, new()).
 
-%% @doc Add the data from a set of intervals (see ar_intervals) to the given buckets.
+%% @doc Add the data from a set of intervals (see arweave_lib_intervals) to the given buckets.
 from_intervals(Intervals, SyncBuckets) ->
     {Size, Map} = SyncBuckets,
-    {Size, ar_intervals:fold(
+    {Size, arweave_lib_intervals:fold(
         fun({End, Start}, Acc) ->
             add(Start, End, Size, Acc)
         end,
@@ -74,34 +73,25 @@ get(Bucket, BucketSize, Buckets) ->
     Last = (Bucket * BucketSize + BucketSize - 1) div Size,
     lists:sum([maps:get(Key, Map, 0) || Key <- lists:seq(First, Last)]).
 
-%% @doc Serialize buckets into Erlang Term Format. If the size of the serialized structure
-%% exceeds MaxSize, double the bucket size and restructure the buckets.
-%% Throw uncompressable_buckets if MaxSize is too low.
-serialize(Buckets, MaxSize) ->
-    serialize(Buckets, MaxSize, infinity).
+%% @doc Serialize buckets, treating their current bucket size as the base size.
+serialize({Size, _Map} = Buckets, MaxSize) ->
+    serialize(Buckets, MaxSize, Size).
 
-serialize(Buckets, MaxSize, PrevSerializedSize) ->
+%% @doc Serialize buckets into Erlang Term Format, doubling the bucket size
+%% until they fit in MaxSize, up to the largest size peers accept for
+%% BaseBucketSize. Throw uncompressable_buckets if they still do not fit.
+serialize(Buckets, MaxSize, BaseBucketSize) ->
     S = term_to_binary(Buckets),
-    SerializedSize = byte_size(S),
-    case SerializedSize > MaxSize of
-        true ->
-            case SerializedSize > PrevSerializedSize of
-                true ->
-                    throw(uncompressable_buckets);
-                false ->
-                    ok
-            end,
-            {Size, Map} = Buckets,
-            %% Double the bucket size until the serialized buckets are smaller than MaxSize.
-            serialize({Size * 2, maps:fold(
-                fun(Bucket, Share, Acc) ->
-                    maps:update_with(Bucket div 2, fun(Sh) -> (Sh + Share) / 2 end, Share, Acc)
-                end,
-                maps:new(),
-                Map
-            )}, MaxSize, SerializedSize);
+    {Size, Map} = Buckets,
+    case byte_size(S) > MaxSize of
         false ->
-            {Buckets, S}
+            {Buckets, S};
+        true when Size * 2 > BaseBucketSize * ?MAX_SYNC_BUCKET_SIZE_RATIO ->
+            throw(uncompressable_buckets);
+        true ->
+            %% A doubling that merges no buckets can grow the term, so keep
+            %% doubling instead of stopping at the first step that grows.
+            serialize({Size * 2, merge_buckets(Map)}, MaxSize, BaseBucketSize)
     end.
 
 %% @doc Deserialize the buckets from Erlang Term Format.
@@ -112,7 +102,7 @@ deserialize(SerializedBuckets, ExpectedBucketSize) ->
                 BucketSize >= ExpectedBucketSize,
                 BucketSize =< ExpectedBucketSize * ?MAX_SYNC_BUCKET_SIZE_RATIO ->
             {ok, {BucketSize, maps:filter(
-                fun (Bucket, Share) when
+                fun    (Bucket, Share) when
                             is_integer(Bucket), Bucket >= 0,
                             is_number(Share), Share > 0, Share =< 1 ->
                         true;
@@ -164,6 +154,19 @@ foreach_range(Fun, Share, SubBucket, End) ->
 %%% Private functions.
 %%%===================================================================
 
+%% @doc Merge each pair of neighbouring buckets into one of twice the size,
+%% which holds half of each share.
+merge_buckets(Map) ->
+    maps:fold(
+        fun(Bucket, Share, Acc) ->
+            maps:update_with(
+                Bucket div 2, fun(Sh) -> Sh + Share / 2 end, Share / 2, Acc
+            )
+        end,
+        #{},
+        Map
+    ).
+
 add(Start, End, _Size, Map) when Start >= End ->
     Map;
 add(Start, End, Size, Map) ->
@@ -175,7 +178,7 @@ add(Start, End, Size, Map) ->
             maps:put(Bucket, min(1, (Share * Size + Increase) / Size), Map)).
 
 bucket_upper_bound(Offset, Size) ->
-    arweave_util:ceil_int(Offset, Size).
+    arweave_lib_util:ceil_int(Offset, Size).
 
 delete(Start, End, _Size, Map) when Start >= End ->
     Map;
@@ -186,6 +189,9 @@ delete(Start, End, Size, Map) ->
     Decrease = min(BucketUpperBound, End) - Start,
     delete(BucketUpperBound, End, Size,
             maps:put(Bucket, max(0, Share * (1 - Decrease / Size)), Map)).
+
+-ifdef(AR_TEST).
+-include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
 %%% Tests.
@@ -201,7 +207,52 @@ compressed_etf_rejected_test() ->
     ?assertEqual({error, compressed_etf},
             deserialize(Compressed, ?DEFAULT_SYNC_BUCKET_SIZE)).
 
-buckets_test() ->
+%% @doc Sparse buckets that one doubling does not shrink keep doubling until
+%% neighbouring buckets merge.
+sparse_buckets_serialize_past_a_growing_step_test() ->
+    %% Bucket size 2^39 gains a byte of ETF at 2^40. Keys four apart, all at
+    %% least 256 after two halvings, only merge at the third doubling.
+    Size = 1 bsl 39,
+    Keys = lists:seq(1024, 1024 + 4 * 99, 4),
+    Buckets = {Size, maps:from_list([{Key, 0.5} || Key <- Keys])},
+    MaxSize = byte_size(term_to_binary(Buckets)) - 1,
+    {{Size2, Map2}, S} = serialize(Buckets, MaxSize, Size),
+    ?assert(byte_size(S) =< MaxSize),
+    ?assertEqual(8 * Size, Size2),
+    ?assertEqual(lists:usort([Key div 8 || Key <- Keys]),
+        lists:sort(maps:keys(Map2))),
+    %% Each merged bucket spans eight original buckets, two of them half
+    %% covered.
+    ?assertEqual([0.125], lists:usort(maps:values(Map2))).
+
+%% @doc Serialization stops at the largest bucket size peers accept.
+serialize_stops_at_the_accepted_ratio_test() ->
+    Size = ?DEFAULT_SYNC_BUCKET_SIZE,
+    Buckets = {Size, #{0 => 1, 1 bsl 40 => 1}},
+    ?assertException(throw, uncompressable_buckets,
+        serialize(Buckets, 10, Size)),
+    %% A bucket size already at the largest accepted ratio cannot double.
+    MaxBuckets = {Size * ?MAX_SYNC_BUCKET_SIZE_RATIO, #{0 => 1, 1 => 1}},
+    ?assertException(throw, uncompressable_buckets,
+        serialize(MaxBuckets, 10, Size)).
+
+%% @doc Merging a bucket without a neighbour halves its share.
+unpaired_bucket_share_halves_test() ->
+    Size = ?DEFAULT_SYNC_BUCKET_SIZE,
+    %% Buckets 0 and 1 merge, which shrinks the map, and bucket 3 has no
+    %% neighbour.
+    Buckets = {Size, #{0 => 0.5, 1 => 0.5, 3 => 0.5}},
+    MaxSize = byte_size(term_to_binary(Buckets)) - 1,
+    ?assertEqual({2 * Size, #{0 => 0.5, 1 => 0.25}},
+        element(1, serialize(Buckets, MaxSize, Size))).
+
+%% @doc Run the bucket coverage checks with the original suite's timeout.
+buckets_test_() ->
+    {timeout, 60, fun buckets/0}.
+
+%% @doc Bucket updates and size-bounded serialization preserve coverage through
+%% round trips.
+buckets() ->
     Size = 10000000000,
     B1 = {10000000000, #{}},
     ?assertException(throw, uncompressable_buckets, serialize(B1, 10)),
@@ -210,18 +261,31 @@ buckets_test() ->
     B2 = add(5, 0, B1),
     ?assertEqual(5 / Size, get(0, 10, B2)),
     B3 = add(Size * 2, Size, B2),
-    ?assertEqual({Size, #{ 0 => 5 / Size, 1 => 1 }}, B3),
+    ?assertEqual({Size, #{0 => 5 / Size, 1 => 1}}, B3),
     {B3, S3} = serialize(B3, 40),
     {ok, B3} = deserialize(S3, ?DEFAULT_SYNC_BUCKET_SIZE),
     %% The size of the serialized buckets is 31 bytes.
     DoubleSize = 2 * Size,
-    ?assertEqual({DoubleSize, #{ 0 => 0.5 + 5 / Size / 2 }}, element(1, serialize(B3, 30))),
+    ?assertEqual(
+        {DoubleSize, #{0 => 0.5 + 5 / Size / 2}}, element(1, serialize(B3, 30))
+    ),
     {_, S3_1} = serialize(B3, 30),
-    ?assertEqual({ok, {DoubleSize, #{ 0 => 0.5 + 5 / Size / 2 }}}, deserialize(S3_1, ?DEFAULT_SYNC_BUCKET_SIZE)),
-    ?assertEqual({Size, #{ 0 => 5 / Size, 1 => 0.5 }}, cut(Size + Size div 2, B3)),
-    ?assertEqual({Size, #{ 0 => (1 - (Size - 4) / Size) * (5 / Size), 1 => 0 }},
-            delete(Size * 2, 4, B3)),
-    B4 = from_intervals(gb_sets:from_list([{5, 0}, {2 * Size, Size}]), {10000000000, #{}}),
+    ?assertEqual(
+        {ok, {DoubleSize, #{0 => 0.5 + 5 / Size / 2}}},
+        deserialize(S3_1, ?DEFAULT_SYNC_BUCKET_SIZE)
+    ),
+    ?assertEqual(
+        {Size, #{0 => 5 / Size, 1 => 0.5}}, cut(Size + Size div 2, B3)
+    ),
+    ?assertEqual(
+        {Size, #{0 => (1 - (Size - 4) / Size) * (5 / Size), 1 => 0}},
+        delete(Size * 2, 4, B3)
+    ),
+    B4 = from_intervals(
+        gb_sets:from_list([{5, 0}, {2 * Size, Size}]), {10000000000, #{}}
+    ),
     ?assertEqual(B3, B4),
     B5 = from_intervals(gb_sets:from_list([{2 * Size, Size}]), B2),
     ?assertEqual(B4, B5).
+
+-endif.

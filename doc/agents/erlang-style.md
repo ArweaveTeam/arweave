@@ -41,6 +41,17 @@ in `maybe` expressions.
 
 Four spaces. Never tabs.
 
+For `try ... after ... end`, put each body on its own lines, indented one
+level beneath `try` or `after`. Keep `after` and `end` on separate lines:
+
+```erlang
+Next = try
+    do_work(Args)
+after
+    release(Ref)
+end,
+```
+
 ### Line length
 
 Aim for a maximum of 80 characters. This is a real constraint, not an
@@ -140,7 +151,7 @@ not to hinder readability. The module name carries some of the meaning.
 ```erlang
 %% Bad
 ar_tx:generate_data_segment_for_signing(TX).
-arweave_util:pretty_print_internal_ip_representation(IPAddr).
+arweave_lib_util:pretty_print_internal_ip_representation(IPAddr).
 
 %% Good
 ar_tx:to_binary(TX).
@@ -328,6 +339,24 @@ sign_verify_test({Priv, Pub}) ->
     verify(Pub, SignedData).
 ```
 
+### No tracker references
+
+Comments describe the code, not its history: never cite an issue, ticket or
+pull request number. The number means nothing to a reader without the
+tracker, trackers get migrated, and the comment goes stale while the code
+stays. State the behaviour or the reason itself; if the reason is a past
+incident, describe what happened. Commit messages are where issue numbers
+belong.
+
+```erlang
+%% Bad
+%% Store the chunk as it is (issue 1444).
+
+%% Good
+%% Store the chunk as it is: a chunk packed for this module's address is
+%% byte for byte what enciphering the unpacked chunk would produce.
+```
+
 ### Record field descriptions
 
 Document each field inline with a single `%`, as concisely as possible.
@@ -377,15 +406,26 @@ it to hide ordinary return-value errors.
 
 ## Tests in the module
 
-New tests belong in a dedicated `X_tests.erl` alongside `X.erl` — separate files
-keep tests out of search results when you are looking for real call sites. Tests
-do also live inside the module they cover in parts of this codebase; when they
-do, separate them with a banner immediately before the first test function:
+Tests outside `arweave` belong in Common Test suites under their app's `test/`
+directory. In `arweave`, prefer a dedicated `X_tests.erl` — separate files keep
+tests out of search results when you are looking for real call sites. Tests
+also live inside the module they cover in parts of `arweave`; when they do,
+collect the embedded tests and their test-only helpers at the bottom inside
+one `-ifdef(AR_TEST)` block. Put the EUnit include inside that block, not at the
+top of the module, and keep the test banner immediately before the tests:
 
 ```erlang
+-ifdef(AR_TEST).
+-include_lib("eunit/include/eunit.hrl").
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+example_test() ->
+    ?assertEqual(expected, example()).
+
+-endif.
 ```
 
 If a module carries a weaker marker (`%% Tests.` or similar), replace it with the

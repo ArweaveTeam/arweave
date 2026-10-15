@@ -2,14 +2,17 @@
 %%% for a chunk of data received from the network.
 -module(ar_poa).
 
--export([get_data_path_validation_ruleset/2, get_data_path_validation_ruleset/3,
-         validate_pre_fork_2_5/4, validate/1, chunk_proof/2, chunk_proof/3, chunk_proof/5,
-         validate_paths/1, validate_data_path/5, validate_data_path/6,
-         get_padded_offset/1, get_padded_offset/2]).
+-export([
+    get_data_path_validation_ruleset/2, get_data_path_validation_ruleset/3,
+    validate_pre_fork_2_5/4,
+    validate/1,
+    chunk_proof/2, chunk_proof/3, chunk_proof/5,
+    validate_paths/1,
+    validate_data_path/5, validate_data_path/6
+]).
 
 -include_lib("arweave/include/ar_poa.hrl").
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -19,11 +22,16 @@
 %% offset, the threshold where the offset rebases were allowed (and the validation
 %% changed in some other ways on top of that). The threshold where the specific
 %% requirements were imposed on data splits to make each chunk belong to its own
-%% 256 KiB bucket is set to ar_block:strict_data_split_threshold(). The code is then passed to
-%% ar_merkle:validate_path/5.
-get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold) ->
-    get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
-                                     ar_block:strict_data_split_threshold()).
+%% 256 KiB bucket is set to arweave_lib_constants:strict_data_split_threshold().
+%% The code is then passed to ar_merkle:validate_path/5.
+get_data_path_validation_ruleset(
+    BlockStartOffset, MerkleRebaseSupportThreshold
+) ->
+    get_data_path_validation_ruleset(
+        BlockStartOffset,
+        MerkleRebaseSupportThreshold,
+        arweave_lib_constants:strict_data_split_threshold()
+    ).
 
 %% @doc Return the merkle proof validation ruleset code depending on the block start
 %% offset, the threshold where the offset rebases were allowed (and the validation
@@ -45,9 +53,11 @@ get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
     end.
 
 get_data_path_validation_ruleset(BlockStartOffset) ->
-    get_data_path_validation_ruleset(BlockStartOffset,
-                                     ar_block:get_merkle_rebase_support_threshold(),
-                                     ar_block:strict_data_split_threshold()).
+    get_data_path_validation_ruleset(
+        BlockStartOffset,
+        arweave_lib_constants:get_merkle_rebase_support_threshold(),
+        arweave_lib_constants:strict_data_split_threshold()
+    ).
 
 validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
     validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk, not_set).
@@ -59,7 +69,7 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) ->
         true ->
             log_invalid_data_path(ambiguous_rebase_marker, Peer,
                                   [{previous_log_code, redundant_rebase_marker},
-                                   {data_root, arweave_util:encode(DataRoot)},
+                                   {data_root, arweave_lib_util:encode(DataRoot)},
                                    {offset, Offset}, {tx_size, TXSize}]),
             false;
         false ->
@@ -106,7 +116,7 @@ validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) ->
                                     {true, PassesBase, PassesStrict, PassesRebase, EndOffset};
                                 false ->
                                     log_invalid_data_path(negative_leaf_size, Peer,
-                                                          [{data_root, arweave_util:encode(DataRoot)},
+                                                          [{data_root, arweave_lib_util:encode(DataRoot)},
                                                            {offset, Offset}, {tx_size, TXSize},
                                                            {chunk_start_offset, StartOffset},
                                                            {chunk_end_offset, EndOffset}]),
@@ -135,7 +145,7 @@ log_invalid_data_path(_Reason, not_set, _Logs) ->
     ok;
 log_invalid_data_path(Reason, Peer, Logs) ->
     ?LOG_ERROR([{event, invalid_data_path}, {reason, Reason},
-                {peer, arweave_util:format_peer(Peer)} | Logs]).
+                {peer, arweave_lib_util:format_peer(Peer)} | Logs]).
 
 %% @doc Validate a proof of access.
 validate(Args) ->
@@ -176,7 +186,11 @@ validate(Args) ->
     end.
 
 chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte) ->
-    chunk_proof(ChunkMetadata, SeekByte, ar_block:get_merkle_rebase_support_threshold()).
+    chunk_proof(
+        ChunkMetadata,
+        SeekByte,
+        arweave_lib_constants:get_merkle_rebase_support_threshold()
+    ).
 
 chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte, MerkleRebaseSupportThreshold) ->
     {BlockStartOffset, BlockEndOffset, TXRoot} = ar_block_index:get_block_bounds(SeekByte),
@@ -189,7 +203,10 @@ chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte, MerkleRebaseSupportThre
                      end,
 
     ValidateDataPathRuleset = get_data_path_validation_ruleset(
-                                BlockStartOffset, MerkleRebaseSupportThreshold, ar_block:strict_data_split_threshold()),
+        BlockStartOffset,
+        MerkleRebaseSupportThreshold,
+        arweave_lib_constants:strict_data_split_threshold()
+    ),
     chunk_proof(
       ChunkMetadata2,
       BlockStartOffset,
@@ -274,10 +291,12 @@ validate_paths(Proof) ->
     end.
 
 get_recall_bucket_offset(RecallOffset, BlockStartOffset) ->
-    case RecallOffset >= ar_block:strict_data_split_threshold() of
+    case RecallOffset >= arweave_lib_constants:strict_data_split_threshold() of
         true ->
-            get_padded_offset(RecallOffset + 1, ar_block:strict_data_split_threshold())
-                - (?DATA_CHUNK_SIZE) - BlockStartOffset;
+            arweave_lib_constants:get_padded_offset(
+                RecallOffset + 1,
+                arweave_lib_constants:strict_data_split_threshold()
+            ) - (?DATA_CHUNK_SIZE) - BlockStartOffset;
         false ->
             RecallOffset - BlockStartOffset
     end.
@@ -354,17 +373,6 @@ validate3(Packing, Args) ->
         {ok, _UnexpectedSubChunk} ->
             false
     end.
-
-%% @doc Return the smallest multiple of 256 KiB >= Offset
-%% counting from ar_block:strict_data_split_threshold().
-get_padded_offset(Offset) ->
-    get_padded_offset(Offset, ar_block:strict_data_split_threshold()).
-
-%% @doc Return the smallest multiple of 256 KiB >= Offset
-%% counting from StrictDataSplitThreshold.
-get_padded_offset(Offset, StrictDataSplitThreshold) ->
-    Diff = Offset - StrictDataSplitThreshold,
-    StrictDataSplitThreshold + ((Diff - 1) div (?DATA_CHUNK_SIZE) + 1) * (?DATA_CHUNK_SIZE).
 
 %% @doc Validate a proof of access.
 validate_pre_fork_2_5(BlockOffset, TXRoot, BlockEndOffset, POA) ->

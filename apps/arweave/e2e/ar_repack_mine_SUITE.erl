@@ -12,7 +12,7 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("arweave_lib/include/arweave_lib_constants.hrl").
 
 %%====================================================================
 %% Suite metadata
@@ -25,15 +25,15 @@ suite() ->
 
 all() ->
     [
-     test_replica_2_9_to_replica_2_9,
-     test_replica_2_9_to_spora_2_6,
-     test_replica_2_9_to_unpacked,
+        test_replica_2_9_to_replica_2_9,
+        test_replica_2_9_to_spora_2_6,
+        test_replica_2_9_to_unpacked,
 
-     test_unpacked_to_replica_2_9,
-     test_unpacked_to_spora_2_6,
-     test_spora_2_6_to_replica_2_9,
-     test_spora_2_6_to_spora_2_6,
-     test_spora_2_6_to_unpacked
+        test_unpacked_to_replica_2_9,
+        test_unpacked_to_spora_2_6,
+        test_spora_2_6_to_replica_2_9,
+        test_spora_2_6_to_spora_2_6,
+        test_spora_2_6_to_unpacked
     ].
 
 %%====================================================================
@@ -112,30 +112,30 @@ test_spora_2_6_to_unpacked(_Config) ->
 %% then mine and validate.
 do_repack_mine(FromPackingType, ToPackingType) ->
     ?LOG_INFO([{event, test_repack_mine}, {module, ?MODULE},
-               {from_packing_type, FromPackingType}, {to_packing_type, ToPackingType}]),
+        {from_packing_type, FromPackingType}, {to_packing_type, ToPackingType}]),
     ValidatorNode = peer1,
     RepackerNode = peer2,
     ar_test_node:stop(ValidatorNode),
     ar_test_node:stop(RepackerNode),
     {Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
-                                 RepackerNode, FromPackingType, wallet_a),
+        RepackerNode, FromPackingType, wallet_a),
     RepackerSnapshot = ar_test_node:remote_call(
-                         RepackerNode, arweave_config, snapshot, []),
+        RepackerNode, arweave_config, internal_snapshot, []),
 
     [B0 | _] = Blocks,
     start_validator_node(ValidatorNode, RepackerNode, B0),
 
     {WalletB, StorageModules} = ar_e2e:source_node_storage_modules(
-                                  RepackerNode, ToPackingType, wallet_b),
+        RepackerNode, ToPackingType, wallet_b),
     AddrB = case WalletB of
-                not_set -> not_set;
-                _ -> ar_wallet:to_address(WalletB)
-            end,
+        not_set -> not_set;
+        _ -> ar_wallet:to_address(WalletB)
+    end,
     ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
     ExistingStorageModules = ar_test_node:remote_call(
                                      RepackerNode, arweave_config, storage_modules, []),
     %% For replica_2_9 destinations, mount old and new modules with
-    %% sync_jobs=0 first so new modules prepare entropy without
+    %% Syncing disabled first so new modules prepare entropy without
     %% concurrent cross-module sync: otherwise a chunk copied in as
     %% `unpacked_padded' could be read as `not_found' from another new
     %% module and invalidated via `read_range2'. The second restart
@@ -145,7 +145,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
             ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
                                                                   [storage_modules] => ExistingStorageModules ++ StorageModules,
                                                                   [mining, address] => AddrB,
-                                                                  [sync, jobs] => 0
+                                                                  [sync, max_download_rate] => 0
                                                                  }),
             ar_test_await:all_entropy_prepared(RepackerNode);
         _ ->
@@ -156,7 +156,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
                                                           [mining, address] => AddrB
                                                          }),
 
-    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),
+    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*arweave_lib_constants:partition_size()),
     ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
     ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
     %% Source ends at height 6, putting the disk-pool threshold at the
@@ -174,7 +174,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
                                                           [storage_modules] => StorageModules,
                                                           [mining, address] => AddrB
                                                          }),
-    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),
+    ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*arweave_lib_constants:partition_size()),
     ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
     ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
     ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking),
@@ -193,7 +193,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
             %% Partitions 0-3 are now fully below it; partition 4 holds
             %% only the two chunks below the threshold (the chunk ending
             %% at 8126464 crosses into partition 4).
-            ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),
+            ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*arweave_lib_constants:partition_size()),
             ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
             ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
             ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking),
@@ -204,7 +204,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
     ValidatorPeerName = ar_test_node:peer_name(ValidatorNode),
     ValidatorPeerName = ar_test_node:start_other_node(ValidatorNode, B0, #{
-                                                                           [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(RepackerNode))],
+                                                                           [peers, trusted] => [arweave_lib_util:format_peer(ar_test_node:peer_ip(RepackerNode))],
                                                                            [join, start_from_latest_state] => true,
                                                                            [join, auto] => true,
                                                                            [storage_modules] => []

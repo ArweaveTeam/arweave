@@ -2,6 +2,7 @@
 %%% gen_server, exercised without the supervisor.
 %%% @end
 -module(arweave_throttling_group_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -58,8 +59,37 @@ all() ->
      remote_peer_reverted_no_more_headers,
      update_before_first_throttle,
      blocking_and_draining_to_reset_amount,
+     unresponsive_peer_quota_is_forgotten,
+     zero_reset_quota_is_forgotten,
      blocking_call
     ].
+
+%% @doc A caller waiting on a quota our own requests used up is released, and
+%% the quota forgotten, when the peer does not answer in time.
+unresponsive_peer_quota_is_forgotten(Config) ->
+    Peer = {7, 7, 7, 7, 1984},
+    Pid = ?config(group_pid, Config),
+    ok = ?M:update_quota(Pid, ?GROUPID_GENERAL, Peer,
+                         #{total => 10, remaining => 1,
+                           reset_amount => 0, reset_seconds => 0}),
+    ok = ?M:throttle(?GROUPID_GENERAL, Peer),
+    {Time, ok} = timer:tc(?M, throttle, [?GROUPID_GENERAL, Peer]),
+    ?assert(Time < 5000000),
+    ?assertMatch({ok, #{remaining := infinity, queue_length := 0}},
+                 ?M:status(?GROUPID_GENERAL, Peer)),
+    ok.
+
+%% @doc A peer reporting an exhausted quota with no reset does not hold
+%% callers until the receive timeout.
+zero_reset_quota_is_forgotten(Config) ->
+    Peer = {8, 8, 8, 8, 1984},
+    Pid = ?config(group_pid, Config),
+    ok = ?M:update_quota(Pid, ?GROUPID_GENERAL, Peer,
+                         #{total => 10, remaining => 0,
+                           reset_amount => 0, reset_seconds => 0}),
+    {Time, ok} = timer:tc(?M, throttle, [?GROUPID_GENERAL, Peer]),
+    ?assert(Time < 5000000),
+    ok.
 
 %% @doc State is maintained independently per peer.
 initial_peer_state(_Config) ->

@@ -3,6 +3,7 @@
 %%% production spec contributors (and their `handle_set' callbacks)
 %%% are registered.
 -module(arweave_config_options_handle_set_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -34,7 +35,7 @@ all() ->
 %%====================================================================
 
 mining_address_base64(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Raw = <<0:256>>,
         Encoded = b64fast:encode(Raw),
         ok = arweave_config:set([mining, address], Encoded),
@@ -48,7 +49,7 @@ mining_address_base64(_Config) ->
     ok.
 
 start_from_block_base64(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Raw = <<0:384>>,
         Encoded = b64fast:encode(Raw),
         ok = arweave_config:set([join, start_from_block], Encoded),
@@ -63,7 +64,7 @@ start_from_block_base64(_Config) ->
     ok.
 
 verify_mode_atoms_and_binaries(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config:set([verify, mode], false),
         ?assertEqual(false, arweave_config:get([verify, mode])),
 
@@ -85,7 +86,7 @@ verify_mode_atoms_and_binaries(_Config) ->
     ok.
 
 connections_per_peer_at_least_one(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Key = [network, client, http, connections_per_peer],
         ok = arweave_config:set(Key, 1),
         ?assertEqual(1, arweave_config:get(Key)),

@@ -2,11 +2,11 @@
 -test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
 recovers_from_corruption_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_recovers_from_corruption/0}.
@@ -14,9 +14,14 @@ recovers_from_corruption_test_() ->
 test_recovers_from_corruption() ->
     ?LOG_DEBUG([{event, test_recovers_from_corruption_start}]),
     ar_test_data_sync:setup_nodes(),
-    StoreID = ar_storage_module:id(hd(ar_storage_module:get_all(262144 * 3))),
+    #store_info{id = StoreID} =
+        arweave_storage:store_info(hd(arweave_storage:covering_stores(262144 * 3, any_packing))),
     ?debugFmt("Corrupting ~s...", [StoreID]),
-    [ar_chunk_storage:write_chunk(PaddedEndOffset, << 0:(262144*8) >>, #{}, StoreID)
-            || PaddedEndOffset <- lists:seq(262144, 262144 * 3, 262144)],
+    [
+        arweave_storage:internal_write_chunk(
+            PaddedEndOffset, <<0:(262144 * 8)>>, StoreID
+        )
+     || PaddedEndOffset <- lists:seq(262144, 262144 * 3, 262144)
+    ],
     ar_test_node:mine(),
     ?assertMatch({ok, _}, ar_test_await:node_height(main, 1)).

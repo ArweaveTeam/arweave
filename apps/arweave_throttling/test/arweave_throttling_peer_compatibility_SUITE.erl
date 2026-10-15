@@ -1,6 +1,7 @@
 %%% @doc Tests for the `arweave_throttling_peer_groups' ETS store.
 %%% @end
 -module(arweave_throttling_peer_compatibility_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").

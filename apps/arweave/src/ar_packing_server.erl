@@ -4,19 +4,20 @@
 -behaviour(gen_server).
 
 -export([start_link/0, packing_atom/1, get_packing_state/0, get_randomx_state_for_h0/2,
-         request_unpack/2, request_unpack/3, request_repack/2, request_repack/3,
+         request_unpack/2, request_unpack/3, request_unpack/4,
+         request_repack/2, request_repack/3, request_repack/4,
          request_encipher/3, request_decipher/3,
+         request_encipher/4, request_decipher/4,
          pack/4, unpack/5, repack/6, unpack_sub_chunk/5,
-         is_buffer_full/0, record_buffer_size_metric/0,
+         record_pending_requests_metric/0,
          pad_chunk/1, unpad_chunk/3, unpad_chunk/4,
          encipher_replica_2_9_chunk/2, decipher_replica_2_9_chunk/2,
-         exor_replica_2_9_chunk/2, pack_replica_2_9_chunk/3, request_entropy_generation/3,
-         set_cache_size/1]).
+         exor_replica_2_9_chunk/2, pack_replica_2_9_chunk/3,
+         request_entropy_generation/3, request_entropy_slice/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -25,10 +26,6 @@
                 num_workers
                }).
 
-%% We remember the earliest entropy generation per mining address
-%% until it falls out of this window. Used to track the amount of
-%% redundant entropy generation.
--define(ENTROPY_GENERATION_STATS_WINDOW_MS, 1000 * 60 * 30). % 30 minutes
 
 %%%===================================================================
 %%% Public interface.
@@ -45,29 +42,43 @@ request_unpack(Ref, Args) ->
     request_unpack(Ref, self(), Args).
 
 request_unpack(Ref, ReplyTo, Args) ->
-    arweave_util:cast_after(600000, ReplyTo, {expire_unpack_request, Ref}),
-    gen_server:cast(?MODULE, {unpack_request, ReplyTo, Ref, Args}).
+    submit(unpack, Ref, ReplyTo, Args).
+
+request_unpack(Ref, ReplyTo, Args, CacheRef) ->
+    submit(unpack, Ref, ReplyTo, Args, CacheRef).
 
 request_repack(Ref, Args) ->
     request_repack(Ref, self(), Args).
 
 request_repack(Ref, ReplyTo, Args) ->
-    arweave_util:cast_after(600000, ReplyTo, {expire_repack_request, Ref}),
-    gen_server:cast(?MODULE, {repack_request, ReplyTo, Ref, Args}).
+    submit(repack, Ref, ReplyTo, Args).
 
-request_encipher(Ref, ReplyTo, {Chunk, Entropy}) ->
-    arweave_util:cast_after(600000, ReplyTo, {expire_encipher_request, Ref}),
-    gen_server:cast(?MODULE, {encipher_request, ReplyTo, Ref, {Chunk, Entropy}}).
+request_repack(Ref, ReplyTo, Args, CacheRef) ->
+    submit(repack, Ref, ReplyTo, Args, CacheRef).
 
-request_decipher(Ref, ReplyTo, {Chunk, Entropy}) ->
-    arweave_util:cast_after(600000, ReplyTo, {expire_decipher_request, Ref}),
-    gen_server:cast(?MODULE, {decipher_request, ReplyTo, Ref, {Chunk, Entropy}}).
+request_encipher(Ref, ReplyTo, Args) ->
+    submit(encipher, Ref, ReplyTo, Args).
+
+request_encipher(Ref, ReplyTo, Args, CacheRef) ->
+    submit(encipher, Ref, ReplyTo, Args, CacheRef).
+
+request_decipher(Ref, ReplyTo, Args) ->
+    submit(decipher, Ref, ReplyTo, Args).
+
+request_decipher(Ref, ReplyTo, Args, CacheRef) ->
+    submit(decipher, Ref, ReplyTo, Args, CacheRef).
 
 request_entropy_generation(
   Ref, ReplyTo, {RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}) ->
     gen_server:cast(?MODULE,
                     {generate_entropy, ReplyTo, Ref,
                      {RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}}).
+
+%% @doc Ask a packing worker for one chunk's slice of a cached entropy.
+request_entropy_slice(Ref, ReplyTo, {RewardAddr, BucketEndOffset, SubChunkStart}) ->
+    gen_server:cast(?MODULE,
+                    {generate_entropy_slice, ReplyTo, Ref,
+                     {RewardAddr, BucketEndOffset, SubChunkStart}}).
 
 %% @doc Pack the chunk for mining. Packing ensures every mined chunk of data is globally
 %% unique and cannot be easily inferred during mining from any metadata stored in RAM.
@@ -104,21 +115,14 @@ unpack_sub_chunk({replica_2_9, RewardAddr} = Packing,
         false ->
             {error, invalid_packed_size};
         true ->
-            PackingState = get_packing_state(),
             record_packing_request(unpack_sub_chunk, not_set, Packing),
-            Entropy = generate_replica_2_9_entropy(
+            Slice = arweave_entropy:generate_slice(
                         RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
-            RandomXState = get_randomx_state_by_packing(Packing, PackingState),
-            EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
-            case prometheus_histogram:observe_duration(packing_duration_milliseconds,
-                                                       [unpack_sub_chunk, replica_2_9, external], fun() ->
-                                                                                                          ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk({RandomXState,
-                                                                                                                                                                 Entropy, Chunk, EntropySubChunkIndex}) end) of
-                {ok, UnpackedSubChunk} ->
-                    {ok, UnpackedSubChunk};
-                Error ->
-                    Error
-            end
+            UnpackedSubChunk = prometheus_histogram:observe_duration(
+                packing_duration_milliseconds,
+                [unpack_sub_chunk, replica_2_9, external],
+                fun() -> ar_mine_randomx:exor_sub_chunk(Chunk, Slice) end),
+            {ok, UnpackedSubChunk}
     end.
 
 repack(RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
@@ -128,38 +132,34 @@ repack(RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk, ChunkSize) -
       RequestedPacking, StoredPacking, ChunkOffset, TXRoot,
       Chunk, ChunkSize, PackingState, external).
 
-%% @doc Return true if the packing server buffer is considered full, to apply
-%% some back-pressure on the pack/4 and unpack/5 callers.
-is_buffer_full() ->
-    [{_, Limit}] = ets:lookup(?MODULE, buffer_size_limit),
-    case ets:lookup(?MODULE, buffer_size) of
-        [{_, Size}] when Size > Limit ->
-            true;
-        _ ->
-            false
+%% @doc Admit a standalone request whose caller has no pipeline reservation.
+submit(Type, Ref, ReplyTo, Args) ->
+    case ar_chunk_cache:reserve(packing) of
+        full -> busy;
+        {ok, CacheRef} ->
+            try
+                ar_chunk_cache:mark_cached(CacheRef),
+                submit(Type, Ref, ReplyTo, Args, CacheRef)
+            after ar_chunk_cache:release(CacheRef) end
     end.
 
-%% @doc Re-derive the packing buffer size limit from config at runtime.
-set_cache_size(Value) ->
-    gen_server:cast(?MODULE, {set_cache_size, Value}).
+%% @doc Add a cache reference before a payload enters the packing mailbox.
+submit(Type, Ref, ReplyTo, Args, CacheRef) ->
+    case whereis(?MODULE) of
+        undefined -> busy;
+        PID -> do_submit(PID, Type, Ref, ReplyTo, Args, CacheRef)
+    end.
 
-%% @doc Resolve the packing buffer size limit (an undefined configured value
-%% falls back to a free-memory heuristic) and store it in ETS. Shared by init
-%% and the runtime set_cache_size handler.
-set_buffer_size_limit(PackingCacheSizeLimit) ->
-    MaxSize =
-        case PackingCacheSizeLimit of
-            undefined ->
-                Free = proplists:get_value(free_memory,
-                                           memsup:get_system_memory_data(), 2000000000),
-                arweave_util:ceil_int(
-                  min(1200, erlang:ceil(Free * 0.9 / 3 / ?DATA_CHUNK_SIZE)), 100);
-            Limit ->
-                Limit
-        end,
-    ?LOG_INFO([{event, packing_chunk_cache_size_limit}, {max_size, MaxSize}]),
-    ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
-    MaxSize.
+do_submit(PID, Type, Ref, ReplyTo, Args, CacheRef) ->
+    case ar_chunk_cache:add_reference(CacheRef, PID) of
+        {ok, PackingCacheRef} ->
+            ar_util:cast_after(
+                600000, ReplyTo, {expire, Type, Ref}
+            ),
+            gen_server:cast(PID,
+                {reserved, PackingCacheRef, Type, Ref, ReplyTo, Args});
+        {error, expired} -> {error, cancelled}
+    end.
 
 pad_chunk(Chunk) ->
     pad_chunk(Chunk, byte_size(Chunk)).
@@ -246,67 +246,12 @@ decipher_replica_2_9_chunk(Chunk, Entropy) ->
     record_packing_request(decipher, unpacked_padded, {replica_2_9, <<>>}),
     exor_replica_2_9_chunk(Chunk, Entropy).
 
-%% @doc Generate the 2.9 entropy.
--spec generate_replica_2_9_entropy(
-        RewardAddr :: binary(),
-        BucketEndOffset :: non_neg_integer(),
-        SubChunkStartOffset :: non_neg_integer()
-       ) -> binary().
-generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
-    generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, true).
-
--spec generate_replica_2_9_entropy(
-        RewardAddr :: binary(),
-        BucketEndOffset :: non_neg_integer(),
-        SubChunkStartOffset :: non_neg_integer(),
-        CacheEntropy :: boolean()
-       ) -> binary().
-generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, false) ->
-    Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
-    do_generate_entropy(RewardAddr, Key);
-generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, true) ->
-    Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
-    Partition = ar_node:get_partition_number(BucketEndOffset),
-
-    entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
-    case ar_entropy_cache:get(Key) of
-        {ok, Entropy} ->
-            arweave_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, cache_hit]),
-            entropy_generation_release(Key),
-            Entropy;
-        not_found ->
-            arweave_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, cache_miss]),
-            Entropy = do_generate_entropy(RewardAddr, Key),
-            update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
-            EntropyCacheSizeMb = arweave_config:get([packing, entropy, cache_size]),
-            MaxSize = EntropyCacheSizeMb * ?MiB,
-            ar_entropy_cache:clean_up_space(?REPLICA_2_9_ENTROPY_SIZE, MaxSize),
-            ar_entropy_cache:put(Key, Entropy, ?REPLICA_2_9_ENTROPY_SIZE),
-            entropy_generation_release(Key),
-            Entropy
-    end.
-
-do_generate_entropy(RewardAddr, Key) ->
-    PackingState = get_packing_state(),
-    RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
-    Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
-    %% Primarily needed for testing where the entropy generated exceeds the entropy
-    %% needed for tests.
-    binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE).
-
 %% @doc Pad (to ?DATA_CHUNK_SIZE) and pack the chunk according to the 2.9 replication format.
 %% Return the chunk and the combined entropy used on that chunk.
--spec pack_replica_2_9_chunk(
-        RewardAddr :: binary(),
-        AbsoluteEndOffset :: non_neg_integer(),
-        Chunk :: binary()
-       ) -> {ok, binary(), binary()}.
 pack_replica_2_9_chunk(RewardAddr, AbsoluteEndOffset, Chunk) ->
-    PackingState = get_packing_state(),
-    RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
     PaddedChunk = pad_chunk(Chunk),
     SubChunks = get_sub_chunks(PaddedChunk),
-    pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState, SubChunks).
+    pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, SubChunks).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -315,8 +260,8 @@ pack_replica_2_9_chunk(RewardAddr, AbsoluteEndOffset, Chunk) ->
 init([]) ->
     ar:console("~nInitialising RandomX datasets. Keys: ~p, ~p. "
                "The process may take several minutes.~n",
-               [arweave_util:encode(?RANDOMX_PACKING_KEY),
-                arweave_util:encode(?RANDOMX_PACKING_KEY)]),
+               [arweave_lib_util:encode(?RANDOMX_PACKING_KEY),
+                arweave_lib_util:encode(?RANDOMX_PACKING_KEY)]),
     {RandomXState512, _RandomXState4096, _RandomXStateSharedEntropy}
         = PackingState = init_packing_state(),
     ar:console("RandomX dataset initialisation complete.~n", []),
@@ -330,17 +275,17 @@ init([]) ->
     ?LOG_INFO([{event, starting_packing_threads}, {num_threads, NumWorkers}]),
     Workers = queue:from_list(
                 [spawn_link(fun() -> worker(PackingState) end) || _ <- lists:seq(1, NumWorkers)]),
-    ets:insert(?MODULE, {buffer_size, 0}),
+    ets:insert(?MODULE, {pending_requests, 0}),
 
-    MaxSize = set_buffer_size_limit(arweave_config:get([packing, cache_size])),
-    ar:console("~nSetting the packing chunk cache size limit to ~B chunks.~n", [MaxSize]),
+    MaxSize = ar_chunk_cache:limit(),
+    ar:console("~nShared chunk cache capacity: ~B chunks.~n", [MaxSize]),
     {ok, _} = ar_timer:apply_interval(
-                200,
-                ?MODULE,
-                record_buffer_size_metric,
-                [],
-                #{ skip_on_shutdown => false }
-               ),
+        200,
+        ?MODULE,
+        record_pending_requests_metric,
+        [],
+        #{skip_on_shutdown => false}
+    ),
     {ok, #state{
             workers = Workers, num_workers = NumWorkers }}.
 
@@ -348,63 +293,23 @@ handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
     {reply, ok, State}.
 
-handle_cast({unpack_request, _, _, _}, #state{ num_workers = 0 } = State) ->
-    ?LOG_WARNING([{event, got_unpack_request_while_packing_is_disabled}]),
+handle_cast({reserved, CacheRef, Type, Ref, From, Args},
+        #state{workers = Workers, num_workers = N} = State) when N > 0 ->
+    {{value, Worker}, Workers2} = queue:out(Workers),
+    case ar_chunk_cache:transfer(CacheRef, Worker) of
+        {ok, WorkerCacheRef} ->
+            increment_pending_requests(),
+            Worker ! {reserved, WorkerCacheRef, Type, Ref, From, Args};
+        {error, expired} -> ok
+    end,
+    {noreply, State#state{workers = queue:in(Worker, Workers2)}};
+handle_cast({reserved, CacheRef, _Type, _Ref, _From, _Args}, State) ->
+    ar_chunk_cache:release(CacheRef),
     {noreply, State};
-handle_cast({unpack_request, From, Ref, Args}, State) ->
-    #state{ workers = Workers } = State,
-    {Packing, _Chunk, _AbsoluteOffset, _TXRoot, _ChunkSize} = Args,
-    {{value, Worker}, Workers2} = queue:out(Workers),
-    increment_buffer_size(),
-    record_packing_request(unpack, unpacked, Packing),
-    Worker ! {unpack, Ref, From, Args},
-    {noreply, State#state{ workers = queue:in(Worker, Workers2) }};
-handle_cast({repack_request, _, _, _}, #state{ num_workers = 0 } = State) ->
-    ?LOG_WARNING([{event, got_repack_request_while_packing_is_disabled}]),
-    {noreply, State};
-handle_cast({repack_request, From, Ref, Args}, State) ->
-    #state{ workers = Workers } = State,
-    {RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
-    {{value, Worker}, Workers2} = queue:out(Workers),
-    case {RequestedPacking, Packing} of
-        {unpacked, unpacked} ->
-            From ! {chunk, {packed, Ref, {unpacked, Chunk, AbsoluteOffset, TXRoot, ChunkSize}}},
-            {noreply, State};
-        {_, unpacked} ->
-            increment_buffer_size(),
-            record_packing_request(pack, RequestedPacking, unpacked),
-            Worker ! {pack, Ref, From, {RequestedPacking, Chunk, AbsoluteOffset, TXRoot,
-                                        ChunkSize}},
-            {noreply, State#state{ workers = queue:in(Worker, Workers2) }};
-        _ ->
-            increment_buffer_size(),
-            record_packing_request(repack, RequestedPacking, Packing),
-            Worker ! {
-                      repack, Ref, From,
-                      {RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize}
-                     },
-            {noreply, State#state{ workers = queue:in(Worker, Workers2) }}
-    end;
-handle_cast({encipher_request, From, Ref, {Chunk, Entropy}}, State) ->
-    #state{ workers = Workers } = State,
-    {{value, Worker}, Workers2} = queue:out(Workers),
-    Worker ! {encipher, Ref, From, {Chunk, Entropy}},
-    {noreply, State#state{ workers = queue:in(Worker, Workers2) }};
-handle_cast({decipher_request, From, Ref, {Chunk, Entropy}}, State) ->
-    #state{ workers = Workers } = State,
-    {{value, Worker}, Workers2} = queue:out(Workers),
-    Worker ! {decipher, Ref, From, {Chunk, Entropy}},
-    {noreply, State#state{ workers = queue:in(Worker, Workers2) }};
-handle_cast({generate_entropy, From, Ref,
-             {RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}}, State) ->
-    #state{ workers = Workers } = State,
-    {{value, Worker}, Workers2} = queue:out(Workers),
-    Worker ! {generate_entropy, Ref, From,
-              {RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}},
-    {noreply, State#state{ workers = queue:in(Worker, Workers2) }};
-handle_cast({set_cache_size, PackingCacheSizeLimit}, State) ->
-    set_buffer_size_limit(PackingCacheSizeLimit),
-    {noreply, State};
+handle_cast({generate_entropy, From, Ref, Args}, State) ->
+    {noreply, send_to_worker({generate_entropy, Ref, From, Args}, State)};
+handle_cast({generate_entropy_slice, From, Ref, Args}, State) ->
+    {noreply, send_to_worker({generate_entropy_slice, Ref, From, Args}, State)};
 
 handle_cast(Cast, State) ->
     ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -421,6 +326,11 @@ terminate(Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+send_to_worker(Message, #state{ workers = Workers } = State) ->
+    {{value, Worker}, Workers2} = queue:out(Workers),
+    Worker ! Message,
+    State#state{ workers = queue:in(Worker, Workers2) }.
 
 init_packing_state() ->
     %% The RandomX datasets are derived solely from ?RANDOMX_PACKING_KEY
@@ -461,76 +371,23 @@ get_randomx_state_by_packing(spora_2_5, {RandomXState, _, _}) ->
 
 worker(PackingState) ->
     receive
-        {unpack, Ref, From, Args} ->
-            {Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
-            case unpack(Packing, AbsoluteOffset, TXRoot, Chunk, ChunkSize,
-                        PackingState, internal) of
-                {ok, U, _AlreadyUnpacked} ->
-                    From ! {chunk, {unpacked, Ref, {Packing, U, AbsoluteOffset, TXRoot,
-                                                    ChunkSize}}};
-                {error, invalid_packed_size} ->
-                    From ! {chunk, {unpack_error, Ref, Args, invalid_packed_size}};
-                {error, invalid_chunk_size} ->
-                    From ! {chunk, {unpack_error, Ref, Args, invalid_chunk_size}};
-                {error, invalid_padding} ->
-                    From ! {chunk, {unpack_error, Ref, Args, invalid_padding}};
-                {exception, Error} ->
-                    ?LOG_ERROR([{event, failed_to_unpack_chunk},
-                                {absolute_end_offset, AbsoluteOffset},
-                                {error, io_lib:format("~p", [Error])}])
+        {reserved, CacheRef, Type, Ref, From, Args} ->
+            try
+                process_reserved(Type, Ref, From, Args, PackingState, CacheRef)
+            after
+                decrement_pending_requests(),
+                ar_chunk_cache:release(CacheRef)
             end,
-            decrement_buffer_size(),
-            worker(PackingState);
-        {pack, Ref, From, Args} ->
-            {Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
-            case pack(Packing, AbsoluteOffset, TXRoot, Chunk, PackingState, internal) of
-                {ok, Packed, _AlreadyPacked} ->
-                    From ! {chunk, {packed, Ref, {Packing, Packed, AbsoluteOffset, TXRoot,
-                                                  ChunkSize}}};
-                {error, invalid_unpacked_size} ->
-                    ?LOG_WARNING([{event, got_unpacked_chunk_of_invalid_size}]);
-                {exception, Error} ->
-                    ?LOG_ERROR([{event, failed_to_pack_chunk},
-                                {absolute_end_offset, AbsoluteOffset},
-                                {error, io_lib:format("~p", [Error])}])
-            end,
-            decrement_buffer_size(),
-            worker(PackingState);
-        {repack, Ref, From, Args} ->
-            {RequestedPacking, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize} = Args,
-            case repack(RequestedPacking, Packing,
-                        AbsoluteOffset, TXRoot, Chunk, ChunkSize, PackingState, internal) of
-                {ok, Packed, _RepackInput} ->
-                    From ! {chunk, {packed, Ref,
-                                    {RequestedPacking, Packed, AbsoluteOffset, TXRoot, ChunkSize}}};
-                {error, invalid_packed_size} ->
-                    ?LOG_WARNING([{event, got_packed_chunk_of_invalid_size}]);
-                {error, invalid_chunk_size} ->
-                    ?LOG_WARNING([{event, got_packed_chunk_with_invalid_chunk_size}]);
-                {error, invalid_padding} ->
-                    ?LOG_WARNING([{event, got_packed_chunk_with_invalid_padding},
-                                  {absolute_end_offset, AbsoluteOffset}]);
-                {error, invalid_unpacked_size} ->
-                    ?LOG_WARNING([{event, got_unpacked_chunk_of_invalid_size}]);
-                {exception, Error} ->
-                    ?LOG_ERROR([{event, failed_to_repack_chunk},
-                                {absolute_end_offset, AbsoluteOffset},
-                                {error, io_lib:format("~p", [Error])}])
-            end,
-            decrement_buffer_size(),
-            worker(PackingState);
-        {encipher, Ref, From, {Chunk, Entropy}} ->
-            PackedChunk = encipher_replica_2_9_chunk(Chunk, Entropy),
-            From ! {chunk, {enciphered, Ref, PackedChunk}},
-            worker(PackingState);
-        {decipher, Ref, From, {Chunk, Entropy}} ->
-            UnpackedChunk = decipher_replica_2_9_chunk(Chunk, Entropy),
-            From ! {chunk, {deciphered, Ref, UnpackedChunk}},
             worker(PackingState);
         {generate_entropy, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}} ->
-            Entropy = generate_replica_2_9_entropy(
+            Entropy = arweave_entropy:generate(
                         RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy),
             From ! {entropy_generated, Ref, Entropy},
+            worker(PackingState);
+        {generate_entropy_slice, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart}} ->
+            Slice = arweave_entropy:generate_slice(
+                        RewardAddr, BucketEndOffset, SubChunkStart),
+            From ! {entropy_generated, Ref, Slice},
             worker(PackingState)
     end.
 
@@ -563,17 +420,16 @@ pack(unpacked, _ChunkOffset, _TXRoot, Chunk, _PackingState, _External) ->
 pack(unpacked_padded, _ChunkOffset, _TXRoot, Chunk, _PackingState, _External) ->
     %% Allows to reuse the same interface for unpacking and repacking.
     {ok, pad_chunk(Chunk), was_not_already_packed};
-pack({replica_2_9, RewardAddr} = Packing, AbsoluteEndOffset, _TXRoot, Chunk, PackingState,
+pack({replica_2_9, RewardAddr}, AbsoluteEndOffset, _TXRoot, Chunk, _PackingState,
      _External) ->
     case byte_size(Chunk) > ?DATA_CHUNK_SIZE of
         true ->
             {error, invalid_unpacked_size};
         false ->
-            RandomXState = get_randomx_state_by_packing(Packing, PackingState),
             PaddedChunk = pad_chunk(Chunk),
             SubChunks = get_sub_chunks(PaddedChunk),
             case pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset,
-                                             RandomXState, SubChunks) of
+                                             SubChunks) of
                 {ok, Packed, _Entropy} ->
                     {ok, Packed, was_not_already_packed};
                 Error ->
@@ -603,60 +459,43 @@ get_sub_chunks(<< SubChunk:(?SUB_CHUNK_SIZE)/binary, Rest/binary >>) ->
 get_sub_chunks(<<>>) ->
     [].
 
-pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState, SubChunks) ->
-    pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
-                                0, SubChunks, [], []).
+pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, SubChunks) ->
+    pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, 0, SubChunks, [], []).
 
-pack_replica_2_9_sub_chunks(_RewardAddr, _AbsoluteEndOffset, _RandomXState,
-                            _SubChunkStartOffset, [], PackedSubChunks, EntropyParts) ->
+pack_replica_2_9_sub_chunks(_RewardAddr, _AbsoluteEndOffset, _SubChunkStartOffset, [],
+                            PackedSubChunks, EntropyParts) ->
     {ok, iolist_to_binary(lists:reverse(PackedSubChunks)),
      iolist_to_binary(lists:reverse(EntropyParts))};
-pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
-                            SubChunkStartOffset, [SubChunk | SubChunks], PackedSubChunks, EntropyParts) ->
-    EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
-    Entropy = generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
-    case prometheus_histogram:observe_duration(packing_duration_milliseconds,
-                                               [pack_sub_chunk, replica_2_9, internal], fun() ->
-                                                                                                ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk({RandomXState,
-                                                                                                                                                       Entropy, SubChunk, EntropySubChunkIndex}) end) of
-        {ok, PackedSubChunk} ->
-            SubChunkSize = ?SUB_CHUNK_SIZE,
-            EntropyPart = binary:part(Entropy,
-                                      EntropySubChunkIndex * ?SUB_CHUNK_SIZE,
-                                      ?SUB_CHUNK_SIZE),
-            pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
-                                        SubChunkStartOffset + SubChunkSize, SubChunks,
-                                        [PackedSubChunk | PackedSubChunks], [EntropyPart | EntropyParts]);
-        Error ->
-            Error
-    end.
+pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset,
+                            [SubChunk | SubChunks], PackedSubChunks, EntropyParts) ->
+    Slice = arweave_entropy:generate_slice(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
+    PackedSubChunk = prometheus_histogram:observe_duration(
+        packing_duration_milliseconds,
+        [pack_sub_chunk, replica_2_9, internal],
+        fun() -> ar_mine_randomx:exor_sub_chunk(SubChunk, Slice) end),
+    pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset,
+                                SubChunkStartOffset + ?SUB_CHUNK_SIZE, SubChunks,
+                                [PackedSubChunk | PackedSubChunks], [Slice | EntropyParts]).
 
-unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState, SubChunks) ->
-    unpack_replica_2_9_sub_chunks(
-      RewardAddr, AbsoluteEndOffset, RandomXState, 0, SubChunks, []).
+unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, SubChunks) ->
+    unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, 0, SubChunks, []).
 
-unpack_replica_2_9_sub_chunks(_RewardAddr, _AbsoluteEndOffset, _RandomXState,
-                              _SubChunkStartOffset, [], UnpackedSubChunks) ->
+unpack_replica_2_9_sub_chunks(_RewardAddr, _AbsoluteEndOffset, _SubChunkStartOffset, [],
+                              UnpackedSubChunks) ->
     {ok, iolist_to_binary(lists:reverse(UnpackedSubChunks))};
-unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
-                              SubChunkStartOffset, [SubChunk | SubChunks], UnpackedSubChunks) ->
-    EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
-    Entropy = generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
-    case prometheus_histogram:observe_duration(packing_duration_milliseconds,
-                                               [unpack_sub_chunk, replica_2_9, internal], fun() ->
-                                                                                                  ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk({RandomXState,
-                                                                                                                                                         Entropy, SubChunk, EntropySubChunkIndex}) end) of
-        {ok, UnpackedSubChunk} ->
-            SubChunkSize = ?SUB_CHUNK_SIZE,
-            unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
-                                          SubChunkStartOffset + SubChunkSize, SubChunks,
-                                          [UnpackedSubChunk | UnpackedSubChunks]);
-        Error ->
-            Error
-    end.
+unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset,
+                              [SubChunk | SubChunks], UnpackedSubChunks) ->
+    Slice = arweave_entropy:generate_slice(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
+    UnpackedSubChunk = prometheus_histogram:observe_duration(
+        packing_duration_milliseconds,
+        [unpack_sub_chunk, replica_2_9, internal],
+        fun() -> ar_mine_randomx:exor_sub_chunk(SubChunk, Slice) end),
+    unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset,
+                                  SubChunkStartOffset + ?SUB_CHUNK_SIZE, SubChunks,
+                                  [UnpackedSubChunk | UnpackedSubChunks]).
 
 unpack({replica_2_9, RewardAddr} = Packing, AbsoluteEndOffset,
-       _TXRoot, Chunk, ChunkSize, PackingState, _External) ->
+       _TXRoot, Chunk, ChunkSize, _PackingState, _External) ->
     case validate_chunk_size(Packing, Chunk, ChunkSize) of
         {error, Reason} ->
             ?LOG_ERROR([{event, unpack_chunk_size_error}, {error, Reason},
@@ -667,9 +506,8 @@ unpack({replica_2_9, RewardAddr} = Packing, AbsoluteEndOffset,
             {error, Reason};
         {ok, PackedSize} ->
             SubChunks = get_sub_chunks(Chunk),
-            RandomXState = get_randomx_state_by_packing(Packing, PackingState),
             case unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset,
-                                               RandomXState, SubChunks) of
+                                               SubChunks) of
                 {ok, Unpacked} ->
                     case ar_packing_server:unpad_chunk(Packing, Unpacked,
                                                        ChunkSize, PackedSize) of
@@ -850,18 +688,22 @@ validate_chunk_size(Chunk, ChunkSize) ->
             {ok, PackedSize}
     end.
 
-increment_buffer_size() ->
-    ets:update_counter(?MODULE, buffer_size, {2, 1}, {buffer_size, 1}).
+increment_pending_requests() ->
+    ets:update_counter(
+        ?MODULE, pending_requests, {2, 1}, {pending_requests, 1}
+    ).
 
-decrement_buffer_size() ->
-    ets:update_counter(?MODULE, buffer_size, {2, -1}, {buffer_size, 0}).
+decrement_pending_requests() ->
+    ets:update_counter(
+        ?MODULE, pending_requests, {2, -1}, {pending_requests, 0}
+    ).
 
 %%%===================================================================
 %%% Prometheus metrics
 %%%===================================================================
 
-record_buffer_size_metric() ->
-    case ets:lookup(?MODULE, buffer_size) of
+record_pending_requests_metric() ->
+    case ets:lookup(?MODULE, pending_requests) of
         [{_, Size}] ->
             arweave_metrics:gauge_set(packing_buffer_size, Size);
         _ ->
@@ -895,61 +737,42 @@ exor_replica_2_9_sub_chunks(
     [ar_mine_randomx:exor_sub_chunk(SubChunk, EntropyPart)
     | exor_replica_2_9_sub_chunks(ChunkRest, EntropyRest)].
 
-entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
-    case ets:insert_new(?MODULE, {{entropy_generation_lock, Key}}) of
-        true ->
-            ok;
-        false ->
-            timer:sleep(100),
-            entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset)
-    end.
-
-entropy_generation_release(Key) ->
-    ets:delete(?MODULE, {entropy_generation_lock, Key}).
-
-update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
-    Tab = entropy_generation_stats,
-    Time = erlang:monotonic_time(millisecond),
-    ets:update_counter(Tab, Key, {2, 1}, {Key, 0, Time}),
-    arweave_metrics:counter_inc(replica_2_9_entropy_generated, ?REPLICA_2_9_ENTROPY_SIZE),
-    maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
-    remove_outdated_entropy_generation_stats().
-
-maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
-    Tab = entropy_generation_stats,
-    Now = erlang:monotonic_time(millisecond),
-    [{_, Count, Time}] = ets:lookup(Tab, Key),
-    case Count > 1 of
-        true ->
-            Partition = ar_node:get_partition_number(BucketEndOffset),
-            arweave_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, redundant]),
-            ?LOG_DEBUG([{event, possibly_redundant_entropy_generation},
-                        {reward_addr, arweave_util:encode(RewardAddr)},
-                        {key, arweave_util:encode(Key)},
-                        {bucket_end_offset, BucketEndOffset},
-                        {sub_chunk_start_offset, SubChunkStartOffset},
-                        {count, Count},
-                        {seconds_since_first_generation, (Now - Time) / 1_000},
-                        {avg_per_second, Count / ((Now - Time) / 1_000)}]);
-        false ->
-            ok
-    end.
-
-remove_outdated_entropy_generation_stats() ->
-    Tab = entropy_generation_stats,
-    Cursor = ets:first(Tab),
-    Now = erlang:monotonic_time(millisecond),
-    case ets:lookup(Tab, Cursor) of
-        [{_, _, Time}] when Time < Now - ?ENTROPY_GENERATION_STATS_WINDOW_MS ->
-            ets:delete(Tab, Cursor),
-            remove_outdated_entropy_generation_stats();
-        _ ->
-            ok
-    end.
+%% @doc Process an admitted transformation without another memory check.
+process_reserved(Type, Ref, From, Args, PackingState, CacheRef) ->
+    Result = case {Type, Args} of
+        {unpack, {Packing, Chunk, Offset, TXRoot, Size}} ->
+            record_packing_request(unpack, unpacked, Packing),
+            case unpack(Packing, Offset, TXRoot, Chunk, Size, PackingState,
+                    internal) of
+                {ok, Output, _} ->
+                    {unpacked, Ref, {Packing, Output, Offset, TXRoot, Size}};
+                {error, Reason} -> {unpack_error, Ref, Args, Reason};
+                Error -> {unpack_error, Ref, Args, Error}
+            end;
+        {repack, {Target, Source, Chunk, Offset, TXRoot, Size}} ->
+            RequestType = case Source of unpacked -> pack; _ -> repack end,
+            record_packing_request(RequestType, Target, Source),
+            case repack(Target, Source, Offset, TXRoot, Chunk, Size,
+                    PackingState, internal) of
+                {ok, Output, _} ->
+                    {packed, Ref, {Target, Output, Offset, TXRoot, Size}};
+                Error -> {repack_error, Ref, Error}
+            end;
+        {encipher, {Chunk, Entropy}} ->
+            {enciphered, Ref, encipher_replica_2_9_chunk(Chunk, Entropy)};
+        {decipher, {Chunk, Entropy}} ->
+            {deciphered, Ref, decipher_replica_2_9_chunk(Chunk, Entropy)}
+    end,
+    case ar_chunk_cache:transfer(CacheRef, From) of
+        {ok, ReplyCacheRef} -> From ! {chunk, Result, ReplyCacheRef};
+        {error, expired} -> ok
+    end,
+    ok.
 
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
 
 pack_test() ->
     Root = crypto:strong_rand_bytes(32),

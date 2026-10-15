@@ -4,13 +4,14 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 syncs_data_test_() ->
     ar_test_node:test_with_all_nodes_mocked(
-            [{ar_fork, height_2_9_6, fun() -> infinity end}],
-            fun test_syncs_data/0, 480).
+        [{arweave_lib_constants, height_2_9_6, fun() -> infinity end}],
+        fun test_syncs_data/0,
+        480
+    ).
 
 test_syncs_data() ->
     ?LOG_DEBUG([{event, test_syncs_data_start}]),
@@ -43,7 +44,7 @@ test_syncs_data() ->
     lists:foreach(
         fun({B, #tx{ id = TXID }, Chunks, {_, Proof}}) ->
             TXSize = byte_size(binary:list_to_bin(Chunks)),
-            TXOffset = ar_merkle:extract_note(arweave_util:decode(maps:get(tx_path, Proof))),
+            TXOffset = ar_merkle:extract_note(arweave_lib_util:decode(maps:get(tx_path, Proof))),
             AbsoluteTXOffset = B#block.weave_size - B#block.block_size + TXOffset,
             ExpectedOffsetInfo = ar_serialize:jsonify(#{
                     offset => integer_to_binary(AbsoluteTXOffset),
@@ -58,7 +59,7 @@ test_syncs_data() ->
                     end
                 end
             ),
-            ExpectedData = arweave_util:encode(binary:list_to_bin(Chunks)),
+            ExpectedData = arweave_lib_util:encode(binary:list_to_bin(Chunks)),
             ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
             case AbsoluteTXOffset > DiskPoolThreshold of
                 true ->

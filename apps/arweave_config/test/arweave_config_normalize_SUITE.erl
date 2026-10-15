@@ -1,6 +1,7 @@
 %%% @doc Tests for `arweave_config_normalize:run/0' — the walker that
 %%% invokes each option module's optional `normalize/0' callback.
 -module(arweave_config_normalize_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -35,13 +36,13 @@ all() ->
 %%====================================================================
 
 walker_smoke(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ?assertEqual(ok, arweave_config_normalize:run())
     end),
     ok.
 
 join_normalize_promotes_latest_state(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         %% Sanity: the latest-state flag defaults to false.
         ?assertEqual(false,
             arweave_config:get([join, start_from_latest_state])),
@@ -56,15 +57,15 @@ join_normalize_promotes_latest_state(_Config) ->
 %% When verify.mode is off (default `false`), normalize must leave
 %% every flag the operator set alone.
 verify_normalize_noop_when_disabled(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         %% Pre-set a couple of flags to non-default values that the
         %% active-verify path would otherwise clobber.
         ok = arweave_config:set([join, auto], false),
-        ok = arweave_config:set([sync, jobs], 7),
+        ok = arweave_config:set([sync, max_download_rate], 7),
         ok = arweave_config:set([cm, enabled], true),
         ?assertEqual(ok, arweave_config_normalize:run()),
         ?assertEqual(false, arweave_config:get([join, auto])),
-        ?assertEqual(7, arweave_config:get([sync, jobs])),
+        ?assertEqual(7, arweave_config:get([sync, max_download_rate])),
         ?assertEqual(true, arweave_config:get([cm, enabled]))
     end),
     ok.
@@ -79,7 +80,7 @@ verify_normalize_forces_flags_log(_Config) ->
 %% the feature catalog should land at `[features, foo] = true | false`
 %% directly (no staging keys).
 classify_legacy_flag_promotes_catalog_entries(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         [Flag | _] = arweave_config_features:names(),
         discard_io(fun() ->
             arweave_config_features:classify_legacy_flag(Flag, enable)
@@ -95,7 +96,7 @@ classify_legacy_flag_promotes_catalog_entries(_Config) ->
 %% Promotion-table flags: a few `enable` / `disable` keywords map to
 %% dedicated option_keys (e.g. `randomx_jit` -> `[randomx, jit]`).
 classify_legacy_flag_promotes_dedicated_fields(_Config) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         discard_io(fun() ->
             arweave_config_features:classify_legacy_flag(randomx_jit, disable)
         end),
@@ -116,15 +117,15 @@ classify_legacy_flag_promotes_dedicated_fields(_Config) ->
 %% asserts every write took effect. `purge' and `log' share this
 %% fan-out.
 assert_verify_normalize_forces_all_flags(Mode) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         %% Leaf pre-seeds: each value is chosen so the asserted
         %% forced value differs, ensuring every assertion proves a
         %% write happened.
         ok = arweave_config:set([join, auto], true),
         ok = arweave_config:set([join, start_from_latest_state], false),
-        ok = arweave_config:set([sync, jobs], 7),
+        ok = arweave_config:set([sync, max_download_rate], 7),
         ok = arweave_config:set([gossip, block, pollers], 7),
-        ok = arweave_config:set([gossip, header_sync_jobs], 7),
+        ok = arweave_config:set([gossip, header, workers], 7),
         ok = arweave_config:set([gossip, tx, polling_enabled], true),
         ok = arweave_config:set([packing, entropy, workers], 7),
         ok = arweave_config:set([cm, enabled], true),
@@ -151,9 +152,9 @@ assert_verify_normalize_forces_all_flags(Mode) ->
         %% Every leaf write took effect.
         ?assertEqual(false, arweave_config:get([join, auto])),
         ?assertEqual(true, arweave_config:get([join, start_from_latest_state])),
-        ?assertEqual(0, arweave_config:get([sync, jobs])),
+        ?assertEqual(0, arweave_config:get([sync, max_download_rate])),
         ?assertEqual(0, arweave_config:get([gossip, block, pollers])),
-        ?assertEqual(0, arweave_config:get([gossip, header_sync_jobs])),
+        ?assertEqual(0, arweave_config:get([gossip, header, workers])),
         ?assertEqual(false, arweave_config:get([gossip, tx, polling_enabled])),
         ?assertEqual(0, arweave_config:get([packing, entropy, workers])),
         ?assertEqual(false, arweave_config:get([cm, enabled])),

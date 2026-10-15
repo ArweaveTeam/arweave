@@ -4,6 +4,13 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_verify_chunks.hrl").
 
+%% Convert a legacy cache limit (in chunks) to the new-style MiB option using
+%% ceiling division so positive counts never round down; zero stays zero.
+%% Chunks is always a bound variable at the call sites (no double-eval).
+-define(LEGACY_CHUNKS_TO_CACHE_MIB(Chunks),
+    ((Chunks + (?MiB div ?DATA_CHUNK_SIZE) - 1)
+        div (?MiB div ?DATA_CHUNK_SIZE))).
+
 %% The polling frequency in seconds.
 -define(DEFAULT_POLLING_INTERVAL, 2).
 
@@ -13,14 +20,6 @@
 %% The number of processes fetching the recent blocks and transactions on join.
 -define(DEFAULT_JOIN_WORKERS, 10).
 
-%% The number of data sync jobs to run. Each job periodically picks a range
-%% and downloads it from peers.
--ifdef(AR_TEST).
--define(DEFAULT_SYNC_JOBS, 10).
--else.
--define(DEFAULT_SYNC_JOBS, 100).
--endif.
-
 %% The number of disk pool jobs to run. Disk pool jobs scan the disk pool to index
 %% no longer pending or orphaned chunks, pack chunks with a sufficient number of confirmations,
 %% or remove the abandoned ones.
@@ -29,12 +28,6 @@
 %% The number of header sync jobs to run. Each job picks the latest not synced
 %% block header and downloads it from peers.
 -define(DEFAULT_HEADER_SYNC_JOBS, 1).
-
-%% Maximum concurrent peer-discovery scanners across all (Peer, Mode) pairs.
-%% Each scanner walks one peer's advertised buckets and refreshes the
-%% per-peer interval cache; per-peer rate limiting is enforced separately by
-%% ar_client_throttling, so this knob just caps total parallelism.
--define(DEFAULT_DATA_DISCOVERY_MAX_CONCURRENT_PEER_SCANS, 100).
 
 %% The default expiration time for a data root in the disk pool.
 -define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 30 * 60).
@@ -64,7 +57,7 @@
 -endif.
 
 -define(NUM_HASHING_PROCESSES,
-        max(1, (erlang:system_info(schedulers_online) - 1))).
+    max(1, (erlang:system_info(schedulers_online) - 1))).
 
 -define(MAX_PARALLEL_BLOCK_INDEX_REQUESTS, 1).
 -define(MAX_PARALLEL_GET_CHUNK_REQUESTS, 100).
@@ -179,7 +172,7 @@
 
 %% Total wall-clock limit for reading the complete request body.
 -define(DEFAULT_HTTP_MAX_BODY_READ_TIME_MS,
-        ?DEFAULT_HTTP_HANDLER_TIMEOUT_MS - 2000).
+    ?DEFAULT_HTTP_HANDLER_TIMEOUT_MS - 2000).
 
 %% Default Cowboy HTTP/TCP options
 -define(DEFAULT_COWBOY_HTTP_ACTIVE_N, 100).

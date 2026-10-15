@@ -40,7 +40,8 @@ parse(Args, Opts) ->
             long_arguments,
             Opts,
             maps:from_list(
-                arweave_config_options_registry:get_long_arguments()
+                arweave_config_deprecated:long_arguments()
+                ++ arweave_config_options_registry:get_long_arguments()
             )
         ),
         parse_args(BinaryArgs, #{

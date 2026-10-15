@@ -17,7 +17,7 @@
 %% -------------------------------------------------------------------------------------------------
 
 setup_external_update() ->
-    Config = arweave_config:snapshot(),
+    Config = arweave_config:internal_snapshot(),
     [B0] = ar_weave:init(),
     %% Start the testnode with a configured VDF server so that it doesn't compute its own VDF -
     %% this is necessary so that we can test the behavior of apply_external_update without any
@@ -26,8 +26,8 @@ setup_external_update() ->
         B0, ar_test_node:generate_address(main),
         #{
             [peers, vdf_server] => [
-                arweave_util:format_peer(vdf_server_1()),
-                arweave_util:format_peer(vdf_server_2())
+                arweave_lib_util:format_peer(vdf_server_1()),
+                arweave_lib_util:format_peer(vdf_server_2())
             ],
             [mining, enabled] => true
         }
@@ -44,7 +44,7 @@ setup_external_update() ->
 
 cleanup_external_update({Pid, Config}) ->
     exit(Pid, kill),
-    ok = arweave_config:restore(Config),
+    ok = arweave_config:internal_restore(Config),
     ets:delete(add_task),
     ets:delete(computed_output).
 

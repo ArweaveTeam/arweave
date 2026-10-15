@@ -4,6 +4,7 @@
 -behaviour(arweave_config_options).
 -export([specs/0, group_description/0, validate/0]).
 -include("arweave_config.hrl").
+-include_lib("arweave_config/include/arweave_config_deps.hrl").
 
 specs() ->
     [
@@ -49,7 +50,7 @@ specs() ->
                   "mined partition. When omitted, it is determined "
                   "based on the number of mining partitions.">>,
             handle_set => fun(_K, V, _S, _A) ->
-                ok = ar_mining_server:set_cache_size(V),
+                ok = ?DEP(mining_server):set_cache_size(V),
                 {store, V}
             end
         },

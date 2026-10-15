@@ -4,7 +4,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 -define(ENCODED_RX512_HASH, <<"NcXUtn7gA42QoM8MtaS-vgVy8gJ21EE2YxV18mHndmM">>).
 -define(ENCODED_RX4096_HASH, <<"HqbpuoVNu8u4l4slkwnP3fvX9Q-mgjFH-3LgCyhMPPk">>).
@@ -286,10 +285,10 @@ test_input_changes_packing(State, ExtraArgs, EncryptFun, DecryptFun) ->
 test_hash({
         FastState512, LightState512,
         FastState4096, LightState4096}) ->
-    ExpectedHash512 = arweave_util:decode(?ENCODED_RX512_HASH),
-    ExpectedHash4096 = arweave_util:decode(?ENCODED_RX4096_HASH),
-    Nonce = arweave_util:decode(?ENCODED_NONCE),
-    Segment = arweave_util:decode(?ENCODED_SEGMENT),
+    ExpectedHash512 = arweave_lib_util:decode(?ENCODED_RX512_HASH),
+    ExpectedHash4096 = arweave_lib_util:decode(?ENCODED_RX4096_HASH),
+    Nonce = arweave_lib_util:decode(?ENCODED_NONCE),
+    Segment = arweave_lib_util:decode(?ENCODED_SEGMENT),
     Input = << Nonce/binary, Segment/binary >>,
     ?assertEqual(ExpectedHash512,
         ar_mine_randomx:hash(FastState512, Input, 0, 0, 0)),

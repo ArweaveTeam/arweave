@@ -13,7 +13,8 @@
 
 -spec parse() -> #{list() => term()}.
 parse() ->
-    Bindings = arweave_config_options_registry:get_environments(),
+    Bindings = arweave_config_options_registry:get_environments()
+        ++ arweave_config_deprecated:environments(),
     lists:foldl(
         fun(E, Acc) ->
             case re:split(E, "=", [{parts, 2}, {return, list}]) of

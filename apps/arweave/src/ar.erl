@@ -3,12 +3,6 @@
 -behaviour(application).
 -compile(warnings_as_errors).
 -export([
-         benchmark_hash/0,
-         benchmark_hash/1,
-         benchmark_packing/0,
-         benchmark_packing/1,
-         benchmark_vdf/0,
-         benchmark_vdf/1,
          console/1,
          console/2,
          create_ecdsa_wallet/0,
@@ -36,7 +30,6 @@
         ]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include("ar_verify_chunks.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -91,20 +84,32 @@ start(normal, _Args) ->
     %% enable/disable feature lists, promotes start_from_state, etc.).
     ok = arweave_config:normalize(),
 
-    %% Boot-time prerequisites that must be in place before any
-    %% supervisor child starts reading config.
+    %% Configure logger
     LogDir = arweave_config:get([log_dir]),
     filelib:ensure_dir(LogDir ++ "/"),
+    maybe_install_dumb_term_logger(),
+    ar_logger:init(),
+
+    %% Reject a configuration that breaks a rule spanning several options
+    %% before anything starts, as bootstrap rejects an invalid option.
+    %% arweave_config:runtime/0 checks again once the node has started.
+    case arweave_config_validate:run() of
+        ok ->
+            start_node();
+        {error, Reason} = Error ->
+            report_invalid_config(Reason),
+            Error
+    end.
+
+start_node() ->
+    %% Boot-time prerequisites that must be in place before any
+    %% supervisor child starts reading config.
     warn_if_single_scheduler(),
     maybe_run_vdf_benchmark(),
-    maybe_install_dumb_term_logger(),
 
     %% Set erlang socket backend
-    SocketBackend = arweave_config:get([network, server, socket_backend]),
+    SocketBackend = arweave_config:get([network, server, socket, backend]),
     persistent_term:put({kernel, inet_backend}, SocketBackend),
-
-    %% Configure logger
-    ar_logger:init(),
 
     ?LOG_INFO("========== Starting Arweave Node  =========="),
     arweave_config:log(),
@@ -114,7 +119,7 @@ start(normal, _Args) ->
 
     %% Start other apps which we depend on.
     set_mining_address(),
-    ar_chunk_storage:run_defragmentation(),
+    arweave_storage:run_defragmentation(),
 
     %% Start Arweave. Supervisor children may run boot-time validators
     %% in their init/1 callbacks that mutate static config (e.g.,
@@ -122,6 +127,10 @@ start(normal, _Args) ->
     %% supervisor tree's child order guarantees those validators run
     %% before any downstream consumer reads the config.
     Result = ar_sup:start_link(),
+    case Result of
+        {ok, _} -> ok = arweave_sync:activate();
+        _ -> ok
+    end,
 
     %% Prometheus metrics collector - metrics should be defined 
     %% in arweave_metrics already. We only start the metrics collector
@@ -137,7 +146,7 @@ start(normal, _Args) ->
         ok ->
             ok;
         {error, Reason} ->
-            io:format("~nConfiguration validation failed: ~p~n~n", [Reason]),
+            report_invalid_config(Reason),
             %% Exit immediately rather than via init:stop/1: a graceful app
             %% shutdown tears down the config registry ETS (it dies with its
             %% owner) while ar_sup's workers are still terminating, so they
@@ -148,6 +157,17 @@ start(normal, _Args) ->
     end,
 
     Result.
+
+%% @doc Print and log why the configuration was rejected.
+report_invalid_config(Reason) ->
+    Message =
+        case is_binary(Reason) of
+            true -> Reason;
+            false -> io_lib:format("~p", [Reason])
+        end,
+    io:format("~nConfiguration validation failed: ~s~n~n", [Message]),
+    ?LOG_ERROR([{event, invalid_configuration},
+        {reason, iolist_to_binary(Message)}]).
 
 set_mining_address() ->
     MiningAddr = arweave_config:get([mining, address]),
@@ -162,7 +182,7 @@ set_mining_address() ->
                 W ->
                     Addr = ar_wallet:to_address(W),
                     ar:console("~nSetting the mining address to ~s.~n",
-                               [arweave_util:encode(Addr)]),
+                               [arweave_lib_util:encode(Addr)]),
                     _ = arweave_config:set([mining, address], Addr),
                     verify_mining_keyfile(Addr)
             end;
@@ -186,7 +206,7 @@ verify_mining_keyfile(Addr) ->
                                " [data_dir]/~s/[mining_addr].json or "
                                "[data_dir]/~s/arweave_keyfile_[mining_addr].json file)."
                                " Do not specify \"mining_addr\" if you want one to be generated.~n~n",
-                               [arweave_util:encode(Addr), ?WALLET_DIR, ?WALLET_DIR, ?WALLET_DIR]),
+                               [arweave_lib_util:encode(Addr), ?WALLET_DIR, ?WALLET_DIR, ?WALLET_DIR]),
                     init:stop(1);
                 _ ->
                     ok
@@ -227,7 +247,7 @@ create_wallet(DataDir, KeyType) ->
                     init:stop(1);
                 W ->
                     Addr = ar_wallet:to_address(W),
-                    ar:console("Created a wallet with address ~s.~n", [arweave_util:encode(Addr)]),
+                    ar:console("Created a wallet with address ~s.~n", [arweave_lib_util:encode(Addr)]),
                     init:stop(1)
             end
     end.
@@ -262,30 +282,6 @@ convert_config(_Args) ->
               "<InputFile> <OutputFile>~n"),
     init:stop(1).
 
-benchmark_vdf() ->
-    Args = init:get_plain_arguments(),
-    benchmark_vdf(Args).
-
-benchmark_vdf(Args) ->
-    ar_bench_vdf:run_benchmark_from_cli(Args),
-    init:stop(1).
-
-benchmark_hash() ->
-    Args = init:get_plain_arguments(),
-    benchmark_hash(Args).
-
-benchmark_hash(Args) ->
-    ar_bench_hash:run_benchmark_from_cli(Args),
-    init:stop(1).
-
-benchmark_packing() ->
-    Args = init:get_plain_arguments(),
-    benchmark_packing(Args).
-
-benchmark_packing(Args) ->
-    ar_bench_packing:run_benchmark_from_cli(Args),
-    init:stop(1).
-
 shutdown([NodeName]) ->
     rpc:cast(NodeName, init, stop, []).
 
@@ -298,6 +294,9 @@ prep_stop(State) ->
                                                 % accepting connections from other peers, and then
                                                 % start the shutdown procedure.
     ok = ranch:suspend_listener(ar_http_iface_listener),
+
+    %% Quiesce sync while the host's packing and storage services still exist.
+    ok = arweave_sync:deactivate(),
 
                                                 % all timers/intervals must be stopped.
     ar_timer:terminate_timers(),
@@ -332,8 +331,15 @@ stop_dependencies() ->
     lists:foreach(fun(Dep) -> application:stop(Dep) end, lists:reverse(Deps)).
 
 start_dependencies() ->
-    {ok, _} = application:ensure_all_started(arweave, permanent),
-    ok.
+    case application:ensure_all_started(arweave, permanent) of
+        {ok, _} ->
+            ok;
+        {error, _} = Error ->
+            %% start/2 has reported why, for example a rejected
+            %% configuration, and nothing was left running.
+            init:stop(1),
+            Error
+    end.
 
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
 %% for validating a block, will be blocked on initializing a RandomX dataset,

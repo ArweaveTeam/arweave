@@ -43,10 +43,10 @@ execute(Req0, Env) ->
 
 get_limiter_ref(Req) ->
     LocalIPs = [
-                arweave_util:peer_to_ip(Peer)
+                arweave_lib_util:peer_to_ip(Peer)
                 || Peer <- arweave_config:get([peers, local])
                ],
-    PeerIP = arweave_util:peer_to_ip(get_peer_key(Req)),
+    PeerIP = arweave_lib_util:peer_to_ip(get_peer_key(Req)),
 
     case lists:member(PeerIP, LocalIPs) of
         true ->
@@ -90,6 +90,8 @@ get_peer_key(Req) ->
 path_to_limiter_ref([<<"chunk">> | _]) -> chunk;
 path_to_limiter_ref([<<"chunk2">> | _]) -> chunk;
 path_to_limiter_ref([<<"data_sync_record">> | _]) -> data_sync_record;
+path_to_limiter_ref([<<"footprints">> | _]) -> footprints;
+path_to_limiter_ref([<<"footprint_buckets">>]) -> footprints;
 path_to_limiter_ref([<<"recent_hash_list_diff">> | _]) -> recent_hash_list_diff;
 path_to_limiter_ref([<<"hash_list">>]) -> block_index;
 path_to_limiter_ref([<<"hash_list2">>]) -> block_index;

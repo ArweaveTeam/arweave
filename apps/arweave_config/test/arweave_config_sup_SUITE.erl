@@ -4,6 +4,7 @@
 %%% `one_for_all' strategy means killing any child triggers a
 %%% full-tree restart; we exploit that to drive the restart test.
 -module(arweave_config_sup_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

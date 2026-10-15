@@ -4,6 +4,7 @@
 -behaviour(arweave_config_options).
 -export([specs/0, group_description/0, validate/0]).
 -include("arweave_config.hrl").
+-include_lib("arweave_config/include/arweave_config_deps.hrl").
 
 %% Defaults shared between the top-level [logging, X] specs and the
 %% per-handler [logging, handlers, _, X] specs. Single source of
@@ -85,15 +86,18 @@ specs() ->
             enabled => true,
             %% see: https://www.erlang.org/doc/apps/kernel/logger.html
             %% Stored as a string (list of integer); the `path` type
-            %% always returns a binary, so the handler coerces it back
-            %% to a list for the logger handler API.
+            %% returns a binary, except that defaults bypass conversion.
+            %% Keep both paths as lists for the logger handler API.
             option_key => [logging,path],
             default => "./logs",
             type => path,
             runtime => false,
             short_description => <<"Set the directory used for Arweave logs.">>,
-            handle_set => fun(_K, Path, _S, _) when is_binary(Path) ->
-                {store, binary_to_list(Path)}
+            handle_set => fun
+                (_K, Path, _S, _) when is_binary(Path) ->
+                    {store, binary_to_list(Path)};
+                (_K, Path, _S, _) when is_list(Path) ->
+                    {store, Path}
             end
         },
         #{
@@ -318,10 +322,10 @@ specs() ->
                 <<"Enable the debug-level logger handler.">>,
             handle_set => fun
                 (_,true,_,_) ->
-                    ar_logger:start_handler(arweave_debug),
+                    ?DEP(logger):start_handler(arweave_debug),
                     {store, true};
                 (_,false,_,_) ->
-                    ar_logger:stop_handler(arweave_debug),
+                    ?DEP(logger):stop_handler(arweave_debug),
                     {store, false}
             end
         },
@@ -541,10 +545,10 @@ specs() ->
                 <<"Enable the HTTP API logger handler.">>,
             handle_set => fun
                 (_K,true,_S,_) ->
-                    ar_logger:start_handler(arweave_http_api),
+                    ?DEP(logger):start_handler(arweave_http_api),
                     {store, true};
                 (_K,false,_S,_) ->
-                    ar_logger:stop_handler(arweave_http_api),
+                    ?DEP(logger):stop_handler(arweave_http_api),
                     {store, false}
             end
         },

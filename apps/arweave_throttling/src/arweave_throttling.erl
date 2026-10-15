@@ -42,6 +42,7 @@
 
 -export([start/2, stop/1]).
 
+-include_lib("arweave_throttling/include/arweave_throttling_deps.hrl").
 -include_lib("kernel/include/logger.hrl").
 
 %% Number of throttling groups a peer is allowed to have.
@@ -262,7 +263,7 @@ validate_group_id(Peer, HeaderGroupID) when is_binary(HeaderGroupID)->
 maybe_log_update_error(Peer, Path, GroupID, Reason) ->
     ReasonStr = get_quota_error_reason(Reason),
     log_unknown_reason(Peer, Path, GroupID, Reason, ReasonStr),
-    arweave_metrics:counter_inc(arweave_throttling_quota_update_error,
+    ?DEP(metrics):counter_inc(arweave_throttling_quota_update_error,
                                 [GroupID,
                                  ReasonStr]),
     ok.
@@ -288,6 +289,10 @@ get_or_start_throttling_group_process(GroupID) ->
                     case arweave_throttling_sup:start_throttling_group(GroupID) of
                         {ok, Pid} ->
                             {ok, Pid};
+                        {ok, Pid, _Info} ->
+                            {ok, Pid};
+                        {error, {already_started, Pid}} ->
+                            {ok, Pid};
                         {error, _Reason} = E ->
                             E
                     end
@@ -299,7 +304,7 @@ is_process_limit_breached(GroupID) ->
         true ->
             false;
         false ->
-            MaxProcesses = arweave_config:get([throttling, max_processes]),
+            MaxProcesses = ?DEP(config):get([throttling, max_processes]),
             arweave_throttling_sup:count_running() >= MaxProcesses
     end.
 
@@ -312,7 +317,7 @@ is_exempt_from_process_limit(GroupID) when is_list(GroupID) ->
     lists:member(GroupID, exempt_group_ids()).
 
 exempt_group_ids() ->
-    [atom_to_list(ID) || ID <- arweave_config:limiter_groups()].
+    [atom_to_list(ID) || ID <- ?DEP(config):limiter_groups()].
 
 get_quota_error_reason(Reason) when is_atom(Reason) ->
     atom_to_list(Reason);

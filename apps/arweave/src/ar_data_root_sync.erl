@@ -7,6 +7,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -46,14 +47,16 @@ start_link(StoreID) ->
     gen_server:start_link({local, Name}, ?MODULE, [StoreID], []).
 
 name(StoreID) ->
-    list_to_atom("ar_data_root_sync_" ++ ar_storage_module:label(StoreID)).
+    #store_info{label = Label} = arweave_storage:store_info(StoreID),
+    list_to_atom("ar_data_root_sync_" ++ Label).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
 init([StoreID]) ->
-    {RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+    #store_info{effective_range = {RangeStart, RangeEnd}} =
+        arweave_storage:store_info(StoreID),
     gen_server:cast(self(), sync),
     {ok, #state{ store_id = StoreID,
                  range_start = RangeStart,
@@ -63,7 +66,7 @@ init([StoreID]) ->
 handle_cast(sync, State) ->
     case ar_node:is_joined() of
         false ->
-            arweave_util:cast_after(500, self(), sync),
+            ar_util:cast_after(?NODE_JOIN_RETRY_DELAY_MS, self(), sync),
             {noreply, State};
         true ->
             SyncingEnabled = arweave_config:get(
@@ -75,7 +78,7 @@ handle_cast(sync, State) ->
                     false ->
                         {?DATA_ROOTS_SYNC_SCAN_INTERVAL_MS, State}
                 end,
-            arweave_util:cast_after(Delay, self(), sync),
+            ar_util:cast_after(Delay, self(), sync),
             {noreply, State2}
     end;
 
@@ -177,7 +180,7 @@ synced_pct(Synced, Total) ->
 maybe_fetch_and_store({BlockStart, BlockEnd, _TXRoot} = Bounds) ->
     Peers = ar_peers:get_peers(current),
     %% Shuffle eligible peers so repeated fetches do not always hit them in the same order.
-    Peers2 = arweave_util:shuffle_list(lists:filter(
+    Peers2 = arweave_lib_util:shuffle_list(lists:filter(
                                     fun(Peer) ->
                                             ar_peers:get_peer_release(Peer) >= ?DATA_ROOTS_SYNC_RELEASE_NUMBER
                                     end,

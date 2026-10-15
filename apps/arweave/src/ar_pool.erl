@@ -43,7 +43,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("arweave/include/ar_pool.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -431,7 +430,7 @@ process_partial_solution_packing_difficulty(Solution, Ref) ->
     end.
 
 process_partial_solution_nonce(Solution, Ref) ->
-    Max = ar_block:get_max_nonce(Solution#mining_solution.packing_difficulty),
+    Max = arweave_lib_constants:get_max_nonce(Solution#mining_solution.packing_difficulty),
     Nonce = Solution#mining_solution.nonce,
     case Nonce < 0 orelse Nonce > Max of
         false ->

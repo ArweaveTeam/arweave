@@ -13,8 +13,8 @@
 -export([parse_peers/3]).
 -endif.
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
+-include_lib("arweave_config/include/arweave_config_deps.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -78,7 +78,7 @@ parse(Config) ->
 %% converter so converted files preserve peer spellings and convert
 %% needs no DNS.
 parse(Config, Opts) when is_binary(Config) ->
-    case ar_serialize:json_decode(Config) of
+    case ?DEP(serialize):json_decode(Config) of
         {ok, JSONValue} ->
             case parse_options(JSONValue, Opts) of
                 ok -> {ok, ok};
@@ -94,7 +94,7 @@ parse_storage_module(IOList) ->
         [PartitionNumberBin, PackingBin, <<"repack_in_place">>, ToPackingBin] ->
             PartitionNumber = binary_to_integer(PartitionNumberBin),
             true = PartitionNumber >= 0,
-            parse_storage_module(PartitionNumber, ar_block:partition_size(), PackingBin, ToPackingBin);
+            parse_storage_module(PartitionNumber, arweave_lib_constants:partition_size(), PackingBin, ToPackingBin);
         [RangeNumberBin, RangeSizeBin, PackingBin, <<"repack_in_place">>, ToPackingBin] ->
             RangeNumber = binary_to_integer(RangeNumberBin),
             true = RangeNumber >= 0,
@@ -104,7 +104,7 @@ parse_storage_module(IOList) ->
         [PartitionNumberBin, PackingBin] ->
             PartitionNumber = binary_to_integer(PartitionNumberBin),
             true = PartitionNumber >= 0,
-            parse_storage_module(PartitionNumber, ar_block:partition_size(), PackingBin);
+            parse_storage_module(PartitionNumber, arweave_lib_constants:partition_size(), PackingBin);
         [RangeNumberBin, RangeSizeBin, PackingBin] ->
             RangeNumber = binary_to_integer(RangeNumberBin),
             true = RangeNumber >= 0,
@@ -188,7 +188,7 @@ parse_options([{<<"start_from_state">>, Folder} | _], _Opts) ->
     {error, {bad_type, start_from_state, string}, Folder};
 
 parse_options([{<<"start_from_block">>, H} | Rest], Opts) when is_binary(H) ->
-    case arweave_util:safe_decode(H) of
+    case arweave_lib_util:safe_decode(H) of
         {ok, Decoded} when byte_size(Decoded) == 48 ->
             _ = arweave_config:set([join, start_from_block], Decoded),
             parse_options(Rest, Opts);
@@ -285,7 +285,7 @@ parse_options([{<<"storage_modules">>, L} | Rest], Opts) when is_list(L) ->
         parse_options(Rest, Opts)
     catch Error:Reason ->
             ?LOG_ERROR([{event, parse_failure}, {option, storage_modules},
-			{error, Error}, {reason, Reason}]),
+            {error, Error}, {reason, Reason}]),
             {error, {bad_format, storage_modules, "an array of "
                      "\"{number},{address}[,repack_in_place,{to_packing}]\""}, L}
     end;
@@ -364,7 +364,7 @@ parse_options([{<<"diff">>, Diff} | _], _Opts) ->
     {error, {bad_type, diff, number}, Diff};
 
 parse_options([{<<"mining_addr">>, Addr} | Rest], Opts) when is_binary(Addr) ->
-    case arweave_util:safe_decode(Addr) of
+    case arweave_lib_util:safe_decode(Addr) of
         {ok, D} when byte_size(D) == 32 ->
             _ = arweave_config:set([mining, address], D),
             parse_options(Rest, Opts);
@@ -381,17 +381,20 @@ parse_options([{<<"hashing_threads">>, Threads} | _], _Opts) ->
 
 parse_options([{<<"data_cache_size_limit">>, Limit} | Rest], Opts)
   when is_integer(Limit) ->
-    _ = arweave_config:set([sync, cache_size_limit], Limit),
+    %% Legacy chunks become MiB, rounding up any partial MiB.
+    _ = arweave_config:set([packing, cache_size],
+        ?LEGACY_CHUNKS_TO_CACHE_MIB(Limit)),
     parse_options(Rest, Opts);
 parse_options([{<<"data_cache_size_limit">>, Limit} | _], _Opts) ->
     {error, {bad_type, data_cache_size_limit, number}, Limit};
 
-parse_options([{<<"packing_cache_size_limit">>, Limit} | Rest], Opts)
-  when is_integer(Limit) ->
-    _ = arweave_config:set([packing, cache_size], Limit),
+parse_options([{<<"packing_cache_size_limit">>, _Limit} | Rest], Opts) ->
+    ?LOG_WARNING([{event, deprecated_config_option},
+        {option, packing_cache_size_limit}, {action, ignored},
+        {reason, <<"Use packing.cache_size (MiB), or legacy "
+            "data_cache_size_limit (256 KiB chunks), for the shared "
+            "chunk cache.">>}]),
     parse_options(Rest, Opts);
-parse_options([{<<"packing_cache_size_limit">>, Limit} | _], _Opts) ->
-    {error, {bad_type, packing_cache_size_limit, number}, Limit};
 
 parse_options([{<<"mining_cache_size_mb">>, Limit} | Rest], Opts)
   when is_integer(Limit) ->
@@ -429,14 +432,32 @@ parse_options([{<<"max_block_propagation_peers">>, Value} | _], _Opts) ->
 
 parse_options([{<<"sync_jobs">>, Value} | Rest], Opts)
   when is_integer(Value) ->
-    _ = arweave_config:set([sync, jobs], Value),
+    arweave_config_deprecated:set(sync_jobs, [sync, jobs], Value),
     parse_options(Rest, Opts);
 parse_options([{<<"sync_jobs">>, Value} | _], _Opts) ->
     {error, {bad_type, sync_jobs, number}, Value};
+parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, Value} | Rest],
+        Opts) when is_integer(Value), Value >= 0 ->
+    arweave_config_deprecated:set(data_discovery_max_concurrent_peer_scans,
+        [sync, max_concurrent_peer_scans], Value),
+    parse_options(Rest, Opts);
+parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, Value} | _],
+        _Opts) ->
+    {error, {bad_type, data_discovery_max_concurrent_peer_scans, number},
+        Value};
+parse_options([{<<"sync_max_download_rate">>, Value} | Rest], Opts)
+  when is_integer(Value), Value >= 0 ->
+    _ = arweave_config:set([sync, max_download_rate], Value),
+    parse_options(Rest, Opts);
+parse_options([{<<"sync_max_download_rate">>, <<"infinity">>} | Rest], Opts) ->
+    _ = arweave_config:set([sync, max_download_rate], infinity),
+    parse_options(Rest, Opts);
+parse_options([{<<"sync_max_download_rate">>, Value} | _], _Opts) ->
+    {error, {bad_type, sync_max_download_rate, number}, Value};
 
 parse_options([{<<"header_sync_jobs">>, Value} | Rest], Opts)
   when is_integer(Value) ->
-    _ = arweave_config:set([gossip, header_sync_jobs], Value),
+    _ = arweave_config:set([gossip, header, workers], Value),
     parse_options(Rest, Opts);
 parse_options([{<<"header_sync_jobs">>, Value} | _], _Opts) ->
     {error, {bad_type, header_sync_jobs, number}, Value};
@@ -450,7 +471,7 @@ parse_options([{<<"enable_data_roots_syncing">>, Value} | _], _Opts) ->
 
 parse_options([{<<"disk_pool_jobs">>, Value} | Rest], Opts)
   when is_integer(Value) ->
-    _ = arweave_config:set([disk_pool, jobs], Value),
+    _ = arweave_config:set([disk_pool, workers], Value),
     parse_options(Rest, Opts);
 parse_options([{<<"disk_pool_jobs">>, Value} | _], _Opts) ->
     {error, {bad_type, disk_pool, jobs}, Value};
@@ -561,7 +582,7 @@ parse_options([{<<"semaphores">>, Semaphores} | _], _Opts) ->
 
 parse_options([{<<"max_connections">>, MaxConnections} | Rest], Opts)
   when is_integer(MaxConnections), MaxConnections >= 1 ->
-    _ = arweave_config:set([network, server, tcp, max_connections], MaxConnections),
+    _ = arweave_config:set([network, server, http, max_connections], MaxConnections),
     parse_options(Rest, Opts);
 
 parse_options([{<<"disk_pool_data_root_expiration_time">>, D} | Rest], Opts)
@@ -587,7 +608,7 @@ parse_options([{<<"max_duplicate_data_roots">>, D} | Rest], Opts)
     parse_options(Rest, Opts);
 
 parse_options([{<<"disk_cache_size_mb">>, D} | Rest], Opts) when is_integer(D) ->
-    _ = arweave_config:set([gossip, header_cache_size], D),
+    _ = arweave_config:set([gossip, header, cache_size], D),
     parse_options(Rest, Opts);
 
 parse_options([{<<"max_nonce_limiter_validation_thread_count">>, D} | Rest], Opts)
@@ -661,7 +682,7 @@ parse_options([{<<"defragment_modules">>, Bin} | _], _Opts) ->
     {error, {bad_type, defragment_modules, array}, Bin};
 
 parse_options([{<<"http_api.tcp.idle_timeout_seconds">>, D} | Rest], Opts) when is_integer(D) ->
-    _ = arweave_config:set([network, server, transport, idle_timeout], D * 1000),
+    _ = arweave_config:set([network, server, http, idle_timeout], D * 1000),
     parse_options(Rest, Opts);
 
 parse_options([{<<"coordinated_mining">>, true} | Rest], Opts) ->
@@ -771,27 +792,20 @@ parse_options([{<<"data_sync_request_packed_chunks">>, Bool} | Rest], Opts)
 parse_options([{<<"data_sync_request_packed_chunks">>, InvalidValue} | _Rest], _Opts) ->
     {error, {bad_type, data_sync_request_packed_chunks, boolean}, InvalidValue};
 
-parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, N} | Rest], Opts)
-  when is_integer(N), N >= 0 ->
-    _ = arweave_config:set([sync, max_concurrent_peer_scans], N),
-    parse_options(Rest, Opts);
-parse_options([{<<"data_discovery_max_concurrent_peer_scans">>, InvalidValue} | _Rest], _Opts) ->
-    {error, {bad_type, data_discovery_max_concurrent_peer_scans, number}, InvalidValue};
-
 %% TCP shutdown procedure.
 parse_options([{<<"network.tcp.shutdown.connection_timeout">>, Delay} | Rest], Opts)
   when is_integer(Delay) andalso Delay > 0 ->
-    _ = arweave_config:set([network, server, shutdown_connection_timeout], Delay),
+    _ = arweave_config:set([network, server, shutdown, connection_timeout], Delay),
     parse_options(Rest, Opts);
 parse_options([{<<"network.tcp.shutdown.connection_timeout">>, InvalidValue} | _Rest], _Opts) ->
     {error, {bad_type, shutdown_tcp_connection_timeout, integer}, InvalidValue};
 parse_options([{<<"network.tcp.shutdown.mode">>, Mode}|Rest], Opts) ->
     case Mode of
         <<"shutdown">> ->
-            _ = arweave_config:set([network, server, shutdown_mode], shutdown),
+            _ = arweave_config:set([network, server, shutdown, mode], shutdown),
             parse_options(Rest, Opts);
         <<"close">> ->
-            _ = arweave_config:set([network, server, shutdown_mode], close),
+            _ = arweave_config:set([network, server, shutdown, mode], close),
             parse_options(Rest, Opts);
         Mode ->
             {error, {bad_value, shutdown_tcp_mode}, Mode}
@@ -801,10 +815,10 @@ parse_options([{<<"network.tcp.shutdown.mode">>, Mode}|Rest], Opts) ->
 parse_options([{<<"network.socket.backend">>, Backend}|Rest], Opts) ->
     case Backend of
         <<"inet">> ->
-            _ = arweave_config:set([network, server, socket_backend], inet),
+            _ = arweave_config:set([network, server, socket, backend], inet),
             parse_options(Rest, Opts);
         <<"socket">> ->
-            _ = arweave_config:set([network, server, socket_backend], socket),
+            _ = arweave_config:set([network, server, socket, backend], socket),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'socket.backend'}, Backend}
@@ -833,7 +847,7 @@ parse_options([{<<"http_client.http.keepalive">>, Timeout}|Rest], Opts) ->
 parse_options([{<<"http_client.tcp.delay_send">>, Delay}|Rest], Opts) ->
     case Delay of
         _ when is_boolean(Delay) ->
-            _ = arweave_config:set([network, client, tcp, delay_send], Delay),
+            _ = arweave_config:set([network, client, socket, delay_send], Delay),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_client.tcp.delay_send'}, Delay}
@@ -841,7 +855,7 @@ parse_options([{<<"http_client.tcp.delay_send">>, Delay}|Rest], Opts) ->
 parse_options([{<<"http_client.tcp.keepalive">>, Keepalive}|Rest], Opts) ->
     case Keepalive of
         _ when is_boolean(Keepalive) ->
-            _ = arweave_config:set([network, client, tcp, keepalive], Keepalive),
+            _ = arweave_config:set([network, client, socket, keepalive], Keepalive),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_client.tcp.keepalive'}, Keepalive}
@@ -849,7 +863,7 @@ parse_options([{<<"http_client.tcp.keepalive">>, Keepalive}|Rest], Opts) ->
 parse_options([{<<"http_client.tcp.linger">>, Linger}|Rest], Opts) ->
     case Linger of
         _ when is_boolean(Linger) ->
-            _ = arweave_config:set([network, client, tcp, linger], Linger),
+            _ = arweave_config:set([network, client, socket, linger], Linger),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_client.tcp.linger'}, Linger}
@@ -857,7 +871,7 @@ parse_options([{<<"http_client.tcp.linger">>, Linger}|Rest], Opts) ->
 parse_options([{<<"http_client.tcp.linger_timeout">>, Timeout}|Rest], Opts) ->
     case Timeout of
         _ when is_integer(Timeout), Timeout >= 0 ->
-            _ = arweave_config:set([network, client, tcp, linger_timeout], Timeout),
+            _ = arweave_config:set([network, client, socket, linger_timeout], Timeout),
             parse_options(Rest, Opts);
 
         _ ->
@@ -866,7 +880,7 @@ parse_options([{<<"http_client.tcp.linger_timeout">>, Timeout}|Rest], Opts) ->
 parse_options([{<<"http_client.tcp.nodelay">>, Nodelay}|Rest], Opts) ->
     case Nodelay of
         _ when is_boolean(Nodelay) ->
-            _ = arweave_config:set([network, client, tcp, nodelay], Nodelay),
+            _ = arweave_config:set([network, client, socket, nodelay], Nodelay),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_client.tcp.nodelay'}, Nodelay }
@@ -874,7 +888,7 @@ parse_options([{<<"http_client.tcp.nodelay">>, Nodelay}|Rest], Opts) ->
 parse_options([{<<"http_client.tcp.send_timeout_close">>, Value}|Rest], Opts) ->
     case Value of
         _ when is_boolean(Value) ->
-            _ = arweave_config:set([network, client, tcp, send_timeout_close], Value),
+            _ = arweave_config:set([network, client, socket, send_timeout_close], Value),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_client.tcp.send_timeout_close'}, Value}
@@ -882,7 +896,7 @@ parse_options([{<<"http_client.tcp.send_timeout_close">>, Value}|Rest], Opts) ->
 parse_options([{<<"http_client.tcp.send_timeout">>, Timeout}|Rest], Opts) ->
     case Timeout of
         _ when is_integer(Timeout), Timeout >= 0 ->
-            _ = arweave_config:set([network, client, tcp, send_timeout], Timeout),
+            _ = arweave_config:set([network, client, socket, send_timeout], Timeout),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_client.tcp.send_timeout'}, Timeout}
@@ -924,7 +938,7 @@ parse_options([{<<"http_api.http.request_timeout">>, Timeout}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.backlog">>, Backlog}|Rest], Opts) ->
     case Backlog of
         _ when is_integer(Backlog), Backlog >= 1 ->
-            _ = arweave_config:set([network, server, tcp, backlog], Backlog),
+            _ = arweave_config:set([network, server, socket, backlog], Backlog),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_api.tcp.backlog'}, Backlog}
@@ -932,7 +946,7 @@ parse_options([{<<"http_api.tcp.backlog">>, Backlog}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.delay_send">>, Delay}|Rest], Opts) ->
     case Delay of
         _ when is_boolean(Delay) ->
-            _ = arweave_config:set([network, server, tcp, delay_send], Delay),
+            _ = arweave_config:set([network, server, socket, delay_send], Delay),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_api.tcp.delay_send'}, Delay}
@@ -940,7 +954,7 @@ parse_options([{<<"http_api.tcp.delay_send">>, Delay}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.keepalive">>, Keepalive}|Rest], Opts) ->
     case Keepalive of
         _ when is_boolean(Keepalive) ->
-            _ = arweave_config:set([network, server, tcp, keepalive], Keepalive),
+            _ = arweave_config:set([network, server, socket, keepalive], Keepalive),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_api.tcp.keepalive'}, Keepalive}
@@ -948,7 +962,7 @@ parse_options([{<<"http_api.tcp.keepalive">>, Keepalive}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.linger">>, Linger}|Rest], Opts) ->
     case Linger of
         _ when is_boolean(Linger) ->
-            _ = arweave_config:set([network, server, tcp, linger], Linger),
+            _ = arweave_config:set([network, server, socket, linger], Linger),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_api.tcp.linger'}, Linger}
@@ -956,7 +970,7 @@ parse_options([{<<"http_api.tcp.linger">>, Linger}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.linger_timeout">>, Timeout}|Rest], Opts) ->
     case Timeout of
         _ when is_integer(Timeout), Timeout >= 0 ->
-            _ = arweave_config:set([network, server, tcp, linger_timeout], Timeout),
+            _ = arweave_config:set([network, server, socket, linger_timeout], Timeout),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_api.tcp.linger_timeout'}, Timeout}
@@ -964,13 +978,13 @@ parse_options([{<<"http_api.tcp.linger_timeout">>, Timeout}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.listener_shutdown">>, Shutdown}|Rest], Opts) ->
     case Shutdown of
         "brutal_kill" ->
-            _ = arweave_config:set([network, server, tcp, listener_shutdown], brutal_kill),
+            _ = arweave_config:set([network, server, http, listener_shutdown], brutal_kill),
             parse_options(Rest, Opts);
         "infinity" ->
-            _ = arweave_config:set([network, server, tcp, listener_shutdown], infinity),
+            _ = arweave_config:set([network, server, http, listener_shutdown], infinity),
             parse_options(Rest, Opts);
         _ when is_integer(Shutdown), Shutdown >= 0 ->
-            _ = arweave_config:set([network, server, tcp, listener_shutdown], Shutdown),
+            _ = arweave_config:set([network, server, http, listener_shutdown], Shutdown),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_api.tcp.listener_shutdown'}, Shutdown}
@@ -978,7 +992,7 @@ parse_options([{<<"http_api.tcp.listener_shutdown">>, Shutdown}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.nodelay">>, Nodelay}|Rest], Opts) ->
     case Nodelay of
         _ when is_boolean(Nodelay) ->
-            _ = arweave_config:set([network, server, tcp, nodelay], Nodelay),
+            _ = arweave_config:set([network, server, socket, nodelay], Nodelay),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_api.tcp.nodelay'}, Nodelay }
@@ -986,7 +1000,7 @@ parse_options([{<<"http_api.tcp.nodelay">>, Nodelay}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.num_acceptors">>, Acceptors}|Rest], Opts) ->
     case Acceptors of
         _ when is_integer(Acceptors), Acceptors >= 1 ->
-            _ = arweave_config:set([network, server, tcp, num_acceptors], Acceptors),
+            _ = arweave_config:set([network, server, http, num_acceptors], Acceptors),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_valud, 'http_api.tcp.num_acceptors'}, Acceptors}
@@ -994,7 +1008,7 @@ parse_options([{<<"http_api.tcp.num_acceptors">>, Acceptors}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.send_timeout_close">>, Value}|Rest], Opts) ->
     case Value of
         _ when is_boolean(Value) ->
-            _ = arweave_config:set([network, server, tcp, send_timeout_close], Value),
+            _ = arweave_config:set([network, server, socket, send_timeout_close], Value),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_api.tcp.send_timeout_close'}, Value}
@@ -1002,12 +1016,19 @@ parse_options([{<<"http_api.tcp.send_timeout_close">>, Value}|Rest], Opts) ->
 parse_options([{<<"http_api.tcp.send_timeout">>, Timeout}|Rest], Opts) ->
     case Timeout of
         _ when is_integer(Timeout), Timeout >= 0 ->
-            _ = arweave_config:set([network, server, tcp, send_timeout], Timeout),
+            _ = arweave_config:set([network, server, socket, send_timeout], Timeout),
             parse_options(Rest, Opts);
         _ ->
             {error, {bad_value, 'http_api.tcp.send_timeout'}, Timeout}
     end;
 
+parse_options([{Name, _Value} = Opt | Rest], Opts) when is_binary(Name) ->
+    case arweave_config_deprecated:ignore_removed_legacy_option(Name) of
+        true ->
+            parse_options(Rest, Opts);
+        false ->
+            {error, unknown, Opt}
+    end;
 parse_options([Opt | _], _Opts) ->
     {error, unknown, Opt};
 parse_options([], _Opts) ->
@@ -1019,9 +1040,9 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
             <<"unpacked">> ->
                 unpacked;
             << MiningAddr:43/binary, ".replica.2.9" >> ->
-                {replica_2_9, arweave_util:decode(MiningAddr)};
+                {replica_2_9, arweave_lib_util:decode(MiningAddr)};
             MiningAddr when byte_size(MiningAddr) == 43 ->
-                {spora_2_6, arweave_util:decode(MiningAddr)}
+                {spora_2_6, arweave_lib_util:decode(MiningAddr)}
         end,
     %% Legacy bucket notation converts to the runtime range here -
     %% the only place the {BucketSize, Bucket} arithmetic exists.
@@ -1033,18 +1054,18 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
             <<"unpacked">> ->
                 unpacked;
             << MiningAddr:43/binary, ".replica.2.9" >> ->
-                {replica_2_9, arweave_util:decode(MiningAddr)};
+                {replica_2_9, arweave_lib_util:decode(MiningAddr)};
             MiningAddr when byte_size(MiningAddr) == 43 ->
-                {spora_2_6, arweave_util:decode(MiningAddr)}
+                {spora_2_6, arweave_lib_util:decode(MiningAddr)}
         end,
     ToPacking =
         case ToPackingBin of
             <<"unpacked">> ->
                 unpacked;
             << ToMiningAddr:43/binary, ".replica.2.9" >> ->
-                {replica_2_9, arweave_util:decode(ToMiningAddr)};
+                {replica_2_9, arweave_lib_util:decode(ToMiningAddr)};
             ToMiningAddr when byte_size(ToMiningAddr) == 43 ->
-                {spora_2_6, arweave_util:decode(ToMiningAddr)}
+                {spora_2_6, arweave_lib_util:decode(ToMiningAddr)}
         end,
     {repack_in_place,
         {{RangeNumber * RangeSize, (RangeNumber + 1) * RangeSize, Packing},
@@ -1068,7 +1089,7 @@ parse_peers([], ParsedPeers, _Opts) ->
     {ok, Reverse}.
 
 parse_resolved_peer(Peer, Rest, ParsedPeers, Opts) ->
-    case arweave_util:safe_parse_peer(Peer) of
+    case arweave_config_peer:safe_parse_peer(Peer) of
         {ok, ParsedPeer} -> parse_peers(Rest, ParsedPeer ++ ParsedPeers, Opts);
         {error, _} ->
             ?LOG_WARNING([{event, invalid_peer_in_config}, {peer, Peer}, {action, ignored}]),
@@ -1100,7 +1121,7 @@ parse_cm_exit_peer(Peer, Opts) ->
                     error
             end;
         false ->
-            case arweave_util:safe_parse_peer(Peer) of
+            case arweave_config_peer:safe_parse_peer(Peer) of
                 {ok, [ParsedPeer | _]} ->
                     _ = arweave_config_options_peers:write_legacy_singleton(
                           cm_exit, ParsedPeer),

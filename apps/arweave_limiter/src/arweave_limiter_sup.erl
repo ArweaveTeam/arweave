@@ -14,6 +14,7 @@
 -compile({nowarn_unused_function, [{reset_all, 0}]}).
 
 -include_lib("arweave/include/ar_sup.hrl").
+-include_lib("arweave_limiter/include/arweave_limiter_deps.hrl").
 -include_lib("kernel/include/logger.hrl").
 
 %% API functions
@@ -42,7 +43,7 @@ children_spec(GroupIDs) ->
     lists:flatten([children_spec_per_group(ID) || ID <- GroupIDs]).
 
 children_spec_per_group(GroupID) when is_atom(GroupID) ->
-    NumberOfWorkers = arweave_config:get([limiter, GroupID, number_of_workers]),
+    NumberOfWorkers = ?DEP(config):get([limiter, GroupID, number_of_workers]),
     [single_child_spec(arweave_limiter_util:worker_name(GroupID, N), GroupID)
         || N <- lists:seq(0, NumberOfWorkers - 1)].
 
@@ -65,5 +66,5 @@ group_ids() ->
     lists:usort([
         GroupID
         || {[limiter, GroupID, _Field], _Value} <-
-            arweave_config:get_all_with_prefix([limiter])
+            ?DEP(config):get_all_with_prefix([limiter])
     ]).

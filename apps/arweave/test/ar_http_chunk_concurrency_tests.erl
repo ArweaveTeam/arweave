@@ -25,11 +25,11 @@ test_chunk_requests_are_served_concurrently() ->
     Counters = atomics:new(2, []),
     Chunk = binary:copy(<<7>>, ?DATA_CHUNK_SIZE),
     Mocks = [
-        {ar_sync_record, is_recorded, fun
-            (_Offset, ar_data_sync) ->
+        {arweave_storage, is_recorded, fun
+            (_Offset, any_packing, {ar_data_sync, byte}, any_store) ->
                 {{true, unpacked}, "default"};
-            (Offset, ID) ->
-                meck:passthrough([Offset, ID])
+            (Offset, Packing, ID, StoreID) ->
+                meck:passthrough([Offset, Packing, ID, StoreID])
         end},
         {ar_data_sync, get_chunk, fun
             (Offset, #{origin := http}) ->
@@ -42,7 +42,7 @@ test_chunk_requests_are_served_concurrently() ->
         %% The node requests chunks from itself: the client and the server
         %% are the ones peers use.
         Peer = ar_test_node:peer_ip(main),
-        Replies = arweave_util:pmap(
+        Replies = arweave_lib_util:pmap(
             fun(I) ->
                 ar_http_iface_client:get_chunk_binary(
                     Peer,

@@ -1,4 +1,5 @@
 -module(arweave_config_peer_parity_SUITE).
+-test_category([fast]).
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -11,12 +12,12 @@ suite() ->
 
 init_per_testcase(_TestCase, Config) ->
     ok = arweave_config:start(),
-    meck:new(arweave_util, [passthrough]),
-    meck:expect(arweave_util, safe_parse_peer, fun mock_safe_parse_peer/1),
+    meck:new(arweave_config_peer, [passthrough]),
+    meck:expect(arweave_config_peer, safe_parse_peer, fun mock_safe_parse_peer/1),
     Config.
 
 end_per_testcase(_TestCase, _Config) ->
-    meck:unload(arweave_util),
+    meck:unload(arweave_config_peer),
     ok = arweave_config:stop().
 
 all() ->
@@ -120,33 +121,33 @@ expected(OptionSpec, InputKind) ->
 %% Apply a single peer value for an option via one format in an isolated
 %% config snapshot and read back the canonical stored value.
 store_value(legacy_cli, OptionSpec, Value) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         ok = arweave_config_format_legacy_cli:parse(
             [maps:get(legacy_cli, OptionSpec), Value]),
         read_option(OptionSpec)
     end);
 store_value(cli, OptionSpec, Value) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         Arg = "--peers." ++ atom_to_list(maps:get(option, OptionSpec)),
         {ok, Map} = arweave_config_format_cli:parse([Arg, Value]),
         ok = arweave_config:load(Map),
         read_option(OptionSpec)
     end);
 store_value(legacy_json, OptionSpec, Value) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, _} = arweave_config_format_legacy_json:parse(
             legacy_json_config(OptionSpec, Value)),
         read_option(OptionSpec)
     end);
 store_value(json, OptionSpec, Value) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, Map} = arweave_config_format_json:parse(
             json_config(OptionSpec, Value)),
         ok = arweave_config:load(Map),
         read_option(OptionSpec)
     end);
 store_value(yaml, OptionSpec, Value) ->
-    arweave_config:with_test_config(fun() ->
+    arweave_config:internal_with_test_config(fun() ->
         {ok, Map} = arweave_config_format_yaml:parse(
             yaml_config(OptionSpec, Value)),
         ok = arweave_config:load(Map),

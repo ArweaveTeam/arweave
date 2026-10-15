@@ -10,15 +10,19 @@
 -export([get/1, is_unlimited/1, is_beyond/2, clip/3, kept_intervals/3]).
 
 -include("ar.hrl").
+-include_lib("arweave_storage/include/arweave_storage.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc How many footprints of each sector the module keeps: its
 %% footprint_limit clamped to at least one and at most every footprint of
 %% a partition, or every footprint without a limit.
 get(StoreID) ->
-    All = ar_footprint_record:get_footprints_per_partition(),
-    case ar_storage_module:get_by_id(StoreID) of
-        {_Start, _End, _Packing} = Module ->
+    All = arweave_lib_constants:get_replica_2_9_footprints_per_partition(),
+    case arweave_storage:store_info(StoreID) of
+        #store_info{
+            configured_range = {Start, End}, packing = Packing
+        } when is_integer(End) ->
+            Module = {Start, End, Packing},
             clamp(arweave_config:storage_module_footprint_limit(Module), All);
         _ ->
             All
@@ -31,12 +35,12 @@ clamp(Limit, All) ->
 
 %% @doc Whether the limit keeps every footprint of a partition.
 is_unlimited(Limit) ->
-    Limit >= ar_footprint_record:get_footprints_per_partition().
+    Limit >= arweave_lib_constants:get_replica_2_9_footprints_per_partition().
 
 %% @doc Whether the chunk with the given bucket end offset lies past the
 %% limit, in the part of its sector the module does not keep.
 is_beyond(BucketEndOffset, Limit) ->
-    ar_footprint_record:get_footprint(BucketEndOffset) >= Limit.
+    arweave_lib_footprint:get_footprint(BucketEndOffset) >= Limit.
 
 %% @doc The number of buckets from the given one to the end of the kept
 %% prefix of its sector, at most Count and at least one. Without a limit
@@ -46,19 +50,20 @@ clip(BucketEndOffset, Count, Limit) ->
         true ->
             Count;
         false ->
-            Footprint = ar_footprint_record:get_footprint(BucketEndOffset),
+            Footprint = arweave_lib_footprint:get_footprint(BucketEndOffset),
             max(1, min(Count, Limit - Footprint))
     end.
 
 %% @doc The byte intervals of [Start, End) within the first Limit footprints
-%% of their sectors, as an ar_intervals set: what a module with the limit
-%% keeps of the range.
+%% of their sectors, as an arweave_lib_intervals set: what a module with the
+%% limit keeps of the range.
 kept_intervals(Start, End, Limit) ->
     case is_unlimited(Limit) of
         true ->
-            ar_intervals:add(ar_intervals:new(), End, Start);
+            arweave_lib_intervals:add(
+                arweave_lib_intervals:new(), End, Start);
         false ->
-            kept_intervals(Start, End, Limit, ar_intervals:new())
+            kept_intervals(Start, End, Limit, arweave_lib_intervals:new())
     end.
 
 kept_intervals(Start, End, _Limit, Intervals) when Start >= End ->
@@ -66,15 +71,15 @@ kept_intervals(Start, End, _Limit, Intervals) when Start >= End ->
 kept_intervals(Start, End, Limit, Intervals) ->
     ChunkEndOffset = Start + ?DATA_CHUNK_SIZE,
     SectorStart =
-        ar_footprint_record:get_sector_bucket_start(ChunkEndOffset, 0),
+        arweave_lib_footprint:get_sector_bucket_start(ChunkEndOffset, 0),
     AllowedEnd = min(SectorStart + Limit * ?DATA_CHUNK_SIZE, End),
     Intervals2 =
         case AllowedEnd > Start of
-            true -> ar_intervals:add(Intervals, AllowedEnd, Start);
+            true -> arweave_lib_intervals:add(Intervals, AllowedEnd, Start);
             false -> Intervals
         end,
     NextSectorStart =
-        ar_footprint_record:get_sector_bucket_start(ChunkEndOffset, 1),
+        arweave_lib_footprint:get_sector_bucket_start(ChunkEndOffset, 1),
     kept_intervals(NextSectorStart, End, Limit, Intervals2).
 
 %%%===================================================================
@@ -83,11 +88,11 @@ kept_intervals(Start, End, Limit, Intervals) ->
 %%%===================================================================
 
 get_test() ->
-    arweave_config:with_test_config(fun() ->
-        P = ar_block:partition_size(),
+    arweave_config:internal_with_test_config(fun() ->
+        P = arweave_lib_constants:partition_size(),
         Addr = crypto:strong_rand_bytes(32),
-        All = ar_footprint_record:get_footprints_per_partition(),
-        ok = arweave_config:force_config(#{
+        All = arweave_lib_constants:get_replica_2_9_footprints_per_partition(),
+        ok = arweave_config:internal_force_config(#{
             [storage_modules] => [
                 #{partition => 0, packing_format => replica_2_9,
                     packing_address => Addr, footprint_limit => 1},
@@ -95,13 +100,26 @@ get_test() ->
                 #{partition => 2, packing_format => unpacked,
                     footprint_limit => 10 * All}
             ]}),
-        ?assertEqual(1, get(ar_storage_module:id({0, P, {replica_2_9, Addr}}))),
-        ?assertEqual(All, get(ar_storage_module:id({P, 2 * P, unpacked}))),
+        ?assertEqual(
+            1,
+            get(
+                (arweave_storage:store_info({0, P, {replica_2_9, Addr}}))#store_info.id
+            )
+        ),
+        ?assertEqual(
+            All,
+            get((arweave_storage:store_info({P, 2 * P, unpacked}))#store_info.id)
+        ),
         %% A limit above the partition keeps every footprint.
-        ?assertEqual(All, get(ar_storage_module:id({2 * P, 3 * P, unpacked}))),
+        ?assertEqual(
+            All,
+            get(
+                (arweave_storage:store_info({2 * P, 3 * P, unpacked}))#store_info.id
+            )
+        ),
         ?assertEqual(All, get(?DEFAULT_MODULE)),
         ?assertEqual(All, get("storage_module_9_unpacked")),
-        ok = arweave_config:force_config(#{
+        ok = arweave_config:internal_force_config(#{
             [storage_modules] => [],
             [repack_modules] => [
                 #{partition => 3, from_format => unpacked,
@@ -109,7 +127,12 @@ get_test() ->
                     footprint_limit => 1}
             ]}),
         %% A repack source is limited by its repack entry.
-        ?assertEqual(1, get(ar_storage_module:id({3 * P, 4 * P, unpacked})))
+        ?assertEqual(
+            1,
+            get(
+                (arweave_storage:store_info({3 * P, 4 * P, unpacked}))#store_info.id
+            )
+        )
     end).
 
 is_beyond_test() ->
@@ -132,16 +155,16 @@ clip_test() ->
 
 kept_intervals_test() ->
     Whole = kept_intervals(0, 2097152, 5),
-    ?assertEqual([{2097152, 0}], ar_intervals:to_list(Whole)),
+    ?assertEqual([{2097152, 0}], arweave_lib_intervals:to_list(Whole)),
     One = kept_intervals(0, 2097152, 1),
     ?assertEqual([{262144, 0}, {786432, 524288}, {1310720, 1048576},
-            {1835008, 1572864}], ar_intervals:to_list(One)),
+            {1835008, 1572864}], arweave_lib_intervals:to_list(One)),
     Two = kept_intervals(0, 2097152, 2),
-    ?assertEqual([{2097152, 0}], ar_intervals:to_list(Two)),
+    ?assertEqual([{2097152, 0}], arweave_lib_intervals:to_list(Two)),
     %% A window starting inside a kept prefix keeps only its tail.
     Tail = kept_intervals(131072, 1000000, 1),
     ?assertEqual([{262144, 131072}, {786432, 524288}],
-            ar_intervals:to_list(Tail)),
+            arweave_lib_intervals:to_list(Tail)),
     %% A window starting past the prefix gets the next sector's prefix.
     Skip = kept_intervals(262144, 1048576, 1),
-    ?assertEqual([{786432, 524288}], ar_intervals:to_list(Skip)).
+    ?assertEqual([{786432, 524288}], arweave_lib_intervals:to_list(Skip)).
