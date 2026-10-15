@@ -27,10 +27,14 @@
 
 -define(MAX_DISCOVERY_PEERS, 1000).
 
-%% How long discovery leaves a peer alone after the peer rejects a chunk
-%% interval request with 429. 2.9.6 peers ask clients to wait 30 s and do not
-%% send the rate limit headers the client throttling follows.
+%% How long discovery leaves a peer alone after a chunk interval request to
+%% the peer fails or is rejected with 429. 2.9.6 peers ask clients to wait
+%% 30 s and do not send the rate limit headers the client throttling follows.
+-ifdef(AR_TEST).
+-define(PEER_COOLDOWN_MS, 2_000).
+-else.
 -define(PEER_COOLDOWN_MS, 30_000).
+-endif.
 
 %% A short queue keeps pending chunk interval jobs close to the sweep
 %% frontier, so their results are still useful when they arrive.

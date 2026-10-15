@@ -1291,13 +1291,20 @@ record_job_result(
     cool_down(Peer, State);
 record_job_result(
     Peer,
-    {chunk_intervals, _StoreID, Offset, Mode, _Error},
+    {chunk_intervals, _StoreID, Offset, Mode, Error},
     State
 ) ->
-    %% The fetch failed, so stop serving the old row. A later sweep will
-    %% request the intervals again.
+    %% The fetch failed, so stop serving the old row. Leave the peer alone for
+    %% a while too, or a blocked sweep range asks it again on every retry.
+    ?LOG_DEBUG([
+        {event, failed_to_fetch_chunk_intervals},
+        {peer, arweave_lib_util:format_peer(Peer)},
+        {mode, Mode},
+        {offset, Offset},
+        {reason, io_lib:format("~p", [Error])}
+    ]),
     delete_row(chunk_interval, Mode, Offset, Peer),
-    State.
+    cool_down(Peer, State).
 
 finish_job(Pid, State) ->
     #state{jobs = JobsByKind} = State,
@@ -1345,7 +1352,7 @@ pid_to_job(Pid, Inflight) ->
 %%%===================================================================
 
 %% @doc Stop requesting chunk intervals from Peer for ?PEER_COOLDOWN_MS and
-%% drop its chunk interval jobs, which it would reject as well.
+%% drop its chunk interval jobs, which would likely fail as well.
 cool_down(Peer, State) ->
     #state{cooldowns = Cooldowns, jobs = JobsByKind} = State,
     Now = ?DEP(clock):monotonic_ms(),

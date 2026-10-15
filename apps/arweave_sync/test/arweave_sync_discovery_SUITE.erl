@@ -24,6 +24,7 @@ all() ->
         removed_peer_job_results_are_ignored,
         untracked_peer_removal_keeps_caches,
         rejected_peer_cools_down,
+        failed_peer_cools_down,
         take_next_job_prefers_less_loaded_peer,
         take_next_job_limits_byte_peer_store_mode,
         take_next_job_allows_bounded_footprint_concurrency,
@@ -497,6 +498,29 @@ rejected_peer_cools_down(_Config) ->
         arweave_sync_discovery:chunk_interval_lookup(byte, Peer, 0)),
     %% A missing row is not requested while the peer cools down.
     ets:delete_all_objects(?CHUNK_INTERVAL_CACHE_TABLE),
+    JobKey = {chunk_interval, Peer, ?DEFAULT_MODULE, byte,
+        arweave_sync_discovery:interval_location(byte, 0)},
+    Cooling = arweave_sync_discovery:warm_peer_ranges(
+        ?DEFAULT_MODULE, [Peer], 0, State),
+    ?assertNot(arweave_sync_discovery:job_exists(JobKey, Cooling)),
+    Cooled = arweave_sync_discovery:warm_peer_ranges(
+        ?DEFAULT_MODULE, [Peer], 0, State#state{cooldowns = #{}}),
+    ?assert(arweave_sync_discovery:job_exists(JobKey, Cooled)).
+
+%% @doc A peer that fails a chunk interval request loses its cached row and is
+%% not asked again until its cooldown has passed.
+failed_peer_cools_down(_Config) ->
+    arweave_sync_discovery:reset_all_caches(),
+    Peer = {10, 0, 0, 10, 1984},
+    Intervals = arweave_lib_intervals:from_list([{?DATA_CHUNK_SIZE, 0}]),
+    arweave_sync_discovery:store_row(sync_bucket, byte, 0, Peer, 1.0),
+    arweave_sync_discovery:store_row(chunk_interval, byte, 0, Peer, Intervals),
+    TrackedState = arweave_sync_discovery:add_peer(Peer, #state{}),
+    Failed = {chunk_intervals, ?DEFAULT_MODULE, 0, byte, {error, timeout}},
+    {noreply, State} = arweave_sync_discovery:handle_cast(
+        {job_result, Peer, Failed}, TrackedState),
+    ?assertEqual(miss,
+        arweave_sync_discovery:chunk_interval_lookup(byte, Peer, 0)),
     JobKey = {chunk_interval, Peer, ?DEFAULT_MODULE, byte,
         arweave_sync_discovery:interval_location(byte, 0)},
     Cooling = arweave_sync_discovery:warm_peer_ranges(
