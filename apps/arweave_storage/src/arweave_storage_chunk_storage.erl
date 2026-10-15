@@ -587,15 +587,34 @@ get_filepath(Name, StoreID) ->
 store_chunk(
     PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, EntropyContext
 ) ->
-    case Packing == unpacked_padded of
-        true ->
+    case Packing of
+        unpacked_padded ->
             arweave_storage_entropy_storage:record_chunk(
                 PaddedEndOffset, Chunk, StoreID, FileIndex, EntropyContext
             );
-        false ->
+        {replica_2_9, _} ->
+            record_packed_replica_2_9_chunk(
+                PaddedEndOffset, Chunk, Packing, StoreID, FileIndex
+            );
+        _ ->
             record_chunk(
                 PaddedEndOffset, Chunk, Packing, StoreID, FileIndex
             )
+    end.
+
+%% @doc Write a chunk packed for replica.2.9 under the chunk file lock that
+%% entropy writes take. An entropy write that finds no chunk recorded would
+%% otherwise overwrite the chunk between its write and its record.
+record_packed_replica_2_9_chunk(
+    PaddedEndOffset, Chunk, Packing, StoreID, FileIndex
+) ->
+    {_ChunkFileStart, Filepath, _Position, _ChunkOffset} =
+        locate_chunk_on_disk(PaddedEndOffset, StoreID),
+    arweave_storage_entropy_storage:acquire_semaphore(Filepath),
+    try
+        record_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex)
+    after
+        arweave_storage_entropy_storage:release_semaphore(Filepath)
     end.
 
 record_chunk(

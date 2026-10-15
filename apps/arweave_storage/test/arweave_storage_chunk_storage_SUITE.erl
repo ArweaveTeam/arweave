@@ -15,7 +15,8 @@ all() ->
         cross_file_not_aligned,
         defrag_command,
         put_to_missing_worker,
-        put_to_killed_worker
+        put_to_killed_worker,
+        packed_replica_2_9_put_waits_for_entropy_lock
     ].
 
 init_per_suite(Config) -> arweave_storage_ct_util:init_suite(Config).
@@ -29,7 +30,8 @@ init_per_testcase(Name, Config) ->
             N =:= well_aligned;
             N =:= not_aligned;
             N =:= cross_file_aligned;
-            N =:= cross_file_not_aligned
+            N =:= cross_file_not_aligned;
+            N =:= packed_replica_2_9_put_waits_for_entropy_lock
         ->
             {ok, _} = arweave_storage:activate();
         _ ->
@@ -43,6 +45,46 @@ end_per_testcase(Name, Config) ->
 %%====================================================================
 %% Test cases
 %%====================================================================
+
+%% @doc A chunk packed for replica.2.9 is written under the chunk file lock that
+%% entropy writes hold, so an entropy write cannot overwrite it between the
+%% write and its record.
+packed_replica_2_9_put_waits_for_entropy_lock(_Config) ->
+    Offset = 2 * ?DATA_CHUNK_SIZE,
+    Packing = {replica_2_9, <<0:256>>},
+    Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+    {_, Filepath, _, _} =
+        arweave_storage:locate_chunk_on_disk(Offset, ?DEFAULT_MODULE),
+    ok = arweave_storage_entropy_storage:acquire_semaphore(Filepath),
+    Parent = self(),
+    spawn_link(fun() ->
+        Result = arweave_storage:put_chunk(
+            Offset, Chunk, Packing, ?DEFAULT_MODULE
+        ),
+        Parent ! {put_result, Result}
+    end),
+    try
+        ?assertEqual(no_result, receive
+            {put_result, Early} -> Early
+        after 500 -> no_result
+        end),
+        ?assertEqual(false, arweave_storage:is_recorded(
+            Offset, any_packing, {ar_chunk_storage, byte}, ?DEFAULT_MODULE
+        ))
+    after
+        arweave_storage_entropy_storage:release_semaphore(Filepath)
+    end,
+    ?assertEqual({ok, Packing}, receive
+        {put_result, Result} -> Result
+    after 10_000 -> timeout
+    end),
+    ?assertNotEqual(false, arweave_storage:is_recorded(
+        Offset, any_packing, {ar_chunk_storage, byte}, ?DEFAULT_MODULE
+    )),
+    ?assertEqual(
+        arweave_storage_ct_util:expected_samples(Chunk, Offset),
+        arweave_storage_ct_util:chunk_samples(Offset, ?DEFAULT_MODULE)
+    ).
 
 well_aligned(_Config) ->
     Packing = arweave_storage_module:get_packing(?DEFAULT_MODULE),
