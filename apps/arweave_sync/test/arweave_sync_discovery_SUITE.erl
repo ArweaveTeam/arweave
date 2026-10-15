@@ -18,6 +18,7 @@ all() ->
         enqueue_job_uses_global_capacity_after_store_guarantee,
         finish_job_updates_matching_kind,
         add_peer_enqueues_one_sync_bucket_job,
+        tracked_peers_follow_latest_collection,
         enqueue_sync_bucket_jobs_deduplicates_active_peers,
         remove_jobs_keeps_other_peers,
         removed_peer_job_results_are_ignored,
@@ -321,6 +322,32 @@ add_peer_enqueues_one_sync_bucket_job(_Config) ->
     ?assert(arweave_sync_discovery:job_exists({sync_bucket, Peer}, State)),
     %% Re-collecting an already tracked peer must not duplicate its job.
     ?assertEqual(State, arweave_sync_discovery:add_peer(Peer, State)).
+
+%% @doc Discovery tracks exactly the latest collected peers, so the hourly
+%% refresh queues a job for every tracked peer however the collection churns.
+tracked_peers_follow_latest_collection(_Config) ->
+    First = [{peer, N} || N <- lists:seq(1, ?MAX_DISCOVERY_PEERS)],
+    Second = [{peer, N} || N <- lists:seq(?MAX_DISCOVERY_PEERS div 2 + 1,
+        ?MAX_DISCOVERY_PEERS * 3 div 2)],
+    State = arweave_sync_discovery:track_peers(First, #state{}),
+    %% The refresh jobs of the first collection completed.
+    State2 = State#state{jobs = (State#state.jobs)#{
+        sync_bucket := #discovery_jobs{}}},
+    State3 = arweave_sync_discovery:track_peers(Second, State2),
+    ?assertEqual(lists:sort(Second),
+        lists:sort(sets:to_list(State3#state.tracked_peers))),
+    %% Only the newly collected peers get a job at collection time.
+    New = Second -- First,
+    Jobs = maps:get(sync_bucket, State3#state.jobs),
+    ?assertEqual(length(New), map_size(Jobs#discovery_jobs.pending)),
+    State4 = arweave_sync_discovery:enqueue_sync_bucket_jobs(
+        State3#state{jobs = (State3#state.jobs)#{
+            sync_bucket := #discovery_jobs{}}}),
+    ?assert(lists:all(
+        fun(Peer) ->
+            arweave_sync_discovery:job_exists({sync_bucket, Peer}, State4)
+        end,
+        Second)).
 
 %% @doc Bucket refreshes preserve inflight jobs and enqueue only peers without
 %% active requests.

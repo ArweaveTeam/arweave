@@ -79,7 +79,7 @@ run_test(EndpointType) ->
         %% synthetic peer so discovery for peer1 cannot skew the row count.
         FetchPeer = ar_test_node:peer_ip(peer1),
         TablePeer = table_peer(EndpointType),
-        gen_server:cast(arweave_sync_discovery, {add_peers, [TablePeer]}),
+        gen_server:cast(arweave_sync_discovery, {track_peers, [TablePeer]}),
         _ = sys:get_state(arweave_sync_discovery, infinity),
         ok = ar_test_await:until(sync_bucket_jobs_finished, fun() ->
             arweave_sync_discovery:inflight_count() =:= 0

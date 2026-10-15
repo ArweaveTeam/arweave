@@ -10,11 +10,12 @@
 %%%   mode.
 %%%
 %%% The process fills and drains the caches in these phases:
-%%% 1. Peer collection (add_peer/2), every
-%%%    DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS and once on join: track up to
-%%%    MAX_DISCOVERY_PEERS current peers and queue a sync bucket job for each
-%%%    new one. A peer `removed' event drops the peer's jobs and cache rows
-%%%    (do_remove_peer/3).
+%%% 1. Peer collection (track_peers/2), every
+%%%    DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS and once on join: track the
+%%%    first MAX_DISCOVERY_PEERS current peers and queue a sync bucket job for
+%%%    each new one. A peer that is no longer collected is not refreshed, so
+%%%    its rows expire with their TTL. A peer `removed' event drops the peer's
+%%%    jobs and cache rows (do_remove_peer/3).
 %%% 2. Sync bucket refresh (enqueue_sync_bucket_jobs/1), every
 %%%    SYNC_BUCKET_JOB_INTERVAL_MS with jitter: queue a sync bucket job for each
 %%%    tracked peer. The job fetches the peer's byte and footprint sync buckets
@@ -47,6 +48,7 @@
 -ifdef(AR_TEST).
 -export([
     add_peer/2,
+    track_peers/2,
     chunk_interval_key/3,
     chunk_interval_lookup/3,
     compute_job_load/1,
@@ -193,9 +195,8 @@ handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
     {reply, ok, State}.
 
-handle_cast({add_peers, Peers}, State) ->
-    State2 = lists:foldl(fun add_peer/2, State, Peers),
-    {noreply, start_jobs(sync_bucket, State2)};
+handle_cast({track_peers, Peers}, State) ->
+    {noreply, start_jobs(sync_bucket, track_peers(Peers, State))};
 handle_cast({job_result, Peer, Result}, State) ->
     State2 =
         case is_peer_tracked(Peer, State) of
@@ -279,9 +280,17 @@ collect_peers() ->
                 end,
             gen_server:cast(
                 ?MODULE,
-                {add_peers, lists:sublist(Peers, ?MAX_DISCOVERY_PEERS)}
+                {track_peers, lists:sublist(Peers, ?MAX_DISCOVERY_PEERS)}
             )
     end.
+
+%% @doc Track exactly Peers. Keeping the set bounded by the latest collection
+%% keeps the hourly refresh within the pending job limit. The caller starts
+%% the jobs.
+track_peers(Peers, State) ->
+    #state{tracked_peers = TrackedPeers} = State,
+    Kept = sets:intersection(TrackedPeers, sets:from_list(Peers)),
+    lists:foldl(fun add_peer/2, State#state{tracked_peers = Kept}, Peers).
 
 %% The caller starts the jobs after adding all current peers.
 add_peer(Peer, State) ->
