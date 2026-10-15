@@ -1,6 +1,6 @@
 {application, arweave_sim, [
     {description, "Deterministic simulation infrastructure (test-only)"},
-    {vsn, "2.9.7-alpha1"},
+    {vsn, "2.9.7-alpha2"},
     {applications, [kernel, stdlib]},
     {modules, []},
     {registered, []},
