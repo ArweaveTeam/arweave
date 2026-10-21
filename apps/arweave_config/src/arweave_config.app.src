@@ -3,7 +3,7 @@
  [
   {id, "arweave_config"},
   {description, "Arweave Configuration"},
-  {vsn, "2.9.7-alpha2"},
+  {vsn, "2.9.7"},
   {mod, {arweave_config, []}},
   {env, []},
   {applications, [

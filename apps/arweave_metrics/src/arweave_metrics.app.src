@@ -2,7 +2,7 @@
  [
   {id, "arweave_metrics"},
   {description, "Arweave Prometheus metrics subsystem"},
-  {vsn, "2.9.7-alpha2"},
+  {vsn, "2.9.7"},
   {mod, {arweave_metrics, []}},
   {env, []},
   {applications, [

@@ -1,6 +1,6 @@
 {application, arweave_entropy, [
     {description, "Entropy generation, caching and storage preparation"},
-    {vsn, "2.9.7-alpha2"},
+    {vsn, "2.9.7"},
     {mod, {arweave_entropy, []}},
     {applications, [
         kernel,

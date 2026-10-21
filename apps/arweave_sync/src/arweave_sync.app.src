@@ -1,6 +1,6 @@
 {application, arweave_sync, [
     {description, "Arweave network chunk synchronization"},
-    {vsn, "2.9.7-alpha2"},
+    {vsn, "2.9.7"},
     {mod, {arweave_sync, []}},
     {applications, [
         kernel,
