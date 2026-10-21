@@ -543,6 +543,13 @@ resume_unsynced_range(
     UnsyncedRange;
 resume_unsynced_range(
     #sweep_range{next_claim_offset = NextClaimOffset},
+    #unsynced_range{range_end = RangeEnd} = UnsyncedRange
+) when NextClaimOffset >= RangeEnd ->
+    %% The last claim ended at the live end, or the live end has since moved
+    %% below it, so nothing is left to claim.
+    UnsyncedRange#unsynced_range{intervals = arweave_lib_intervals:new()};
+resume_unsynced_range(
+    #sweep_range{next_claim_offset = NextClaimOffset},
     UnsyncedRange
 ) ->
     #unsynced_range{intervals = Intervals, range_end = RangeEnd} =
