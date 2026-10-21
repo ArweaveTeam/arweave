@@ -23,7 +23,7 @@
 -define(CLIENT_VERSION, 5).
 
 %% The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 111).
+-define(RELEASE_NUMBER, 120).
 
 %% Header names are lowercase, as HTTP/2 requires.
 -define(DEFAULT_REQUEST_HEADERS,
