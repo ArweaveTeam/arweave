@@ -153,9 +153,9 @@ tombstones() ->
         {tx_poller,
             <<"Promoted to a proper option: "
               "use `gossip.tx.polling_enabled = false' "
-              "(or the legacy `disable: [\"tx_poller\"]' which "
-              "is recognized one more release before being "
-              "removed in Arweave 2.9.7 or later).">>}
+              "(the legacy `disable: [\"tx_poller\"]' is still "
+              "recognized but will be removed in a future Arweave "
+              "release).">>}
     ].
 
 %% @doc Lookup a tombstone message for a flag. Returns
@@ -272,22 +272,22 @@ apply_promotion(Flag, ListName) ->
 warn_legacy_list_format(Flag, ListName, Value) ->
     io:format(
         "~nWARNING: feature flag `~p' in the legacy `~p' list is "
-        "deprecated and the list format will be removed in Arweave "
-        "2.9.7 or later. Use `features.~p = ~p' instead.~n",
+        "deprecated and the list format will be removed in a future "
+        "Arweave release. Use `features.~p = ~p' instead.~n",
         [Flag, ListName, Flag, Value]),
     ?LOG_WARNING([
         {event, deprecated_legacy_features_list_format},
         {flag, Flag},
         {list, ListName},
         {replacement_value, Value},
-        {removal_target, <<"Arweave 2.9.7 or later">>}
+        {removal_target, <<"a future Arweave release">>}
     ]).
 
 warn_promoted_flag(Flag, ListName, OptionKey, Value) ->
     Replacement = replacement_hint(OptionKey, Value),
     io:format(
         "~nWARNING: ~p is deprecated as an entry in the `~p' list "
-        "and will be removed in Arweave 2.9.7 or later. "
+        "and will be removed in a future Arweave release. "
         "Use `~s' instead.~n",
         [Flag, ListName, Replacement]),
     ?LOG_WARNING([
@@ -295,7 +295,7 @@ warn_promoted_flag(Flag, ListName, OptionKey, Value) ->
         {flag, Flag},
         {list, ListName},
         {replacement, Replacement},
-        {removal_target, <<"Arweave 2.9.7 or later">>}
+        {removal_target, <<"a future Arweave release">>}
     ]).
 
 replacement_hint(OptionKey, Value) ->
