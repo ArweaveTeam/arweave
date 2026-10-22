@@ -1836,7 +1836,9 @@ get_current_diff(TS) ->
     DiffPair = proplists:get_value(diff_pair, Props),
     LastRetarget = proplists:get_value(last_retarget, Props),
     PrevTS = proplists:get_value(timestamp, Props),
-    ar_retarget:maybe_retarget(Height + 1, DiffPair, TS, LastRetarget, PrevTS).
+    %% Use the timestamp handle_found_solution/4 gives the block.
+    TS2 = max(TS, PrevTS),
+    ar_retarget:maybe_retarget(Height + 1, DiffPair, TS2, LastRetarget, PrevTS).
 
 get_merkle_rebase_threshold(PrevB) ->
     case PrevB#block.height + 1 == arweave_lib_constants:height_2_7() of
@@ -2032,18 +2034,18 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
     Height = PrevHeight + 1,
     Now = os:system_time(second),
     MaxDeviation = arweave_lib_constants:get_max_timestamp_deviation(),
-    Timestamp =
-        case Now < PrevTimestamp - MaxDeviation of
-            true ->
-                ?LOG_WARNING([{event, clock_out_of_sync},
-                              {previous_block, arweave_lib_util:encode(PrevH)},
-                              {previous_block_timestamp, PrevTimestamp},
-                              {our_time, Now},
-                              {max_allowed_deviation, MaxDeviation}]),
-                PrevTimestamp - MaxDeviation;
-            false ->
-                Now
-        end,
+    case Now < PrevTimestamp - MaxDeviation of
+        true ->
+            ?LOG_WARNING([{event, clock_out_of_sync},
+                          {previous_block, arweave_lib_util:encode(PrevH)},
+                          {previous_block_timestamp, PrevTimestamp},
+                          {our_time, Now},
+                          {max_allowed_deviation, MaxDeviation}]);
+        false ->
+            ok
+    end,
+    %% The block timestamp must not be smaller than the previous one.
+    Timestamp = max(Now, PrevTimestamp),
     IsBanned = ar_node_utils:is_account_banned(MiningAddress,
                                                ar_account_tree:get(WalletList, MiningAddress)),
     %% Check the solution is ahead of the previous solution on the timeline.

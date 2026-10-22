@@ -420,13 +420,13 @@ test_add_external_block_with_invalid_timestamp() ->
     OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
     B3 = sign_block(B#block{ timestamp = OkFutureTimestamp }, PrevB, Key),
     post_block(B3, valid),
-    %% Expect the timestamp too far behind the previous timestamp to be rejected.
-    PastTimestampTolerance = lists:sum([?JOIN_CLOCK_TOLERANCE * 2, ?CLOCK_DRIFT_MAX]),
-    TooFarPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance - 1,
-    B4 = sign_block(B#block{ timestamp = TooFarPastTimestamp }, PrevB, Key),
+    %% Expect the timestamp smaller than the previous timestamp to be rejected
+    %% without banning the peer.
+    B4 = sign_block(B#block{ timestamp = PrevB#block.timestamp - 1 }, PrevB,
+            Key),
     post_block(B4, invalid_timestamp),
-    OkPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance + 1,
-    B5 = sign_block(B#block{ timestamp = OkPastTimestamp }, PrevB, Key),
+    assert_not_banned(ar_test_node:peer_ip(main)),
+    B5 = sign_block(B#block{ timestamp = PrevB#block.timestamp }, PrevB, Key),
     post_block(B5, valid).
 
 resigned_solution_prev_block_test_() ->

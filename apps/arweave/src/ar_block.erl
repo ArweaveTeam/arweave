@@ -89,16 +89,16 @@ block_field_size_limit(B) ->
     end,
     Check.
 
-%% @doc Verify the block timestamp is not too far in the future nor too far in
-%% the past. We calculate the maximum reasonable clock difference between any
-%% two nodes. This is a simplification since there is a chaining effect in the
-%% network which we don't take into account. Instead, we assume two nodes can
-%% deviate JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each
-%% other.
+%% @doc Verify the block timestamp is not smaller than the previous block
+%% timestamp nor too far in the future. For the upper bound, we calculate the
+%% maximum reasonable clock difference between any two nodes. This is a
+%% simplification since there is a chaining effect in the network which we
+%% don't take into account. Instead, we assume two nodes can deviate
+%% JOIN_CLOCK_TOLERANCE seconds in the opposite direction from each other.
 verify_timestamp(#block{ timestamp = Timestamp }, #block{ timestamp = PrevTimestamp }) ->
     MaxNodesClockDeviation =
         arweave_lib_constants:get_max_timestamp_deviation(),
-    case Timestamp >= PrevTimestamp - MaxNodesClockDeviation of
+    case Timestamp >= PrevTimestamp of
         false ->
             false;
         true ->
