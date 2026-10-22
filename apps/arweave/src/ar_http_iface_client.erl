@@ -1182,7 +1182,11 @@ get_tx(Peers, TXID) ->
         not_found ->
             get_tx_from_disk_or_peers(Peers, TXID);
         TX ->
-            TX
+            %% Look up ECDSA transactions in the storage or on the peers.
+            case ar_tx:is_ecdsa_tx(TX) of
+                true -> get_tx_from_disk_or_peers(Peers, TXID);
+                false -> TX
+            end
     end.
 
 get_tx_from_disk_or_peers(Peers, TXID) ->
@@ -1190,13 +1194,12 @@ get_tx_from_disk_or_peers(Peers, TXID) ->
         unavailable ->
             get_tx_from_peers(Peers, TXID, not_found);
         TX ->
-            case ar_storage:is_v1_denomination0_local_tx(TX) of
+            case ar_storage:needs_block_header(TX) of
                 true ->
-                    %% A deprecated format-1 transaction is only authoritative
-                    %% as carried by its block, so do not fall back to the local
-                    %% copy: report not_found and let the caller fetch it from a
-                    %% peer or retry, as ar_join:read_local_tx/1 does for the
-                    %% trail.
+                    %% The header comes from the block, so do not fall back
+                    %% to an unconfirmed local copy: report not_found and let
+                    %% the caller fetch it from a peer or retry, as
+                    %% ar_join:read_local_tx/2 does for the trail.
                     get_tx_from_peers(Peers, TXID, not_found);
                 false ->
                     TX

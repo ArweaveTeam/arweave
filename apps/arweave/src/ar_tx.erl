@@ -8,7 +8,7 @@
         generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
         chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
         get_addresses/1, get_weave_size_increase/2, utility/1, get_owner_address/1,
-        is_v1_denomination0_tx/1]).
+        is_v1_denomination0_tx/1, is_ecdsa_tx/1, takes_header_from_block/1]).
 
 -include("ar.hrl").
 
@@ -265,6 +265,17 @@ is_v1_denomination0_tx(#tx{ format = 1, denomination = 0 }) ->
     true;
 is_v1_denomination0_tx(_TX) ->
     false.
+
+%% @doc Return true if the transaction is ECDSA-signed.
+is_ecdsa_tx(#tx{ signature_type = ?ECDSA_KEY_TYPE }) ->
+    true;
+is_ecdsa_tx(_TX) ->
+    false.
+
+%% @doc Return true if nodes take the transaction header from the block
+%% carrying it.
+takes_header_from_block(TX) ->
+    is_v1_denomination0_tx(TX) orelse is_ecdsa_tx(TX).
 
 %%%===================================================================
 %%% Private functions.

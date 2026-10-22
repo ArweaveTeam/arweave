@@ -39,9 +39,9 @@
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 200).
 -endif.
 
-%% How long to refuse a rejected block carrying deprecated format-1
-%% transactions from the peer that supplied it.
--define(REJECTED_V1_BLOCK_IGNORE_MS, 30000).
+%% How long to refuse a block from the peer that supplied it when the other
+%% peers may still deliver it (ignore_block_from_peer/1).
+-define(BLOCK_FROM_PEER_IGNORE_MS, 30000).
 
 -define(FILTER_MEMPOOL_CHUNK_SIZE, 100).
 
@@ -537,9 +537,15 @@ handle_info({event, nonce_limiter, {refuse_validation, H}}, State) ->
 handle_info({event, nonce_limiter, _}, State) ->
     {noreply, State};
 
-handle_info({tx_ready_for_mining, TX}, State) ->
-    ar_mempool:add_tx(TX, ready_for_mining),
-    ar_events:send(tx, {ready_for_mining, TX}),
+handle_info({tx_ready_for_mining, #tx{ id = TXID }}, State) ->
+    %% Skip the transaction if it left the mempool in the meantime.
+    case ar_mempool:get_tx(TXID) of
+        not_found ->
+            ok;
+        TX ->
+            ar_mempool:add_tx(TX, ready_for_mining),
+            ar_events:send(tx, {ready_for_mining, TX})
+    end,
     {noreply, State};
 
 handle_info({event, block, {new, Block, _Source}}, State)
@@ -585,7 +591,8 @@ handle_info({event, block, _}, State) ->
 %% Add the new waiting transaction to the server state.
 handle_info({event, tx, {new, TX, _Source}}, State) ->
     TXID = TX#tx.id,
-    case ar_mempool:has_tx(TXID) of
+    %% A block may have taken the transaction after it was validated.
+    case ar_mempool:has_tx(TXID) orelse is_recent_tx(TXID) of
         false ->
             InitialStatus =
                 case maps:get(automine, State) of
@@ -627,12 +634,21 @@ handle_info({event, tx, {ready_for_mining, TX}}, State) ->
 handle_info({event, tx, _}, State) ->
     {noreply, State};
 
-handle_info({'DOWN', _Ref, process, PID, _Info}, State) ->
+handle_info({'DOWN', _Ref, process, PID, Reason}, State) ->
     #{
       blocks_missing_txs := Set,
       missing_txs_lookup_processes := Map
      } = State,
     BH = maps:get(PID, Map),
+    case Reason of
+        normal ->
+            ok;
+        _ ->
+            ?LOG_WARNING([{event, missing_txs_lookup_failed},
+                    {block, arweave_lib_util:encode(BH)},
+                    {reason, io_lib:format("~p", [Reason])}]),
+            gen_server:cast(?MODULE, {missing_txs_not_found, BH})
+    end,
     {noreply, State#{
                      missing_txs_lookup_processes => maps:remove(PID, Map),
                      blocks_missing_txs => sets:del_element(BH, Set)
@@ -734,6 +750,18 @@ handle_task({cache_missing_txs, BH, TXs}, State) ->
             %% we were looking for previously missing transactions.
             {noreply, State}
     end;
+
+handle_task({missing_txs_not_found, BH}, State) ->
+    case ar_block_cache:get_block_and_status(block_cache, BH) of
+        {B, {{not_validated, _}, _}} ->
+            %% Let the other peers deliver the block.
+            ar_block_cache:remove(block_cache, BH),
+            ignore_block_from_peer(B),
+            gen_server:cast(?MODULE, apply_block);
+        _ ->
+            ok
+    end,
+    {noreply, State};
 
 handle_task(start_mining, State) ->
     {noreply, start_mining(State#{ automine => true })};
@@ -999,10 +1027,9 @@ apply_block2(BShadow, PrevBlocks, Timestamp, State) ->
         _ ->
             ?LOG_INFO([{event, missing_txs_for_block}, {count, length(MissingTXIDs)}]),
             Self = self(),
-            monitor(
-              process,
-              PID = spawn(fun() -> get_missing_txs_and_retry(BShadow, Self) end)
-             ),
+            BShadow2 = BShadow#block{ txs = TXs },
+            PID = spawn(fun() -> get_missing_txs_and_retry(BShadow2, Self) end),
+            monitor(process, PID),
             BH = BShadow#block.indep_hash,
             {noreply, State#{
                              blocks_missing_txs => sets:add_element(BH, BlocksMissingTXs),
@@ -1085,6 +1112,8 @@ request_nonce_limiter_validation(#block{ indep_hash = H } = B, PrevB) ->
     PrevInfo = ar_nonce_limiter:get_or_init_nonce_limiter_info(PrevB),
     ar_nonce_limiter:request_validation(H, Info, PrevInfo).
 
+%% @doc Return the block's transactions, each a local #tx{} or the
+%% identifier of a transaction to fetch, and the identifiers to fetch.
 pick_txs(TXIDs) ->
     Mempool = ar_mempool:get_map(),
     lists:foldr(
@@ -1097,19 +1126,24 @@ pick_txs(TXIDs) ->
                       %% the only reason to find some of these transactions on disk
                       %% is they had been written prior to the call, what means they are
                       %% from an orphaned fork, more than one block behind.
-                      case ar_storage:read_tx(TXID) of
-                          unavailable ->
-                              {Found, [TXID | Missing]};
-                          TX ->
-                              {[TX | Found], Missing}
-                      end;
+                      pick_local_tx(ar_storage:read_tx(TXID), TXID, Found, Missing);
                   _Status ->
-                      {[ar_mempool:get_tx(TXID) | Found], Missing}
+                      pick_local_tx(ar_mempool:get_tx(TXID), TXID, Found, Missing)
               end
       end,
       {[], []},
       TXIDs
      ).
+
+%% @doc Use the local copy of the transaction unless it is missing or its
+%% header comes from the block.
+pick_local_tx(#tx{} = TX, TXID, Found, Missing) ->
+    case ar_tx:takes_header_from_block(TX) of
+        true -> {[TXID | Found], [TXID | Missing]};
+        false -> {[TX | Found], Missing}
+    end;
+pick_local_tx(_NotFound, TXID, Found, Missing) ->
+    {[TXID | Found], [TXID | Missing]}.
 
 may_be_get_double_signing_proof(PrevB, State) ->
     LockedRewards = ar_rewards:get_locked_rewards(PrevB),
@@ -1425,18 +1459,24 @@ validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
             ok
     end.
 
-get_missing_txs_and_retry(#block{ txs = TXIDs }, _Worker)
+get_missing_txs_and_retry(#block{ txs = TXIDs, indep_hash = H }, Worker)
   when length(TXIDs) > 1000 ->
     ?LOG_WARNING([{event, ar_node_worker_downloaded_txs_count_exceeds_limit}]),
-    ok;
+    gen_server:cast(Worker, {missing_txs_not_found, H});
 get_missing_txs_and_retry(BShadow, Worker) ->
+    %% Ask the peer that supplied the block, if any.
+    Peers =
+        case BShadow#block.source_peer of
+            undefined -> ar_peers:get_peers(current);
+            Peer -> [Peer]
+        end,
     get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs,
-                              Worker, ar_peers:get_peers(current), [], 0).
+                              Worker, Peers, [], 0).
 
-get_missing_txs_and_retry(_H, _TXIDs, _Worker, _Peers, _TXs, TotalSize)
+get_missing_txs_and_retry(H, _TXIDs, Worker, _Peers, _TXs, TotalSize)
   when TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
     ?LOG_WARNING([{event, ar_node_worker_downloaded_txs_exceed_block_size_limit}]),
-    ok;
+    gen_server:cast(Worker, {missing_txs_not_found, H});
 get_missing_txs_and_retry(H, [], Worker, _Peers, TXs, _TotalSize) ->
     gen_server:cast(Worker, {cache_missing_txs, H, lists:reverse(TXs)});
 get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
@@ -1454,8 +1494,10 @@ get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
           end,
           {TXs, TotalSize},
           arweave_lib_util:pmap(
-            fun(TXID) ->
-                    ar_http_iface_client:get_tx(Peers, TXID)
+            fun(#tx{} = TX) ->
+                    TX;
+               (TXID) ->
+                    get_tx_from_peers(Peers, TXID)
             end,
             Bulk
            )
@@ -1463,9 +1505,18 @@ get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
     case Fetch of
         failed_to_fetch_tx ->
             ?LOG_WARNING([{event, ar_node_worker_failed_to_fetch_missing_tx}]),
-            ok;
+            gen_server:cast(Worker, {missing_txs_not_found, H});
         {TXs2, TotalSize2} ->
             get_missing_txs_and_retry(H, Rest, Worker, Peers, TXs2, TotalSize2)
+    end.
+
+%% @doc Fetch a transaction pick_txs/1 did not take locally from the peers.
+get_tx_from_peers(Peers, TXID) ->
+    case ar_http_iface_client:get_tx_from_remote_peers(Peers, TXID, true) of
+        {#tx{} = TX, _Peer, _Time, _Size} ->
+            TX;
+        _ ->
+            not_found
     end.
 
 apply_validated_block(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
@@ -1556,6 +1607,9 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
     AddedBlocks = tl(lists:reverse([B | [PrevB2 || PrevB2 <- PrevBlocks]])),
     AddedBIElements = [block_index_entry(Blck) || Blck <- AddedBlocks],
     OrphanCount = length(Orphans),
+    %% Record the confirmations before the header sync does, so that the
+    %% transactions are served once they leave the mempool.
+    lists:foreach(fun ar_storage:update_confirmation_index/1, AddedBlocks),
     ar_block_index:update(AddedBIElements, OrphanCount),
     RecentBI2 = lists:sublist(RecentBI, ?BLOCK_INDEX_HEAD_LEN),
     ar_data_sync:add_tip_block(BlockTXPairs, RecentBI2),
@@ -1739,26 +1793,41 @@ record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
             ok
     end.
 
-%% @doc Ignore the rejected block. A block carrying deprecated format-1
-%% transactions is only refused from the peer that supplied it, and only for a
-%% while, so the other peers can still deliver it.
+%% @doc Ignore the rejected block. Some blocks are only refused from the peer
+%% that supplied them.
 ignore_rejected_block(B) ->
-    BH = B#block.indep_hash,
-    case carries_v1_denomination0_tx(B)
-            andalso B#block.height < arweave_lib_constants:height_2_9_6() of
+    case (carries_v1_denomination0_tx(B)
+            andalso B#block.height < arweave_lib_constants:height_2_9_6())
+            orelse lists:any(fun ar_tx:is_ecdsa_tx/1, B#block.txs) of
         true ->
-            ?LOG_DEBUG([{event, rejected_block_with_deprecated_v1_tx},
-                        {block, arweave_lib_util:encode(BH)},
-                        {peer, B#block.source_peer}]),
-            ar_ignore_registry:remove(BH),
-            ID =
-                case B#block.source_peer of
-                    undefined -> BH;
-                    Peer -> {BH, Peer}
-                end,
-            ar_ignore_registry:add_temporary(ID, ?REJECTED_V1_BLOCK_IGNORE_MS);
+            ignore_block_from_peer(B);
         false ->
-            ar_ignore_registry:add(BH)
+            ar_ignore_registry:add(B#block.indep_hash)
+    end.
+
+%% @doc Refuse the block from the peer that supplied it for a while, so that
+%% the other peers can still deliver it.
+ignore_block_from_peer(B) ->
+    BH = B#block.indep_hash,
+    ?LOG_DEBUG([{event, ignore_block_from_peer},
+                {block, arweave_lib_util:encode(BH)},
+                {peer, B#block.source_peer}]),
+    ar_ignore_registry:remove(BH),
+    ID =
+        case B#block.source_peer of
+            undefined -> BH;
+            Peer -> {BH, Peer}
+        end,
+    ar_ignore_registry:add_temporary(ID, ?BLOCK_FROM_PEER_IGNORE_MS).
+
+%% @doc Return true if a recent block of the current chain has the
+%% transaction.
+is_recent_tx(TXID) ->
+    case ets:lookup(node_state, recent_txs_map) of
+        [{_, RecentTXMap}] ->
+            maps:is_key(TXID, RecentTXMap);
+        [] ->
+            false
     end.
 
 carries_v1_denomination0_tx(B) ->
@@ -1877,6 +1946,8 @@ priority(apply_block) ->
 priority({work_complete, _, _, _, _, _}) ->
     {2, 1};
 priority({cache_missing_txs, _, _}) ->
+    {3, 1};
+priority({missing_txs_not_found, _}) ->
     {3, 1};
 priority(_) ->
     {os:system_time(second), 1}.

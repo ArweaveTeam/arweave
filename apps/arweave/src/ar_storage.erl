@@ -9,7 +9,7 @@
         store_block_time_history_part/2, store_block_time_history_part2/1,
         block_count/0, write_full_block/2, read_block/1, read_block/2, read_block/3, write_tx/1,
         read_tx/1, read_tx/2, read_tx_data/1, read_tx_data/2, update_confirmation_index/1, get_tx_confirmation_data/1,
-        is_v1_denomination0_local_tx/1,
+        needs_block_header/1,
         read_wallet_list/1, read_wallet_list/2, fold_wallet_list/4, write_wallet_list/2,
         delete_blacklisted_tx/1, lookup_tx_filename/1, lookup_tx_filename/2, open_databases/0,
         open_start_from_state_databases/1, close_start_from_state_databases/0,
@@ -371,13 +371,13 @@ put_tx_confirmation_data(B) ->
     ).
 
 
-%% @doc Return true if the locally stored transaction is a deprecated format-1
-%% transaction without a denomination that no block in the current block index
-%% confirmed. The copy the peers' block carries is fetched instead. The block
-%% index is empty while joining, so a joining node fetches every such
-%% transaction from its peers.
-is_v1_denomination0_local_tx(TX) ->
-    case ar_tx:is_v1_denomination0_tx(TX) of
+%% @doc Return true if nodes take the header of the locally stored transaction
+%% from its block (ar_tx:takes_header_from_block/1) and no block in the current
+%% block index confirmed it. The copy the peers' block carries is fetched
+%% instead. The block index is empty while joining, so ar_join checks the
+%% confirmation against the blocks it fetches.
+needs_block_header(TX) ->
+    case ar_tx:takes_header_from_block(TX) of
         false ->
             false;
         true ->
