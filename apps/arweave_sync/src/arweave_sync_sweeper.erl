@@ -4,7 +4,10 @@
 %%% (set_weave_size/2); the loop then schedules its own sweep steps.
 %%%
 %%% A sweep (initialize_sweep/1) starts two modes at the store start, each
-%%% with its own cursor offset:
+%%% with its own cursor offset. The first sweep after the sweeper starts
+%%% resumes instead at the offsets last saved (maybe_save_cursor/1), so a
+%%% node restart does not send the sweep back over ranges it had passed. The
+%%% modes are:
 %%% - byte: one QUERY_RANGE_STEP_SIZE grid step at a time, up to the weave
 %%%   size;
 %%% - footprint: one footprint at a time, up to the lower of the weave size
@@ -29,7 +32,8 @@
 %%%    store's claim limit stops the claim, keep what is left of the range at
 %%%    the head of the queue and retry after BLOCKED_RETRY_DELAY_MS.
 %%% 4. Complete (complete_sweep/1): once both modes reach their live ends,
-%%%    start a new sweep after SWEEP_RESTART_DELAY_MS.
+%%%    save the store start as the cursor offsets and start a new sweep after
+%%%    SWEEP_RESTART_DELAY_MS.
 %%%
 %%% The sweeper's state:
 %%% - cursor: the offset each mode has processed up to;
@@ -47,9 +51,11 @@
     do_enqueue_sweep_range/3,
     frontier_offset/2,
     initialize_sweep/1,
+    maybe_save_cursor/1,
     process_next_sweep_range/2,
     process_sweep_queues/1,
     process_sweep_range/2,
+    read_resume_offsets/3,
     sweep_queue/2,
     unsynced_intervals/3,
     unsynced_footprint_intervals/3
@@ -127,7 +133,8 @@ init(StoreID) ->
         store_id = StoreID,
         range_start = RangeStart,
         range_end = RangeEnd,
-        sync_status = ?DEP(data_sync):init_sync_status(StoreID)
+        sync_status = ?DEP(data_sync):init_sync_status(StoreID),
+        resume_offsets = read_resume_offsets(StoreID, RangeStart, RangeEnd)
     }}.
 
 handle_call(ping, _From, State) ->
@@ -208,9 +215,13 @@ sweep(#state{cursor = undefined} = State) ->
         {blocked, Delay} ->
             {noreply, schedule_sweep(Delay, State)};
         complete ->
-            %% The store starts above both live ends, so there is nothing to
-            %% sweep yet.
-            {noreply, schedule_sweep(?NODE_JOIN_RETRY_DELAY_MS, State)};
+            %% Either the store starts above both live ends, so there is
+            %% nothing to sweep yet, or the saved offsets had reached them.
+            %% The next sweep starts at the store start.
+            {noreply, schedule_sweep(
+                ?NODE_JOIN_RETRY_DELAY_MS,
+                State#state{resume_offsets = undefined}
+            )};
         ready ->
             ?LOG_DEBUG([
                 {event, sync_network},
@@ -223,23 +234,81 @@ sweep(#state{cursor = undefined} = State) ->
     end;
 sweep(State) ->
     publish_sweep_metrics(State),
-    case can_sweep(State) of
+    State2 = maybe_save_cursor(State),
+    case can_sweep(State2) of
         {blocked, Delay} ->
-            {noreply, schedule_sweep(Delay, State)};
+            {noreply, schedule_sweep(Delay, State2)};
         complete ->
-            complete_sweep(State);
+            complete_sweep(State2);
         ready ->
-            sweep_ready(State)
+            sweep_ready(State2)
     end.
 
 initialize_sweep(State) ->
-    Cursor = arweave_sync_cursor:new(State#state.range_start, State#state.range_end),
+    Cursor = resume_cursor(
+        State#state.resume_offsets,
+        arweave_sync_cursor:new(State#state.range_start, State#state.range_end)
+    ),
     State#state{
         cursor = Cursor,
         readahead_cursor = Cursor,
         sweep_queues = new_sweep_queues(),
-        next_mode = byte
+        next_mode = byte,
+        resume_offsets = undefined
     }.
+
+resume_cursor(undefined, Cursor) ->
+    Cursor;
+resume_cursor({Byte, Footprint}, Cursor) ->
+    arweave_sync_cursor:set(
+        footprint, Footprint, arweave_sync_cursor:set(byte, Byte, Cursor)
+    ).
+
+%% @doc Return the byte and footprint offsets saved for the store if both lie
+%% in the store range, or undefined.
+read_resume_offsets(StoreID, RangeStart, RangeEnd) ->
+    case ?DEP(storage):read_sweep_cursor(StoreID) of
+        {ok, {Byte, Footprint} = Offsets}
+                when is_integer(Byte), is_integer(Footprint),
+                    Byte >= RangeStart, Byte =< RangeEnd,
+                    Footprint >= RangeStart, Footprint =< RangeEnd ->
+            Offsets;
+        _ ->
+            undefined
+    end.
+
+%% @doc Save the cursor offsets if they have changed and the last save is at
+%% least SWEEP_CURSOR_SAVE_INTERVAL_MS old.
+maybe_save_cursor(#state{cursor = undefined} = State) ->
+    State;
+maybe_save_cursor(State) ->
+    #state{cursor = Cursor, saved_at_ms = SavedAtMs} = State,
+    Offsets = {
+        arweave_sync_cursor:current(byte, Cursor),
+        arweave_sync_cursor:current(footprint, Cursor)
+    },
+    NowMs = ?DEP(clock):monotonic_ms(),
+    IsDue =
+        SavedAtMs == undefined orelse
+            NowMs - SavedAtMs >= ?SWEEP_CURSOR_SAVE_INTERVAL_MS,
+    case Offsets =/= State#state.saved_offsets andalso IsDue of
+        true -> save_offsets(Offsets, NowMs, State);
+        false -> State
+    end.
+
+save_offsets(Offsets, NowMs, State) ->
+    StoreID = State#state.store_id,
+    case ?DEP(storage):write_sweep_cursor(Offsets, StoreID) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            ?LOG_WARNING([
+                {event, failed_to_save_sweep_cursor},
+                {store_id, StoreID},
+                {reason, io_lib:format("~p", [Reason])}
+            ])
+    end,
+    State#state{saved_offsets = Offsets, saved_at_ms = NowMs}.
 
 %% @doc Check whether the node, store and disk are ready to sweep, and whether
 %% the sweep has reached its live ends.
@@ -633,12 +702,18 @@ complete_sweep(#state{store_id = StoreID} = State) ->
         {stage, sweep_complete},
         {store_id, StoreID}
     ]),
-    State2 = State#state{
+    %% A restart before the next save starts the next sweep at the store start
+    %% too.
+    Start = State#state.range_start,
+    State2 = save_offsets(
+        {Start, Start}, ?DEP(clock):monotonic_ms(), State
+    ),
+    State3 = State2#state{
         cursor = undefined,
         readahead_cursor = undefined,
         sweep_queues = new_sweep_queues()
     },
-    {noreply, schedule_sweep(?SWEEP_RESTART_DELAY_MS, State2)}.
+    {noreply, schedule_sweep(?SWEEP_RESTART_DELAY_MS, State3)}.
 
 %%%===================================================================
 %%% Metrics.

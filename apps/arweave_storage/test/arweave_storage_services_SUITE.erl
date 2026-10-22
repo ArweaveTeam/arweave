@@ -18,6 +18,7 @@ all() ->
         footprint_write_reports_failed_buckets,
         entropy_for_packed_bucket_records_only_entropy,
         entropy_cursor_persistence,
+        sweep_cursor_persistence,
         raw_chunk_helpers_preserve_records,
         global_record_aggregation,
         global_footprint_run
@@ -532,6 +533,20 @@ entropy_cursor_persistence(_) ->
         {true, <<0:256>>},
         arweave_storage:entropy_context(StoreID, Packing)
     ).
+
+%% @doc The sync sweep cursor survives a runtime restart and does not show up
+%% as a chunk file.
+sweep_cursor_persistence(_) ->
+    Module = {0, arweave_lib_constants:partition_size(), unpacked},
+    ok = arweave_config:internal_force_config(#{[storage_modules] => [Module]}),
+    {ok, _} = arweave_storage:activate(),
+    StoreID = arweave_storage_module:id(Module),
+    ?assertEqual(not_found, arweave_storage:read_sweep_cursor(StoreID)),
+    ok = arweave_storage:write_sweep_cursor({1, 2}, StoreID),
+    ok = arweave_storage:deactivate(),
+    {ok, _} = arweave_storage:activate(),
+    ?assertEqual({ok, {1, 2}}, arweave_storage:read_sweep_cursor(StoreID)),
+    ?assertEqual([], arweave_storage:list_chunk_files(StoreID)).
 
 %% @doc Storage activation owns its workers and tables, and deactivation removes
 %% them.

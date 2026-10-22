@@ -46,6 +46,8 @@
     is_disk_space_sufficient/1,
     is_footprint_record_initialized/1,
     store_info/1,
+    read_sweep_cursor/1,
+    write_sweep_cursor/2,
     get_intervals/6,
     get_next_interval/6,
     get_next_not_blacklisted_byte/1,
@@ -117,6 +119,12 @@ is_footprint_record_initialized(_StoreID) ->
 
 store_info(StoreID) ->
     arweave_storage:store_info(StoreID).
+
+read_sweep_cursor(StoreID) ->
+    arweave_sim:read_sweep_cursor(StoreID).
+
+write_sweep_cursor(Cursor, StoreID) ->
+    arweave_sim:write_sweep_cursor(Cursor, StoreID).
 
 get_next_not_blacklisted_byte(Byte) ->
     Byte.

@@ -32,6 +32,11 @@
 %% from claiming the whole batch before it knows the ranges' sources.
 -define(SWEEP_RANGE_CADENCE_MS, 1_000).
 
+%% The sweeper saves its cursor offsets at most every
+%% SWEEP_CURSOR_SAVE_INTERVAL_MS, so a restart resumes the sweep about where it
+%% stopped instead of at the store start.
+-define(SWEEP_CURSOR_SAVE_INTERVAL_MS, 10_000).
+
 -define(CHUNK_PATH, "/chunk2").
 
 %% One range in a sweep queue. When `unsynced_range' is none, the store needs
@@ -68,5 +73,11 @@
     next_mode = byte,
     %% The due time and token of the next scheduled sweep. An earlier request
     %% replaces the token, and the sweeper ignores the old timer when it fires.
-    next_sweep = undefined :: undefined | {integer(), reference()}
+    next_sweep = undefined :: undefined | {integer(), reference()},
+    %% The byte and footprint offsets saved by an earlier run, where the first
+    %% sweep resumes.
+    resume_offsets = undefined :: undefined | {integer(), integer()},
+    %% The offsets last saved and when.
+    saved_offsets = undefined :: undefined | {integer(), integer()},
+    saved_at_ms = undefined :: undefined | integer()
 }).

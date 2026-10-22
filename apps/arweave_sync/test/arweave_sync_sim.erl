@@ -5,7 +5,8 @@
 %%% used by simulation scenarios.
 -module(arweave_sync_sim).
 -export([setup_fixture/0, teardown_fixture/0]).
--export([start_sim/1, update_world/1, run_for/1, advance_tick/0, flush_pipeline/0]).
+-export([start_sim/1, restart_sim/0, update_world/1, run_for/1, advance_tick/0,
+    flush_pipeline/0]).
 -export([metric/2]).
 -export([complete_write/3]).
 
@@ -82,6 +83,28 @@ start_sim(#sim_world{} = World) ->
     start_pipeline(),
     arweave_sim:start_scenario(),
     ok.
+
+%% @doc Restart the sync pipeline as a node restart does: every sync process
+%% and in-memory cache starts over, while the world keeps the chunks already
+%% stored and simulated time carries on.
+restart_sim() ->
+    stop_pipeline(),
+    cancel_pipeline_timers(),
+    arweave_sim:clear_inflight_requests(),
+    %% The caches live in tables that outlive the sync runtime but not the node.
+    arweave_sync_discovery:reset_all_caches(),
+    start_pipeline().
+
+%% A stopped process's timers die with the node. Writes already handed to
+%% storage still complete, as ar_data_sync outlives arweave_sync on shutdown.
+cancel_pipeline_timers() ->
+    [arweave_sim:cancel_timer(Ref)
+     || {{_FireAt, Ref}, Action, _Interval} <- arweave_sim:pending_timers(),
+        not is_handed_off_write(Action)],
+    ok.
+
+is_handed_off_write({mfa, ?MODULE, complete_write, _Arguments}) -> true;
+is_handed_off_write(_Action) -> false.
 
 %% @doc Apply a runtime world change and expose its current peers to discovery.
 update_world(#sim_world{} = World) ->

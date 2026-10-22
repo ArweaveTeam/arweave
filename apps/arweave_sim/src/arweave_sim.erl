@@ -2,6 +2,7 @@
 -module(arweave_sim).
 
 -export([start_clock/0, stop_clock/0, advance/1, sleeping/0, pending_timers/0]).
+-export([cancel_timer/1]).
 -export([monotonic_ms/0, sleep/1, send_after/3, apply_after/4]).
 -export([
     create_world/0,
@@ -22,6 +23,7 @@
 ]).
 -export([
     get_chunk_binary/3,
+    clear_inflight_requests/0,
     wait_for_entropy/2,
     wait_for_chunk_interval_response/1,
     peer_sync_kind_enabled/2,
@@ -33,6 +35,8 @@
     increment_chunk_cache_size/1,
     admit_store_write/3,
     write_completed/2,
+    read_sweep_cursor/1,
+    write_sweep_cursor/2,
     unsynced_intervals/3,
     unsynced_footprint_intervals/3,
     get_next_synced_interval/3
@@ -43,6 +47,7 @@ stop_clock() -> arweave_sim_clock:stop().
 advance(Milliseconds) -> arweave_sim_clock:advance(Milliseconds).
 sleeping() -> arweave_sim_clock:sleeping().
 pending_timers() -> arweave_sim_clock:pending().
+cancel_timer(Ref) -> arweave_sim_clock:cancel(Ref).
 
 monotonic_ms() -> arweave_sim_clock:monotonic_ms().
 sleep(Milliseconds) -> arweave_sim_clock:sleep(Milliseconds).
@@ -79,6 +84,8 @@ use_mainnet_replica_2_9_sizes() ->
 get_chunk_binary(Peer, Offset, TimeoutMS) ->
     arweave_sim_world:get_chunk_binary(Peer, Offset, TimeoutMS).
 
+clear_inflight_requests() -> arweave_sim_world:clear_inflight_requests().
+
 wait_for_entropy(Peer, Byte) ->
     arweave_sim_world:wait_for_entropy(Peer, Byte).
 
@@ -103,6 +110,11 @@ admit_store_write(StoreID, Tick, Second) ->
 
 write_completed(StoreID, Byte) ->
     arweave_sim_world:write_completed(StoreID, Byte).
+
+read_sweep_cursor(StoreID) -> arweave_sim_world:read_sweep_cursor(StoreID).
+
+write_sweep_cursor(Cursor, StoreID) ->
+    arweave_sim_world:write_sweep_cursor(Cursor, StoreID).
 
 unsynced_intervals(Start, End, StoreID) ->
     arweave_sim_world:unsynced_intervals(Start, End, StoreID).
