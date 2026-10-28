@@ -62,7 +62,7 @@
     start_link/0,
     register_workers/0,
     %% Admission.
-    admission_headroom/1,
+    admission_room/1,
     claim_and_enqueue/2,
     %% Task lifecycle.
     report_fetch_completed/3,
@@ -105,17 +105,21 @@ register_workers() ->
 %%% Public interface: admission.
 %%%===================================================================
 
-%% @doc Return how many more chunks the store can claim now, so the picker
-%% avoids building work that claim_and_enqueue/2 would refuse.
-admission_headroom(StoreID) ->
-    case catch gen_server:call(?MODULE, {admission_headroom, StoreID}, infinity) of
-        {'EXIT', _Reason} -> 0;
-        Headroom -> Headroom
+%% @doc Return {Headroom, FullPeers}: how many more chunks the store can claim
+%% now, and the peers that have reached their share of the store's claim
+%% limit, so the picker avoids building work that claim_and_enqueue/2 would
+%% refuse.
+admission_room(StoreID) ->
+    case catch gen_server:call(?MODULE, {admission_room, StoreID}, infinity) of
+        {'EXIT', _Reason} -> {0, []};
+        Room -> Room
     end.
 
 %% @doc Claim and queue as much of the offered work as fits. The call is
 %% synchronous, so the claims cover this batch before the sweeper offers any
-%% overlapping range.
+%% overlapping range. Return blocked, {ok, ClaimedChunks}, or
+%% {ok, ClaimedChunks, {skipped, Offset}} when tasks were refused because
+%% their sources had no room, Offset being the first of them.
 claim_and_enqueue(_StoreID, []) ->
     {ok, 0};
 claim_and_enqueue(StoreID, Work) ->
@@ -216,11 +220,11 @@ handle_call(ping, _From, State) ->
     {reply, pong, State};
 handle_call(inflight_count, _From, State) ->
     {reply, map_size(State#state.monitor_index), State};
-handle_call({admission_headroom, StoreID}, _From, State) ->
-    HeadroomChunks = arweave_sync_store:admission_headroom(
-        StoreID, State#state.stores
-    ),
-    {reply, HeadroomChunks, State};
+handle_call({admission_room, StoreID}, _From, State) ->
+    Stores = State#state.stores,
+    Room = {arweave_sync_store:admission_headroom(StoreID, Stores),
+        arweave_sync_store:full_peers(StoreID, Stores)},
+    {reply, Room, State};
 handle_call({claim_and_enqueue, StoreID, Work}, _From, State) ->
     {Result, State2} = admit(StoreID, Work, State),
     {reply, Result, schedule_dispatch(State2)};
@@ -303,28 +307,37 @@ terminate_workers(MonitorIndex) ->
 %%% Admission.
 %%%===================================================================
 
-%% @doc Admit the work the sweeper offers for one store, in order. Return
-%% {ok, ClaimedChunks}, or blocked when the store's claim limit refused any
-%% unit of work.
+%% @doc Admit the units of work in order. Return blocked if the claim limit
+%% refused one, {ok, ClaimedChunks, {skipped, Offset}} if the store refused a
+%% task because its sources had no room, where Offset is the first such
+%% task's, and {ok, ClaimedChunks} otherwise.
 admit(StoreID, Work, State) ->
-    admit(StoreID, Work, 0, false, State).
+    admit(StoreID, Work, 0, false, none, State).
 
-admit(_StoreID, [], Admitted, Blocked, State) ->
+admit(_StoreID, [], Admitted, Blocked, FirstSkipped, State) ->
     Result =
-        case Blocked of
-            true -> blocked;
-            false -> {ok, Admitted}
+        case {Blocked, FirstSkipped} of
+            {true, _} -> blocked;
+            {false, none} -> {ok, Admitted};
+            {false, _} -> {ok, Admitted, {skipped, FirstSkipped}}
         end,
     {Result, State};
-admit(StoreID, [Unit | Rest], Admitted, Blocked, State) ->
+admit(StoreID, [Unit | Rest], Admitted, Blocked, FirstSkipped, State) ->
     case admit_work(StoreID, Unit, State) of
         {blocked, State2} ->
             %% Keep going: a later unit may need no new claim, such as a chunk
             %% already claimed or a footprint already reserved.
-            admit(StoreID, Rest, Admitted, true, State2);
+            admit(StoreID, Rest, Admitted, true, FirstSkipped, State2);
+        {skipped, Offset, State2} ->
+            admit(StoreID, Rest, Admitted, Blocked,
+                min_offset(FirstSkipped, Offset), State2);
         {ok, ClaimedChunks, State2} ->
-            admit(StoreID, Rest, Admitted + ClaimedChunks, Blocked, State2)
+            admit(StoreID, Rest, Admitted + ClaimedChunks, Blocked,
+                FirstSkipped, State2)
     end.
+
+min_offset(none, Offset) -> Offset;
+min_offset(Offset1, Offset2) -> min(Offset1, Offset2).
 
 %% @doc Claim the chunks of one unit of work in the store and add the unit to
 %% the store's work queue, within the store's claim limit.
@@ -336,6 +349,11 @@ admit_work(StoreID, #task{} = Task, State) ->
     of
         {ok, ClaimedChunks, Stores} ->
             {ok, ClaimedChunks, State#state{stores = Stores}};
+        no_peer_room ->
+            %% Skip the task instead of blocking, so the sweep moves on to
+            %% work for the store's other peers. The sweeper offers the chunk
+            %% again later.
+            {skipped, Task#task.offset, State};
         blocked ->
             {blocked, State}
     end;
@@ -577,7 +595,7 @@ bind_task(Task0, Source, Plan) ->
     #task_source{peer = Peer, footprint = Footprint} = Source,
     Task = Task0#task{peer = Peer, footprint = Footprint},
     StorePlan = arweave_sync_store:bind_task(
-        Task0, Plan#dispatch_plan.stores
+        Task0, Peer, Plan#dispatch_plan.stores
     ),
     PeerPlan = arweave_sync_peer:enqueue_tasks(
         Peer, [Task], Plan#dispatch_plan.peers

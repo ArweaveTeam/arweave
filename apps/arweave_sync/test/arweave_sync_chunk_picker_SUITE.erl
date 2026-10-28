@@ -17,7 +17,8 @@ all() ->
         build_footprint_task_source,
         build_tasks_keeps_source_representations_independent,
         build_tasks_keeps_each_footprint_group,
-        build_tasks_returns_next_claim_offset
+        build_tasks_returns_next_claim_offset,
+        drop_full_peer_sources_reports_first_skipped_chunk
     ].
 
 init_per_testcase(_Case, Config) ->
@@ -238,4 +239,38 @@ build_task_sources(UnsyncedRange, PeerRanges) ->
         arweave_sync_chunk_picker:build_task_sources(
             UnsyncedRange, PeerRanges, #{}
         )
+    ).
+
+%% @doc A full peer's byte sources are left out, and the first chunk that only
+%% they serve is reported as skipped. Its footprint sources are kept.
+drop_full_peer_sources_reports_first_skipped_chunk(_Config) ->
+    Slow = {1, 2, 3, 4, 1984},
+    Fast = {5, 6, 7, 8, 1984},
+    Chunk = ?DATA_CHUNK_SIZE,
+    Source = fun(Peer, Footprint, End, Start) ->
+        #task_source{
+            peer = Peer,
+            footprint = Footprint,
+            intervals = arweave_lib_intervals:from_list(
+                [{End * Chunk, Start * Chunk}])
+        }
+    end,
+    Footprint = #footprint{partition = 0, footprint = 0},
+    SlowBytes = Source(Slow, none, 6, 0),
+    SlowFootprint = Source(Slow, Footprint, 1, 0),
+    FastBytes = Source(Fast, none, 3, 2),
+    TaskSources = [SlowBytes, SlowFootprint, FastBytes],
+    ?assertEqual(
+        {TaskSources, none},
+        arweave_sync_chunk_picker:drop_full_peer_sources(TaskSources, [])
+    ),
+    %% The footprint source serves chunk 0 and the fast peer chunk 2, so
+    %% chunk 1 is the first that only the slow peer's byte source serves.
+    ?assertEqual(
+        {[SlowFootprint, FastBytes], Chunk},
+        arweave_sync_chunk_picker:drop_full_peer_sources(TaskSources, [Slow])
+    ),
+    ?assertEqual(
+        {[SlowBytes, SlowFootprint], none},
+        arweave_sync_chunk_picker:drop_full_peer_sources(TaskSources, [Fast])
     ).

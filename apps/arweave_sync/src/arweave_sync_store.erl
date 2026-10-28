@@ -11,13 +11,16 @@
 %%% 1. Admission (admit/3), for each unit of work the sweeper offers: claim
 %%%    its chunks and add it to the work queue, up to the claim limit. A
 %%%    footprint reservation claims a whole footprint until it binds to a
-%%%    peer; after that, only the chunks handed to the peer are claimed.
+%%%    peer; after that, only the chunks handed to the peer are claimed. A
+%%%    task is admitted only while one of its source peers counts for fewer
+%%%    than 1 / PEER_CLAIM_DIVISOR of the claim limit in queued and bound
+%%%    tasks (peer_claim_limit/1).
 %%% 2. Dispatch (snapshot/4 to commit_plan/1), on each dispatch pass:
 %%%    snapshot/4 counts each store's bound, fetching and writing chunks and
 %%%    sets the store's cache and pipeline limits for the pass. The scheduler
 %%%    takes work from the least-loaded store with disk space and room under
 %%%    those limits (best_store/1, pop_work/2), and records each bind and each
-%%%    started fetch (bind_task/2, bind_footprint/2, enqueue_bound_tasks/2,
+%%%    started fetch (bind_task/3, bind_footprint/2, enqueue_bound_tasks/2,
 %%%    start_bound_task/2). After the pass starts fetches, refresh_work/2 puts
 %%%    the work that found no peer back into the pass's work queues so it can
 %%%    be bound again.
@@ -51,9 +54,11 @@
     cache_limit/2,
     do_pipeline_limit/2,
     has_capacity/1,
+    peer_claim_limit/1,
     put_state/2,
     queued_count/2,
     sample_write_rate/3,
+    test_enqueue/3,
     test_plan/1,
     work_element/1,
     write_rate/2
@@ -61,7 +66,7 @@
 -endif.
 
 -export([new/0,
-        admission_headroom/2, claim_limit/2,
+        admission_headroom/2, full_peers/2, claim_limit/2,
         chunks_in_claim/1, claimed_chunks/2,
         admit/3, release_claim/3,
         return_bound_task/2, retry_task/2, drop_bound_task/2,
@@ -72,7 +77,7 @@
         fair_share/1, pipeline_limit/3,
         snapshot/4, refresh_work/2, commit_plan/1,
         best_store/1, pop_work/2,
-        add_reservations/2, bind_task/2, start_bound_task/2,
+        add_reservations/2, bind_task/3, start_bound_task/2,
         enqueue_bound_tasks/2, bind_footprint/2,
         unclaimed_intervals/3, has_capacity/2, rank/2,
         pipeline_limit/2,
@@ -154,13 +159,15 @@ replace_sources(StoreID, OldSources, NewSources, States) ->
 
 %% @doc Claim and queue a task or footprint reservation if the store has room
 %% under its claim limit; a task whose chunk is already claimed claims nothing.
+%% Return no_peer_room for a task whose every source peer has reached its
+%% peer claim limit.
 admit(StoreID, Task, States) ->
     State = get_state(StoreID, States),
     case admit(Task, State) of
         {ok, ClaimedChunks, State2} ->
             {ok, ClaimedChunks, put_state(State2, States)};
-        blocked ->
-            blocked
+        Refusal ->
+            Refusal
     end.
 
 admit(#task{ offset = Offset } = Task, State) ->
@@ -168,7 +175,10 @@ admit(#task{ offset = Offset } = Task, State) ->
         {true, _} ->
             {ok, 0, State};
         {false, true} ->
-            {ok, 1, enqueue_state(Task, State)};
+            case has_peer_room(Task, State) of
+                true -> {ok, 1, enqueue_state(Task, State)};
+                false -> no_peer_room
+            end;
         {false, false} ->
             blocked
     end;
@@ -187,6 +197,34 @@ admission_headroom(StoreID, States) ->
 
 admission_headroom(#store_state{ queued_task_count = QueuedTaskCount } = State) ->
     max(0, claim_limit(State) - QueuedTaskCount).
+
+%% @doc Return whether a source peer of the task counts for fewer tasks than
+%% the peer claim limit.
+has_peer_room(#task{ sources = Sources }, State) ->
+    PeerClaimLimit = peer_claim_limit(State),
+    Counts = State#store_state.queued_task_peer_counts,
+    Sources == [] orelse lists:any(
+        fun(#task_source{ peer = Peer }) ->
+            maps:get(Peer, Counts, 0) < PeerClaimLimit
+        end,
+        Sources).
+
+%% @doc Return the peers that count for as many tasks as the peer claim limit
+%% allows.
+full_peers(StoreID, States) ->
+    State = get_state(StoreID, States),
+    PeerClaimLimit = peer_claim_limit(State),
+    [Peer || {Peer, Count} <- maps:to_list(
+        State#store_state.queued_task_peer_counts), Count >= PeerClaimLimit].
+
+%% @doc Return how many queued and bound tasks may count against one peer.
+%% Before the store has a write rate, the share comes from the minimum claim
+%% limit rather than the larger bootstrap limit, which a slow peer would hold
+%% for minutes after the write rate lowers the claim limit.
+peer_claim_limit(#store_state{ write_rate = undefined }) ->
+    ?MIN_CLAIM_LIMIT div ?PEER_CLAIM_DIVISOR;
+peer_claim_limit(State) ->
+    claim_limit(State) div ?PEER_CLAIM_DIVISOR.
 
 reservation_headroom(#store_state{ queued_task_count = QueuedTaskCount,
         reservation_chunks = ReservationChunks } = State) ->
@@ -216,12 +254,25 @@ enqueue_state(Reservation, State) ->
     }).
 
 enqueue_task(Task, State) ->
-    State#store_state{
+    State2 = State#store_state{
         work_queue = gb_sets:add_element(
             work_element(Task), State#store_state.work_queue),
         queued_peer_counts = adjust_peer_counts(
             sources(Task), 1, State#store_state.queued_peer_counts)
-    }.
+    },
+    adjust_task_peer_counts(Task, 1, State2).
+
+adjust_task_peer_counts(#task{ sources = Sources }, Delta, State) ->
+    State#store_state{
+        queued_task_peer_counts = adjust_peer_counts(
+            Sources, Delta, State#store_state.queued_task_peer_counts)
+    };
+adjust_task_peer_counts(_Reservation, _Delta, State) ->
+    State.
+
+adjust_bound_peer_count(Peer, Delta, State) ->
+    adjust_task_peer_counts(
+        #task{ sources = [#task_source{ peer = Peer }] }, Delta, State).
 
 %%%===================================================================
 %%% Dispatch: snapshot.
@@ -403,24 +454,27 @@ do_pop_work(#store_plan{ work_queue = WorkQueue } = StorePlan) ->
 %%% Dispatch: binding.
 %%%===================================================================
 
-%% @doc Move a task from the store's work queue to a peer queue. The task still
-%% counts against the claim limit until its fetch starts.
-bind_task(Task, Plan) ->
+%% @doc Move a task from the store's work queue to Peer's queue. The task
+%% still counts against the claim limit, and against Peer's share of it, until
+%% its fetch starts.
+bind_task(Task, Peer, Plan) ->
     StoreID = Task#task.store_id,
     StorePlan = get_store_plan(StoreID, Plan),
     #store_plan{ state = State, bound_count = BoundCount } = StorePlan,
     put_store_plan(StorePlan#store_plan{
-        state = bind_queued_task(Task, State),
+        state = bind_queued_task(Task, Peer, State),
         bound_count = BoundCount + 1
     }, Plan).
 
-bind_queued_task(#task{ sources = Sources } = Task, State) ->
-    State#store_state{
+bind_queued_task(#task{ sources = Sources } = Task, Peer, State) ->
+    State2 = State#store_state{
         work_queue = gb_sets:delete(
             work_element(Task), State#store_state.work_queue),
         queued_peer_counts = adjust_peer_counts(
             Sources, -1, State#store_state.queued_peer_counts)
-    }.
+    },
+    State3 = adjust_task_peer_counts(Task, -1, State2),
+    adjust_bound_peer_count(Peer, 1, State3).
 
 %% @doc Return the store's pipeline limit for this pass.
 pipeline_limit(StoreID, Plan) ->
@@ -489,13 +543,13 @@ do_enqueue_bound_task(Task, Plan) ->
         bound_count = BoundCount + 1
     }, Plan).
 
-enqueue_bound_task(#task{ offset = Offset }, State) ->
-    State#store_state{
+enqueue_bound_task(#task{ offset = Offset, peer = Peer }, State) ->
+    adjust_bound_peer_count(Peer, 1, State#store_state{
         claimed = arweave_lib_intervals:add(
             State#store_state.claimed, Offset + ?DATA_CHUNK_SIZE, Offset),
         claimed_chunks = State#store_state.claimed_chunks + 1,
         queued_task_count = State#store_state.queued_task_count + 1
-    }.
+    }).
 
 %%%===================================================================
 %%% Dispatch: starting fetches.
@@ -530,9 +584,9 @@ start_bound_task(Task, Plan) ->
         bound_count = BoundCount,
         fetching_count = FetchingCount
     } = StorePlan,
-    State2 = State#store_state{
+    State2 = adjust_bound_peer_count(Task#task.peer, -1, State#store_state{
         queued_task_count = max(0, State#store_state.queued_task_count - 1)
-    },
+    }),
     put_store_plan(StorePlan#store_plan{
         state = State2,
         bound_count = max(0, BoundCount - 1),
@@ -600,8 +654,8 @@ release_claim(StoreID, Offset, States) ->
 
 %% @doc Put a task taken out of a peer queue back in its store's work queue.
 %% The task keeps its claim and still counts as queued.
-return_bound_task(#task{ store_id = StoreID } = Task, States) ->
-    State = get_state(StoreID, States),
+return_bound_task(#task{ store_id = StoreID, peer = Peer } = Task, States) ->
+    State = adjust_bound_peer_count(Peer, -1, get_state(StoreID, States)),
     put_state(enqueue_task(unbound_task(Task), State), States).
 
 %% @doc Put a task whose fetch failed back in its store's work queue, so
@@ -614,11 +668,12 @@ retry_task(#task{ store_id = StoreID } = Task, States) ->
     put_state(enqueue_task(unbound_task(Task), State2), States).
 
 %% @doc Drop a task taken out of a peer queue and release its claim.
-drop_bound_task(#task{ store_id = StoreID, offset = Offset }, States) ->
+drop_bound_task(#task{ store_id = StoreID, offset = Offset,
+        peer = Peer }, States) ->
     State = get_state(StoreID, States),
-    State2 = State#store_state{
+    State2 = adjust_bound_peer_count(Peer, -1, State#store_state{
         queued_task_count = max(0, State#store_state.queued_task_count - 1)
-    },
+    }),
     release_claim(StoreID, Offset, put_state(State2, States)).
 
 unbound_task(Task) ->
@@ -862,6 +917,13 @@ add_source_peers(Sources, Peers) ->
 %% @doc Latest measured write rate in chunks per second, or undefined.
 write_rate(StoreID, States) ->
     (get_state(StoreID, States))#store_state.write_rate.
+-endif.
+
+-ifdef(AR_TEST).
+%% @doc Claim and queue a task outside the claim limit and the peer claim
+%% limit, to build dispatch fixtures.
+test_enqueue(StoreID, #task{} = Task, States) ->
+    put_state(enqueue_state(Task, get_state(StoreID, States)), States).
 -endif.
 
 -ifdef(AR_TEST).

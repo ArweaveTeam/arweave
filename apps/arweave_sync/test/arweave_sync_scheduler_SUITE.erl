@@ -1922,8 +1922,8 @@ fetching_state(Peer, Sources) ->
     {ok, 1, State} = arweave_sync_scheduler:admit_work(store1, Queued,
         #state{}),
     Plan = arweave_sync_store:snapshot(#{}, #{}, [], State#state.stores),
-    Plan2 = arweave_sync_store:start_bound_task(Queued,
-        arweave_sync_store:bind_task(Queued, Plan)),
+    Plan2 = arweave_sync_store:start_bound_task(Queued#task{peer = Peer},
+        arweave_sync_store:bind_task(Queued, Peer, Plan)),
     TaskRef = make_ref(),
     Fetching = Queued#task{peer = Peer, task_ref = TaskRef, state = fetching},
     {TaskRef, State#state{stores = arweave_sync_store:commit_plan(Plan2),
@@ -1940,7 +1940,8 @@ bound_state(Peer, ByteTasks, FootprintTask, State) ->
         end,
         State,
         ByteTasks),
-    Plan = lists:foldl(fun arweave_sync_store:bind_task/2,
+    Plan = lists:foldl(
+        fun(Task, Acc) -> arweave_sync_store:bind_task(Task, Peer, Acc) end,
         arweave_sync_store:snapshot(#{}, #{}, [], State2#state.stores),
         ByteTasks),
     Plan2 = arweave_sync_store:enqueue_bound_tasks([FootprintTask], Plan),
@@ -1968,7 +1969,9 @@ seed(Tasks) ->
     arweave_sync_scheduler:snapshot(State).
 
 seed_candidate(#task{store_id = StoreID} = Task, State) ->
-    {ok, _ClaimedChunks, StoreStates} = arweave_sync_store:admit(
+    %% The fixtures queue more tasks for one peer than an unmeasured store
+    %% admits, to test dispatch on its own.
+    StoreStates = arweave_sync_store:test_enqueue(
         StoreID, Task, State#state.stores
     ),
     State#state{stores = StoreStates};

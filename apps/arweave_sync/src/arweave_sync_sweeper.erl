@@ -30,7 +30,15 @@
 %%%    arweave_sync_chunk_picker:claim_ranges/3, which builds the work and
 %%%    offers it to the scheduler. Then move the cursor past the range. If the
 %%%    store's claim limit stops the claim, keep what is left of the range at
-%%%    the head of the queue and retry after BLOCKED_RETRY_DELAY_MS.
+%%%    the head of the queue and retry after BLOCKED_RETRY_DELAY_MS. If the
+%%%    claim skipped chunks because their sources had no room
+%%%    (arweave_sync_store:full_peers/2), park the range (park_sweep_range/3),
+%%%    or, when the mode already holds its sweep queue length of parked
+%%%    ranges, keep the range at the head and retry after
+%%%    BLOCKED_RETRY_DELAY_MS.
+%%%    Each step first claims again from the parked range due first
+%%%    (retry_parked_range/1), every PARKED_RANGE_RETRY_DELAY_MS, so a peer
+%%%    whose data the sweep has passed stays busy.
 %%% 4. Complete (complete_sweep/1): once both modes reach their live ends,
 %%%    save the store start as the cursor offsets and start a new sweep after
 %%%    SWEEP_RESTART_DELAY_MS.
@@ -40,6 +48,8 @@
 %%% - readahead_cursor: the end of the ranges already in the sweep queues;
 %%% - sweep_queues: the queued ranges of each mode, up to
 %%%   BYTE_SWEEP_QUEUE_MAX_LENGTH and FOOTPRINT_SWEEP_QUEUE_MAX_LENGTH;
+%%% - parked_ranges: the parked ranges of each mode, up to the same lengths,
+%%%   kept across sweeps;
 %%% - weave_size, disk_pool_threshold: the bounds that set the live ends.
 -module(arweave_sync_sweeper).
 
@@ -52,6 +62,7 @@
     frontier_offset/2,
     initialize_sweep/1,
     maybe_save_cursor/1,
+    park_sweep_range/3,
     process_next_sweep_range/2,
     process_sweep_queues/1,
     process_sweep_range/2,
@@ -346,7 +357,7 @@ can_sweep(State) ->
     end.
 
 sweep_ready(State) ->
-    State2 = fill_sweep_queues(State),
+    State2 = retry_parked_range(fill_sweep_queues(State)),
     case process_sweep_queues(State2) of
         {ok, State3} ->
             Delay = completed_range_delay(State2, State3),
@@ -355,7 +366,7 @@ sweep_ready(State) ->
             NextDelay =
                 case can_extend_sweep_queue(State3) of
                     true -> 0;
-                    false -> Delay
+                    false -> min(Delay, parked_range_delay(State3))
                 end,
             {noreply, schedule_sweep(NextDelay, State3)};
         done ->
@@ -530,6 +541,17 @@ process_next_sweep_range(Mode, State) ->
             process_sweep_range(SweepRange, State)
     end.
 
+%% @doc Update the head of the sweep queue with the outcome of its claim.
+apply_claim_outcome(SweepRange, finished, State) ->
+    finish_sweep_range(SweepRange, State);
+apply_claim_outcome(_SweepRange, {continue, SweepRange2}, State) ->
+    replace_sweep_queue_head(SweepRange2, State);
+apply_claim_outcome(SweepRange, {parked, SweepRange2}, State) ->
+    RetryAtMs = ?DEP(clock):monotonic_ms() + ?PARKED_RANGE_RETRY_DELAY_MS,
+    park_sweep_range(
+        SweepRange2, RetryAtMs, finish_sweep_range(SweepRange, State)
+    ).
+
 process_sweep_range(
     #sweep_range{requested_at = RequestedAt} = SweepRange, State
 ) ->
@@ -538,14 +560,40 @@ process_sweep_range(
         RequestedAt + ?SWEEP_RANGE_WARM_WAIT_MS -
             ?DEP(clock):monotonic_ms()
     ),
-    maybe
-        0 ?= WarmDelay,
-        do_process_sweep_range(SweepRange, State)
-    else
-        _ -> {{blocked, WarmDelay}, State}
+    case WarmDelay of
+        0 ->
+            case claim_sweep_range(SweepRange, State) of
+                {{blocked, _Delay}, _State} = Blocked ->
+                    Blocked;
+                {parked, SweepRange2} = Outcome ->
+                    Mode = SweepRange#sweep_range.mode,
+                    case has_parking_room(Mode, State) of
+                        true ->
+                            {ok, apply_claim_outcome(
+                                SweepRange, Outcome, State)};
+                        false ->
+                            %% Keep the range at the head so the sweep does
+                            %% not run further ahead of the peers with no room.
+                            {{blocked, ?BLOCKED_RETRY_DELAY_MS},
+                                replace_sweep_queue_head(
+                                    resume_at_skipped(SweepRange2), State)}
+                    end;
+                Outcome ->
+                    {ok, apply_claim_outcome(SweepRange, Outcome, State)}
+            end;
+        _ ->
+            {{blocked, WarmDelay}, State}
     end.
 
-do_process_sweep_range(SweepRange, State) ->
+%% @doc Claim the chunks of the range that its sources have room for, and
+%% return the outcome:
+%% - {{blocked, Delay}, State}: the claim limit refused the claim;
+%% - finished: the store needs nothing more from the range;
+%% - {continue, SweepRange2}: the claim stopped at the claim limit, and
+%%   SweepRange2 resumes after it;
+%% - {parked, SweepRange2}: the claim reached the end of the range but skipped
+%%   chunks whose sources had no room, from SweepRange2's skipped_from on.
+claim_sweep_range(SweepRange, State) ->
     #sweep_range{unsynced_range = UnsyncedRange} = SweepRange,
     #unsynced_range{
         query_offset = QueryOffset,
@@ -584,12 +632,12 @@ revalidate_and_claim(SweepRange, PeerRanges, State) ->
                 )
             of
                 true ->
-                    {ok, finish_sweep_range(SweepRange, State)};
+                    range_end_outcome(SweepRange);
                 false ->
                     claim_range(SweepRange, UnsyncedRange2, PeerRanges, State)
             end;
         _NoLongerNeeded ->
-            {ok, finish_sweep_range(SweepRange, State)}
+            finished
     end.
 
 claim_range(SweepRange, UnsyncedRange, PeerRanges, State) ->
@@ -600,11 +648,29 @@ claim_range(SweepRange, UnsyncedRange, PeerRanges, State) ->
     of
         blocked ->
             {{blocked, ?BLOCKED_RETRY_DELAY_MS}, State};
-        {ok, _TasksProduced, NextClaimOffset} ->
-            {ok, resume_sweep_range(SweepRange, NextClaimOffset, State)};
-        {ok, _TasksProduced} ->
-            {ok, finish_sweep_range(SweepRange, State)}
+        {ok, _ClaimedChunks, NextClaimOffset, FirstSkipped} ->
+            SweepRange2 = add_skipped(FirstSkipped, SweepRange),
+            case NextClaimOffset of
+                none ->
+                    range_end_outcome(SweepRange2);
+                _ ->
+                    {continue, SweepRange2#sweep_range{
+                        next_claim_offset = NextClaimOffset
+                    }}
+            end
     end.
+
+add_skipped(none, SweepRange) ->
+    SweepRange;
+add_skipped(Offset, #sweep_range{skipped_from = undefined} = SweepRange) ->
+    SweepRange#sweep_range{skipped_from = Offset};
+add_skipped(Offset, #sweep_range{skipped_from = SkippedFrom} = SweepRange) ->
+    SweepRange#sweep_range{skipped_from = min(Offset, SkippedFrom)}.
+
+range_end_outcome(#sweep_range{skipped_from = undefined}) ->
+    finished;
+range_end_outcome(SweepRange) ->
+    {parked, SweepRange}.
 
 resume_unsynced_range(
     #sweep_range{next_claim_offset = undefined}, UnsyncedRange
@@ -628,13 +694,10 @@ resume_unsynced_range(
         intervals = arweave_lib_intervals:intersection(Intervals, Remaining)
     }.
 
-resume_sweep_range(SweepRange, NextClaimOffset, State) ->
+replace_sweep_queue_head(SweepRange, State) ->
     Mode = SweepRange#sweep_range.mode,
-    {{value, SweepRange}, Queue2} = queue:out(sweep_queue(Mode, State)),
-    SweepRange2 = SweepRange#sweep_range{
-        next_claim_offset = NextClaimOffset
-    },
-    set_sweep_queue(Mode, queue:in_r(SweepRange2, Queue2), State).
+    {{value, _Head}, Queue2} = queue:out(sweep_queue(Mode, State)),
+    set_sweep_queue(Mode, queue:in_r(SweepRange, Queue2), State).
 
 finish_sweep_range(SweepRange, State) ->
     #sweep_range{mode = Mode, next_offset = NextOffset} = SweepRange,
@@ -651,6 +714,116 @@ finish_sweep_range(SweepRange, State) ->
                 State2#state{cursor = Cursor2}
         end,
     State3.
+
+%%%===================================================================
+%%% Claim: parked ranges.
+%%%===================================================================
+
+%% @doc Return whether the mode has fewer parked ranges than its sweep queue
+%% length. The sweep stops at a range it cannot park.
+has_parking_room(Mode, State) ->
+    length(parked_ranges(Mode, State)) < sweep_queue_max_length(Mode).
+
+%% @doc Return the range set to claim from its first skipped chunk.
+resume_at_skipped(#sweep_range{skipped_from = undefined} = SweepRange) ->
+    SweepRange;
+resume_at_skipped(#sweep_range{skipped_from = SkippedFrom} = SweepRange) ->
+    SweepRange#sweep_range{
+        next_claim_offset = SkippedFrom,
+        skipped_from = undefined
+    }.
+
+%% @doc Add the range to its mode's parked ranges, to claim again from its
+%% first skipped chunk at RetryAtMs. A range already parked keeps the lower
+%% offset to claim from. When the mode has no parking room, a new range is
+%% dropped and waits for the next sweep; process_sweep_range/2 checks the room
+%% first, so this happens only in tests.
+park_sweep_range(SweepRange, RetryAtMs, State) ->
+    #sweep_range{mode = Mode, offset = Offset} = SweepRange,
+    Entry = (resume_at_skipped(SweepRange))#sweep_range{
+        retry_at_ms = RetryAtMs
+    },
+    ClaimFrom = Entry#sweep_range.next_claim_offset,
+    Parked = parked_ranges(Mode, State),
+    Parked2 =
+        case lists:keyfind(Offset, #sweep_range.offset, Parked) of
+            #sweep_range{next_claim_offset = ParkedFrom} = ParkedRange ->
+                lists:keyreplace(Offset, #sweep_range.offset, Parked,
+                    ParkedRange#sweep_range{
+                        next_claim_offset = min_claim_offset(
+                            ParkedFrom, ClaimFrom),
+                        retry_at_ms = min(
+                            ParkedRange#sweep_range.retry_at_ms, RetryAtMs)
+                    });
+            false ->
+                case has_parking_room(Mode, State) of
+                    true -> Parked ++ [Entry];
+                    false -> Parked
+                end
+        end,
+    set_parked_ranges(Mode, Parked2, State).
+
+min_claim_offset(undefined, _Offset) -> undefined;
+min_claim_offset(_Offset, undefined) -> undefined;
+min_claim_offset(Offset1, Offset2) -> min(Offset1, Offset2).
+
+%% @doc Claim again from the parked range due first, if one is due. A retry
+%% that skips chunks parks the range again from the first skipped chunk; one
+%% that stops at the claim limit continues on the next sweep step.
+retry_parked_range(State) ->
+    NowMs = ?DEP(clock):monotonic_ms(),
+    case take_due_parked_range(NowMs, State) of
+        none ->
+            State;
+        {SweepRange, State2} ->
+            case claim_sweep_range(SweepRange, State2) of
+                {{blocked, Delay}, _State} ->
+                    park_sweep_range(SweepRange, NowMs + Delay, State2);
+                finished ->
+                    State2;
+                {continue, #sweep_range{skipped_from = undefined} = Next} ->
+                    park_sweep_range(Next, NowMs, State2);
+                {_ContinueOrParked, Next} ->
+                    park_sweep_range(
+                        Next, NowMs + ?PARKED_RANGE_RETRY_DELAY_MS, State2
+                    )
+            end
+    end.
+
+take_due_parked_range(NowMs, State) ->
+    Due = [
+        {RetryAtMs, Mode, SweepRange}
+     || Mode <- [byte, footprint],
+        #sweep_range{retry_at_ms = RetryAtMs} = SweepRange
+            <- parked_ranges(Mode, State),
+        RetryAtMs =< NowMs
+    ],
+    case lists:sort(Due) of
+        [] ->
+            none;
+        [{_RetryAtMs, Mode, SweepRange} | _] ->
+            Parked = lists:delete(SweepRange, parked_ranges(Mode, State)),
+            {SweepRange, set_parked_ranges(Mode, Parked, State)}
+    end.
+
+%% @doc Return the time until the next parked range is due, or infinity.
+parked_range_delay(State) ->
+    NowMs = ?DEP(clock):monotonic_ms(),
+    lists:foldl(
+        fun(#sweep_range{retry_at_ms = RetryAtMs}, Delay) ->
+            min(Delay, max(0, RetryAtMs - NowMs))
+        end,
+        infinity,
+        parked_ranges(byte, State) ++ parked_ranges(footprint, State)
+    ).
+
+parked_ranges(Mode, State) ->
+    maps:get(Mode, State#state.parked_ranges).
+
+set_parked_ranges(Mode, Parked, State) ->
+    State#state{
+        parked_ranges = maps:put(Mode, Parked, State#state.parked_ranges)
+    }.
 
 %%%===================================================================
 %%% Claim: pacing.

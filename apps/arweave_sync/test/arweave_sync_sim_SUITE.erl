@@ -81,7 +81,9 @@ all() ->
         test_unaligned_store_matches_aligned_throughput,
         test_restart_recovers_throughput,
         test_restart_after_scarce_source_appears,
-        test_restart_recovers_footprint_throughput
+        test_restart_recovers_footprint_throughput,
+        test_scarce_early_ranges_do_not_block_fast_peers,
+        test_scarce_ranges_sync_after_abundant_ranges
     ].
 
 init_per_suite(Config) ->
@@ -3841,6 +3843,96 @@ test_restart_recovers_footprint_throughput(_Config) ->
         assert_metric_utilization(stored_cps, capacity(Peers), After)
     end).
 
+%% Scenario: Only a slow peer holds each store's earliest unsynced data.
+%%
+%% Context:
+%% - One slow peer is the only source of every store's first four sweep
+%%   ranges.
+%% - Four fast peers hold the following 32 ranges.
+%%
+%% Timeline:
+%% - Warm discovery and concurrency growth, then measure.
+%%
+%% Contract:
+%% - C1: Work only the slow peer serves does not take the stores' claim
+%%   limits from the fast peers.
+test_scarce_early_ranges_do_not_block_fast_peers(_Config) ->
+    arweave_config:internal_with_test_config(fun() ->
+        {SlowPeer, FastPeers} = scarce_and_abundant_peers(4, 32),
+        arweave_sync_sim:start_sim(#sim_world{
+            peers = maps:merge(SlowPeer, FastPeers)
+        }),
+        %% Ninety seconds cover discovery and concurrency growth, as in
+        %% test_restart_after_scarce_source_appears.
+        arweave_sync_sim:run_for(90),
+        Measurement = arweave_sync_sim:run_for(120),
+        %% C1: the stores stay near the fast peers' capacity. Without a limit
+        %% on the slow peer's claims, they sync at its six chunks per second.
+        assert_metric_utilization(stored_cps, capacity(FastPeers), Measurement)
+    end).
+
+%% Scenario: The stores sync the data only a slow peer holds once the fast
+%% peers' data runs out.
+%%
+%% Context:
+%% - One slow peer is the only source of every store's first four sweep
+%%   ranges.
+%% - Four fast peers hold the following range, which they serve within the
+%%   first minutes.
+%%
+%% Timeline:
+%% - Sync the fast peers' data, then measure while only the slow peer has
+%%   data left.
+%%
+%% Contract:
+%% - C1: The slow peer's data still syncs at the slow peer's rate after the
+%%   sweep has moved past it.
+test_scarce_ranges_sync_after_abundant_ranges(_Config) ->
+    arweave_config:internal_with_test_config(fun() ->
+        {SlowPeerMap, FastPeers} = scarce_and_abundant_peers(4, 1),
+        [SlowPeer] = maps:keys(SlowPeerMap),
+        arweave_sync_sim:start_sim(#sim_world{
+            peers = maps:merge(SlowPeerMap, FastPeers)
+        }),
+        %% One billion-byte range holds about 3,800 chunks per store, so the
+        %% six stores need under a minute at the fast peers' 400 chunks per
+        %% second. Three minutes cover that, discovery and concurrency growth.
+        arweave_sync_sim:run_for(180),
+        Measurement = arweave_sync_sim:run_for(120),
+        %% C1: the four scarce ranges, over 15,000 chunks per store, keep the
+        %% slow peer busy for hours, so it serves at its full rate.
+        assert_rate_at_least(
+            cps_by_peer, SlowPeer, 0.95 * capacity(SlowPeerMap), Measurement
+        )
+    end).
+
+%% @doc Return a slow peer that is the only source of every store's first
+%% ScarceRangeCount sweep ranges, and four fast peers holding the following
+%% AbundantRangeCount ranges.
+scarce_and_abundant_peers(ScarceRangeCount, AbundantRangeCount) ->
+    StoreRanges = arweave_sim:store_ranges(),
+    ScarceIntervals = [
+        sweep_chunk_interval(StoreRange, 0, ScarceRangeCount)
+     || {_StoreID, StoreRange} <- StoreRanges
+    ],
+    AbundantIntervals = [
+        sweep_chunk_interval(StoreRange, ScarceRangeCount, AbundantRangeCount)
+     || {_StoreID, StoreRange} <- StoreRanges
+    ],
+    %% One chunk per second per store.
+    SlowPeer = #{{10, 5, 1, 1, 1984} => #sim_peer{
+        max_serve_cps = ?SIM_STORES,
+        sync_availability = {intervals, ScarceIntervals}
+    }},
+    FastPeers = maps:from_list([
+        {{10, 5, 2, N, 1984}, #sim_peer{
+            max_serve_cps = 100,
+            sync_availability = {intervals, AbundantIntervals}
+        }}
+     || N <- lists:seq(1, 4)
+    ]),
+    {SlowPeer, FastPeers}.
+
 %%====================================================================
 %% Helpers
 %%====================================================================
@@ -4227,4 +4319,7 @@ testcase_timeout(test_node_config_drives_cache_capacity) -> 30;
 testcase_timeout(test_unaligned_store_matches_aligned_throughput) -> 300;
 testcase_timeout(test_restart_recovers_throughput) -> 300;
 testcase_timeout(test_restart_after_scarce_source_appears) -> 300;
-testcase_timeout(test_restart_recovers_footprint_throughput) -> 300.
+testcase_timeout(test_restart_recovers_footprint_throughput) -> 300;
+testcase_timeout(test_scarce_early_ranges_do_not_block_fast_peers) -> 300;
+testcase_timeout(test_scarce_ranges_sync_after_abundant_ranges) -> 300.
+

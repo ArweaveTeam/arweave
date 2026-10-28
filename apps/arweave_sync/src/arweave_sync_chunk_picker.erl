@@ -3,11 +3,13 @@
 %%% calls claim_ranges/3 with the step's unsynced ranges and a snapshot of peer
 %%% ranges from arweave_sync_discovery. claim_ranges/3 then:
 %%% 1. Asks arweave_sync_scheduler how many more chunks the store may claim
-%%%    under its claim limit (the admission headroom), and returns `blocked'
-%%%    when the answer is 0.
+%%%    under its claim limit (the admission headroom), and which peers are
+%%%    already sources of as many of its queued tasks as one peer may be (the
+%%%    full peers). Returns `blocked' when the headroom is 0.
 %%% 2. Intersects each peer range with the unsynced ranges to build task
 %%%    sources (build_task_sources/3): one per peer and footprint, where a
-%%%    byte source has footprint none.
+%%%    byte source has footprint none. Leaves out the byte sources of full
+%%%    peers, and notes the first chunk only those sources serve as skipped.
 %%% 3. Builds work from the task sources in offset order (build_tasks/3): a
 %%%    footprint reservation for each footprint, holding the footprint's
 %%%    sources, and, up to the headroom, a task for each chunk the byte
@@ -15,15 +17,18 @@
 %%% 4. Offers the work to arweave_sync_scheduler:claim_and_enqueue/2, which
 %%%    claims the chunks and adds the work to the store's work queue.
 %%%
-%%% When the tasks reach the headroom, claim_ranges/3 also returns the offset
-%%% where the next claim for the step resumes. The module keeps no state.
+%%% claim_ranges/3 returns the offset where the next claim for the step
+%%% resumes when the tasks reach the headroom, and the first offset skipped
+%%% because its sources had no room, here or in the scheduler. The module
+%%% keeps no state.
 -module(arweave_sync_chunk_picker).
 
 -ifdef(AR_TEST).
 -export([
     add_task_source/2,
     build_task_sources/3,
-    build_tasks/3
+    build_tasks/3,
+    drop_full_peer_sources/2
 ]).
 -endif.
 
@@ -36,32 +41,42 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Turn a sweep step's unsynced ranges into work for the scheduler,
-%% returning the number of chunks claimed (and, after a partial claim, the
-%% offset to resume from), or `blocked' when the store can claim no more.
+%% @doc Turn a sweep step's unsynced ranges into work for the scheduler.
+%% Return {ok, ClaimedChunks, NextClaimOffset, FirstSkipped}, where
+%% NextClaimOffset is the offset to resume from after a partial claim and
+%% FirstSkipped the first offset skipped because its sources had no room, each
+%% none if there is no such offset; or `blocked' when the store can claim no
+%% more.
 claim_ranges(_StoreID, [], _PeerRanges) ->
-    {ok, 0};
+    {ok, 0, none, none};
 claim_ranges(StoreID, UnsyncedRanges, PeerRanges) ->
     %% The headroom only limits how much work is worth building. The scheduler
     %% makes the exact claims in one atomic step, so it stays correct if the
     %% headroom changed in the meantime. Building the work here rather than in
     %% the scheduler keeps every store's interval work off that single process.
-    case arweave_sync_scheduler:admission_headroom(StoreID) of
-        0 ->
+    case arweave_sync_scheduler:admission_room(StoreID) of
+        {0, _FullPeers} ->
             blocked;
-        Headroom ->
-            TaskSources = find_task_sources(UnsyncedRanges, PeerRanges),
+        {Headroom, FullPeers} ->
+            {TaskSources, FirstSkipped} = drop_full_peer_sources(
+                find_task_sources(UnsyncedRanges, PeerRanges), FullPeers),
             {Tasks, NextClaimOffset} = build_tasks(
                 StoreID, TaskSources, Headroom),
             case arweave_sync_scheduler:claim_and_enqueue(StoreID, Tasks) of
                 blocked ->
                     blocked;
-                {ok, ClaimedChunks} when is_integer(NextClaimOffset) ->
-                    {ok, ClaimedChunks, NextClaimOffset};
                 {ok, ClaimedChunks} ->
-                    {ok, ClaimedChunks}
+                    {ok, ClaimedChunks, NextClaimOffset, FirstSkipped};
+                {ok, ClaimedChunks, {skipped, Offset}} ->
+                    {ok, ClaimedChunks, NextClaimOffset,
+                        min_offset(FirstSkipped, Offset)}
             end
     end.
+
+min_offset(none, Offset) ->
+    Offset;
+min_offset(Offset1, Offset2) ->
+    min(Offset1, Offset2).
 
 %%%===================================================================
 %%% Task sources.
@@ -75,6 +90,34 @@ find_task_sources(UnsyncedRanges, PeerRanges) ->
         #{},
         UnsyncedRanges),
     maps:values(TaskSourcesByKey).
+
+%% @doc Leave out the byte sources of full peers. Return the remaining sources
+%% and the first offset that only the left-out sources serve, or none.
+drop_full_peer_sources(TaskSources, []) ->
+    {TaskSources, none};
+drop_full_peer_sources(TaskSources, FullPeers) ->
+    {Dropped, Kept} = lists:partition(
+        fun(#task_source{ peer = Peer, footprint = Footprint }) ->
+            Footprint == none andalso lists:member(Peer, FullPeers)
+        end,
+        TaskSources),
+    Skipped = arweave_lib_intervals:outerjoin(
+        union_intervals(Kept), union_intervals(Dropped)),
+    case arweave_lib_intervals:is_empty(Skipped) of
+        true ->
+            {Kept, none};
+        false ->
+            {_, Start} = arweave_lib_intervals:smallest(Skipped),
+            {Kept, Start}
+    end.
+
+union_intervals(TaskSources) ->
+    lists:foldl(
+        fun(#task_source{ intervals = Intervals }, Acc) ->
+            arweave_lib_intervals:union(Intervals, Acc)
+        end,
+        arweave_lib_intervals:new(),
+        TaskSources).
 
 %% @doc Build task sources by intersecting peer advertisements with the chunks
 %% the local store still needs. Sources from the same peer and footprint are
