@@ -30,7 +30,9 @@
     sync_record_id/1,
     write_chunk/4,
     record_chunk/5,
-    read_offset/2
+    read_offset/2,
+    read_sweep_cursor/1,
+    write_sweep_cursor/2
 ]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -46,6 +48,10 @@
 
 -include_lib("kernel/include/file.hrl").
 -include_lib("arweave_storage/include/arweave_storage_deps.hrl").
+
+%% The file in the chunk directory that holds the sync sweep cursor. Chunk
+%% files are named by offset, so the chunk file index skips this name.
+-define(SWEEP_CURSOR_FILENAME, "sync_sweep_cursor").
 
 -record(state, {
     file_index,
@@ -399,6 +405,22 @@ read_offset(PaddedOffset, StoreID) ->
         Error ->
             Error
     end.
+
+read_sweep_cursor(StoreID) ->
+    case file:read_file(get_filepath(?SWEEP_CURSOR_FILENAME, StoreID)) of
+        {ok, Bin} ->
+            case catch binary_to_term(Bin, [safe]) of
+                {'EXIT', _} -> not_found;
+                Cursor -> {ok, Cursor}
+            end;
+        _ ->
+            not_found
+    end.
+
+write_sweep_cursor(Cursor, StoreID) ->
+    file:write_file(
+        get_filepath(?SWEEP_CURSOR_FILENAME, StoreID), term_to_binary(Cursor)
+    ).
 
 %%%===================================================================
 %%% Generic server callbacks.

@@ -78,7 +78,10 @@ all() ->
         test_disjoint_peer_holdings,
         test_stalled_frontier_peer_does_not_hide_later_capacity,
         test_node_config_drives_cache_capacity,
-        test_unaligned_store_matches_aligned_throughput
+        test_unaligned_store_matches_aligned_throughput,
+        test_restart_recovers_throughput,
+        test_restart_after_scarce_source_appears,
+        test_restart_recovers_footprint_throughput
     ].
 
 init_per_suite(Config) ->
@@ -3671,6 +3674,173 @@ test_unaligned_store_matches_aligned_throughput(_Config) ->
         )
     end).
 
+%% Scenario: A node restarted mid-sync returns to its pre-restart throughput.
+%%
+%% Context:
+%% - Four equal byte peers hold every store's first 32 sweep ranges, more
+%%   than the scenario can sync.
+%% - The restart stops every sync process and drops every in-memory cache, as
+%%   a node restart does, while the stores keep the chunks they hold.
+%%
+%% Timeline:
+%% - Settle and measure the pre-restart rate, restart, then measure equal
+%%   windows.
+%%
+%% Contract:
+%% - C1: A restart costs a bounded warm-up, after which sync runs as fast as
+%%   before.
+test_restart_recovers_throughput(_Config) ->
+    arweave_config:internal_with_test_config(fun() ->
+        StoreRanges = arweave_sim:store_ranges(),
+        PeerCPS = 100,
+        %% Thirty-two billion-byte ranges hold over 122,000 chunks per store,
+        %% more than the 400 chunks/s peers can serve in the scenario's
+        %% 270 seconds.
+        RangeCount = 32,
+        Intervals = [
+            sweep_chunk_interval(StoreRange, 0, RangeCount)
+         || {_StoreID, StoreRange} <- StoreRanges
+        ],
+        Peers = maps:from_list([
+            {{10, 5, 0, N, 1984}, #sim_peer{
+                max_serve_cps = PeerCPS,
+                sync_availability = {intervals, Intervals}
+            }}
+         || N <- lists:seq(1, 4)
+        ]),
+        arweave_sync_sim:start_sim(#sim_world{peers = Peers}),
+        %% Sixty simulated seconds cover discovery and concurrency growth, as
+        %% in test_steady_state_no_monopoly.
+        arweave_sync_sim:run_for(60),
+        Before = arweave_sync_sim:run_for(30),
+        assert_metric_utilization(stored_cps, capacity(Peers), Before),
+        arweave_sync_sim:restart_sim(),
+        %% C1: the restart repeats the start-up warm-up, which reached the full
+        %% rate within 50 seconds in every run; 60 seconds bounds it with one
+        %% window spare.
+        arweave_sync_sim:run_for(60),
+        After = arweave_sync_sim:run_for(120),
+        assert_metric_utilization(stored_cps, capacity(Peers), After)
+    end).
+
+%% Scenario: The only source of the stores' early data appears after the sweep
+%% has passed it, and the node then restarts.
+%%
+%% Context:
+%% - Four fast peers hold every store's sweep ranges four to 35.
+%% - Nobody holds ranges zero to three at first, so the first sweep passes
+%%   them. A slow peer holding them joins later.
+%% - A sweep that started over at the store start would claim chunks only the
+%%   slow peer serves until they filled the stores' claim limits, and then sync
+%%   at the slow peer's rate.
+%%
+%% Timeline:
+%% - Settle with the fast peers, add the slow peer and measure, restart, then
+%%   measure again.
+%%
+%% Contract:
+%% - C1: A restart resumes the sweep where it stopped, so the stores go back to
+%%   their fast sources.
+test_restart_after_scarce_source_appears(_Config) ->
+    arweave_config:internal_with_test_config(fun() ->
+        StoreRanges = arweave_sim:store_ranges(),
+        ScarceRangeCount = 4,
+        %% Thirty-two ranges hold more than the fast peers can serve in the
+        %% scenario, as in test_restart_recovers_throughput.
+        AbundantRangeCount = 32,
+        ScarceIntervals = [
+            sweep_chunk_interval(StoreRange, 0, ScarceRangeCount)
+         || {_StoreID, StoreRange} <- StoreRanges
+        ],
+        AbundantIntervals = [
+            sweep_chunk_interval(
+                StoreRange, ScarceRangeCount, AbundantRangeCount
+            )
+         || {_StoreID, StoreRange} <- StoreRanges
+        ],
+        %% One chunk per second per store: the four scarce ranges, over
+        %% 15,000 chunks per store, would take hours to drain from the slow
+        %% peer.
+        SlowPeer = #sim_peer{
+            max_serve_cps = ?SIM_STORES,
+            sync_availability = {intervals, ScarceIntervals}
+        },
+        FastPeers = maps:from_list([
+            {{10, 5, 2, N, 1984}, #sim_peer{
+                max_serve_cps = 100,
+                sync_availability = {intervals, AbundantIntervals}
+            }}
+         || N <- lists:seq(1, 4)
+        ]),
+        Peers = FastPeers#{{10, 5, 1, 1, 1984} => SlowPeer},
+        arweave_sync_sim:start_sim(#sim_world{peers = FastPeers}),
+        %% Ninety seconds cover discovery and concurrency growth, as in
+        %% test_restart_recovers_throughput, and take the sweep past the
+        %% scarce ranges.
+        arweave_sync_sim:run_for(90),
+        arweave_sync_sim:update_world(#sim_world{peers = Peers}),
+        arweave_sync_sim:run_for(30),
+        Before = arweave_sync_sim:run_for(30),
+        assert_metric_utilization(stored_cps, capacity(Peers), Before),
+        arweave_sync_sim:restart_sim(),
+        %% C1: the warm-up reached the full rate within 50 seconds in every
+        %% run, as in test_restart_recovers_throughput. A sweep restarted at the store
+        %% start would hold the stores near the slow peer's six chunks per
+        %% second instead.
+        arweave_sync_sim:run_for(60),
+        After = arweave_sync_sim:run_for(120),
+        assert_metric_utilization(stored_cps, capacity(Peers), After)
+    end).
+
+%% Scenario: A miner-style node, syncing replica 2.9 footprints, restarted
+%% mid-sync.
+%%
+%% Context:
+%% - Two footprint peers, mainnet partition and footprint sizes.
+%% - Generating a footprint's entropy takes a second, and the entropy cache
+%%   holds eight footprints.
+%%
+%% Timeline:
+%% - Settle and measure the pre-restart rate, restart, then measure again.
+%%
+%% Contract:
+%% - C1: A restart costs a bounded warm-up, after which footprint sync runs as
+%%   fast as before.
+test_restart_recovers_footprint_throughput(_Config) ->
+    arweave_config:internal_with_test_config(fun() ->
+        arweave_sim:use_mainnet_replica_2_9_sizes(),
+        PeerCPS = 40,
+        Peers = maps:from_list([
+            {{10, 5, 3, N, 1984}, #sim_peer{
+                max_serve_cps = PeerCPS,
+                chunk_interval_latency_ms = ?SIM_SUBSTEP_MS,
+                sync_kinds = [footprint]
+            }}
+         || N <- lists:seq(1, 2)
+        ]),
+        Slots = 8,
+        arweave_sync_sim:start_sim(#sim_world{
+            peers = Peers,
+            entropy_generation_ms = 1000,
+            node_config = #{
+                %% Eight 256 MiB footprints for six stores.
+                [packing, entropy, cache_size] => Slots * 256
+            }
+        }),
+        %% Ninety ticks cover discovery and the peers' concurrency growth, as
+        %% in test_more_stores_than_entropy_slots_keep_footprints.
+        arweave_sync_sim:run_for(90),
+        Before = arweave_sync_sim:run_for(30),
+        assert_metric_utilization(stored_cps, capacity(Peers), Before),
+        arweave_sync_sim:restart_sim(),
+        %% C1: the warm-up, which also regenerates the entropy the restart
+        %% dropped, took 30 seconds or less in every run; 60 seconds bounds it
+        %% with three windows spare.
+        arweave_sync_sim:run_for(60),
+        After = arweave_sync_sim:run_for(120),
+        assert_metric_utilization(stored_cps, capacity(Peers), After)
+    end).
+
 %%====================================================================
 %% Helpers
 %%====================================================================
@@ -4054,4 +4224,7 @@ testcase_timeout(test_discovery_backlog_preserves_store_throughput) -> 600;
 testcase_timeout(test_disjoint_peer_holdings) -> 500;
 testcase_timeout(test_stalled_frontier_peer_does_not_hide_later_capacity) -> 500;
 testcase_timeout(test_node_config_drives_cache_capacity) -> 30;
-testcase_timeout(test_unaligned_store_matches_aligned_throughput) -> 300.
+testcase_timeout(test_unaligned_store_matches_aligned_throughput) -> 300;
+testcase_timeout(test_restart_recovers_throughput) -> 300;
+testcase_timeout(test_restart_after_scarce_source_appears) -> 300;
+testcase_timeout(test_restart_recovers_footprint_throughput) -> 300.

@@ -63,7 +63,9 @@
     close_chunk_files/1,
     list_chunk_files/1,
     run_defragmentation/0,
-    read_offset/2
+    read_offset/2,
+    read_sweep_cursor/1,
+    write_sweep_cursor/2
 ]).
 
 %% Entropy storage.
@@ -267,6 +269,14 @@ run_defragmentation() ->
 
 read_offset(PaddedOffset, StoreID) ->
     arweave_storage_chunk_storage:read_offset(PaddedOffset, StoreID).
+
+%% @doc Return {ok, Cursor} with the sync sweep cursor last written for the
+%% store, or not_found.
+read_sweep_cursor(StoreID) ->
+    arweave_storage_chunk_storage:read_sweep_cursor(StoreID).
+
+write_sweep_cursor(Cursor, StoreID) ->
+    arweave_storage_chunk_storage:write_sweep_cursor(Cursor, StoreID).
 
 %%====================================================================
 %% Entropy storage

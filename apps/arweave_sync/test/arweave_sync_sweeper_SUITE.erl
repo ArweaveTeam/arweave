@@ -21,7 +21,9 @@ all() ->
         completed_nonempty_range_uses_cadence,
         waiting_metadata_allows_other_mode_progress,
         sync_bounds_decrease_keeps_sweep,
-        sweep_readiness
+        sweep_readiness,
+        sweep_resumes_at_saved_offsets,
+        cursor_save_cadence
     ].
 
 init_per_suite(Config) ->
@@ -525,6 +527,101 @@ sweep_readiness(_Config) ->
 %%====================================================================
 %% Helpers
 %%====================================================================
+
+%% @doc The first sweep resumes at saved offsets that lie in the store range;
+%% the sweeps after it start at the store start.
+sweep_resumes_at_saved_offsets(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        [
+            {arweave_storage, read_sweep_cursor, fun
+                (inside) -> {ok, {600, 300}};
+                (outside) -> {ok, {1001, 300}};
+                (corrupt) -> {ok, not_offsets};
+                (missing) -> not_found
+            end}
+        ],
+        fun() ->
+            ?assertEqual(
+                {600, 300},
+                arweave_sync_sweeper:read_resume_offsets(inside, 0, 1000)
+            ),
+            %% 1001 is past the store end of 1000.
+            ?assertEqual(
+                undefined,
+                arweave_sync_sweeper:read_resume_offsets(outside, 0, 1000)
+            ),
+            ?assertEqual(
+                undefined,
+                arweave_sync_sweeper:read_resume_offsets(corrupt, 0, 1000)
+            ),
+            ?assertEqual(
+                undefined,
+                arweave_sync_sweeper:read_resume_offsets(missing, 0, 1000)
+            ),
+            InitialState = #state{
+                range_start = 0,
+                range_end = 1000,
+                resume_offsets = {600, 300}
+            },
+            ResumedState = arweave_sync_sweeper:initialize_sweep(InitialState),
+            ResumedCursor = ResumedState#state.cursor,
+            ?assertEqual(600, arweave_sync_cursor:current(byte, ResumedCursor)),
+            ?assertEqual(
+                300, arweave_sync_cursor:current(footprint, ResumedCursor)
+            ),
+            ?assertEqual(ResumedCursor, ResumedState#state.readahead_cursor),
+            NextState = arweave_sync_sweeper:initialize_sweep(ResumedState),
+            NextCursor = NextState#state.cursor,
+            ?assertEqual(0, arweave_sync_cursor:current(byte, NextCursor)),
+            ?assertEqual(0, arweave_sync_cursor:current(footprint, NextCursor))
+        end
+    ).
+
+%% @doc The sweeper saves changed offsets, at most once per
+%% SWEEP_CURSOR_SAVE_INTERVAL_MS.
+cursor_save_cadence(_Config) ->
+    Self = self(),
+    arweave_sync_test_util:with_mocks(
+        [
+            {ar_timer, monotonic_ms, fun() -> get(now_ms) end},
+            {arweave_storage, write_sweep_cursor, fun(Offsets, store1) ->
+                Self ! {saved, Offsets},
+                ok
+            end}
+        ],
+        fun() ->
+            put(now_ms, 0),
+            State = arweave_sync_sweeper:maybe_save_cursor(
+                arweave_sync_sweeper:initialize_sweep(#state{
+                    store_id = store1,
+                    range_start = 0,
+                    range_end = 1000
+                })
+            ),
+            %% The first save needs no earlier one.
+            ?assertEqual([{0, 0}], saved_offsets()),
+            Moved = State#state{
+                cursor = set_test_cursors(State#state.cursor, 600, 300)
+            },
+            put(now_ms, ?SWEEP_CURSOR_SAVE_INTERVAL_MS - 1),
+            State2 = arweave_sync_sweeper:maybe_save_cursor(Moved),
+            ?assertEqual([], saved_offsets()),
+            put(now_ms, ?SWEEP_CURSOR_SAVE_INTERVAL_MS),
+            State3 = arweave_sync_sweeper:maybe_save_cursor(State2),
+            ?assertEqual([{600, 300}], saved_offsets()),
+            %% Unchanged offsets are not saved again.
+            put(now_ms, 2 * ?SWEEP_CURSOR_SAVE_INTERVAL_MS),
+            arweave_sync_sweeper:maybe_save_cursor(State3),
+            ?assertEqual([], saved_offsets())
+        end
+    ).
+
+saved_offsets() ->
+    receive
+        {saved, Offsets} -> [Offsets | saved_offsets()]
+    after 0 ->
+        []
+    end.
 
 set_test_cursors(Cursor, Byte, Footprint) ->
     arweave_sync_cursor:set(

@@ -18,12 +18,15 @@
     get/1,
     update_world/1,
     get_chunk_binary/3,
+    clear_inflight_requests/0,
     wait_for_entropy/2,
     is_chunk_cache_full/0,
     chunk_cache_size/0, chunk_cache_size/1,
     increment_chunk_cache_size/1,
     admit_store_write/3,
     write_completed/2,
+    read_sweep_cursor/1,
+    write_sweep_cursor/2,
     unsynced_intervals/3,
     unsynced_footprint_intervals/3,
     get_next_synced_interval/3,
@@ -207,6 +210,17 @@ get_chunk_binary(Name, Offset, TimeoutMS) ->
     after
         _ = add_counter({http_inflight, Name}, -1)
     end.
+
+%% @doc Drop the requests of killed callers, whose cleanup never ran, as peers
+%% close the connections of a restarted node.
+clear_inflight_requests() ->
+    lists:foreach(
+        fun(Peer) ->
+            put_value({http_inflight, Peer}, 0),
+            put_value({chunk_interval_inflight, Peer}, 0)
+        end,
+        get(peers)
+    ).
 
 %% @doc Apply detailed-metadata latency while exposing concurrent requests to
 %% scenarios that model a peer whose metadata endpoint overloads under fan-out.
@@ -497,6 +511,17 @@ write_completed(StoreID, Byte) ->
             ok
     end,
     ok.
+
+%% @doc Return the sweep cursor last written for the store. Like the stored
+%% chunks, it survives a restart of the sync pipeline but not a world reset.
+read_sweep_cursor(StoreID) ->
+    case ets:lookup(?MODULE, {sweep_cursor, StoreID}) of
+        [{_, Cursor}] -> {ok, Cursor};
+        [] -> not_found
+    end.
+
+write_sweep_cursor(Cursor, StoreID) ->
+    put_value({sweep_cursor, StoreID}, Cursor).
 
 %% @doc A fresh store reports the queried byte range as one contiguous need. A
 %% targeted fragmented scenario can retain the old alternating-chunk layout.
