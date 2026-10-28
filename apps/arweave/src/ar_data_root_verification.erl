@@ -16,7 +16,9 @@
 %%% blocks' transaction paths while data-roots syncing is enabled, and remove
 %%% the data roots of blocks whose sizes and start offsets do not match so that
 %%% data-roots syncing fetches them again. Earlier releases accepted such data
-%%% roots from peers. A copy of the removed data roots is kept in the
+%%% roots from peers. Data roots leaving out a transaction are removed too,
+%%% and header syncing builds them again. A copy of the removed data roots is
+%%% kept in the
 %%% migrations index (see ar_data_roots:get_removed_block/2). Only blocks below
 %%% the disk pool threshold are checked: peers only provide data roots for
 %%% those, and the node builds the rest itself. The position is kept in the
@@ -51,7 +53,8 @@
 -define(IDLE_INTERVAL_MS, 600_000).
 -endif.
 
--define(CURSOR_KEY, <<"data_root_verification_cursor">>).
+%% The key is new so that nodes check every block again with the current rules.
+-define(CURSOR_KEY, <<"data_root_verification_cursor_2">>).
 
 %%%===================================================================
 %%% Public interface.
@@ -134,6 +137,7 @@ step(#state{ cursor = Cursor, checked = Checked,
                                             ?DEFAULT_MODULE) of
         {Status, Cursor2, StepChecked, StepMismatches} ->
             [log_mismatch(Mismatch) || Mismatch <- StepMismatches],
+            [maybe_resync_block(Mismatch) || Mismatch <- StepMismatches],
             case write_cursor(Cursor2) of
                 ok ->
                     ok;
@@ -179,6 +183,19 @@ log_mismatch({BlockStart, BlockEnd, Reason, kept}) ->
                 {block_start_offset, BlockStart},
                 {block_end_offset, BlockEnd},
                 {reason, Reason}]).
+
+%% @doc Have header syncing process the block again if its data roots were
+%% removed for leaving out a transaction.
+maybe_resync_block({BlockStart, BlockEnd, Reason, removed})
+        when Reason == missing_tx_entry; Reason == invalid_total_tx_size ->
+    case ar_block_index:get_block_bounds_with_height(BlockStart) of
+        {BlockStart, BlockEnd, _TXRoot, Height} ->
+            ar_header_sync:remove_block(Height);
+        _ ->
+            ok
+    end;
+maybe_resync_block(_Mismatch) ->
+    ok.
 
 %% @doc Return whether data-roots syncing will fetch the given block again:
 %% it only scans the ranges of the configured storage modules.

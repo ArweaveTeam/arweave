@@ -61,6 +61,10 @@
 -define(REMOVED_BLOCK_KEY_PREFIX, <<"data_root_verification_removed_block">>).
 %% Each store finishes its pending removal before starting another batch.
 -define(PENDING_REMOVAL_KEY, <<"data_root_verification_pending_removal">>).
+%% Hashed with a data root shorter than 32 bytes to get the key its entry is
+%% stored under. The preimage is at most 15 + 31 bytes long, so its hash cannot
+%% equal a Merkle root, the hash of a 64- or 96-byte preimage.
+-define(SHORT_DATA_ROOT_PREFIX, <<"short_data_root">>).
 
 -type data_root_entry() :: {DataRoot :: binary(), TXSize :: non_neg_integer(),
                             TXStartOffset :: non_neg_integer(), TXPath :: binary()}.
@@ -138,6 +142,8 @@ add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID) ->
     end.
 
 %% @doc Build `{TXRoot, BlockSize, DataRootEntries}` for the given size-tagged txs.
+%% A transaction with a data root shorter than 32 bytes gets an entry too, under
+%% the data root entry_data_root/1 returns, so that the entries cover the block.
 build_block_data_root_entries(BlockStart, SizeTaggedTXs) ->
     SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
     {TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
@@ -146,14 +152,13 @@ build_block_data_root_entries(BlockStart, SizeTaggedTXs) ->
                                              Acc;
                                          ({{padding, _}, Offset}, {_, DataRootEntriesAcc}) ->
                                              {Offset, DataRootEntriesAcc};
-                                         ({{_, DataRoot}, Offset}, {_, DataRootEntriesAcc}) when byte_size(DataRoot) < 32 ->
-                                             {Offset, DataRootEntriesAcc};
                                          ({{_, DataRoot}, TXEndOffset}, {PrevOffset, DataRootEntriesAcc}) ->
                                              TXPath = ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree),
                                              TXOffset = BlockStart + PrevOffset,
                                              TXSize = TXEndOffset - PrevOffset,
                                              {TXEndOffset,
-                                              [{DataRoot, TXSize, TXOffset, TXPath} | DataRootEntriesAcc]}
+                                              [{entry_data_root(DataRoot), TXSize, TXOffset, TXPath}
+                                               | DataRootEntriesAcc]}
                                      end,
                                      {0, []},
                                      SizeTaggedTXs
@@ -239,9 +244,10 @@ verify_stored_block(BlockStart, StoreID) ->
 
 %% @doc Check up to Count stored blocks starting at or after Cursor and
 %% before End with verify_stored_block/2. Remove the entries of the blocks
-%% whose sizes and start offsets do not match their transaction paths, so that
-%% data root syncing fetches them again, and keep the entries of blocks that
-%% fail for another reason. Return {more | done, NextCursor, Checked,
+%% whose sizes and start offsets do not match their transaction paths or which
+%% leave out a transaction (see verify_and_remove_stored_block/3), so that they
+%% are fetched or built again, and keep the entries of blocks that fail for
+%% another reason. Return {more | done, NextCursor, Checked,
 %% Mismatches}, where Mismatches lists {BlockStart, BlockEnd, Reason,
 %% removed | kept}, or {error, Reason} if no block could be checked.
 verify_stored_blocks(Cursor, _End, 0, _StoreID) ->
@@ -250,8 +256,8 @@ verify_stored_blocks(Cursor, End, Count, StoreID) ->
     case resume_block_removal(StoreID) of
         none ->
             verify_stored_blocks(Cursor, End, Count, StoreID, 0, []);
-        {ok, BlockStart, BlockEnd} ->
-            Mismatch = {BlockStart, BlockEnd, invalid_tx_start_offset, removed},
+        {ok, BlockStart, BlockEnd, Reason} ->
+            Mismatch = {BlockStart, BlockEnd, Reason, removed},
             verify_stored_blocks(Cursor, End, Count, StoreID, 1, [Mismatch]);
         {error, _} = Error ->
             Error
@@ -294,17 +300,22 @@ verify_stored_blocks(Cursor, End, Count, StoreID, Checked, Mismatches) ->
     end.
 
 %% @doc Remove the entries of the given stored block if their sizes and start
-%% offsets do not match its transaction paths, keeping a copy in the migrations
-%% index. Return ok, {removed, Reason}, {kept, Reason} or {error, Reason}.
+%% offsets do not match its transaction paths or if they leave out a
+%% transaction, keeping a copy in the migrations index. Return ok,
+%% {removed, Reason}, {kept, Reason} or {error, Reason}.
 %%
 %% Peers could only make the node store entries whose sizes and start offsets
-%% disagree with otherwise valid paths (invalid_tx_start_offset): every other
-%% mismatch was already rejected when the entries were received, so entries
-%% failing for another reason are kept for an operator to look into.
+%% disagree with otherwise valid paths (invalid_tx_start_offset). Entries
+%% leaving out a transaction (missing_tx_entry, or invalid_total_tx_size when
+%% it is the last one) are removed as well. Every other mismatch was already
+%% rejected when the entries were received, so entries failing for another
+%% reason are kept for an operator to look into.
 verify_and_remove_stored_block(BlockStart, BlockEnd, StoreID) ->
     case verify_stored_block(BlockStart, StoreID) of
-        {invalid, invalid_tx_start_offset} ->
-            remove_block(BlockStart, BlockEnd, StoreID);
+        {invalid, Reason} when Reason == invalid_tx_start_offset;
+                Reason == missing_tx_entry;
+                Reason == invalid_total_tx_size ->
+            remove_block(BlockStart, BlockEnd, Reason, StoreID);
         {invalid, Reason} ->
             {kept, Reason};
         {error, _} = Error ->
@@ -314,7 +325,7 @@ verify_and_remove_stored_block(BlockStart, BlockEnd, StoreID) ->
     end.
 
 %% @doc Back up a block's entries and journal their removal before deleting them.
-remove_block(BlockStart, BlockEnd, StoreID) ->
+remove_block(BlockStart, BlockEnd, Reason, StoreID) ->
     maybe
         {ok, Bin} ?= get_keys(BlockStart, StoreID),
         {TXRoot, BlockSize, DataRootIDs} = binary_to_term(Bin, [safe]),
@@ -323,10 +334,10 @@ remove_block(BlockStart, BlockEnd, StoreID) ->
         ok ?= ar_kv:put(ar_data_sync:migration_db(StoreID),
                         removed_block_key(BlockStart),
                         term_to_binary({TXRoot, BlockSize, Entries})),
-        Pending = {entries, BlockStart, BlockEnd, Bin},
+        Pending = {entries, BlockStart, BlockEnd, Reason, Bin},
         ok ?= write_pending_removal(Pending, StoreID),
-        {ok, BlockStart, BlockEnd} ?= do_remove_block(Pending, StoreID),
-        {removed, invalid_tx_start_offset}
+        {ok, BlockStart, BlockEnd, Reason} ?= do_remove_block(Pending, StoreID),
+        {removed, Reason}
     else
         not_found ->
             {error, not_found};
@@ -352,7 +363,12 @@ resume_block_removal(StoreID) ->
             Error
     end.
 
-do_remove_block({entries, BlockStart, BlockEnd, BlockKey}, StoreID) ->
+%% Earlier releases journaled removals without the reason. They only removed
+%% blocks for invalid_tx_start_offset.
+do_remove_block({Phase, BlockStart, BlockEnd, BlockKey}, StoreID) ->
+    do_remove_block({Phase, BlockStart, BlockEnd, invalid_tx_start_offset,
+                     BlockKey}, StoreID);
+do_remove_block({entries, BlockStart, BlockEnd, Reason, BlockKey}, StoreID) ->
     maybe
         {ok, Entries} ?= get_pending_entries(BlockStart, BlockEnd, BlockKey,
                                              StoreID),
@@ -360,18 +376,18 @@ do_remove_block({entries, BlockStart, BlockEnd, BlockKey}, StoreID) ->
         %% Use exact keys: a neighboring block's forged start may be in this
         %% block's range, even though its proven end belongs to its own block.
         ok ?= remove_entries(Entries, StoreID),
-        Pending = {block_key, BlockStart, BlockEnd, BlockKey},
+        Pending = {block_key, BlockStart, BlockEnd, Reason, BlockKey},
         ok ?= write_pending_removal(Pending, StoreID),
         do_remove_block(Pending, StoreID)
     end;
-do_remove_block({block_key, BlockStart, BlockEnd, BlockKey}, StoreID) ->
+do_remove_block({block_key, BlockStart, BlockEnd, Reason, BlockKey}, StoreID) ->
     maybe
         %% Once the key is deleted, syncing may store fresh entries. A retry
         %% must not delete entries again. Preserve a changed block key too.
         ok ?= remove_block_key(BlockStart, BlockKey, StoreID),
         ok ?= ar_kv:delete(ar_data_sync:migration_db(StoreID),
                            ?PENDING_REMOVAL_KEY),
-        {ok, BlockStart, BlockEnd}
+        {ok, BlockStart, BlockEnd, Reason}
     end.
 
 %% @doc Return the entries of a pending removal from its backup, or read them
@@ -782,7 +798,7 @@ verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | DataRootEn
         false ->
             {error, invalid_entry_merkle_label};
         true ->
-            case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize, TXPath) of
+            case validate_entry_path(TXRoot, TXEndOffset, BlockSize, TXPath) of
                 false ->
                     {error, invalid_tx_path};
                 {DataRoot, ExpectedTXStartOffset, TXEndOffset}
@@ -804,10 +820,81 @@ verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | DataRootEn
                     %% offset that only add up to the right end would index
                     %% the transaction under the wrong size.
                     {error, invalid_tx_start_offset};
+                {DataRoot, ProvenTXStartOffset, TXEndOffset}
+                        when ProvenTXStartOffset > ExpectedTXStartOffset ->
+                    %% The transaction starts after the end of the previous
+                    %% entry, so the entries of the transactions in between are
+                    %% missing.
+                    {error, missing_tx_entry};
                 _ ->
                     {error, invalid_tx_path}
             end
     end.
+
+%% @doc Validate the transaction path of an entry ending at TXEndOffset and
+%% return the proven {DataRoot, TXStartOffset, TXEndOffset}, with a data root
+%% shorter than 32 bytes replaced the way entry_data_root/1 replaces it, or
+%% false.
+validate_entry_path(TXRoot, TXEndOffset, BlockSize, TXPath) ->
+    Proven =
+        case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize,
+                                     TXPath) of
+            false ->
+                %% Clamp the offset the way ar_merkle:validate_path/4 does.
+                Dest = max(0, min(TXEndOffset - 1, BlockSize - 1)),
+                validate_short_leaf_path(TXRoot, Dest, 0, BlockSize, TXPath);
+            Result ->
+                Result
+        end,
+    case Proven of
+        false ->
+            false;
+        {DataRoot, TXStartOffset, TXEndOffset2} ->
+            {entry_data_root(DataRoot), TXStartOffset, TXEndOffset2}
+    end.
+
+%% @doc Validate a transaction path the way ar_merkle:validate_path/4 does,
+%% but only accept a leaf with data shorter than 32 bytes. ar_merkle expects
+%% 32-byte leaf data, so it cannot validate the path of a transaction with a
+%% shorter data root. A branch is 96 bytes long and a short leaf, data and
+%% offset, less than 64, so the remaining path is a leaf when it is shorter
+%% than a branch.
+validate_short_leaf_path(ID, Dest, LeftBound, RightBound,
+                         << L:?CHUNK_ID_HASH_SIZE/binary,
+                            R:?CHUNK_ID_HASH_SIZE/binary,
+                            Note:(?NOTE_SIZE * 8), Rest/binary >>)
+        when byte_size(Rest) >= ?NOTE_SIZE ->
+    case ar_merkle:get_branch_id(L, R, Note) of
+        ID when Dest < Note ->
+            validate_short_leaf_path(L, Dest, LeftBound, min(RightBound, Note),
+                                     Rest);
+        ID ->
+            validate_short_leaf_path(R, Dest, max(LeftBound, Note), RightBound,
+                                     Rest);
+        _ ->
+            false
+    end;
+validate_short_leaf_path(ID, _Dest, LeftBound, RightBound, Path)
+        when byte_size(Path) >= ?NOTE_SIZE,
+             byte_size(Path) < ?CHUNK_ID_HASH_SIZE + ?NOTE_SIZE ->
+    DataSize = byte_size(Path) - ?NOTE_SIZE,
+    << Data:DataSize/binary, EndOffset:(?NOTE_SIZE * 8) >> = Path,
+    case ar_merkle:get_leaf_id(Data, EndOffset) of
+        ID ->
+            {Data, LeftBound, max(min(RightBound, EndOffset), LeftBound + 1)};
+        _ ->
+            false
+    end;
+validate_short_leaf_path(_ID, _Dest, _LeftBound, _RightBound, _Path) ->
+    false.
+
+%% @doc Return the data root to store the entry of a transaction with the given
+%% data root under. The keys and the data roots served to peers are 32 bytes
+%% long, so a shorter data root is replaced by a hash no Merkle root can equal.
+entry_data_root(DataRoot) when byte_size(DataRoot) == 32 ->
+    DataRoot;
+entry_data_root(DataRoot) ->
+    crypto:hash(sha256, << ?SHORT_DATA_ROOT_PREFIX/binary, DataRoot/binary >>).
 
 %%%===================================================================
 %%% Private: Repair
@@ -1180,15 +1267,118 @@ test_verify_stored_block() ->
                             [{2000, 2000 + BlockSize,
                               invalid_tx_start_offset, removed}]},
                            verify_stored_blocks(2000, 10000, 10, StoreID)),
-              %% Entries failing for another reason, here a missing first
-              %% transaction, are kept.
+              %% Entries leaving out a transaction are removed.
               Missing = [{DataRoot2, 20, 3000 + 10, TXPath2},
                          {DataRoot3, 30, 3000 + 30, TXPath3}],
               {ok, _} = store_block(3000, BlockSize, TXRoot, Missing, StoreID),
-              ?assertMatch({done, _, 1, [{3000, _, invalid_tx_path, kept}]},
+              ?assertEqual({invalid, missing_tx_entry},
+                           verify_stored_block(3000, StoreID)),
+              ?assertMatch({done, _, 1, [{3000, _, missing_tx_entry, removed}]},
                            verify_stored_blocks(3000, 10000, 10, StoreID)),
+              ?assertEqual(not_found, verify_stored_block(3000, StoreID)),
+              %% Entries failing for another reason, here a corrupted path,
+              %% are kept.
+              Corrupted = [{DataRoot1, 10, 4000, << TXPath1/binary, 0 >>},
+                           {DataRoot2, 20, 4000 + 10, TXPath2},
+                           {DataRoot3, 30, 4000 + 30, TXPath3}],
+              {ok, _} = store_block(4000, BlockSize, TXRoot, Corrupted,
+                                    StoreID),
+              ?assertMatch({done, _, 1, [{4000, _, invalid_tx_path, kept}]},
+                           verify_stored_blocks(4000, 10000, 10, StoreID)),
               ?assertMatch({invalid, invalid_tx_path},
-                           verify_stored_block(3000, StoreID))
+                           verify_stored_block(4000, StoreID))
+      end).
+
+%% A transaction with a data root shorter than 32 bytes keeps its place in the
+%% entries under a hashed data root, wherever it is in the block.
+short_data_root_entries_test_() ->
+    {timeout, 30, fun test_short_data_root_entries/0}.
+
+test_short_data_root_entries() ->
+    with_test_index_and_keys_db(
+      fun(StoreID) ->
+              BlockStart = arweave_lib_constants:strict_data_split_threshold(),
+              Short = << 7 >>,
+              ShortKey = entry_data_root(Short),
+              ?assertEqual(32, byte_size(ShortKey)),
+              %% Two short data roots that would be equal if zero-padded to
+              %% 32 bytes get different keys.
+              ?assertNotEqual(ShortKey, entry_data_root(<< 7, 0 >>)),
+              %% A 31-byte prefix of a data root ending with a zero byte
+              %% does not take its key either.
+              Root = << 1:248, 0:8 >>,
+              ?assertNotEqual(Root, entry_data_root(binary:part(Root, 0, 31))),
+              Shift = fun(Entries, Start) ->
+                          [{DataRoot, Size, TXStart - BlockStart + Start, Path}
+                           || {DataRoot, Size, TXStart, Path} <- Entries]
+                      end,
+              lists:foreach(
+                fun(Position) ->
+                        {Before, After} = lists:split(Position - 1,
+                                                      [<< 1:256 >>, << 2:256 >>]),
+                        SizeTaggedTXs = short_root_size_tagged_txs(
+                                          Before ++ [Short] ++ After),
+                        {TXRoot, BlockSize, Reversed} =
+                            build_block_data_root_entries(BlockStart,
+                                                          SizeTaggedTXs),
+                        Entries = lists:reverse(Reversed),
+                        %% 3 one-byte transactions, each padded to a chunk.
+                        ?assertEqual(3 * ?DATA_CHUNK_SIZE, BlockSize),
+                        ?assertMatch({ShortKey, 1, _, _},
+                                     lists:nth(Position, Entries)),
+                        ?assertEqual(3, length(Entries)),
+                        ?assertEqual(ok,
+                                     verify_data_root_entries(
+                                       Entries, TXRoot, BlockStart, BlockSize,
+                                       0, 0)),
+                        %% The entries survive the trip to a peer.
+                        Block = {TXRoot, BlockSize, Entries},
+                        ?assertEqual({ok, Block},
+                                     ar_serialize:binary_to_data_roots(
+                                       ar_serialize:data_roots_to_binary(
+                                         Block))),
+                        %% A block per position, 10 block sizes apart.
+                        Start = BlockStart + Position * 10 * BlockSize,
+                        {ok, _} = store_block(Start, BlockSize, TXRoot,
+                                              Shift(Entries, Start), StoreID),
+                        ?assertEqual(ok, verify_stored_block(Start, StoreID)),
+                        %% The short data root itself is not accepted in
+                        %% place of its key.
+                        WithShort = [case DataRoot of
+                                         ShortKey -> {Short, Size, TXStart, Path};
+                                         _ -> Entry
+                                     end
+                                     || {DataRoot, Size, TXStart, Path} = Entry
+                                            <- Entries],
+                        ?assertEqual({error, invalid_tx_path},
+                                     verify_data_root_entries(
+                                       WithShort, TXRoot, BlockStart,
+                                       BlockSize, 0, 0)),
+                        %% The entries without the short data root fail and
+                        %% are removed when stored.
+                        WithoutShort = lists:delete(lists:nth(Position, Entries),
+                                                    Entries),
+                        Expected = case Position of
+                                       3 -> invalid_total_tx_size;
+                                       _ -> missing_tx_entry
+                                   end,
+                        ?assertEqual({error, Expected},
+                                     verify_data_root_entries(
+                                       WithoutShort, TXRoot, BlockStart,
+                                       BlockSize, 0, 0)),
+                        OldStart = Start + 5 * BlockSize,
+                        {ok, _} = store_block(OldStart, BlockSize, TXRoot,
+                                              Shift(WithoutShort, OldStart),
+                                              StoreID),
+                        ?assertMatch({done, _, 1,
+                                      [{OldStart, _, Expected, removed}]},
+                                     verify_stored_blocks(
+                                       OldStart, OldStart + BlockSize, 10,
+                                       StoreID)),
+                        ?assertEqual(not_found,
+                                     verify_stored_block(OldStart, StoreID))
+                end,
+                [1, 2, 3])
       end).
 
 %% Shifted entries the old validation accepted, in the order they were sent,
@@ -1377,6 +1567,57 @@ test_verify_stored_blocks_failed_removal_resyncs() ->
               ?assertEqual(ok, verify_stored_block(Start, StoreID))
       end).
 
+%% A resumed removal reports the reason it started for.
+verify_stored_blocks_resumed_removal_reason_test_() ->
+    {timeout, 30, fun test_verify_stored_blocks_resumed_removal_reason/0}.
+
+test_verify_stored_blocks_resumed_removal_reason() ->
+    with_test_index_and_keys_db(
+      fun(StoreID) ->
+              {TXRoot, BlockSize, Entries} =
+                  make_valid_data_root_entries(0, [10, 20, 30]),
+              [{DataRoot1, 10, 0, TXPath1}, {DataRoot2, 20, 10, TXPath2},
+               {DataRoot3, 30, 30, TXPath3}] = Entries,
+              Start = 1000,
+              End = Start + BlockSize,
+              Missing = [{DataRoot2, 20, Start + 10, TXPath2},
+                         {DataRoot3, 30, Start + 30, TXPath3}],
+              {ok, _} = store_block(Start, BlockSize, TXRoot, Missing, StoreID),
+              IndexDB = index_db(StoreID),
+              FailingKey = index_key(DataRoot3, 30, Start + 30),
+              ok = meck:new(ar_kv, [passthrough]),
+              try
+                  meck:expect(ar_kv, delete,
+                      fun(DB, Key) when DB == IndexDB, Key == FailingKey ->
+                              {error, injected};
+                         (DB, Key) ->
+                              meck:passthrough([DB, Key])
+                      end),
+                  ?assertEqual({error, injected},
+                               verify_stored_blocks(Start, End, 10, StoreID))
+              after
+                  ok = meck:unload(ar_kv)
+              end,
+              ?assertMatch({done, _, 1, [{Start, End, missing_tx_entry,
+                                          removed}]},
+                           verify_stored_blocks(Start, End, 10, StoreID)),
+              %% A removal journaled without the reason.
+              Start2 = 2000,
+              End2 = Start2 + BlockSize,
+              Shifted = [{DataRoot1, 5, Start2 + 5, TXPath1},
+                         {DataRoot2, 20, Start2 + 10, TXPath2},
+                         {DataRoot3, 35, Start2 + 25, TXPath3}],
+              {ok, _} = store_block(Start2, BlockSize, TXRoot, Shifted,
+                                    StoreID),
+              {ok, BlockKey} = get_keys(Start2, StoreID),
+              ok = write_pending_removal({entries, Start2, End2, BlockKey},
+                                         StoreID),
+              ?assertMatch({done, _, 1, [{Start2, End2,
+                                          invalid_tx_start_offset, removed}]},
+                           verify_stored_blocks(Start2, End2, 10, StoreID)),
+              ?assertEqual(not_found, verify_stored_block(Start2, StoreID))
+      end).
+
 %% Above the strict data split threshold every transaction is padded to whole
 %% chunks, so an entry can be shortened within its last chunk without changing
 %% the padded total. Only the start offset check rejects it.
@@ -1549,6 +1790,21 @@ make_padded_data_root_entries(BlockStart, TXSizes) ->
     {TXRoot, BlockSize, Entries} =
         build_block_data_root_entries(BlockStart, lists:reverse(SizeTaggedTXs)),
     {TXRoot, BlockSize, lists:reverse(Entries)}.
+
+%% @doc Build the size-tagged list of a block above the strict data split
+%% threshold with a one-byte transaction for each of the given data roots.
+short_root_size_tagged_txs(DataRoots) ->
+    {SizeTaggedTXs, _} =
+        lists:foldl(
+          fun(DataRoot, {Acc, Start}) ->
+                  End = Start + 1,
+                  PaddedEnd = arweave_lib_constants:get_padded_offset(End, 0),
+                  {[{{padding, ?PADDING_NODE_DATA_ROOT}, PaddedEnd},
+                    {{dummy, DataRoot}, End} | Acc], PaddedEnd}
+          end,
+          {[], 0},
+          DataRoots),
+    lists:reverse(SizeTaggedTXs).
 
 make_valid_data_root_entries(BlockStart, TXSizes) ->
     SizeTaggedTXs =
