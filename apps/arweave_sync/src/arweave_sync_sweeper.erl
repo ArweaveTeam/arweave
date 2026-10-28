@@ -7,7 +7,8 @@
 %%% with its own cursor offset. The first sweep after the sweeper starts
 %%% resumes instead at the offsets last saved (maybe_save_cursor/1), so a
 %%% node restart does not send the sweep back over ranges it had passed. The
-%%% modes are:
+%%% saved offsets stay at the first parked range, so a restart sweeps the
+%%% parked ranges again. The modes are:
 %%% - byte: one QUERY_RANGE_STEP_SIZE grid step at a time, up to the weave
 %%%   size;
 %%% - footprint: one footprint at a time, up to the lower of the weave size
@@ -34,8 +35,8 @@
 %%%    claim skipped chunks because their sources had no room
 %%%    (arweave_sync_store:full_peers/2), park the range (park_sweep_range/3),
 %%%    or, when the mode already holds its sweep queue length of parked
-%%%    ranges, keep the range at the head and retry after
-%%%    BLOCKED_RETRY_DELAY_MS.
+%%%    ranges and the range is not one of them, keep the range at the head
+%%%    and retry after BLOCKED_RETRY_DELAY_MS.
 %%%    Each step first claims again from the parked range due first
 %%%    (retry_parked_range/1), every PARKED_RANGE_RETRY_DELAY_MS, so a peer
 %%%    whose data the sweep has passed stays busy.
@@ -293,11 +294,8 @@ read_resume_offsets(StoreID, RangeStart, RangeEnd) ->
 maybe_save_cursor(#state{cursor = undefined} = State) ->
     State;
 maybe_save_cursor(State) ->
-    #state{cursor = Cursor, saved_at_ms = SavedAtMs} = State,
-    Offsets = {
-        arweave_sync_cursor:current(byte, Cursor),
-        arweave_sync_cursor:current(footprint, Cursor)
-    },
+    #state{saved_at_ms = SavedAtMs} = State,
+    Offsets = {resume_offset(byte, State), resume_offset(footprint, State)},
     NowMs = ?DEP(clock):monotonic_ms(),
     IsDue =
         SavedAtMs == undefined orelse
@@ -306,6 +304,16 @@ maybe_save_cursor(State) ->
         true -> save_offsets(Offsets, NowMs, State);
         false -> State
     end.
+
+%% @doc Return the offset a restart resumes the mode from: the cursor, or the
+%% first parked range before it. Parked ranges are not saved, so a restart
+%% sweeps them again instead of waiting for the next sweep.
+resume_offset(Mode, State) ->
+    lists:foldl(
+        fun(#sweep_range{offset = Offset}, Min) -> min(Offset, Min) end,
+        arweave_sync_cursor:current(Mode, State#state.cursor),
+        parked_ranges(Mode, State)
+    ).
 
 save_offsets(Offsets, NowMs, State) ->
     StoreID = State#state.store_id,
@@ -567,7 +575,8 @@ process_sweep_range(
                     Blocked;
                 {parked, SweepRange2} = Outcome ->
                     Mode = SweepRange#sweep_range.mode,
-                    case has_parking_room(Mode, State) of
+                    case has_parking_room(Mode, State)
+                            orelse is_parked(SweepRange, State) of
                         true ->
                             {ok, apply_claim_outcome(
                                 SweepRange, Outcome, State)};
@@ -723,6 +732,11 @@ finish_sweep_range(SweepRange, State) ->
 %% length. The sweep stops at a range it cannot park.
 has_parking_room(Mode, State) ->
     length(parked_ranges(Mode, State)) < sweep_queue_max_length(Mode).
+
+%% @doc Return whether a range at the same offset is parked. Parking the range
+%% again only merges it into the parked one, so it needs no room.
+is_parked(#sweep_range{mode = Mode, offset = Offset}, State) ->
+    lists:keymember(Offset, #sweep_range.offset, parked_ranges(Mode, State)).
 
 %% @doc Return the range set to claim from its first skipped chunk.
 resume_at_skipped(#sweep_range{skipped_from = undefined} = SweepRange) ->

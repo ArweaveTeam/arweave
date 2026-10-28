@@ -24,6 +24,7 @@ all() ->
         sweep_readiness,
         sweep_resumes_at_saved_offsets,
         cursor_save_cadence,
+        cursor_save_stops_at_parked_ranges,
         parked_ranges_merge_and_stay_bounded,
         skipped_range_parks_or_blocks
     ].
@@ -618,6 +619,41 @@ cursor_save_cadence(_Config) ->
         end
     ).
 
+%% @doc The saved offsets stay at the first parked range of each mode, so a
+%% restart sweeps the parked ranges again.
+cursor_save_stops_at_parked_ranges(_Config) ->
+    Self = self(),
+    arweave_sync_test_util:with_mocks(
+        [
+            {ar_timer, monotonic_ms, fun() -> 0 end},
+            {arweave_storage, write_sweep_cursor, fun(Offsets, store1) ->
+                Self ! {saved, Offsets},
+                ok
+            end}
+        ],
+        fun() ->
+            State = arweave_sync_sweeper:initialize_sweep(#state{
+                store_id = store1,
+                range_start = 0,
+                range_end = 1000
+            }),
+            Moved = State#state{
+                cursor = set_test_cursors(State#state.cursor, 600, 300)
+            },
+            Park = fun(Mode, Offset, Acc) ->
+                arweave_sync_sweeper:park_sweep_range(
+                    #sweep_range{mode = Mode, offset = Offset,
+                        skipped_from = Offset + 10},
+                    1000, Acc
+                )
+            end,
+            Parked = Park(byte, 400, Park(byte, 200, Park(footprint, 100,
+                Moved))),
+            arweave_sync_sweeper:maybe_save_cursor(Parked),
+            ?assertEqual([{200, 100}], saved_offsets())
+        end
+    ).
+
 %% @doc A range parked again keeps the lower offset to claim from, and a mode
 %% parks at most its sweep queue length of ranges.
 parked_ranges_merge_and_stay_bounded(_Config) ->
@@ -732,7 +768,21 @@ skipped_range_parks_or_blocks(_Config) ->
                     skipped_from = undefined}},
                 queue:peek(arweave_sync_sweeper:sweep_queue(byte, State4))
             ),
-            ?assertEqual(Full, maps:get(byte, State4#state.parked_ranges))
+            ?assertEqual(Full, maps:get(byte, State4#state.parked_ranges)),
+            %% A range that is already parked merges into the full list, and
+            %% the sweep moves past it.
+            FullWithRange = [#sweep_range{mode = byte, offset = 0,
+                next_claim_offset = 70, retry_at_ms = 0} | tl(Full)],
+            State5 = State#state{
+                parked_ranges = #{byte => FullWithRange, footprint => []}
+            },
+            {ok, State6} =
+                arweave_sync_sweeper:process_sweep_range(SweepRange, State5),
+            ?assert(queue:is_empty(arweave_sync_sweeper:sweep_queue(byte, State6))),
+            Parked6 = maps:get(byte, State6#state.parked_ranges),
+            ?assertEqual(?BYTE_SWEEP_QUEUE_MAX_LENGTH, length(Parked6)),
+            ?assertMatch(#sweep_range{next_claim_offset = 50},
+                lists:keyfind(0, #sweep_range.offset, Parked6))
         end
     ).
 
