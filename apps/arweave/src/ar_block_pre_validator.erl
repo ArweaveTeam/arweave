@@ -640,9 +640,7 @@ pre_validate_resigned_solution(B, PrevB, Peer) ->
             reject_hash_preimage(B, Peer),
             invalid;
         false ->
-            Ref = erlang:get(ignore_registry_ref),
-            gen_server:cast(?MODULE, {enqueue, {B, PrevB, true, Peer, Ref}}),
-            enqueued
+            pre_validate_tx_bodies(B, PrevB, true, Peer)
     end.
 
 pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
@@ -654,9 +652,40 @@ pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
             reject_hash_preimage(B, Peer),
             invalid;
         true ->
+            pre_validate_tx_bodies(B, PrevB, SolutionResigned, Peer)
+    end.
+
+pre_validate_tx_bodies(B, PrevB, SolutionResigned, Peer) ->
+    case lists:all(fun is_tx_body_correct/1, B#block.txs) of
+        false ->
+            post_block_reject_warn(B, check_tx_bodies, Peer),
+            ar_events:send(block, {rejected, tx_body_rejection(B#block.height),
+                                   B#block.indep_hash, Peer}),
+            invalid;
+        true ->
             Ref = erlang:get(ignore_registry_ref),
-            gen_server:cast(?MODULE, {enqueue, {B, PrevB, SolutionResigned, Peer, Ref}}),
+            gen_server:cast(?MODULE,
+                            {enqueue, {B, PrevB, SolutionResigned, Peer, Ref}}),
             enqueued
+    end.
+
+is_tx_body_correct(<< _:32/binary >>) ->
+    true;
+is_tx_body_correct(#tx{ id = TXID } = TX) ->
+    case ar_tx:is_ecdsa_tx(TX) of
+        true ->
+            %% Parsing recovered the owner from the signature.
+            ar_tx:verify_hash(TX);
+        false ->
+            ar_tx:verify_tx_id(TXID, TX)
+    end.
+
+tx_body_rejection(Height) ->
+    case ar_block_cache:rejects_resigned_relative_solution(Height) of
+        true ->
+            invalid_tx_body;
+        false ->
+            invalid_tx_body_relative
     end.
 
 reject_hash_preimage(B, Peer) ->
@@ -1002,6 +1031,19 @@ throttle_by_solution_hash(H, Timestamps, ThrottleInterval) ->
 %%%===================================================================
 
 -ifdef(AR_TEST).
+is_tx_body_correct_test() ->
+    OtherID = crypto:strong_rand_bytes(32),
+    lists:foreach(
+        fun(KeyType) ->
+            TX = ar_tx:sign(#tx{ format = 2, reward = 1 },
+                    ar_wallet:new(KeyType)),
+            ?assert(is_tx_body_correct(TX)),
+            ?assert(is_tx_body_correct(TX#tx.id)),
+            ?assertNot(is_tx_body_correct(TX#tx{ id = OtherID }))
+        end,
+        [?RSA_KEY_TYPE, ?ECDSA_KEY_TYPE]
+    ).
+
 poa_cache_reconciles_test_() ->
     Root = <<"root">>,
     PrevB = #block{},

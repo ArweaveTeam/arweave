@@ -122,6 +122,8 @@
 
 -define(BAD_HASH_PREIMAGE_BAN_TIME, 30).
 
+-define(BAD_TX_BODY_BAN_TIME, 5).
+
 %% A part of transaction propagation delay independent from the size, in seconds.
 -ifdef(AR_TEST).
 -define(BASE_TX_PROPAGATION_DELAY, 0).

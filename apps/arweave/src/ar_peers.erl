@@ -143,7 +143,9 @@
                               invalid_poa2,
                               invalid_nonce_limiter,
                               invalid_nonce_limiter_cache_mismatch,
-                              invalid_packing_difficulty
+                              invalid_packing_difficulty,
+                              invalid_tx_body,
+                              invalid_tx_body_relative
                              ]).
 
 -define(BLOCK_REJECTION_IGNORE, [
@@ -1141,6 +1143,8 @@ maybe_add_peer(Peer, Release) ->
 %% @doc Return the ban duration for the given block rejection reason.
 ban_time(invalid_hash_preimage_relative) ->
     ?BAD_HASH_PREIMAGE_BAN_TIME;
+ban_time(invalid_tx_body_relative) ->
+    ?BAD_TX_BODY_BAN_TIME;
 ban_time(_Reason) ->
     ?BAD_BLOCK_BAN_TIME.
 
