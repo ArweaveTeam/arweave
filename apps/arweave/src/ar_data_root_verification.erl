@@ -5,6 +5,10 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
+-ifdef(AR_TEST).
+-export([reset_cursor/0]).
+-endif.
+
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
 
@@ -200,3 +204,12 @@ read_cursor() ->
 write_cursor(Cursor) ->
     ar_kv:put(ar_data_sync:migration_db(?DEFAULT_MODULE), ?CURSOR_KEY,
               << Cursor:?OFFSET_KEY_BITSIZE >>).
+
+-ifdef(AR_TEST).
+%% @doc Start the check over from offset 0, so that it re-checks blocks it has
+%% already passed.
+reset_cursor() ->
+    ok = write_cursor(0),
+    sys:replace_state(?MODULE, fun(State) -> State#state{ cursor = 0 } end),
+    ok.
+-endif.
