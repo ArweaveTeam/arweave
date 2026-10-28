@@ -43,9 +43,11 @@ ban_peer(Peer, TTLSeconds) ->
 
 is_peer_banned(Peer) ->
     Key = {ban, peer_to_ip_addr(Peer)},
+    %% Expired bans stay in the table until the next cleanup.
+    Now = os:system_time(seconds),
     case ets:lookup(?MODULE, Key) of
-        [] -> not_banned;
-        [_] -> banned
+        [{_, Expires}] when Expires >= Now -> banned;
+        _ -> not_banned
     end.
 
 cleanup_ban(TableID) ->
@@ -98,6 +100,17 @@ ban_peer_never_shortens_existing_ban_test() ->
     ban_peer(Peer, 5000),
     [{_, LongerExpires}] = ets:lookup(?MODULE, Key),
     ?assert(LongerExpires > LongExpires),
+    reset().
+
+expired_ban_test() ->
+    ensure_test_table(),
+    reset(),
+    Peer = {127, 0, 0, 1, 1984},
+    %% The cleanup has not removed the expired ban yet.
+    ets:insert(?MODULE, {{ban, {127, 0, 0, 1}}, os:system_time(seconds) - 1}),
+    ?assertEqual(not_banned, is_peer_banned(Peer)),
+    ban_peer(Peer, 10),
+    ?assertEqual(banned, is_peer_banned(Peer)),
     reset().
 
 %% The ban table is created by ar_sup at node boot; create it here when the test
