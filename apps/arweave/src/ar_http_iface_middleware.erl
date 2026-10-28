@@ -2058,6 +2058,8 @@ handle_post_tx(Req, Peer, TX) ->
             handle_post_tx_already_in_mempool_response();
         {invalid, invalid_data_root_size} ->
             handle_post_tx_invalid_data_root_response();
+        {invalid, invalid_data_root_length} ->
+            handle_post_tx_invalid_data_root_length_response();
         {valid, TX2} ->
             ar_disk_pool:add_data_root(TX2#tx.data_root, TX2#tx.data_size,
                                        TX#tx.id),
@@ -2097,6 +2099,9 @@ handle_post_tx_already_in_mempool_response() ->
 
 handle_post_tx_invalid_data_root_response() ->
     {error_response, {400, #{}, <<"The attached data is split in an unknown way.">>}}.
+
+handle_post_tx_invalid_data_root_length_response() ->
+    {error_response, {400, #{}, <<"The data root must be empty or 32 bytes long.">>}}.
 
 handle_get_data_sync_record(Start, Limit, Req) ->
     Options = #{ start => Start, limit => Limit, format => content_type_format(Req) },
