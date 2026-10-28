@@ -16,6 +16,7 @@ all() ->
         byte_range_end_aligns_padded_store_start,
         fresh_sweep_range_waits,
         warmed_sweep_range_proceeds,
+        resume_at_live_end_finishes_range,
         empty_sweep_range_has_no_metadata_wait,
         completed_nonempty_range_uses_cadence,
         waiting_metadata_allows_other_mode_progress,
@@ -134,6 +135,86 @@ warmed_sweep_range_proceeds(_Config) ->
             ?assert(queue:is_empty(arweave_sync_sweeper:sweep_queue(byte, State2))),
             ?assertEqual(
                 100, arweave_sync_cursor:current(byte, State2#state.cursor)
+            )
+        end
+    ).
+
+%% @doc A range whose last claim ended at or past the live end finishes and
+%% advances the cursor even though the store still lacks chunks in it.
+resume_at_live_end_finishes_range(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        [
+            {arweave_sync_discovery, get_peers_for_offset, fun(0) -> [] end},
+            {arweave_sync_discovery, warm_peer_ranges, fun(test_store, [], 0) ->
+                ok
+            end},
+            {arweave_sync_discovery, cached_peer_ranges, fun(
+                test_store, [], 0, 0, 100
+            ) ->
+                {[], ok}
+            end},
+            {ar_peers, pick_peers, fun([], _Limit) -> [] end},
+            {arweave_storage, get_intervals, fun
+                (unsynced, 0, 100, any_packing, {ar_data_sync, byte},
+                        test_store) ->
+                    arweave_lib_intervals:from_list([{100, 0}]);
+                (unsynced, _, _, any_packing, {ar_data_sync, footprint},
+                        test_store) ->
+                    arweave_lib_intervals:new()
+            end},
+            {ar_tx_blacklist, get_blacklisted_intervals, fun(0, 100) ->
+                arweave_lib_intervals:new()
+            end},
+            {ar_footprint_limit, get, fun(test_store) ->
+                arweave_lib_constants:get_replica_2_9_footprints_per_partition()
+            end}
+        ],
+        fun() ->
+            Cursor = arweave_sync_cursor:new(0, 100),
+            UnsyncedRange = #unsynced_range{
+                kind = byte,
+                query_offset = 0,
+                intervals = arweave_lib_intervals:from_list([{100, 0}]),
+                range_start = 0,
+                range_end = 100,
+                advance = 100
+            },
+            RequestedAt = ar_timer:monotonic_ms() - ?SWEEP_RANGE_WARM_WAIT_MS,
+            %% 100 is a claim that ended exactly at the live end. 150 is a
+            %% resume offset left past a live end that has since moved down.
+            lists:foreach(
+                fun(NextClaimOffset) ->
+                    SweepRange = #sweep_range{
+                        mode = byte,
+                        offset = 0,
+                        next_offset = 100,
+                        unsynced_range = UnsyncedRange,
+                        requested_at = RequestedAt,
+                        next_claim_offset = NextClaimOffset
+                    },
+                    State = #state{
+                        store_id = test_store,
+                        weave_size = 100,
+                        disk_pool_threshold = 100,
+                        cursor = Cursor,
+                        readahead_cursor = Cursor,
+                        sweep_queues = #{
+                            byte => queue:in(SweepRange, queue:new()),
+                            footprint => queue:new()
+                        }
+                    },
+                    {ok, State2} = arweave_sync_sweeper:process_sweep_range(
+                        SweepRange, State
+                    ),
+                    ?assert(queue:is_empty(
+                        arweave_sync_sweeper:sweep_queue(byte, State2)
+                    )),
+                    ?assertEqual(
+                        100,
+                        arweave_sync_cursor:current(byte, State2#state.cursor)
+                    )
+                end,
+                [100, 150]
             )
         end
     ).
