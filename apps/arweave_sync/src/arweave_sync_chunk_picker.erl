@@ -8,8 +8,9 @@
 %%%    full peers). Returns `blocked' when the headroom is 0.
 %%% 2. Intersects each peer range with the unsynced ranges to build task
 %%%    sources (build_task_sources/3): one per peer and footprint, where a
-%%%    byte source has footprint none. Leaves out the byte sources of full
-%%%    peers, and notes the first chunk only those sources serve as skipped.
+%%%    byte source has footprint none. Cuts the byte sources of full peers
+%%%    down to the chunks other byte sources serve, and notes the first chunk
+%%%    only full peers' byte sources serve as skipped.
 %%% 3. Builds work from the task sources in offset order (build_tasks/3): a
 %%%    footprint reservation for each footprint, holding the footprint's
 %%%    sources, and, up to the headroom, a task for each chunk the byte
@@ -91,24 +92,34 @@ find_task_sources(UnsyncedRanges, PeerRanges) ->
         UnsyncedRanges),
     maps:values(TaskSourcesByKey).
 
-%% @doc Leave out the byte sources of full peers. Return the remaining sources
-%% and the first offset that only the left-out sources serve, or none.
+%% @doc Cut the byte sources of full peers down to the chunks that other byte
+%% sources also serve, so they stay fallback sources there. Return the sources
+%% and the first offset that only full peers' byte sources serve, or none.
+%% Footprint sources do not count: their reservation may be refused, and
+%% nothing would then claim or skip the chunk.
 drop_full_peer_sources(TaskSources, []) ->
     {TaskSources, none};
 drop_full_peer_sources(TaskSources, FullPeers) ->
-    {Dropped, Kept} = lists:partition(
+    {Full, Kept} = lists:partition(
         fun(#task_source{ peer = Peer, footprint = Footprint }) ->
             Footprint == none andalso lists:member(Peer, FullPeers)
         end,
         TaskSources),
+    KeptBytes = union_intervals(
+        [Source || #task_source{ footprint = none } = Source <- Kept]),
+    Shared = [Source#task_source{ intervals = Intervals }
+        || #task_source{ intervals = SourceIntervals } = Source <- Full,
+            Intervals <- [arweave_lib_intervals:intersection(
+                SourceIntervals, KeptBytes)],
+            not arweave_lib_intervals:is_empty(Intervals)],
     Skipped = arweave_lib_intervals:outerjoin(
-        union_intervals(Kept), union_intervals(Dropped)),
+        KeptBytes, union_intervals(Full)),
     case arweave_lib_intervals:is_empty(Skipped) of
         true ->
-            {Kept, none};
+            {Kept ++ Shared, none};
         false ->
             {_, Start} = arweave_lib_intervals:smallest(Skipped),
-            {Kept, Start}
+            {Kept ++ Shared, Start}
     end.
 
 union_intervals(TaskSources) ->

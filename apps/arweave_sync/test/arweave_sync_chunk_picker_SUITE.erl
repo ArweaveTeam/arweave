@@ -241,8 +241,9 @@ build_task_sources(UnsyncedRange, PeerRanges) ->
         )
     ).
 
-%% @doc A full peer's byte sources are left out, and the first chunk that only
-%% they serve is reported as skipped. Its footprint sources are kept.
+%% @doc A full peer's byte sources are cut down to the chunks other byte
+%% sources serve, and the first chunk that only they serve is reported as
+%% skipped, even if a footprint source serves it. Footprint sources are kept.
 drop_full_peer_sources_reports_first_skipped_chunk(_Config) ->
     Slow = {1, 2, 3, 4, 1984},
     Fast = {5, 6, 7, 8, 1984},
@@ -264,13 +265,25 @@ drop_full_peer_sources_reports_first_skipped_chunk(_Config) ->
         {TaskSources, none},
         arweave_sync_chunk_picker:drop_full_peer_sources(TaskSources, [])
     ),
-    %% The footprint source serves chunk 0 and the fast peer chunk 2, so
-    %% chunk 1 is the first that only the slow peer's byte source serves.
+    %% Chunk 0 has only the slow peer's footprint source besides its byte
+    %% source, so it is the first skipped chunk. The slow peer stays a source
+    %% of chunk 2, which the fast peer also serves.
+    Drop = fun(FullPeers) ->
+        {Sources, Skipped} = arweave_sync_chunk_picker:drop_full_peer_sources(
+            TaskSources, FullPeers),
+        {[{Peer, F, arweave_lib_intervals:to_list(Intervals)}
+            || #task_source{ peer = Peer, footprint = F,
+                intervals = Intervals } <- Sources], Skipped}
+    end,
     ?assertEqual(
-        {[SlowFootprint, FastBytes], Chunk},
-        arweave_sync_chunk_picker:drop_full_peer_sources(TaskSources, [Slow])
+        {[{Slow, Footprint, [{Chunk, 0}]},
+            {Fast, none, [{3 * Chunk, 2 * Chunk}]},
+            {Slow, none, [{3 * Chunk, 2 * Chunk}]}], 0},
+        Drop([Slow])
     ),
     ?assertEqual(
-        {[SlowBytes, SlowFootprint], none},
-        arweave_sync_chunk_picker:drop_full_peer_sources(TaskSources, [Fast])
-    ).
+        {[{Slow, none, [{6 * Chunk, 0}]}, {Slow, Footprint, [{Chunk, 0}]},
+            {Fast, none, [{3 * Chunk, 2 * Chunk}]}], none},
+        Drop([Fast])
+    ),
+    ?assertEqual({[{Slow, Footprint, [{Chunk, 0}]}], 0}, Drop([Slow, Fast])).
