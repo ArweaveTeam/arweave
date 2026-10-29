@@ -7,7 +7,8 @@
 -export([send_tx_json/3, send_tx_json/4, send_tx_binary/3, send_tx_binary/4]).
 -export([send_block_json/3, send_block_binary/3, send_block_binary/4,
          send_block_announcement/2,
-         get_block/3, get_tx/2, get_txs/2, get_tx_from_remote_peers/3,
+         get_block/3, get_tx/2, get_txs/2, get_tx_from_remote_peer/3,
+         get_tx_from_remote_peers/3,
          get_tx_data/2, get_wallet_list_chunk/2, get_wallet_list_chunk/3,
          add_peer/1, get_info/1, get_info/2, get_peers/1,
          get_time/2, get_height/1, get_block_index/3,
@@ -22,11 +23,8 @@
          get_pool_cm_jobs/2, post_pool_cm_jobs/2,
          post_cm_partition_table_to_pool/2, get_data_roots/2]).
 -export([get_block_shadow/2, get_block_shadow/3, get_block_shadow/4]).
+-export([get_ecdsa_settled_state/1, get_ecdsa_settled_chunk/2]).
 -export([log_failed_request/2]).
-
-%% -- Testing exports
--export([get_tx_from_remote_peer/3]).
-%% -- End of testing exports
 
 -include("ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -35,6 +33,7 @@
 -include_lib("arweave_sync/include/arweave_sync.hrl").
 -include("ar_mining.hrl").
 -include("ar_wallets.hrl").
+-include("ar_ecdsa_settled.hrl").
 -include("ar_pool.hrl").
 -include("ar_peers.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -295,6 +294,64 @@ get_wallet_list_chunk([Peer | Peers], H, Cursor) ->
             end;
         Response ->
             get_wallet_list_chunk(Peers, H, Cursor)
+    end.
+
+%% @doc Return {ok, {Height, BH, Count, XOR}} describing the peer's ECDSA
+%% settled set.
+get_ecdsa_settled_state(Peer) ->
+    Response =
+        ar_http:req(#{
+                      method => get,
+                      peer => Peer,
+                      path => "/ecdsa_settled",
+                      headers => p2p_headers(),
+                      limit => 1024,
+                      timeout => 10 * 1000,
+                      connect_timeout => 1000
+                     }),
+    case Response of
+        {ok, {{<<"200">>, _}, _, Body, _, _}} ->
+            parse_ecdsa_settled_state(Body);
+        _ ->
+            {error, Response}
+    end.
+
+parse_ecdsa_settled_state(Body) ->
+    case catch jiffy:decode(Body, [return_maps]) of
+        #{ <<"height">> := Height, <<"indep_hash">> := EncodedBH,
+                <<"count">> := Count, <<"xor_checksum">> := EncodedXOR }
+                when is_integer(Height), Height >= -1, is_integer(Count),
+                    Count >= 0 ->
+            case {arweave_lib_util:safe_decode(EncodedBH),
+                    arweave_lib_util:safe_decode(EncodedXOR)} of
+                {{ok, BH}, {ok, << XOR:256 >>}} ->
+                    {ok, {Height, BH, Count, XOR}};
+                _ ->
+                    {error, invalid_ecdsa_settled_state}
+            end;
+        _ ->
+            {error, invalid_ecdsa_settled_state}
+    end.
+
+%% @doc Return {ok, Entries} with the {TXID, Height, Hash} entries of the
+%% peer's ECDSA settled set with identifiers bigger than Cursor.
+get_ecdsa_settled_chunk(Peer, Cursor) ->
+    Response =
+        ar_http:req(#{
+                      method => get,
+                      peer => Peer,
+                      path => "/ecdsa_settled/"
+                          ++ binary_to_list(arweave_lib_util:encode(Cursor)),
+                      headers => p2p_headers(),
+                      limit => ?MAX_SERIALIZED_ECDSA_SETTLED_CHUNK_SIZE,
+                      timeout => 30 * 1000,
+                      connect_timeout => 1000
+                     }),
+    case Response of
+        {ok, {{<<"200">>, _}, _, Body, _, _}} ->
+            ar_ecdsa_settled:parse_chunk(Body);
+        _ ->
+            {error, Response}
     end.
 
 get_block_index(Peer, Start, End) ->

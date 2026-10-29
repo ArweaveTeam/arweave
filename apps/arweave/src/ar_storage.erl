@@ -1224,7 +1224,10 @@ open_databases() ->
         name => block_index_db}),
     ok = ar_kv:open(#{
         path => filename:join([DataDir, ?ROCKS_DB_DIR, "account_tree_db"]),
-        name => account_tree_db}).
+        name => account_tree_db}),
+    ok = ar_kv:open(#{
+        path => filename:join([DataDir, ?ROCKS_DB_DIR, "ecdsa_settled_2_db"]),
+        name => ecdsa_settled_2_db}).
 
 open_start_from_state_databases(CustomDir) ->
     LogDir = arweave_config:get([log_dir]),

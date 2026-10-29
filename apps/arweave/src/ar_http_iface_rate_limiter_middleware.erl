@@ -98,6 +98,7 @@ path_to_limiter_ref([<<"hash_list2">>]) -> block_index;
 path_to_limiter_ref([<<"block_index">>]) -> block_index;
 path_to_limiter_ref([<<"block_index2">>]) -> block_index;
 path_to_limiter_ref([<<"block">>, _Type, _ID, <<"hash_list">>]) -> block_index;
+path_to_limiter_ref([<<"ecdsa_settled">> | _]) -> ecdsa_settled;
 path_to_limiter_ref([<<"wallet_list">>]) -> wallet_list;
 path_to_limiter_ref([<<"block">>, _Type, _ID, <<"wallet_list">>]) -> wallet_list;
 path_to_limiter_ref([<<"vdf">>]) -> get_vdf;

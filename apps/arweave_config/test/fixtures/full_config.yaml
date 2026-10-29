@@ -221,6 +221,8 @@ semaphores:
     limit: 108
   get_data_roots:
     limit: 109
+  get_ecdsa_settled:
+    limit: 110
 features:
   disk_logging: true
   double_check_nonce_limiter: true
@@ -315,6 +317,7 @@ limiter:
   recent_hash_list_diff: *limiter_full
   block_index: *limiter_full
   wallet_list: *limiter_full
+  ecdsa_settled: *limiter_full
   get_vdf: *limiter_full
   get_vdf_session: *limiter_full
   get_previous_vdf_session: *limiter_full

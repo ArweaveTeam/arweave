@@ -1141,6 +1141,33 @@ handle(<<"GET">>, [<<"total_supply">>], Req, _Pid) ->
             timeout_response(Req)
     end;
 
+%% Return the height and the block hash of the ECDSA settled set, the number of
+%% its entries and the XOR of their SHA-256 hashes (to verify a download).
+%% GET request to endpoint /ecdsa_settled.
+handle(<<"GET">>, [<<"ecdsa_settled">>], Req, _Pid) ->
+    case ar_ecdsa_settled:get_state() of
+        {ok, {Height, BH, Count, XOR}} ->
+            EncodedXOR = arweave_lib_util:encode(<< XOR:256 >>),
+            {200, #{}, jiffy:encode(#{ height => Height,
+                    indep_hash => arweave_lib_util:encode(BH), count => Count,
+                    xor_checksum => EncodedXOR }), Req};
+        _ ->
+            ecdsa_settled_not_available_response(Req)
+    end;
+
+%% Return up to ?ECDSA_SETTLED_CHUNK_SIZE {TXID, Height, Hash} entries of the
+%% ECDSA settled set with identifiers bigger than the given cursor, in
+%% ascending order. Hash is the SHA-256 hash of the signature data segment.
+%% GET request to endpoint /ecdsa_settled/{cursor}.
+handle(<<"GET">>, [<<"ecdsa_settled">>, EncodedCursor], Req, _Pid) ->
+    maybe
+        ok ?= acquire_http_semaphore(get_ecdsa_settled),
+        process_get_ecdsa_settled_chunk(EncodedCursor, Req)
+    else
+        {error, timeout} ->
+            timeout_response(Req)
+    end;
+
 %% Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list.
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
@@ -3199,6 +3226,25 @@ process_get_wallet_list_balance(EncodedRootHash, EncodedAddr, Req) ->
                     {500, #{}, <<>>, Req}
             end
     end.
+
+process_get_ecdsa_settled_chunk(EncodedCursor, Req) ->
+    DecodeResult = arweave_lib_util:safe_decode(EncodedCursor),
+    case {DecodeResult, ar_ecdsa_settled:get_state()} of
+        {{ok, << _:32/binary >> = Cursor}, {ok, _State}} ->
+            case ar_ecdsa_settled:get_chunk(Cursor) of
+                {ok, Entries} ->
+                    {200, #{}, ar_ecdsa_settled:serialize_chunk(Entries), Req};
+                _ ->
+                    ecdsa_settled_not_available_response(Req)
+            end;
+        {{ok, << _:32/binary >>}, _} ->
+            ecdsa_settled_not_available_response(Req);
+        _ ->
+            {400, #{}, <<"Invalid cursor.">>, Req}
+    end.
+
+ecdsa_settled_not_available_response(Req) ->
+    {503, #{}, jiffy:encode(#{ error => ecdsa_settled_not_available }), Req}.
 
 process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
     DecodeCursorResult =

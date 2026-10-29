@@ -34,6 +34,7 @@
 %%% See ar_patricia_tree_ets for the tree structure and why a patricia trie, and ar_diff_dag for
 %%% the sink-and-diffs graph.
 -module(ar_account_tree).
+-test_category([fast]).
 
 -export([start_link/1, get/1, get/2, get_wallet_list_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
          apply_block/2, add_wallets/4, set_current/3, get_size/0]).
@@ -45,6 +46,10 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
+
+-ifdef(AR_TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %%%===================================================================
 %%% Public interface.
@@ -260,8 +265,10 @@ load_local_account_tree(Blocks, SearchDepth, CustomDir, Tid) ->
 load_local_account_tree(_Blocks, Skipped, Skipped, _CustomDir, _Tid) ->
     not_found;
 load_local_account_tree(Blocks, SearchDepth, Skipped, CustomDir, Tid) ->
+    %% With a consensus window of blocks left, the deepest one is the last:
+    %% skipping it would leave fewer recent blocks than the window.
     {IsLast, B} =
-        case length(Blocks) >= arweave_lib_constants:get_consensus_window_size() of
+        case length(Blocks) > arweave_lib_constants:get_consensus_window_size() of
             true ->
                 {false, lists:nth(arweave_lib_constants:get_consensus_window_size(), Blocks)};
             false ->
@@ -683,3 +690,47 @@ maybe_add_node(DAG, UpdatedRootHash, RootHash, Wallets, Metadata) ->
         false ->
             ar_diff_dag:add_node(DAG, UpdatedRootHash, RootHash, Wallets, Metadata)
     end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+-ifdef(AR_TEST).
+
+load_local_account_tree_test_() ->
+    ar_test_util:with_mocked(
+        [{ar_storage, fold_wallet_list, fun fold_deepest_wallet_list/4}],
+        fun test_load_local_account_tree/0).
+
+test_load_local_account_tree() ->
+    Window = arweave_lib_constants:get_consensus_window_size(),
+    %% The 2 * Window recent blocks the node reads on startup, the tip first.
+    Blocks = [#block{ height = Height, wallet_list = << Height:384 >> }
+            || Height <- lists:seq(2 * Window - 1, 0, -1)],
+    Tid = ar_patricia_tree_ets:new(),
+    %% Only the deepest block has a stored tree, so the search skips the
+    %% Window blocks above the last Window blocks.
+    erlang:put(wallet_list_read_failures, 0),
+    ?assertEqual(Window,
+            load_local_account_tree(Blocks, 2 * Window, not_set, Tid)),
+    %% Retrying the read with one block fewer would leave Window - 1 blocks.
+    erlang:put(wallet_list_read_failures, 1),
+    ?assertEqual(not_found,
+            load_local_account_tree(Blocks, 2 * Window, not_set, Tid)),
+    ets:delete(Tid).
+
+%% @doc Stream the stored tree of the block at height 0 only, after failing as
+%% many reads of it as the wallet_list_read_failures key of the process
+%% dictionary says.
+fold_deepest_wallet_list(<< 0:384 >>, _Fun, Acc, _CustomDir) ->
+    case erlang:get(wallet_list_read_failures) of
+        0 ->
+            {ok, Acc};
+        N ->
+            erlang:put(wallet_list_read_failures, N - 1),
+            not_found
+    end;
+fold_deepest_wallet_list(_ID, _Fun, _Acc, _CustomDir) ->
+    not_found.
+
+-endif.

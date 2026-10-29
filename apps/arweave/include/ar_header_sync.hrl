@@ -31,3 +31,7 @@
 
 %% The frequency of storing the server state on disk.
 -define(STORE_HEADER_STATE_FREQUENCY_MS, 30000).
+
+%% The number of peers asked for an ECDSA transaction header the ECDSA settled
+%% set holds when the downloaded one does not match the set.
+-define(SETTLED_HEADER_PEER_COUNT, 10).

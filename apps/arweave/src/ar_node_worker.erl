@@ -444,71 +444,24 @@ handle_info({event, node_state, _Event}, State) ->
     {noreply, State};
 
 handle_info({event, nonce_limiter, initialized}, State) ->
-    [{_, {Height, Blocks, BI, _CustomDir}}] = ets:lookup(node_state, join_state),
-    ar_storage:store_block_index(BI),
-    RecentBI = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
-    Current = element(1, hd(RecentBI)),
-    RecentBlocks = lists:sublist(Blocks, arweave_lib_constants:get_consensus_window_size()),
-    RecentBlocks2 = set_poa_caches(RecentBlocks),
-    ar_block_cache:initialize_from_list(block_cache, RecentBlocks2),
-    B = hd(RecentBlocks2),
-    RewardHistory = [{H, {Addr, HashRate, Reward, Denomination}}
-                     || {{Addr, HashRate, Reward, Denomination}, {H, _, _}}
-                            <- lists:zip(B#block.reward_history,
-                                         lists:sublist(BI, length(B#block.reward_history)))],
-    ar_storage:store_reward_history_part2(RewardHistory),
-    BlockTimeHistory = [{H, {BlockInterval, VDFInterval, ChunkCount}}
-                        || {{BlockInterval, VDFInterval, ChunkCount}, {H, _, _}}
-                               <- lists:zip(B#block.block_time_history,
-                                            lists:sublist(BI, length(B#block.block_time_history)))],
-    ar_storage:store_block_time_history_part2(BlockTimeHistory),
-    Height = B#block.height,
-    ar_disk_cache:write_block(B),
-    ar_data_sync:join(RecentBI),
-    ar_header_sync:join(Height, RecentBI, Blocks),
-    ar_tx_blacklist:start_taking_down(),
-    BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
-    {BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
-    {Rate, ScheduledRate} = {B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate},
-    RecentBI2 = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
-    ets:insert(node_state, [
-                            {recent_block_index,    RecentBI2},
-                            {recent_max_block_size, get_max_block_size(RecentBI2)},
-                            {is_joined,             true},
-                            {current,               Current},
-                            {timestamp,             B#block.timestamp},
-                            {nonce_limiter_info,    B#block.nonce_limiter_info},
-                            {wallet_list,           B#block.wallet_list},
-                            {height,                Height},
-                            {hash,                  B#block.hash},
-                            {reward_pool,           B#block.reward_pool},
-                            {diff_pair,             ar_difficulty:diff_pair(B)},
-                            {cumulative_diff,       B#block.cumulative_diff},
-                            {last_retarget,         B#block.last_retarget},
-                            {weave_size,            B#block.weave_size},
-                            {block_txs_pairs,       BlockTXPairs},
-                            {block_anchors,         BlockAnchors},
-                            {recent_txs_map,        RecentTXMap},
-                            {usd_to_ar_rate,        Rate},
-                            {scheduled_usd_to_ar_rate, ScheduledRate},
-                            {price_per_gib_minute, B#block.price_per_gib_minute},
-                            {kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier},
-                            {denomination, B#block.denomination},
-                            {redenomination_height, B#block.redenomination_height},
-                            {scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute},
-                            {merkle_rebase_support_threshold, get_merkle_rebase_threshold(B)}
-                           ]),
-    SearchSpaceUpperBound = ar_node:get_partition_upper_bound(B#block.height, RecentBI),
-    ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
-    ar_events:send(node_state, {initialized, B}),
-    ar_events:send(node_state, {checkpoint_block,
-                                ar_block_cache:get_checkpoint_block(RecentBI)}),
-    ar:console("Joined the Arweave network successfully at the block ~s, height ~B.~n",
-               [arweave_lib_util:encode(Current), Height]),
-    ?LOG_INFO([{event, joined_the_network}, {block, arweave_lib_util:encode(Current)},
-               {height, Height}]),
-    ets:delete(node_state, join_state),
-    {noreply, maybe_reset_miner(State)};
+    [{_, {Height, Blocks, BI, CustomDir}}] = ets:lookup(node_state, join_state),
+    StartFromLocalState = arweave_config:get([join, start_from_latest_state])
+            orelse arweave_config:get([join, start_from_block]) /= not_set,
+    Source =
+        case {StartFromLocalState, CustomDir} of
+            {false, _} -> peers;
+            {true, not_set} -> local;
+            {true, _} -> {snapshot, CustomDir}
+        end,
+    %% Every on-chain block below the ones we cache must be in the ECDSA
+    %% settled set.
+    case ar_ecdsa_settled:initialize(BI, Blocks, Source) of
+        ok ->
+            {noreply, complete_join(Height, Blocks, BI, State)};
+        {error, Reason} ->
+            ecdsa_settled_set_not_found(Reason),
+            {noreply, State}
+    end;
 
 handle_info({event, nonce_limiter, {invalid, H, Code}}, State) ->
     ?LOG_WARNING([{event, received_block_with_invalid_nonce_limiter_chain},
@@ -692,6 +645,86 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
+%% @doc Make the node join the network at the tip of BI.
+complete_join(Height, Blocks, BI, State) ->
+    ar_storage:store_block_index(BI),
+    RecentBI = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
+    Current = element(1, hd(RecentBI)),
+    RecentBlocks = lists:sublist(Blocks, arweave_lib_constants:get_consensus_window_size()),
+    RecentBlocks2 = set_poa_caches(RecentBlocks),
+    ar_block_cache:initialize_from_list(block_cache, RecentBlocks2),
+    B = hd(RecentBlocks2),
+    RewardHistory = [{H, {Addr, HashRate, Reward, Denomination}}
+                     || {{Addr, HashRate, Reward, Denomination}, {H, _, _}}
+                            <- lists:zip(B#block.reward_history,
+                                         lists:sublist(BI, length(B#block.reward_history)))],
+    ar_storage:store_reward_history_part2(RewardHistory),
+    BlockTimeHistory = [{H, {BlockInterval, VDFInterval, ChunkCount}}
+                        || {{BlockInterval, VDFInterval, ChunkCount}, {H, _, _}}
+                               <- lists:zip(B#block.block_time_history,
+                                            lists:sublist(BI, length(B#block.block_time_history)))],
+    ar_storage:store_block_time_history_part2(BlockTimeHistory),
+    Height = B#block.height,
+    ar_disk_cache:write_block(B),
+    ar_data_sync:join(RecentBI),
+    ar_header_sync:join(Height, RecentBI, Blocks),
+    ar_tx_blacklist:start_taking_down(),
+    BlockTXPairs = [block_txs_pair(Block) || Block <- Blocks],
+    {BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
+    {Rate, ScheduledRate} = {B#block.usd_to_ar_rate, B#block.scheduled_usd_to_ar_rate},
+    RecentBI2 = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
+    ets:insert(node_state, [
+                            {recent_block_index,    RecentBI2},
+                            {recent_max_block_size, get_max_block_size(RecentBI2)},
+                            {is_joined,             true},
+                            {current,               Current},
+                            {timestamp,             B#block.timestamp},
+                            {nonce_limiter_info,    B#block.nonce_limiter_info},
+                            {wallet_list,           B#block.wallet_list},
+                            {height,                Height},
+                            {hash,                  B#block.hash},
+                            {reward_pool,           B#block.reward_pool},
+                            {diff_pair,             ar_difficulty:diff_pair(B)},
+                            {cumulative_diff,       B#block.cumulative_diff},
+                            {last_retarget,         B#block.last_retarget},
+                            {weave_size,            B#block.weave_size},
+                            {block_txs_pairs,       BlockTXPairs},
+                            {block_anchors,         BlockAnchors},
+                            {recent_txs_map,        RecentTXMap},
+                            {usd_to_ar_rate,        Rate},
+                            {scheduled_usd_to_ar_rate, ScheduledRate},
+                            {price_per_gib_minute, B#block.price_per_gib_minute},
+                            {kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier},
+                            {denomination, B#block.denomination},
+                            {redenomination_height, B#block.redenomination_height},
+                            {scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute},
+                            {merkle_rebase_support_threshold, get_merkle_rebase_threshold(B)}
+                           ]),
+    %% Drop the loaded mempool transactions the recent blocks have taken.
+    gen_server:cast(self(),
+            {filter_mempool, lists:reverse(ar_mempool:get_all_txids())}),
+    SearchSpaceUpperBound = ar_node:get_partition_upper_bound(B#block.height, RecentBI),
+    ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
+    ar_events:send(node_state, {initialized, B}),
+    ar_events:send(node_state, {checkpoint_block,
+                                ar_block_cache:get_checkpoint_block(RecentBI)}),
+    ar:console("Joined the Arweave network successfully at the block ~s, height ~B.~n",
+               [arweave_lib_util:encode(Current), Height]),
+    ?LOG_INFO([{event, joined_the_network}, {block, arweave_lib_util:encode(Current)},
+               {height, Height}]),
+    ets:delete(node_state, join_state),
+    maybe_reset_miner(State).
+
+ecdsa_settled_set_not_found(Reason) ->
+    ar:console("~n~n\tThe local state has no ECDSA settled set matching the "
+               "block index. Restart the node without start_from_latest_state "
+               "and start_from_block to download the set from the trusted "
+               "peers.~n"),
+    ?LOG_WARNING([{event, ecdsa_settled_set_not_found},
+                  {reason, io_lib:format("~p", [Reason])}]),
+    timer:sleep(1000),
+    init:stop(1).
+
 record_metrics() ->
     [{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
     arweave_metrics:gauge_set(arweave_block_height, ar_node:get_height()),
@@ -858,24 +891,28 @@ handle_task(Msg, State) ->
                ]),
     {noreply, State}.
 
+%% @doc Return the anchors of the last get_max_tx_anchor_depth() blocks and
+%% the identifiers of the transactions of all the given (up to
+%% 2 * get_max_tx_anchor_depth()) blocks.
 get_block_anchors_and_recent_txs_map(BlockTXPairs) ->
-    lists:foldr(
-      fun({BH, L}, {Acc1, Acc2}) ->
-              Acc3 =
+    Depth = arweave_lib_constants:get_max_tx_anchor_depth(),
+    BlockAnchors = [BH || {BH, _} <- lists:sublist(BlockTXPairs, Depth)],
+    RecentTXMap =
+        lists:foldl(
+          fun({_BH, L}, Acc) ->
                   lists:foldl(
-                    fun({{TXID, _}, _}, Acc4) ->
+                    fun({{TXID, _}, _}, Acc2) ->
                             %% We use a map instead of a set here because it is faster.
-                            maps:put(TXID, ok, Acc4)
+                            maps:put(TXID, ok, Acc2)
                     end,
-                    Acc2,
+                    Acc,
                     L
-                   ),
-              {[BH | Acc1], Acc3}
-      end,
-      {[], #{}},
-      lists:sublist(BlockTXPairs,
-          arweave_lib_constants:get_max_tx_anchor_depth())
-     ).
+                   )
+          end,
+          #{},
+          lists:sublist(BlockTXPairs, 2 * Depth)
+         ),
+    {BlockAnchors, RecentTXMap}.
 
 get_max_block_size([_SingleElement]) ->
     0;
@@ -1548,6 +1585,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
     ar_block_cache:add(block_cache, B),
     ar_block_cache:mark_tip(block_cache, BH),
     PrunedBlocks = ar_block_cache:prune(block_cache, arweave_lib_constants:get_consensus_window_size()),
+    ar_ecdsa_settled:settle(PrunedBlocks),
     evict_confirmed_tx_prefixes(PrunedBlocks),
     %% We could have missed a few blocks due to networking issues, which would then
     %% be picked by ar_poller and end up waiting for missing transactions to be fetched.

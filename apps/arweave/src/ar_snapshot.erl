@@ -5,9 +5,9 @@
 -include_lib("arweave/include/ar.hrl").
 
 %%% Build start_from_state snapshot directories: the block index, the recent
-%%% block and transaction headers, the reward and block time history entries
-%%% and the account tree a node needs to join from a local state, plus a
-%%% manifest.json naming the tip.
+%%% block and transaction headers, the reward and block time history entries,
+%%% the account tree and the ECDSA settled set a node needs to join from a
+%%% local state, plus a manifest.json naming the tip.
 
 %% Mirrors ar_node_worker: how many missing recent block headers a node
 %% tolerates when it starts from a state.
@@ -25,7 +25,8 @@
     {reward_history, reward_history_db, "reward_history_db"},
     {block_time_history, block_time_history_db, "block_time_history_db"},
     {block_index, block_index_db, "block_index_db"},
-    {account_tree, account_tree_db, "account_tree_db"}
+    {account_tree, account_tree_db, "account_tree_db"},
+    {ecdsa_settled, ecdsa_settled_2_db, "ecdsa_settled_2_db"}
 ]).
 
 %%% The functions follow the export flow top-down; a helper with a single
@@ -73,7 +74,8 @@ do_export(DataDir, OutputDir, Height) ->
         ok ?= ensure_dir(OutputDir),
         %% The tree of the tip's window must be present; do not fall back to
         %% an older tree and let the node join below the requested height.
-        ok ?= write_new(OutputDir, State#{ search_depth => 1 }, DataDir),
+        ok ?= write_new(OutputDir,
+                State#{ search_depth => 1, source_block_index => BI }, DataDir),
         {ok, tip_info(State)}
     end.
 
@@ -198,8 +200,8 @@ open_snapshot_dbs(Dir) ->
     open_dbs(Specs, filename:join(Dir, ?ROCKS_DB_DIR), false).
 
 do_write(State, CustomDir, DBs) ->
-    #{ block_index := BI, blocks := Blocks, search_depth := SearchDepth,
-       reward_history_bi := RewardHistoryBI,
+    #{ block_index := BI, source_block_index := SourceBI, blocks := Blocks,
+       search_depth := SearchDepth, reward_history_bi := RewardHistoryBI,
        block_time_history_bi := BlockTimeHistoryBI } = State,
     ReadWalletList = fun(RootHash) ->
         ar_storage:read_wallet_list(RootHash, CustomDir)
@@ -214,6 +216,8 @@ do_write(State, CustomDir, DBs) ->
                 CustomDir, maps:get(block_time_history, DBs)),
         ok ?= store_wallet_list(Blocks, SearchDepth, ReadWalletList,
                 maps:get(account_tree, DBs)),
+        ok ?= copy_ecdsa_settled(SourceBI, BI, Blocks, CustomDir,
+                maps:get(ecdsa_settled, DBs)),
         verify(BI, Blocks, DBs)
     end.
 
@@ -337,6 +341,24 @@ copy_history([{H, _, _} | BI], NodeDBName, SourceDB, DB, ok) ->
                 {error, {NodeDBName, Reason, arweave_lib_util:encode(H)}}
         end,
     copy_history(BI, NodeDBName, SourceDB, DB, Result).
+
+%% @doc Copy the ECDSA settled set of the node's storage (not_set) or of the
+%% snapshot directory CustomDir, settled along SourceBI, to DB up to the
+%% consensus window below the tip of BI, a prefix of SourceBI. A node starting
+%% from the snapshot settles the blocks between the set and the consensus
+%% window from Blocks.
+copy_ecdsa_settled(SourceBI, BI, Blocks, CustomDir, DB) ->
+    SourceDB = ar_storage:get_db_name(ecdsa_settled_2_db, CustomDir),
+    LowestHeight = length(BI) - length(Blocks),
+    case ar_ecdsa_settled:copy(SourceDB, DB, SourceBI, length(BI) - 1) of
+        {ok, Height} when Height + 1 >= LowestHeight ->
+            ar:console("Snapshot: ECDSA settled set height ~B~n", [Height]),
+            ok;
+        {ok, Height} ->
+            {error, {ecdsa_settled_set_below_recent_blocks, Height}};
+        {error, Reason} ->
+            {error, {ecdsa_settled, Reason}}
+    end.
 
 %% @doc Store the account tree of the oldest consensus-window block of Blocks
 %% in DB, dropping up to SearchDepth - 1 tips whose window has no readable

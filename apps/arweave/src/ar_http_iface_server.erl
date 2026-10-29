@@ -34,7 +34,8 @@
                     "chunk", "chunk2", "data_sync_record", "sync_buckets", "footprint_buckets",
                     "wallet", "unsigned_tx",
                     "peers", "hash_list", "block_index", "block_index2", "total_supply", "wallet_list",
-                    "height", "metrics", "vdf", "vdf2", "partial_solution", "pool_cm_jobs"]).
+                    "height", "metrics", "vdf", "vdf2", "partial_solution", "pool_cm_jobs",
+                    "ecdsa_settled"]).
 
 %%%===================================================================
 %%% Public interface.
@@ -299,6 +300,9 @@ name_route([<<"wallet">>, _Addr, <<"deposits">>]) ->
     "/wallet/{addr}/deposits";
 name_route([<<"wallet">>, _Addr, <<"deposits">>, _EarliestDeposit]) ->
     "/wallet/{addr}/deposits/{earliest_deposit}";
+
+name_route([<<"ecdsa_settled">>, _Cursor]) ->
+    "/ecdsa_settled/{cursor}";
 
 name_route([<<"wallet_list">>, _Root]) ->
     "/wallet_list/{root_hash}";

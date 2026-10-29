@@ -564,18 +564,11 @@ download_block(Peers, H, H2, TXRoot) ->
 download_txs(Peers, B, TXRoot) ->
     case ar_http_iface_client:get_txs(Peers, B) of
         {ok, TXs} ->
-            SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
-            SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
-            {Root, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
-            case Root of
-                TXRoot ->
-                    {ok, B#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs }};
-                _ ->
-                    ?LOG_WARNING([
-                                  {event, ar_header_sync_block_tx_root_mismatch},
-                                  {block, arweave_lib_util:encode(B#block.indep_hash)}
-                                 ]),
-                    {error, block_tx_root_mismatch}
+            case get_settled_headers(Peers, B, TXs) of
+                {ok, TXs2} ->
+                    check_tx_root(B, TXs2, TXRoot);
+                Error ->
+                    Error
             end;
         {error, txs_exceed_block_size_limit} ->
             ?LOG_WARNING([
@@ -595,6 +588,98 @@ download_txs(Peers, B, TXRoot) ->
                           {block, arweave_lib_util:encode(B#block.indep_hash)}
                          ]),
             {error, tx_not_found}
+    end.
+
+check_tx_root(B, TXs, TXRoot) ->
+    SizeTaggedTXs =
+            ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
+    SizeTaggedDataRoots =
+            [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
+    {Root, _Tree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
+    case Root of
+        TXRoot ->
+            {ok, B#block{ txs = TXs, size_tagged_txs = SizeTaggedTXs }};
+        _ ->
+            ?LOG_WARNING([
+                          {event, ar_header_sync_block_tx_root_mismatch},
+                          {block, arweave_lib_util:encode(B#block.indep_hash)}
+                         ]),
+            {error, block_tx_root_mismatch}
+    end.
+
+%% @doc Return {ok, TXs2}, where TXs2 is TXs with every ECDSA transaction
+%% header the ECDSA settled set does not hold replaced by one it holds,
+%% fetched from Peers. Above the set, take the ECDSA transaction headers of
+%% the validated block from the block cache.
+get_settled_headers(Peers, B, TXs) ->
+    get_settled_headers(Peers, B, TXs, []).
+
+get_settled_headers(_Peers, _B, [], Acc) ->
+    {ok, lists:reverse(Acc)};
+get_settled_headers(Peers, B, [TX | TXs], Acc) ->
+    #block{ height = Height, indep_hash = H } = B,
+    case is_settled_header(TX, Height) of
+        true ->
+            get_settled_headers(Peers, B, TXs, [TX | Acc]);
+        false ->
+            Peers2 = lists:sublist(Peers, ?SETTLED_HEADER_PEER_COUNT),
+            case get_settled_header(Peers2, TX#tx.id, Height) of
+                {ok, TX2} ->
+                    get_settled_headers(Peers, B, TXs, [TX2 | Acc]);
+                not_found ->
+                    ?LOG_WARNING([
+                            {event, ar_header_sync_settled_tx_header_not_found},
+                            {block, arweave_lib_util:encode(H)},
+                            {tx, arweave_lib_util:encode(TX#tx.id)}]),
+                    {error, settled_tx_header_not_found}
+            end;
+        not_settled ->
+            case get_cached_header(H, TX#tx.id) of
+                {ok, TX2} ->
+                    get_settled_headers(Peers, B, TXs, [TX2 | Acc]);
+                not_found ->
+                    {error, ecdsa_settled_set_below_block}
+            end
+    end.
+
+is_settled_header(TX, Height) ->
+    case ar_tx:is_ecdsa_tx(TX) of
+        true ->
+            ar_ecdsa_settled:has_tx(TX, Height);
+        false ->
+            true
+    end.
+
+%% @doc Return {ok, TX} with the header of the transaction TXID in the
+%% on-chain block H of the block cache, or not_found.
+get_cached_header(H, TXID) ->
+    case ar_block_cache:get_block_and_status(block_cache, H) of
+        {#block{ txs = TXs }, {on_chain, _Timestamp}} ->
+            case [TX || #tx{ id = ID } = TX <- TXs, ID == TXID] of
+                [TX | _] ->
+                    {ok, TX};
+                [] ->
+                    not_found
+            end;
+        _ ->
+            not_found
+    end.
+
+%% @doc Return {ok, TX} with the header of the ECDSA transaction TXID the
+%% ECDSA settled set holds at Height, asking Peers one by one, or not_found.
+get_settled_header([], _TXID, _Height) ->
+    not_found;
+get_settled_header([Peer | Peers], TXID, Height) ->
+    case ar_http_iface_client:get_tx_from_remote_peer(Peer, TXID, false) of
+        {#tx{} = TX, _Peer, _Time, _Size} ->
+            case ar_ecdsa_settled:has_tx(TX, Height) of
+                true ->
+                    {ok, TX};
+                _ ->
+                    get_settled_header(Peers, TXID, Height)
+            end;
+        _ ->
+            get_settled_header(Peers, TXID, Height)
     end.
 
 log_download_source(B, BlockSource) ->

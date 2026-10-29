@@ -117,6 +117,17 @@
 -define(LIMITER_WALLET_LIST_LEAKY_TICK_REDUCTION, 1).
 -define(LIMITER_WALLET_LIST_CONCURRENCY_LIMIT, 2).
 
+%% ecdsa_settled
+%% A joining node pages through the whole set back to back. The bucket admits
+%% a burst of 120 chunks (about 3.9M entries) and drains 60 chunks every 30
+%% seconds.
+-define(LIMITER_ECDSA_SETTLED_SLIDING_WINDOW_LIMIT, 0).
+-define(LIMITER_ECDSA_SETTLED_SLIDING_WINDOW_DURATION, 1000).
+-define(LIMITER_ECDSA_SETTLED_LEAKY_LIMIT, 120).
+-define(LIMITER_ECDSA_SETTLED_LEAKY_TICK_INTERVAL, 30000).
+-define(LIMITER_ECDSA_SETTLED_LEAKY_TICK_REDUCTION, 60).
+-define(LIMITER_ECDSA_SETTLED_CONCURRENCY_LIMIT, 2).
+
 %% get_vdf
 -define(LIMITER_GET_VDF_SLIDING_WINDOW_LIMIT, 0).
 -define(LIMITER_GET_VDF_SLIDING_WINDOW_DURATION, 1000).
@@ -245,6 +256,8 @@ group_coverage_for(block_index) ->
 group_coverage_for(wallet_list) ->
     <<"Group covers: /wallet_list, "
       "/block/{type}/{id}/wallet_list.">>;
+group_coverage_for(ecdsa_settled) ->
+    <<"Group covers: /ecdsa_settled and its sub-paths.">>;
 group_coverage_for(get_vdf) ->
     <<"Group covers: /vdf, /vdf2.">>;
 group_coverage_for(get_vdf_session) ->
@@ -489,6 +502,13 @@ production_groups() ->
             ?LIMITER_WALLET_LIST_LEAKY_TICK_INTERVAL,
             ?LIMITER_WALLET_LIST_LEAKY_TICK_REDUCTION,
             ?LIMITER_WALLET_LIST_CONCURRENCY_LIMIT),
+        ecdsa_settled => standard(
+            ?LIMITER_ECDSA_SETTLED_SLIDING_WINDOW_LIMIT,
+            ?LIMITER_ECDSA_SETTLED_SLIDING_WINDOW_DURATION,
+            ?LIMITER_ECDSA_SETTLED_LEAKY_LIMIT,
+            ?LIMITER_ECDSA_SETTLED_LEAKY_TICK_INTERVAL,
+            ?LIMITER_ECDSA_SETTLED_LEAKY_TICK_REDUCTION,
+            ?LIMITER_ECDSA_SETTLED_CONCURRENCY_LIMIT),
         get_vdf => standard(
             ?LIMITER_GET_VDF_SLIDING_WINDOW_LIMIT,
             ?LIMITER_GET_VDF_SLIDING_WINDOW_DURATION,
