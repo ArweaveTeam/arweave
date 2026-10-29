@@ -158,6 +158,10 @@ test_data_roots_verification_resyncs_mismatching_entries() ->
             [BlockStart, BlockStart + BlockSize, ?DEFAULT_MODULE]),
     {ok, _} = ar_test_node:remote_call(main, ar_data_roots, store_block,
             [BlockStart, BlockSize, TXRoot, Forged, ?DEFAULT_MODULE]),
+    %% The verification may have passed B before the entries were replaced,
+    %% so make it check B again.
+    ok = ar_test_node:remote_call(main, ar_data_root_verification,
+                                  reset_cursor, []),
     %% The verification runs while data roots syncing is enabled. It keeps a
     %% copy of the removed entries, and syncing fetches them again.
     ok = ar_test_await:until(mismatching_data_roots_removed,

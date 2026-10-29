@@ -17,7 +17,8 @@ all() ->
         build_footprint_task_source,
         build_tasks_keeps_source_representations_independent,
         build_tasks_keeps_each_footprint_group,
-        build_tasks_returns_next_claim_offset
+        build_tasks_returns_next_claim_offset,
+        drop_full_peer_sources_reports_first_skipped_chunk
     ].
 
 init_per_testcase(_Case, Config) ->
@@ -239,3 +240,50 @@ build_task_sources(UnsyncedRange, PeerRanges) ->
             UnsyncedRange, PeerRanges, #{}
         )
     ).
+
+%% @doc A full peer's byte sources are cut down to the chunks other byte
+%% sources serve, and the first chunk that only they serve is reported as
+%% skipped, even if a footprint source serves it. Footprint sources are kept.
+drop_full_peer_sources_reports_first_skipped_chunk(_Config) ->
+    Slow = {1, 2, 3, 4, 1984},
+    Fast = {5, 6, 7, 8, 1984},
+    Chunk = ?DATA_CHUNK_SIZE,
+    Source = fun(Peer, Footprint, End, Start) ->
+        #task_source{
+            peer = Peer,
+            footprint = Footprint,
+            intervals = arweave_lib_intervals:from_list(
+                [{End * Chunk, Start * Chunk}])
+        }
+    end,
+    Footprint = #footprint{partition = 0, footprint = 0},
+    SlowBytes = Source(Slow, none, 6, 0),
+    SlowFootprint = Source(Slow, Footprint, 1, 0),
+    FastBytes = Source(Fast, none, 3, 2),
+    TaskSources = [SlowBytes, SlowFootprint, FastBytes],
+    ?assertEqual(
+        {TaskSources, none},
+        arweave_sync_chunk_picker:drop_full_peer_sources(TaskSources, [])
+    ),
+    %% Chunk 0 has only the slow peer's footprint source besides its byte
+    %% source, so it is the first skipped chunk. The slow peer stays a source
+    %% of chunk 2, which the fast peer also serves.
+    Drop = fun(FullPeers) ->
+        {Sources, Skipped} = arweave_sync_chunk_picker:drop_full_peer_sources(
+            TaskSources, FullPeers),
+        {[{Peer, F, arweave_lib_intervals:to_list(Intervals)}
+            || #task_source{ peer = Peer, footprint = F,
+                intervals = Intervals } <- Sources], Skipped}
+    end,
+    ?assertEqual(
+        {[{Slow, Footprint, [{Chunk, 0}]},
+            {Fast, none, [{3 * Chunk, 2 * Chunk}]},
+            {Slow, none, [{3 * Chunk, 2 * Chunk}]}], 0},
+        Drop([Slow])
+    ),
+    ?assertEqual(
+        {[{Slow, none, [{6 * Chunk, 0}]}, {Slow, Footprint, [{Chunk, 0}]},
+            {Fast, none, [{3 * Chunk, 2 * Chunk}]}], none},
+        Drop([Fast])
+    ),
+    ?assertEqual({[{Slow, Footprint, [{Chunk, 0}]}], 0}, Drop([Slow, Fast])).

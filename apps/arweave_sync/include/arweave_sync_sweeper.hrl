@@ -32,6 +32,20 @@
 %% from claiming the whole batch before it knows the ranges' sources.
 -define(SWEEP_RANGE_CADENCE_MS, 1_000).
 
+%% A range whose claim skipped chunks because their sources had no room is
+%% parked, and the sweeper tries to claim those chunks again every
+%% PARKED_RANGE_RETRY_DELAY_MS. A store holds at most a peer's share of its
+%% claim limit for each peer, which a peer serving one chunk per second
+%% drains in about twelve seconds, so a second keeps such a peer busy.
+-define(PARKED_RANGE_RETRY_DELAY_MS, 1_000).
+
+%% A parked range whose retry finds no cached metadata for some of its peers
+%% is parked again, because discovery may have trimmed the metadata and is
+%% fetching it again. After PARKED_RANGE_MAX_METADATA_MISSES such retries in a
+%% row, the range is dropped and waits for the next sweep, so a peer that never
+%% answers does not hold a parking slot.
+-define(PARKED_RANGE_MAX_METADATA_MISSES, 60).
+
 %% The sweeper saves its cursor offsets at most every
 %% SWEEP_CURSOR_SAVE_INTERVAL_MS, so a restart resumes the sweep about where it
 %% stopped instead of at the store start.
@@ -42,7 +56,10 @@
 %% One range in a sweep queue. When `unsynced_range' is none, the store needs
 %% nothing in the range, and the entry only moves the cursor forward in queue
 %% order. Otherwise the entry holds one #unsynced_range{}, the time discovery
-%% was asked for the range's peer metadata, and where a partial claim left off.
+%% was asked for the range's peer metadata, where a partial claim left off,
+%% and the first chunk a claim skipped because its sources had no room. A
+%% parked range also holds the time to claim it again and its retries in a
+%% row that found peer metadata missing.
 %%
 %% A byte range covers at most one byte sweep step, plus any chunks missing
 %% from the footprint that contains the step's first needed byte, so that byte
@@ -54,7 +71,10 @@
     next_offset,
     unsynced_range = none,
     requested_at,
-    next_claim_offset = undefined
+    next_claim_offset = undefined,
+    skipped_from = undefined,
+    retry_at_ms = undefined,
+    metadata_misses = 0
 }).
 
 -record(state, {
@@ -71,9 +91,15 @@
         footprint => queue:new()
     },
     next_mode = byte,
+    %% The parked ranges of each mode: ranges whose claims skipped chunks
+    %% because their sources had no room, kept across sweeps.
+    parked_ranges = #{byte => [], footprint => []},
     %% The due time and token of the next scheduled sweep. An earlier request
     %% replaces the token, and the sweeper ignores the old timer when it fires.
     next_sweep = undefined :: undefined | {integer(), reference()},
+    %% When a completed sweep's restart delay ends. Until then, the sweeper
+    %% only claims again from parked ranges.
+    restart_at_ms = undefined :: undefined | integer(),
     %% The byte and footprint offsets saved by an earlier run, where the first
     %% sweep resumes.
     resume_offsets = undefined :: undefined | {integer(), integer()},

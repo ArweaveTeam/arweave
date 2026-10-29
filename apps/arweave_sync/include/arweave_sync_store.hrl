@@ -24,6 +24,12 @@
 %% enough to notice when a stalled store resumes writing, at little cost.
 -define(MIN_CLAIM_LIMIT, 25).
 
+%% A store admits a task only while one of its source peers counts for fewer
+%% than 1 / PEER_CLAIM_DIVISOR of the claim limit in queued and bound tasks.
+%% Work only a slow peer serves then cannot fill the claim limit and keep the
+%% store's other peers idle.
+-define(PEER_CLAIM_DIVISOR, 2).
+
 -record(store_state, {
     store_id,
     %% Claimed tasks and footprint reservations that are not yet bound to a
@@ -36,6 +42,10 @@
     %% Chunks claimed by footprint reservations that are not yet bound.
     reservation_chunks = 0,
     queued_peer_counts = #{},
+    %% Peer => the number of the store's queued tasks that list the peer as a
+    %% source, plus its bound tasks in the peer's queue. Footprint reservations
+    %% are not counted.
+    queued_task_peer_counts = #{},
     %% The store's tasks that are queued or bound to a peer but not yet
     %% fetching.
     queued_task_count = 0,

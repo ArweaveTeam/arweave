@@ -179,9 +179,13 @@ footprint peers.
 sweeper's process:
 
 1. It asks the scheduler how many more chunks the store may claim (the
-   admission headroom), and stops if the answer is none.
+   admission headroom), and stops if the answer is none. The scheduler also
+   returns the peers that have reached their share of the store's claim
+   limit (the full peers).
 2. It intersects each peer's ranges with the store's unsynced chunks in the
-   range.
+   range. It keeps a full peer's byte ranges only where other byte peers also
+   serve the chunks, and notes the first chunk that only full peers serve as
+   skipped.
 3. It builds units of work from the result: a footprint reservation for each
    footprint, and a task for each chunk that byte peers serve.
 4. It offers the units to the scheduler, which claims them for the store.
@@ -195,6 +199,17 @@ Claiming follows these rules:
   after that, only the chunks it hands to the peer stay claimed.
 - When a store has no room to claim a new footprint, the footprint is skipped
   rather than holding up the sweep. A later sweep offers it again.
+- A peer may count for at most half of a store's claim limit, in queued tasks
+  that list it as a source and tasks bound to it. Before the store's write
+  rate is measured, the share is half of `MIN_CLAIM_LIMIT`. A task is
+  admitted only while one of its sources has room. Otherwise it is skipped,
+  so work that only a slow peer serves cannot fill the claim limit.
+- When a claim skips chunks, the sweeper parks the range and claims it again
+  from the first skipped chunk every second, while the sweep moves on. Each
+  mode parks at most its sweep queue length of ranges. When that is full, the
+  sweep stops at the next range that skips chunks, unless that range is
+  already parked. The saved sweep offsets stay at the first parked range, so
+  a restart sweeps the parked ranges again.
 
 ### 4. Scheduling
 

@@ -23,7 +23,12 @@ all() ->
         sync_bounds_decrease_keeps_sweep,
         sweep_readiness,
         sweep_resumes_at_saved_offsets,
-        cursor_save_cadence
+        cursor_save_cadence,
+        cursor_save_stops_at_parked_ranges,
+        parked_ranges_merge_and_stay_bounded,
+        skipped_range_parks_or_blocks,
+        parked_range_survives_missing_metadata,
+        completed_sweep_keeps_parked_retries
     ].
 
 init_per_suite(Config) ->
@@ -615,6 +620,328 @@ cursor_save_cadence(_Config) ->
             ?assertEqual([], saved_offsets())
         end
     ).
+
+%% @doc The saved offsets stay at the first parked range of each mode, so a
+%% restart sweeps the parked ranges again.
+cursor_save_stops_at_parked_ranges(_Config) ->
+    Self = self(),
+    arweave_sync_test_util:with_mocks(
+        [
+            {ar_timer, monotonic_ms, fun() -> 0 end},
+            {arweave_storage, write_sweep_cursor, fun(Offsets, store1) ->
+                Self ! {saved, Offsets},
+                ok
+            end}
+        ],
+        fun() ->
+            State = arweave_sync_sweeper:initialize_sweep(#state{
+                store_id = store1,
+                range_start = 0,
+                range_end = 1000
+            }),
+            Moved = State#state{
+                cursor = set_test_cursors(State#state.cursor, 600, 300)
+            },
+            Park = fun(Mode, Offset, Acc) ->
+                arweave_sync_sweeper:park_sweep_range(
+                    #sweep_range{mode = Mode, offset = Offset,
+                        skipped_from = Offset + 10},
+                    1000, Acc
+                )
+            end,
+            Parked = Park(byte, 400, Park(byte, 200, Park(footprint, 100,
+                Moved))),
+            arweave_sync_sweeper:maybe_save_cursor(Parked),
+            ?assertEqual([{200, 100}], saved_offsets())
+        end
+    ).
+
+%% @doc A range parked again keeps the lower offset to claim from, and a mode
+%% parks at most its sweep queue length of ranges.
+parked_ranges_merge_and_stay_bounded(_Config) ->
+    Range = fun(Offset, SkippedFrom) ->
+        #sweep_range{mode = byte, offset = Offset, skipped_from = SkippedFrom}
+    end,
+    State = arweave_sync_sweeper:park_sweep_range(
+        Range(0, 100), 1000, #state{}
+    ),
+    ?assertMatch(
+        #{byte := [#sweep_range{next_claim_offset = 100, retry_at_ms = 1000,
+            skipped_from = undefined}]},
+        State#state.parked_ranges
+    ),
+    State2 = arweave_sync_sweeper:park_sweep_range(Range(0, 50), 2000, State),
+    ?assertMatch(
+        #{byte := [#sweep_range{next_claim_offset = 50, retry_at_ms = 1000}]},
+        State2#state.parked_ranges
+    ),
+    State3 = lists:foldl(
+        fun(Offset, Acc) ->
+            arweave_sync_sweeper:park_sweep_range(
+                Range(Offset, Offset), 1000, Acc
+            )
+        end,
+        State2,
+        lists:seq(1, 2 * ?BYTE_SWEEP_QUEUE_MAX_LENGTH)
+    ),
+    ?assertEqual(
+        ?BYTE_SWEEP_QUEUE_MAX_LENGTH,
+        length(maps:get(byte, State3#state.parked_ranges))
+    ).
+
+%% @doc A range whose claim skipped chunks is parked while the mode has room
+%% for it. Otherwise it stays at the head of the queue, blocked, and resumes
+%% at the first skipped chunk.
+skipped_range_parks_or_blocks(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        [
+            {arweave_sync_discovery, get_peers_for_offset, fun(0) -> [] end},
+            {arweave_sync_discovery, warm_peer_ranges, fun(test_store, [], 0) ->
+                ok
+            end},
+            {arweave_sync_discovery, cached_peer_ranges, fun(
+                test_store, [], 0, 0, 100
+            ) ->
+                {[], ok}
+            end},
+            {ar_peers, pick_peers, fun([], _Limit) -> [] end},
+            {arweave_storage, get_intervals, fun
+                (unsynced, 0, 100, any_packing, {ar_data_sync, byte},
+                        test_store) ->
+                    arweave_lib_intervals:from_list([{100, 0}]);
+                (unsynced, _Start, _End, any_packing,
+                        {ar_data_sync, footprint}, test_store) ->
+                    arweave_lib_intervals:new()
+            end},
+            {ar_tx_blacklist, get_blacklisted_intervals, fun(0, 100) ->
+                arweave_lib_intervals:new()
+            end},
+            {ar_footprint_limit, get, fun(test_store) ->
+                arweave_lib_constants:get_replica_2_9_footprints_per_partition()
+            end},
+            %% The claim reaches the end of the range and skips from offset 50.
+            {arweave_sync_chunk_picker, claim_ranges, fun(test_store, _, _) ->
+                {ok, 0, none, 50}
+            end}
+        ],
+        fun() ->
+            Cursor = arweave_sync_cursor:new(0, 100),
+            SweepRange = #sweep_range{
+                mode = byte,
+                offset = 0,
+                next_offset = 100,
+                unsynced_range = #unsynced_range{
+                    kind = byte,
+                    query_offset = 0,
+                    intervals = arweave_lib_intervals:from_list([{100, 0}]),
+                    range_start = 0,
+                    range_end = 100,
+                    advance = 100
+                },
+                requested_at = ar_timer:monotonic_ms() - ?SWEEP_RANGE_WARM_WAIT_MS
+            },
+            State = #state{
+                store_id = test_store,
+                weave_size = 100,
+                disk_pool_threshold = 100,
+                cursor = Cursor,
+                readahead_cursor = Cursor,
+                sweep_queues = #{
+                    byte => queue:in(SweepRange, queue:new()),
+                    footprint => queue:new()
+                }
+            },
+            {ok, State2} =
+                arweave_sync_sweeper:process_sweep_range(SweepRange, State),
+            ?assert(queue:is_empty(arweave_sync_sweeper:sweep_queue(byte, State2))),
+            ?assertMatch(
+                #{byte := [#sweep_range{offset = 0, next_claim_offset = 50}]},
+                State2#state.parked_ranges
+            ),
+            Full = [#sweep_range{mode = byte, offset = Offset, retry_at_ms = 0}
+                || Offset <- lists:seq(1, ?BYTE_SWEEP_QUEUE_MAX_LENGTH)],
+            State3 = State#state{
+                parked_ranges = #{byte => Full, footprint => []}
+            },
+            {{blocked, ?BLOCKED_RETRY_DELAY_MS}, State4} =
+                arweave_sync_sweeper:process_sweep_range(SweepRange, State3),
+            ?assertMatch(
+                {value, #sweep_range{offset = 0, next_claim_offset = 50,
+                    skipped_from = undefined}},
+                queue:peek(arweave_sync_sweeper:sweep_queue(byte, State4))
+            ),
+            ?assertEqual(Full, maps:get(byte, State4#state.parked_ranges)),
+            %% A range that is already parked merges into the full list, and
+            %% the sweep moves past it.
+            FullWithRange = [#sweep_range{mode = byte, offset = 0,
+                next_claim_offset = 70, retry_at_ms = 0} | tl(Full)],
+            State5 = State#state{
+                parked_ranges = #{byte => FullWithRange, footprint => []}
+            },
+            {ok, State6} =
+                arweave_sync_sweeper:process_sweep_range(SweepRange, State5),
+            ?assert(queue:is_empty(arweave_sync_sweeper:sweep_queue(byte, State6))),
+            Parked6 = maps:get(byte, State6#state.parked_ranges),
+            ?assertEqual(?BYTE_SWEEP_QUEUE_MAX_LENGTH, length(Parked6)),
+            ?assertMatch(#sweep_range{next_claim_offset = 50},
+                lists:keyfind(0, #sweep_range.offset, Parked6))
+        end
+    ).
+
+%% @doc A parked retry that finds peer metadata missing parks the range again
+%% from where it was, and the next retry claims it once the metadata is back.
+%% After PARKED_RANGE_MAX_METADATA_MISSES such retries in a row, the range is
+%% dropped.
+parked_range_survives_missing_metadata(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        parked_retry_mocks(),
+        fun() ->
+            put(now_ms, 0),
+            put(claims, 0),
+            put(cache_status, cache_miss),
+            Parked = (parked_test_range())#sweep_range{retry_at_ms = 0},
+            State = parked_test_state([Parked]),
+            State2 = arweave_sync_sweeper:retry_parked_range(State),
+            ?assertMatch(
+                #{byte := [#sweep_range{offset = 0, next_claim_offset = 50,
+                    metadata_misses = 1, retry_at_ms = 1000}]},
+                State2#state.parked_ranges
+            ),
+            %% The metadata is back, and the retry claims the rest of the range.
+            put(now_ms, 1000),
+            put(cache_status, ok),
+            State3 = arweave_sync_sweeper:retry_parked_range(State2),
+            ?assertEqual(2, get(claims)),
+            ?assertMatch(#{byte := []}, State3#state.parked_ranges),
+            %% A range whose metadata stays missing is dropped.
+            put(cache_status, cache_miss),
+            Missing = Parked#sweep_range{
+                metadata_misses = ?PARKED_RANGE_MAX_METADATA_MISSES - 1
+            },
+            State4 = arweave_sync_sweeper:retry_parked_range(
+                parked_test_state([Missing])
+            ),
+            ?assertMatch(#{byte := []}, State4#state.parked_ranges)
+        end
+    ).
+
+%% @doc A completed sweep wakes for a parked retry due before its restart
+%% delay ends, and the retry runs without starting the next sweep.
+completed_sweep_keeps_parked_retries(_Config) ->
+    arweave_sync_test_util:with_mocks(
+        [
+            {ar_node, is_joined, fun() -> true end},
+            {arweave_storage, is_footprint_record_initialized,
+                fun(test_store) -> true end},
+            {arweave_storage, write_sweep_cursor,
+                fun(_Offsets, test_store) -> ok end},
+            {ar_data_sync, is_disk_space_sufficient,
+                fun(test_store) -> true end},
+            {ar_timer, send_after, fun(_Delay, _Pid, _Message) ->
+                {ok, make_ref()}
+            end}
+            | parked_retry_mocks()
+        ],
+        fun() ->
+            put(now_ms, 0),
+            put(claims, 0),
+            put(cache_status, ok),
+            put(claim_result, {ok, 0, none, 50}),
+            RetryAtMs = ?SWEEP_RESTART_DELAY_MS div 2,
+            Parked = (parked_test_range())#sweep_range{retry_at_ms = RetryAtMs},
+            {noreply, State} = arweave_sync_sweeper:complete_sweep(
+                parked_test_state([Parked])
+            ),
+            ?assertEqual(undefined, State#state.cursor),
+            ?assertEqual(?SWEEP_RESTART_DELAY_MS, State#state.restart_at_ms),
+            ?assertMatch({RetryAtMs, _}, State#state.next_sweep),
+            %% The timer fires: the parked range is claimed again, and the
+            %% next wake-up is the restart deadline.
+            put(now_ms, RetryAtMs),
+            {noreply, State2} = arweave_sync_sweeper:sweep(
+                State#state{next_sweep = undefined}
+            ),
+            ?assertEqual(1, get(claims)),
+            ?assertEqual(undefined, State2#state.cursor),
+            ?assertEqual(undefined, State2#state.readahead_cursor),
+            NextRetryAtMs = RetryAtMs + ?PARKED_RANGE_RETRY_DELAY_MS,
+            ?assertMatch(
+                #{byte := [#sweep_range{offset = 0, next_claim_offset = 50,
+                    retry_at_ms = NextRetryAtMs}]},
+                State2#state.parked_ranges
+            ),
+            ?assertMatch(
+                {?SWEEP_RESTART_DELAY_MS, _}, State2#state.next_sweep
+            )
+        end
+    ).
+
+parked_retry_mocks() ->
+    [
+        {ar_timer, monotonic_ms, fun() -> get(now_ms) end},
+        {arweave_sync_discovery, get_peers_for_offset, fun(0) -> [] end},
+        {arweave_sync_discovery, warm_peer_ranges, fun(test_store, [], 0) ->
+            ok
+        end},
+        {arweave_sync_discovery, cached_peer_ranges, fun(
+            test_store, [], 0, 0, 100
+        ) ->
+            {[], get(cache_status)}
+        end},
+        {ar_peers, pick_peers, fun([], _Limit) -> [] end},
+        {arweave_storage, get_intervals, fun
+            (unsynced, 0, 100, any_packing, {ar_data_sync, byte},
+                    test_store) ->
+                arweave_lib_intervals:from_list([{100, 0}]);
+            (unsynced, _Start, _End, any_packing,
+                    {ar_data_sync, footprint}, test_store) ->
+                arweave_lib_intervals:new()
+        end},
+        {ar_tx_blacklist, get_blacklisted_intervals, fun(0, 100) ->
+            arweave_lib_intervals:new()
+        end},
+        {ar_footprint_limit, get, fun(test_store) ->
+            arweave_lib_constants:get_replica_2_9_footprints_per_partition()
+        end},
+        {arweave_sync_chunk_picker, claim_ranges, fun(test_store, _, _) ->
+            put(claims, get(claims) + 1),
+            case get(claim_result) of
+                undefined -> {ok, 0, none, none};
+                Result -> Result
+            end
+        end}
+    ].
+
+%% A byte range parked to claim again from offset 50.
+parked_test_range() ->
+    #sweep_range{
+        mode = byte,
+        offset = 0,
+        next_offset = 100,
+        unsynced_range = #unsynced_range{
+            kind = byte,
+            query_offset = 0,
+            intervals = arweave_lib_intervals:from_list([{100, 0}]),
+            range_start = 0,
+            range_end = 100,
+            advance = 100
+        },
+        requested_at = 0,
+        next_claim_offset = 50
+    }.
+
+parked_test_state(Parked) ->
+    Cursor = arweave_sync_cursor:new(0, 100),
+    #state{
+        store_id = test_store,
+        range_start = 0,
+        range_end = 100,
+        weave_size = 100,
+        disk_pool_threshold = 100,
+        cursor = Cursor,
+        readahead_cursor = Cursor,
+        parked_ranges = #{byte => Parked, footprint => []}
+    }.
 
 saved_offsets() ->
     receive

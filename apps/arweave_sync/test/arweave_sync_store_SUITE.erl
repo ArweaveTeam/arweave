@@ -15,6 +15,7 @@ all() ->
         fair_share_splits_cache_by_demand,
         dispatch_applies_fair_share,
         admission_headroom_counts_only_queued_tasks,
+        peer_claim_limit_leaves_room_for_other_peers,
         fetching_tasks_do_not_consume_store_cache_limit,
         unmeasured_store_limits_initial_fetch_probe,
         footprint_claim_reserves_complete_footprint,
@@ -170,6 +171,79 @@ admission_headroom_counts_only_queued_tasks(_Config) ->
         queued_task_count = 4
     },
     ?assertEqual(21, arweave_sync_store:admission_headroom(State)).
+
+%% @doc A task whose every source is a source of half the claim limit in
+%% queued tasks waits, while a task another peer serves is still admitted.
+peer_claim_limit_leaves_room_for_other_peers(_Config) ->
+    Slow = #task_source{peer = slow},
+    Fast = #task_source{peer = fast},
+    Task = fun(Index, Sources) ->
+        #task{
+            store_id = store1,
+            offset = Index * ?DATA_CHUNK_SIZE,
+            sources = Sources
+        }
+    end,
+    %% One chunk/s resolves to the twenty-five-chunk claim limit, so a peer
+    %% may be a source of 25 div 2 = 12 queued tasks.
+    Initial = arweave_sync_store:put_state(
+        #store_state{store_id = store1, write_rate = 1},
+        arweave_sync_store:new()
+    ),
+    ?assertEqual(
+        12, arweave_sync_store:peer_claim_limit(#store_state{write_rate = 1})
+    ),
+    %% Before the first write sample, the share does not follow the larger
+    %% bootstrap claim limit.
+    ?assertEqual(12, arweave_sync_store:peer_claim_limit(#store_state{})),
+    SlowTasks = [Task(Index, [Slow]) || Index <- lists:seq(0, 11)],
+    States = lists:foldl(
+        fun(SlowTask, Acc) ->
+            {ok, 1, Acc2} = arweave_sync_store:admit(store1, SlowTask, Acc),
+            Acc2
+        end,
+        Initial,
+        SlowTasks
+    ),
+    ?assertEqual(
+        no_peer_room,
+        arweave_sync_store:admit(store1, Task(12, [Slow]), States)
+    ),
+    %% The fast peer has room, whether it is the only source or one of two.
+    {ok, 1, States2} =
+        arweave_sync_store:admit(store1, Task(12, [Slow, Fast]), States),
+    {ok, 1, States3} =
+        arweave_sync_store:admit(store1, Task(13, [Fast]), States2),
+    %% Fourteen queued tasks leave 25 - 14 = 11 chunks of the claim limit.
+    ?assertEqual(11, arweave_sync_store:admission_headroom(store1, States3)),
+    ?assertEqual([slow], arweave_sync_store:full_peers(store1, States3)),
+    %% The slow peer counts for thirteen tasks. Binding two of them to it
+    %% leaves the count unchanged, and starting their fetches frees room for
+    %% another task of that peer.
+    BoundTasks = lists:sublist(SlowTasks, 2),
+    Plan = lists:foldl(
+        fun(SlowTask, Acc) ->
+            arweave_sync_store:bind_task(SlowTask, slow, Acc)
+        end,
+        arweave_sync_store:test_plan(States3),
+        BoundTasks
+    ),
+    ?assertEqual([slow], arweave_sync_store:full_peers(
+        store1, arweave_sync_store:commit_plan(Plan))),
+    Plan2 = lists:foldl(
+        fun(SlowTask, Acc) ->
+            arweave_sync_store:start_bound_task(
+                SlowTask#task{peer = slow}, Acc)
+        end,
+        Plan,
+        BoundTasks
+    ),
+    States4 = arweave_sync_store:commit_plan(Plan2),
+    ?assertEqual([], arweave_sync_store:full_peers(store1, States4)),
+    ?assertMatch(
+        {ok, 1, _},
+        arweave_sync_store:admit(store1, Task(14, [Slow]), States4)
+    ).
 
 %% @doc Cached chunks and total pipeline work are bounded independently for
 %% measured stores.
