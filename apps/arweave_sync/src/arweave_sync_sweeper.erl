@@ -39,10 +39,13 @@
 %%%    and retry after BLOCKED_RETRY_DELAY_MS.
 %%%    Each step first claims again from the parked range due first
 %%%    (retry_parked_range/1), every PARKED_RANGE_RETRY_DELAY_MS, so a peer
-%%%    whose data the sweep has passed stays busy.
+%%%    whose data the sweep has passed stays busy. A retry that finds peer
+%%%    metadata missing parks the range again, up to
+%%%    PARKED_RANGE_MAX_METADATA_MISSES times in a row.
 %%% 4. Complete (complete_sweep/1): once both modes reach their live ends,
 %%%    save the store start as the cursor offsets and start a new sweep after
-%%%    SWEEP_RESTART_DELAY_MS.
+%%%    SWEEP_RESTART_DELAY_MS. Parked ranges are still retried while the new
+%%%    sweep waits.
 %%%
 %%% The sweeper's state:
 %%% - cursor: the offset each mode has processed up to;
@@ -58,6 +61,7 @@
 -export([
     byte_range_end/2,
     can_sweep/1,
+    complete_sweep/1,
     completed_range_delay/2,
     do_enqueue_sweep_range/3,
     frontier_offset/2,
@@ -68,6 +72,8 @@
     process_sweep_queues/1,
     process_sweep_range/2,
     read_resume_offsets/3,
+    retry_parked_range/1,
+    sweep/1,
     sweep_queue/2,
     unsynced_intervals/3,
     unsynced_footprint_intervals/3
@@ -221,6 +227,17 @@ sweep_with_device_lock(State) ->
             {noreply, State2}
     end.
 
+sweep(#state{cursor = undefined, restart_at_ms = RestartAtMs} = State)
+        when is_integer(RestartAtMs) ->
+    NowMs = ?DEP(clock):monotonic_ms(),
+    case NowMs < RestartAtMs of
+        true ->
+            {Delay, State2} = retry_parked_range_before_restart(
+                RestartAtMs - NowMs, State),
+            {noreply, schedule_sweep(Delay, State2)};
+        false ->
+            sweep(State#state{restart_at_ms = undefined})
+    end;
 sweep(#state{cursor = undefined} = State) ->
     State2 = initialize_sweep(State),
     case can_sweep(State2) of
@@ -552,6 +569,8 @@ process_next_sweep_range(Mode, State) ->
 %% @doc Update the head of the sweep queue with the outcome of its claim.
 apply_claim_outcome(SweepRange, finished, State) ->
     finish_sweep_range(SweepRange, State);
+apply_claim_outcome(SweepRange, missing_metadata, State) ->
+    finish_sweep_range(SweepRange, State);
 apply_claim_outcome(_SweepRange, {continue, SweepRange2}, State) ->
     replace_sweep_queue_head(SweepRange2, State);
 apply_claim_outcome(SweepRange, {parked, SweepRange2}, State) ->
@@ -598,6 +617,8 @@ process_sweep_range(
 %% return the outcome:
 %% - {{blocked, Delay}, State}: the claim limit refused the claim;
 %% - finished: the store needs nothing more from the range;
+%% - missing_metadata: the claim reached the end of the range, but some
+%%   candidate peers had no cached metadata for it;
 %% - {continue, SweepRange2}: the claim stopped at the claim limit, and
 %%   SweepRange2 resumes after it;
 %% - {parked, SweepRange2}: the claim reached the end of the range but skipped
@@ -616,12 +637,12 @@ claim_sweep_range(SweepRange, State) ->
     ok = arweave_sync_discovery:warm_peer_ranges(
         State#state.store_id, Peers, QueryOffset
     ),
-    {PeerRanges, _CacheStatus} = arweave_sync_discovery:cached_peer_ranges(
+    {PeerRanges, CacheStatus} = arweave_sync_discovery:cached_peer_ranges(
         State#state.store_id, Peers, QueryOffset, RangeStart, RangeEnd
     ),
-    revalidate_and_claim(SweepRange, PeerRanges, State).
+    revalidate_and_claim(SweepRange, PeerRanges, CacheStatus, State).
 
-revalidate_and_claim(SweepRange, PeerRanges, State) ->
+revalidate_and_claim(SweepRange, PeerRanges, CacheStatus, State) ->
     #sweep_range{mode = Mode, offset = Offset} = SweepRange,
     case
         find_unsynced_range(
@@ -641,15 +662,16 @@ revalidate_and_claim(SweepRange, PeerRanges, State) ->
                 )
             of
                 true ->
-                    range_end_outcome(SweepRange);
+                    range_end_outcome(SweepRange, ok);
                 false ->
-                    claim_range(SweepRange, UnsyncedRange2, PeerRanges, State)
+                    claim_range(SweepRange, UnsyncedRange2, PeerRanges,
+                        CacheStatus, State)
             end;
         _NoLongerNeeded ->
             finished
     end.
 
-claim_range(SweepRange, UnsyncedRange, PeerRanges, State) ->
+claim_range(SweepRange, UnsyncedRange, PeerRanges, CacheStatus, State) ->
     case
         arweave_sync_chunk_picker:claim_ranges(
             State#state.store_id, [UnsyncedRange], PeerRanges
@@ -661,7 +683,7 @@ claim_range(SweepRange, UnsyncedRange, PeerRanges, State) ->
             SweepRange2 = add_skipped(FirstSkipped, SweepRange),
             case NextClaimOffset of
                 none ->
-                    range_end_outcome(SweepRange2);
+                    range_end_outcome(SweepRange2, CacheStatus);
                 _ ->
                     {continue, SweepRange2#sweep_range{
                         next_claim_offset = NextClaimOffset
@@ -676,9 +698,11 @@ add_skipped(Offset, #sweep_range{skipped_from = undefined} = SweepRange) ->
 add_skipped(Offset, #sweep_range{skipped_from = SkippedFrom} = SweepRange) ->
     SweepRange#sweep_range{skipped_from = min(Offset, SkippedFrom)}.
 
-range_end_outcome(#sweep_range{skipped_from = undefined}) ->
+range_end_outcome(#sweep_range{skipped_from = undefined}, cache_miss) ->
+    missing_metadata;
+range_end_outcome(#sweep_range{skipped_from = undefined}, _CacheStatus) ->
     finished;
-range_end_outcome(SweepRange) ->
+range_end_outcome(SweepRange, _CacheStatus) ->
     {parked, SweepRange}.
 
 resume_unsynced_range(
@@ -782,8 +806,10 @@ min_claim_offset(_Offset, undefined) -> undefined;
 min_claim_offset(Offset1, Offset2) -> min(Offset1, Offset2).
 
 %% @doc Claim again from the parked range due first, if one is due. A retry
-%% that skips chunks parks the range again from the first skipped chunk; one
-%% that stops at the claim limit continues on the next sweep step.
+%% that skips chunks parks the range again from the first skipped chunk. One
+%% that stops at the claim limit continues on the next sweep step. One that
+%% finds peer metadata missing parks the range again from where it was, since
+%% discovery is fetching the metadata again.
 retry_parked_range(State) ->
     NowMs = ?DEP(clock):monotonic_ms(),
     case take_due_parked_range(NowMs, State) of
@@ -795,13 +821,30 @@ retry_parked_range(State) ->
                     park_sweep_range(SweepRange, NowMs + Delay, State2);
                 finished ->
                     State2;
+                missing_metadata ->
+                    park_missing_metadata(SweepRange, NowMs, State2);
                 {continue, #sweep_range{skipped_from = undefined} = Next} ->
-                    park_sweep_range(Next, NowMs, State2);
+                    park_sweep_range(
+                        Next#sweep_range{metadata_misses = 0}, NowMs, State2
+                    );
                 {_ContinueOrParked, Next} ->
                     park_sweep_range(
-                        Next, NowMs + ?PARKED_RANGE_RETRY_DELAY_MS, State2
+                        Next#sweep_range{metadata_misses = 0},
+                        NowMs + ?PARKED_RANGE_RETRY_DELAY_MS, State2
                     )
             end
+    end.
+
+park_missing_metadata(SweepRange, NowMs, State) ->
+    Misses = SweepRange#sweep_range.metadata_misses + 1,
+    case Misses >= ?PARKED_RANGE_MAX_METADATA_MISSES of
+        true ->
+            State;
+        false ->
+            park_sweep_range(
+                SweepRange#sweep_range{metadata_misses = Misses},
+                NowMs + ?PARKED_RANGE_RETRY_DELAY_MS, State
+            )
     end.
 
 take_due_parked_range(NowMs, State) ->
@@ -899,15 +942,33 @@ complete_sweep(#state{store_id = StoreID} = State) ->
     %% A restart before the next save starts the next sweep at the store start
     %% too.
     Start = State#state.range_start,
-    State2 = save_offsets(
-        {Start, Start}, ?DEP(clock):monotonic_ms(), State
-    ),
+    NowMs = ?DEP(clock):monotonic_ms(),
+    State2 = save_offsets({Start, Start}, NowMs, State),
     State3 = State2#state{
         cursor = undefined,
         readahead_cursor = undefined,
-        sweep_queues = new_sweep_queues()
+        sweep_queues = new_sweep_queues(),
+        restart_at_ms = NowMs + ?SWEEP_RESTART_DELAY_MS
     },
-    {noreply, schedule_sweep(?SWEEP_RESTART_DELAY_MS, State3)}.
+    %% Parked ranges keep their retries while the next sweep waits.
+    Delay = min(?SWEEP_RESTART_DELAY_MS, parked_range_delay(State3)),
+    {noreply, schedule_sweep(Delay, State3)}.
+
+%% @doc Claim again from a due parked range while a completed sweep waits to
+%% restart, and return the delay until the next parked retry or the restart.
+%% The claim needs a cursor for the store's bounds, so it uses a fresh one.
+retry_parked_range_before_restart(RestartDelay, State) ->
+    Cursor = arweave_sync_cursor:new(
+        State#state.range_start, State#state.range_end
+    ),
+    case can_sweep(State#state{cursor = Cursor}) of
+        ready ->
+            State2 = retry_parked_range(State#state{cursor = Cursor}),
+            State3 = State2#state{cursor = undefined},
+            {min(RestartDelay, parked_range_delay(State3)), State3};
+        _ ->
+            {RestartDelay, State}
+    end.
 
 %%%===================================================================
 %%% Metrics.
