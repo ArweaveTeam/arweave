@@ -7,7 +7,7 @@
 -export([start_link/0,
          start_mining/1, is_paused/0, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
          compute_h2_for_peer/1, prepare_and_post_solution/1, prepare_poa/3,
-         get_recall_bytes/5, get_recall_range/3, get_recall_range/5,
+         get_recall_bytes/5, get_recall_range/3,
          active_sessions/0, encode_sessions/1, add_pool_job/6,
          is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/5,
          get_packing_difficulty/1, get_packing_type/1, set_cache_size/1]).
@@ -564,10 +564,6 @@ get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound, PackingDifficu
 
 get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
     ar_block:get_recall_range(H0, PartitionNumber, PartitionUpperBound).
-
-get_recall_range(H0, PartitionNumber, PartitionUpperBound, RecallRange1, RecallRange2) ->
-    ar_block:get_recall_range(H0, PartitionNumber, PartitionUpperBound,
-                              RecallRange1, RecallRange2).
 
 prepare_and_post_solution(#mining_candidate{} = Candidate, State) ->
     %% A solo miner builds a solution from a candidate here or a CM miner who received

@@ -86,17 +86,10 @@ encode_session_key(SessionKey) ->
 
 %% @doc Return true if the first solution is above the second one according
 %% to the protocol ordering.
--ifdef(LOCALNET).
-is_ahead_on_the_timeline(NonceLimiterInfo1, NonceLimiterInfo2) ->
-    #nonce_limiter_info{ global_step_number = N1 } = NonceLimiterInfo1,
-    #nonce_limiter_info{ global_step_number = N2 } = NonceLimiterInfo2,
-    N1 >= N2.
--else.
 is_ahead_on_the_timeline(NonceLimiterInfo1, NonceLimiterInfo2) ->
     #nonce_limiter_info{ global_step_number = N1 } = NonceLimiterInfo1,
     #nonce_limiter_info{ global_step_number = N2 } = NonceLimiterInfo2,
     N1 > N2.
--endif.
 
 session_key(#nonce_limiter_info{
                next_seed = NextSeed, global_step_number = StepNumber,
@@ -135,13 +128,8 @@ get_step_triplets(Info, PrevOutput, N) ->
     Steps = gen_server:call(?MODULE, {get_latest_step_triplets, SessionKey, N}, ?DEFAULT_CALL_TIMEOUT),
     filter_step_triplets(Steps, [PrevOutput, Info#nonce_limiter_info.output]).
 
--ifdef(LOCALNET).
-assert_step_number_is_ahead(StepNumber, PrevStepNumber) ->
-    true = StepNumber >= PrevStepNumber.
--else.
 assert_step_number_is_ahead(StepNumber, PrevStepNumber) ->
     true = StepNumber > PrevStepNumber.
--endif.
 
 %% @doc Return {Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
 %% for the block mined at StepNumber considering its previous block PrevB.
@@ -204,30 +192,18 @@ get_active_partition_upper_bound(StepNumber, SessionKey) ->
 %% @doc Return the steps of the given interval. The steps are chosen
 %% according to the protocol. Return not_found if the corresponding hash chain is not
 %% computed yet.
--ifdef(LOCALNET).
-%% On localnet two blocks may be mined on the same step so this function may be called
-%% with the same StepNumber for both the StartStepNumber and EndStepNumber arguments.
-get_steps(StepNumber, StepNumber, _NextSeed, _NextVDFDifficulty) ->
-    not_found;
 get_steps(StartStepNumber, EndStepNumber, NextSeed, NextVDFDifficulty)
   when EndStepNumber > StartStepNumber ->
     SessionKey = session_key(NextSeed, StartStepNumber, NextVDFDifficulty),
     gen_server:call(?MODULE, {get_steps, StartStepNumber, EndStepNumber, SessionKey},
                     ?DEFAULT_CALL_TIMEOUT).
--else.
-get_steps(StartStepNumber, EndStepNumber, NextSeed, NextVDFDifficulty)
-  when EndStepNumber > StartStepNumber ->
-    SessionKey = session_key(NextSeed, StartStepNumber, NextVDFDifficulty),
-    gen_server:call(?MODULE, {get_steps, StartStepNumber, EndStepNumber, SessionKey},
-                    ?DEFAULT_CALL_TIMEOUT).
--endif.
 
 %% @doc Quickly validate the checkpoints of the latest step.
-validate_last_step_checkpoints(B = #block{ nonce_limiter_info = #nonce_limiter_info{
-                                                                   global_step_number = StepNumber } },
-                               PrevB = #block{ nonce_limiter_info = #nonce_limiter_info{
-                                                                       global_step_number = StepNumber } }, _PrevOutput) ->
-    validate_last_step_checkpoints_same_step_number(B, PrevB);
+validate_last_step_checkpoints(#block{ nonce_limiter_info = #nonce_limiter_info{
+                                                               global_step_number = StepNumber } },
+                               #block{ nonce_limiter_info = #nonce_limiter_info{
+                                                               global_step_number = StepNumber } }, _PrevOutput) ->
+    false;
 validate_last_step_checkpoints(#block{
                                   nonce_limiter_info = #nonce_limiter_info{ output = Output,
                                                                             global_step_number = StepNumber, seed = Seed,
@@ -259,28 +235,6 @@ validate_last_step_checkpoints(#block{
     end;
 validate_last_step_checkpoints(_B, _PrevB, _PrevOutput) ->
     false.
-
--ifdef(LOCALNET).
-%% On localnet two blocks may be mined on the same step. In this case
-%% we validate the last step checkpoints come from the previous block.
-validate_last_step_checkpoints_same_step_number(
-  #block{
-     nonce_limiter_info = #nonce_limiter_info{
-                             output = Output,
-                             last_step_checkpoints = [Output | _] = LastStepCheckpoints
-                            }
-    },
-  PrevB
- )
-  when length(LastStepCheckpoints) == ?VDF_CHECKPOINT_COUNT_IN_STEP ->
-    PrevInfo = get_or_init_nonce_limiter_info(PrevB),
-    PrevInfo#nonce_limiter_info.last_step_checkpoints == LastStepCheckpoints;
-validate_last_step_checkpoints_same_step_number(_B, _PrevB) ->
-    false.
--else.
-validate_last_step_checkpoints_same_step_number(_B, _PrevB) ->
-    false.
--endif.
 
 get_reset_frequency() ->
     ?NONCE_LIMITER_RESET_FREQUENCY.
@@ -320,22 +274,9 @@ mix_seed2(PrevOutput, SeedH) ->
 %% Assume the seeds are correct and the first block is above the second one
 %% according to the protocol.
 %% Emit {nonce_limiter, {invalid, H, ErrorCode}} or {nonce_limiter, {valid, H}}.
--ifdef(LOCALNET).
-%% On localnet two blocks may be mined on the same step. In this case
-%% we validate steps come from the previous block.
-request_validation_same_step_number(H, #nonce_limiter_info{ steps = Steps },
-                                    #nonce_limiter_info{ steps = Steps }) ->
-    spawn(fun() -> ar_events:send(nonce_limiter, {valid, H}) end);
-request_validation_same_step_number(H, _Info, _PrevInfo) ->
-    spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 1}) end).
--else.
-request_validation_same_step_number(H, _Info, _PrevInfo) ->
-    spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 1}) end).
--endif.
-
-request_validation(H, #nonce_limiter_info{ global_step_number = N } = Info,
-                   #nonce_limiter_info{ global_step_number = N } = PrevInfo) ->
-    request_validation_same_step_number(H, Info, PrevInfo);
+request_validation(H, #nonce_limiter_info{ global_step_number = N },
+                   #nonce_limiter_info{ global_step_number = N }) ->
+    spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 1}) end);
 request_validation(H, #nonce_limiter_info{ output = Output,
                                            steps = [Output | _] = StepsToValidate } = Info, PrevInfo) ->
     #nonce_limiter_info{ output = PrevOutput,
@@ -1032,18 +973,8 @@ apply_chain(Info, PrevInfo) ->
             VDFDifficulty, NextVDFDifficulty, Steps, LastStepCheckpoints},
     gen_server:cast(?MODULE, {validated_steps, Args}).
 
--ifdef(LOCALNET).
-assert_step_count(StepNumber, PrevStepNumber, Steps) ->
-    case StepNumber == PrevStepNumber of
-        true ->
-            true = length(Steps) > 0;
-        false ->
-            true = StepNumber - PrevStepNumber == length(Steps)
-    end.
--else.
 assert_step_count(StepNumber, PrevStepNumber, Steps) ->
     true = StepNumber - PrevStepNumber == length(Steps).
--endif.
 
 apply_tip(#block{ height = Height } = B, PrevB, #state{ sessions = Sessions } = State) ->
     case Height + 1 < arweave_lib_constants:height_2_6() of

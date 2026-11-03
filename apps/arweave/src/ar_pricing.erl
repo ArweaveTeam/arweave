@@ -301,32 +301,12 @@ redenominate(Amount, BaseDenomination, Denomination) when Denomination > BaseDen
     redenominate(Amount * 1000, BaseDenomination, Denomination - 1).
 
 %% @doc Return the threshold for scheduling redenomination.
--ifdef(LOCALNET).
-get_redenomination_threshold() ->
-    case application:get_env(arweave, redenomination_threshold) of
-        {ok, Value} when is_integer(Value), Value > 0 ->
-            Value;
-        _ ->
-            ?REDENOMINATION_THRESHOLD
-    end.
--else.
 get_redenomination_threshold() ->
     ?REDENOMINATION_THRESHOLD.
--endif.
 
 %% @doc Return the delay (in blocks) before redenomination takes effect.
--ifdef(LOCALNET).
-get_redenomination_delay_blocks() ->
-    case application:get_env(arweave, redenomination_delay_blocks) of
-        {ok, Value} when is_integer(Value), Value > 0 ->
-            Value;
-        _ ->
-            ?REDENOMINATION_DELAY_BLOCKS
-    end.
--else.
 get_redenomination_delay_blocks() ->
     ?REDENOMINATION_DELAY_BLOCKS.
--endif.
 
 %% @doc Increase the amount of base currency units in the system if
 %% the available supply is too low.

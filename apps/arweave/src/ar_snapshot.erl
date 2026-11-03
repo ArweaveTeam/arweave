@@ -1,8 +1,6 @@
 -module(ar_snapshot).
 
--export([export/3, read_state/2, write/3, ensure_dir/1,
-         block_time_history_bi/1, store_blocks/4, store_tx_header/2,
-         store_wallet_list/4, tx_id/1]).
+-export([export/3]).
 
 -include_lib("arweave/include/ar.hrl").
 

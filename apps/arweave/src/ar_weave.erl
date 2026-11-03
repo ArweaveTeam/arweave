@@ -117,7 +117,7 @@ get_initial_block_time_history() ->
 -endif.
 
 %% @doc: create a genesis transaction with the given key and data size. This is only used
-%% in tests and when launching a localnet node.
+%% in tests.
 create_genesis_tx(Key, Size) ->
     {_, {_, Pk}} = Key,
     UnsignedTX =

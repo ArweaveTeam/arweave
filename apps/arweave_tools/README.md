@@ -39,7 +39,7 @@ main ones:
 | Entropy | [`arweave_entropy`](../arweave_entropy/src/arweave_entropy.erl) | Maps entropy over footprints for the packing benchmark. |
 | Key-value store | `arweave` ([`ar_kv`](../arweave/src/ar_kv.erl)) | Opens the node's databases for dumps and snapshots. |
 | Benchmarks | `arweave` ([`ar_bench_hash`](../arweave/src/ar_bench_hash.erl), [`ar_bench_vdf`](../arweave/src/ar_bench_vdf.erl)) | The hash and VDF benchmark code, which the running node also uses. |
-| Snapshots | `arweave` ([`ar_snapshot`](../arweave/src/ar_snapshot.erl)) | Exports a snapshot, with the same engine the local test network uses. |
+| Snapshots | `arweave` ([`ar_snapshot`](../arweave/src/ar_snapshot.erl)) | Exports a snapshot a node can start from via `join.start_from_state`. |
 | Helpers | [`arweave_lib`](../arweave_lib/README.md) | Protocol constants, interval sets and encoding helpers. |
 
 ## Tests

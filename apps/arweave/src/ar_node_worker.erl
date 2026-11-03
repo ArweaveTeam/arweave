@@ -20,7 +20,7 @@
 
 -export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1,
          tx_id_prefix/1, found_solution/4, pause/0,
-         start_mining/0, mine_one_block/0, mine_until_height/1]).
+         start_mining/0, mine_one_block/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
@@ -31,22 +31,12 @@
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--ifdef(LOCALNET).
--define(MINING_SERVER, ar_localnet_mining_server).
--else.
--define(MINING_SERVER, ar_mining_server).
--endif.
-
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(AR_TEST).
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 10).
 -else.
--ifdef(LOCALNET).
--define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 10).
--else.
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 200).
--endif.
 -endif.
 
 %% How long to refuse a rejected block carrying deprecated format-1
@@ -77,8 +67,8 @@
 -define(COMPUTE_MINING_DIFFICULTY_INTERVAL, 10).
 -endif.
 
--ifndef(LOCALNET_BALANCE).
--define(LOCALNET_BALANCE, 1000000000000).
+-ifndef(GENESIS_BALANCE).
+-define(GENESIS_BALANCE, 1000000000000).
 -endif.
 
 %%%===================================================================
@@ -110,15 +100,10 @@ found_solution(Source, Solution, PoACache, PoA2Cache) ->
 start_mining() ->
     gen_server:cast(?MODULE, start_mining).
 
-%% @doc Mine until a block is found. The default server may produce several block
-%% candidates (happens often in tests). The localnet mining server only produces
-%% one candidate and one block.
+%% @doc Mine until a block is found. The mining server may produce several block
+%% candidates (happens often in tests).
 mine_one_block() ->
     gen_server:cast(?MODULE, mine_one_block).
-
-%% @doc Mine blocks until the given height is reached.
-mine_until_height(Height) ->
-    gen_server:cast(?MODULE, {mine_until_height, Height}).
 
 %% @doc Pause the mining server.
 pause() ->
@@ -175,7 +160,7 @@ init([]) ->
             arweave_config:set([genesis, init], false),
             MiningAddr = arweave_config:get([mining, address]),
             Diff = arweave_config:get([genesis, difficulty]),
-            InitialBalance = ?AR(?LOCALNET_BALANCE),
+            InitialBalance = ?AR(?GENESIS_BALANCE),
             [B0] = ar_weave:init([{MiningAddr, InitialBalance, <<>>}],
                                  ar_retarget:switch_to_linear_diff(Diff)),
             RootHash0 = B0#block.wallet_list,
@@ -211,7 +196,6 @@ init([]) ->
            miner_state => undefined,
            io_threads => [],
            automine => false,
-           mine_until_height => undefined,
            tags => [],
            blocks_missing_txs => sets:new(),
            missing_txs_lookup_processes => #{},
@@ -762,18 +746,14 @@ handle_task(mine_one_block, State) ->
             {noreply, State}
     end;
 
-handle_task({mine_until_height, Height}, State) ->
-    {noreply, start_mining(State#{ mine_until_height => {height, Height}, automine => true })};
-
 handle_task(pause, State) ->
     case maps:get(miner_state, State) of
         undefined ->
             ok;
         _ ->
-            ?MINING_SERVER:pause()
+            ar_mining_server:pause()
     end,
-    {noreply, State#{ miner_state => undefined, automine => false,
-                      mine_until_height => undefined }};
+    {noreply, State#{ miner_state => undefined, automine => false }};
 
 handle_task({filter_mempool, Mempool}, State) ->
     {ok, List, RemainingMempool} = ar_mempool:take_chunk(Mempool, ?FILTER_MEMPOOL_CHUNK_SIZE),
@@ -837,7 +817,7 @@ handle_task(compute_mining_difficulty, State) ->
         undefined ->
             ok;
         _ ->
-            ?MINING_SERVER:set_difficulty(Diff)
+            ar_mining_server:set_difficulty(Diff)
     end,
     ar_util:cast_after((?COMPUTE_MINING_DIFFICULTY_INTERVAL) * 1000, ?MODULE,
                        compute_mining_difficulty),
@@ -1811,19 +1791,12 @@ return_orphaned_txs_to_mempool(H, BaseH, SkipTXIDs) ->
 
 %% @doc Stop the current mining session and optionally start a new one,
 %% depending on the automine setting.
-maybe_reset_miner(#{ mine_until_height := {height, TargetHeight} } = State) ->
-    case ar_node:get_height() >= TargetHeight of
-        true ->
-            maybe_reset_miner(State#{ mine_until_height => undefined, automine => false });
-        false ->
-            start_mining(State)
-    end;
 maybe_reset_miner(#{ miner_state := MinerState, automine := false } = State) ->
     case MinerState of
         undefined ->
             ok;
         _ ->
-            ?MINING_SERVER:pause()
+            ar_mining_server:pause()
     end,
     State#{ miner_state => undefined };
 maybe_reset_miner(State) ->
@@ -1834,14 +1807,14 @@ start_mining(State) ->
     [{_, MerkleRebaseThreshold}] = ets:lookup(node_state,
                                               merkle_rebase_support_threshold),
     [{_, Height}] = ets:lookup(node_state, height),
-    ?MINING_SERVER:start_mining({DiffPair, MerkleRebaseThreshold, Height}),
+    ar_mining_server:start_mining({DiffPair, MerkleRebaseThreshold, Height}),
     case maps:get(miner_state, State) of
         undefined ->
             State#{ miner_state => running };
         running ->
-            ?MINING_SERVER:set_difficulty(DiffPair),
-            ?MINING_SERVER:set_merkle_rebase_threshold(MerkleRebaseThreshold),
-            ?MINING_SERVER:set_height(Height),
+            ar_mining_server:set_difficulty(DiffPair),
+            ar_mining_server:set_merkle_rebase_threshold(MerkleRebaseThreshold),
+            ar_mining_server:set_height(Height),
             State
     end.
 

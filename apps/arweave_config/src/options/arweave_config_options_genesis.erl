@@ -38,9 +38,7 @@ validate() ->
             case ?NETWORK_NAME of
                 "arweave.N.1" ->
                     {error, <<"Cannot start a new network with the mainnet name! "
-                            "Use ./bin/start-localnet ... when running from sources "
-                            "or compile via ./rebar3 as localnet tar and use "
-                            "./bin/start ... as usual.">>};
+                            "Compile the node with a different NETWORK_NAME.">>};
                 _ ->
                     ok
             end;
