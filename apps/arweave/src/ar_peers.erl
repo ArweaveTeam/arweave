@@ -140,6 +140,7 @@
                               invalid_recall_byte,
                               invalid_recall_byte2,
                               invalid_poa,
+                              invalid_poa_relative,
                               invalid_poa2,
                               invalid_nonce_limiter,
                               invalid_nonce_limiter_cache_mismatch,
@@ -1145,6 +1146,8 @@ ban_time(invalid_hash_preimage_relative) ->
     ?BAD_HASH_PREIMAGE_BAN_TIME;
 ban_time(invalid_tx_body_relative) ->
     ?BAD_TX_BODY_BAN_TIME;
+ban_time(invalid_poa_relative) ->
+    ?BAD_POA_BAN_TIME;
 ban_time(_Reason) ->
     ?BAD_BLOCK_BAN_TIME.
 

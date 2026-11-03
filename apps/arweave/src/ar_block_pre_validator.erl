@@ -416,7 +416,8 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
             nonce_limiter_info = #nonce_limiter_info{ output = Output,
                                                       global_step_number = StepNumber, seed = Seed,
                                                       partition_upper_bound = UpperBound,
-                                                      last_step_checkpoints = LastStepCheckpoints },
+                                                      last_step_checkpoints = LastStepCheckpoints,
+                                                      vdf_difficulty = VDFDifficulty },
             chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash,
             unpacked_chunk_hash = UnpackedChunkHash,
             unpacked_chunk2_hash = UnpackedChunk2Hash,
@@ -436,7 +437,8 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
                     nonce_limiter_info = #nonce_limiter_info{ output = Output,
                                                               last_step_checkpoints = LastStepCheckpoints,
                                                               seed = Seed, partition_upper_bound = UpperBound,
-                                                              global_step_number = StepNumber },
+                                                              global_step_number = StepNumber,
+                                                              vdf_difficulty = VDFDifficulty },
                     chunk_hash = ChunkHash, chunk2_hash = Chunk2Hash,
                     unpacked_chunk_hash = UnpackedChunkHash,
                     unpacked_chunk2_hash = UnpackedChunk2Hash,
@@ -452,14 +454,7 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
                     true ->
                         B2 = B#block{ poa = (B#block.poa)#poa{ chunk = Chunk },
                                       poa2 = (B#block.poa2)#poa{ chunk = Chunk2 } },
-                        case validate_poa_against_cached_poa(B2, CacheB) of
-                            {true, B3} ->
-                                {valid, B3};
-                            false ->
-                                {invalid, #{
-                                            code => check_resigned_solution_hash_poa_mismatch,
-                                            b2 => B2, cache_b => CacheB, prev_b => PrevB }}
-                        end;
+                        reuse_cached_poa(B2, CacheB);
                     false ->
                         {invalid, #{ code => check_resigned_solution_hash_last_step_prev_output_mismatch,
                                      packing_difficulty => PackingDifficulty,
@@ -478,10 +473,10 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
                 not_found;
             {invalid, ExtraData} ->
                 {invalid, ExtraData};
-            {valid, B4} ->
+            {valid, B4, Resigned} ->
                 case ar_node_utils:block_passes_diff_check(B) of
                     true ->
-                        {valid, B4};
+                        {valid, B4, Resigned};
                     false ->
                         {invalid, #{ code => check_resigned_solution_hash_diff_mismatch,
                                      b => B }}
@@ -496,8 +491,9 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
             ar_events:send(block, {rejected, invalid_resigned_solution_hash,
                                    B#block.indep_hash, Peer}),
             invalid;
-        {valid, B5} ->
-            pre_validate_nonce_limiter_global_step_number(B5, PrevB, true, Peer)
+        {valid, B5, SolutionResigned} ->
+            pre_validate_nonce_limiter_global_step_number(
+                B5, PrevB, SolutionResigned, Peer)
     end.
 
 get_last_step_prev_output(B) ->
@@ -510,29 +506,32 @@ get_last_step_prev_output(B) ->
             PrevOutput
     end.
 
-validate_poa_against_cached_poa(B, CacheB) ->
-    #block{ poa_cache = {ArgCache, ChunkID}, poa2_cache = Cache2 } = CacheB,
-    Args = erlang:append_element(erlang:insert_element(5, ArgCache, B#block.poa), ChunkID),
-    case ar_poa:validate(Args) of
-        {true, ChunkID} ->
-            B2 = B#block{ poa_cache = {ArgCache, ChunkID} },
-            case B#block.recall_byte2 of
-                undefined ->
-                    {true, B2};
-                _ ->
-                    {ArgCache2, Chunk2ID} = Cache2,
-                    Args2 = erlang:append_element(
-                              erlang:insert_element(5, ArgCache2, B#block.poa2), Chunk2ID),
-                    case ar_poa:validate(Args2) of
-                        {true, Chunk2ID} ->
-                            {true, B2#block{ poa2_cache = Cache2 }};
-                        _ ->
-                            false
-                    end
-            end;
-        _ ->
-            false
+%% @doc Attach the proof caches of CacheB to B and mark whether its proofs
+%% differ from the cached ones.
+reuse_cached_poa(B, CacheB) ->
+    #block{ poa = PoA, poa2 = PoA2, recall_byte2 = RecallByte2 } = B,
+    #block{ poa = CachePoA, poa2 = CachePoA2, poa_cache = Cache,
+            poa2_cache = Cache2 } = CacheB,
+    HasCaches = Cache /= undefined
+        andalso (RecallByte2 == undefined orelse Cache2 /= undefined),
+    HasSamePaths = has_same_paths(PoA, CachePoA)
+        andalso (RecallByte2 == undefined
+                 orelse has_same_paths(PoA2, CachePoA2)),
+    B2 = B#block{ poa_cache = Cache, poa2_cache = Cache2 },
+    case {HasCaches, HasSamePaths} of
+        {false, _} ->
+            not_found;
+        {true, true} ->
+            {valid, B2, true};
+        {true, false} ->
+            {valid, B2, other_proof}
     end.
+
+has_same_paths(#poa{ tx_path = TXPath, data_path = DataPath },
+               #poa{ tx_path = TXPath, data_path = DataPath }) ->
+    true;
+has_same_paths(_PoA, _CachePoA) ->
+    false.
 
 pre_validate_nonce_limiter_global_step_number(B, PrevB, SolutionResigned, Peer) ->
     BlockInfo = B#block.nonce_limiter_info,
@@ -627,20 +626,21 @@ pre_validate_packing_difficulty(B, PrevB, SolutionResigned, Peer) ->
             invalid;
         true ->
             case SolutionResigned of
-                true ->
-                    pre_validate_resigned_solution(B, PrevB, Peer);
                 false ->
-                    pre_validate_quick_pow(B, PrevB, false, Peer)
+                    pre_validate_quick_pow(B, PrevB, false, Peer);
+                _ ->
+                    pre_validate_resigned_solution(B, PrevB, SolutionResigned,
+                                                   Peer)
             end
     end.
 
-pre_validate_resigned_solution(B, PrevB, Peer) ->
+pre_validate_resigned_solution(B, PrevB, SolutionResigned, Peer) ->
     case is_resigned_relative_solution(B, PrevB) of
         true ->
             reject_hash_preimage(B, Peer),
             invalid;
         false ->
-            pre_validate_tx_bodies(B, PrevB, true, Peer)
+            pre_validate_tx_bodies(B, PrevB, SolutionResigned, Peer)
     end.
 
 pre_validate_quick_pow(B, PrevB, SolutionResigned, Peer) ->
@@ -771,9 +771,55 @@ pre_validate_nonce(B, PrevB, PartitionUpperBound, SolutionResigned, Peer) ->
             case SolutionResigned of
                 true ->
                     accept_block(B, Peer, false);
+                other_proof ->
+                    pre_validate_resigned_poa(B, Peer);
                 false ->
                     pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer)
             end
+    end.
+
+%% @doc Validate the proofs of a resigned solution with the cached arguments.
+pre_validate_resigned_poa(B, Peer) ->
+    #block{ poa = PoA, poa2 = PoA2, poa_cache = Cache, poa2_cache = Cache2,
+            recall_byte2 = RecallByte2 } = B,
+    Result =
+        maybe
+            true ?= check_poa(PoA, Cache),
+            RecallByte2 == undefined orelse check_poa(PoA2, Cache2)
+        end,
+    case Result of
+        true ->
+            accept_block(B, Peer, false);
+        error ->
+            ?LOG_ERROR([{event, failed_to_validate_proof_of_access},
+                        {block, arweave_lib_util:encode(B#block.indep_hash)}]),
+            invalid;
+        false ->
+            post_block_reject_warn_and_error_dump(B, check_resigned_poa, Peer),
+            ar_events:send(block, {rejected, poa_rejection(B#block.height),
+                                   B#block.indep_hash, Peer}),
+            invalid
+    end.
+
+%% @doc Return true or false for a valid or invalid proof, or error if the
+%% validation failed locally.
+check_poa(PoA, {ArgCache, _ChunkID}) ->
+    {BlockStart, RecallByte, TXRoot, BlockSize, Packing, SubChunkIndex} =
+        ArgCache,
+    case ar_poa:validate({BlockStart, RecallByte, TXRoot, BlockSize, PoA,
+                          Packing, SubChunkIndex, not_set}) of
+        {true, _ChunkID2} ->
+            true;
+        Result ->
+            Result
+    end.
+
+poa_rejection(Height) ->
+    case ar_block_cache:rejects_resigned_relative_solution(Height) of
+        true ->
+            invalid_poa;
+        false ->
+            invalid_poa_relative
     end.
 
 pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
@@ -1071,4 +1117,17 @@ poa_cache_reconciles_test_() ->
             ?assertNot(poa_cache_reconciles(150, Cache(100, Root, 200), PrevB))
         end)
     ].
+
+reuse_cached_poa_test() ->
+    PoA = #poa{ tx_path = <<"tx_path">>, data_path = <<"data_path">> },
+    Cache = {{100, 150, <<"root">>, 200, unpacked, 0}, <<"chunk_id">>},
+    CacheB = #block{ poa = PoA, poa2 = PoA, recall_byte2 = 250,
+                     poa_cache = Cache, poa2_cache = Cache },
+    B = CacheB#block{ poa_cache = undefined, poa2_cache = undefined },
+    B2 = B#block{ poa2 = PoA#poa{ data_path = <<"other">> } },
+    ?assertEqual({valid, CacheB, true}, reuse_cached_poa(B, CacheB)),
+    ?assertEqual({valid, CacheB#block{ poa2 = B2#block.poa2 }, other_proof},
+                 reuse_cached_poa(B2, CacheB)),
+    ?assertEqual(not_found,
+                 reuse_cached_poa(B, CacheB#block{ poa2_cache = undefined })).
 -endif.

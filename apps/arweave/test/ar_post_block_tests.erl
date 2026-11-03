@@ -540,6 +540,68 @@ test_resigned_solution_prev_block() ->
         meck:unload(ar_node_utils)
     end.
 
+resigned_solution_other_proof_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT, fun test_resigned_solution_other_proof/0}.
+
+test_resigned_solution_other_proof() ->
+    [B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
+    ar_test_node:start(B0),
+    ar_test_node:start_peer(peer1, B0),
+    ar_test_node:disconnect_from(peer1),
+    ar_test_node:mine(peer1),
+    {ok, BI} = ar_test_await:node_height(peer1, 1),
+    B1 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI)]),
+    ok = ar_events:subscribe(block),
+    post_block(B1, valid),
+    MiningAddr = ar_test_node:remote_call(peer1, arweave_config, get,
+            [[mining, address]]),
+    Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [MiningAddr]),
+    Peer = ar_test_node:peer_ip(main),
+    B2 = sign_block(B1#block{ timestamp = B1#block.timestamp + 1 }, B0, Key),
+    post_block(B2, valid),
+    %% The node has the solution cached, yet validates the other proof in full.
+    PoA = B1#block.poa,
+    B3 = sign_block(B1#block{ timestamp = B1#block.timestamp + 2,
+            poa = PoA#poa{ data_path = <<>> } }, B0, Key),
+    post_block(B3, invalid_poa_relative),
+    assert_banned(Peer),
+    ar_blacklist_middleware:reset(),
+    B4 = sign_block(B1#block{ timestamp = B1#block.timestamp + 3,
+            poa = PoA#poa{ data_path = <<>> } }, B0, Key),
+    meck:new(ar_block_cache, [passthrough]),
+    meck:expect(ar_block_cache, rejects_resigned_relative_solution,
+        fun(_Height) -> true end),
+    try
+        post_block(B4, invalid_poa),
+        assert_banned(Peer)
+    after
+        meck:unload(ar_block_cache)
+    end,
+    ar_blacklist_middleware:reset(),
+    %% A local validation failure drops the block without blaming the peer.
+    B5 = sign_block(B1#block{ timestamp = B1#block.timestamp + 4,
+            poa = PoA#poa{ data_path = <<>> } }, B0, Key),
+    H5 = B5#block.indep_hash,
+    meck:new(ar_poa, [passthrough]),
+    meck:expect(ar_poa, validate, fun(_Args) -> error end),
+    try
+        ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
+                ar_test_node:send_new_block(Peer, B5)),
+        meck:wait(ar_poa, validate, '_', 60_000),
+        assert_not_banned(Peer)
+    after
+        meck:unload(ar_poa)
+    end,
+    receive
+        {event, block, {rejected, Reason, H5, _}} ->
+            ?assert(false,
+                    io_lib:format("Unexpected rejection: ~p.", [Reason]));
+        {event, block, {new, #block{ indep_hash = H5 }, _}} ->
+            ?assert(false, "Unexpected acceptance.")
+    after 0 ->
+        ok
+    end.
+
 rejects_invalid_blocks_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_invalid_blocks/0}.
 
@@ -1007,6 +1069,13 @@ test_resigned_solution() ->
     post_block(B2, [valid]),
     B3 = sign_block(B#block{ tags = [<<"tag2">>] }, B0, Key),
     post_block(B3, [valid]),
+    %% A resigned solution keeps the VDF difficulty.
+    Info = B#block.nonce_limiter_info,
+    OtherVDFB = sign_block(B#block{ tags = [<<"tag3">>],
+            nonce_limiter_info = Info#nonce_limiter_info{
+                vdf_difficulty = Info#nonce_limiter_info.vdf_difficulty + 1 } },
+            B0, Key),
+    post_block(OtherVDFB, invalid_resigned_solution_hash),
     ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
     B4 = ar_test_node:remote_call(peer1, ar_node, get_current_block, []),
     ?assertEqual(B#block.indep_hash, B4#block.previous_block),

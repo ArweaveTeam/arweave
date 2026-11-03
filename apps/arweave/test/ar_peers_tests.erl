@@ -509,6 +509,12 @@ test_block_rejected() ->
     ?assert(ban_expires_within(Peer, ?BAD_HASH_PREIMAGE_BAN_TIME)),
     ar_blacklist_middleware:reset(),
 
+    send_block_event({rejected, invalid_poa_relative, <<>>, Peer}),
+
+    ?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)),
+    ?assert(ban_expires_within(Peer, ?BAD_POA_BAN_TIME)),
+    ar_blacklist_middleware:reset(),
+
     send_block_event({rejected, invalid_previous_solution_hash, <<>>, Peer}),
 
     ?assertEqual(#{Peer => #performance{}},
