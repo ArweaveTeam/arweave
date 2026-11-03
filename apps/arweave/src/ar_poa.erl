@@ -6,6 +6,7 @@
     get_data_path_validation_ruleset/2, get_data_path_validation_ruleset/3,
     validate_pre_fork_2_5/4,
     validate/1,
+    get_chunk_id/5,
     chunk_proof/2, chunk_proof/3, chunk_proof/5,
     validate_paths/1,
     validate_data_path/5, validate_data_path/6
@@ -152,15 +153,8 @@ validate(Args) ->
     {BlockStartOffset, RecallOffset, TXRoot, BlockSize, SPoA, Packing, SubChunkIndex,
      ExpectedChunkID} = Args,
     #poa{ chunk = Chunk, unpacked_chunk = UnpackedChunk } = SPoA,
-
-    ChunkMetadata = #chunk_metadata{
-                       tx_root = TXRoot,
-                       tx_path = SPoA#poa.tx_path,
-                       data_path = SPoA#poa.data_path
-                      },
-    ChunkProof = chunk_proof(ChunkMetadata, RecallOffset, BlockStartOffset, BlockSize),
-
-    case validate_paths(ChunkProof) of
+    case validate_poa_paths(BlockStartOffset, RecallOffset, TXRoot, BlockSize,
+                            SPoA) of
         {false, _} ->
             false;
         {true, ChunkProof2} ->
@@ -184,6 +178,26 @@ validate(Args) ->
                     end
             end
     end.
+
+%% @doc Return the identifier of the chunk the proof's paths prove, without
+%% unpacking the chunk.
+get_chunk_id(BlockStartOffset, RecallOffset, TXRoot, BlockSize, PoA) ->
+    case validate_poa_paths(BlockStartOffset, RecallOffset, TXRoot, BlockSize,
+                            PoA) of
+        {true, #chunk_proof{ chunk_id = ChunkID }} ->
+            {ok, ChunkID};
+        {false, _} ->
+            {error, invalid_paths}
+    end.
+
+validate_poa_paths(BlockStartOffset, RecallOffset, TXRoot, BlockSize, PoA) ->
+    ChunkMetadata = #chunk_metadata{
+                       tx_root = TXRoot,
+                       tx_path = PoA#poa.tx_path,
+                       data_path = PoA#poa.data_path
+                      },
+    validate_paths(chunk_proof(ChunkMetadata, RecallOffset, BlockStartOffset,
+                               BlockSize)).
 
 chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte) ->
     chunk_proof(

@@ -2087,19 +2087,22 @@ compute_poa_cache(#block{ height = 0 }, _PoA, _RecallByte, _Nonce, _Packing) ->
 compute_poa_cache(B, PoA, RecallByte, Nonce, Packing) ->
     PackingDifficulty = B#block.packing_difficulty,
     SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),
-    {BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte),
-    BlockSize = BlockEnd - BlockStart,
-    ChunkID =
-        case PoA#poa.unpacked_chunk of
-            <<>> ->
-                Args = {BlockStart, RecallByte, TXRoot, BlockSize, PoA, Packing,
-                        SubChunkIndex, not_set},
-                {true, ComputedChunkID} = ar_poa:validate(Args),
-                ComputedChunkID;
-            _ ->
-                ar_tx:generate_chunk_id(PoA#poa.unpacked_chunk)
-        end,
-    {{BlockStart, RecallByte, TXRoot, BlockSize, Packing, SubChunkIndex}, ChunkID}.
+    maybe
+        {BlockStart, BlockEnd, TXRoot} ?=
+            ar_block_index:get_block_bounds(RecallByte),
+        BlockSize = BlockEnd - BlockStart,
+        {ok, ChunkID} ?= ar_poa:get_chunk_id(BlockStart, RecallByte, TXRoot,
+                                            BlockSize, PoA),
+        {{BlockStart, RecallByte, TXRoot, BlockSize, Packing, SubChunkIndex},
+         ChunkID}
+    else
+        Error ->
+            ?LOG_WARNING([{event, failed_to_compute_poa_cache},
+                          {block, arweave_lib_util:encode(B#block.indep_hash)},
+                          {recall_byte, RecallByte},
+                          {reason, io_lib:format("~p", [Error])}]),
+            undefined
+    end.
 
 dump_mempool(TXs, MempoolSize) ->
     SerializedTXs = maps:map(fun(_, {TX, St}) -> {ar_serialize:tx_to_binary(TX), St} end, TXs),
@@ -2612,6 +2615,38 @@ checker_test_disabled() ->
     ?assertEqual({3, #{ true => 3 }}, checker([true, true, true])),
     ?assertEqual({3, #{ true => 2, false => 1}}, checker([true, true, false])),
     ?assertEqual({3, #{ true => 1, false => 2}}, checker([true, false, false])).
+
+-ifdef(AR_TEST).
+compute_poa_cache_test_() ->
+    %% Any size below ?DATA_CHUNK_SIZE, so that the chunk gets padded.
+    ChunkSize = 1000,
+    Chunk = crypto:strong_rand_bytes(ChunkSize),
+    ChunkID = ar_tx:generate_chunk_id(Chunk),
+    %% The only chunk of the only transaction of a block starting at offset 0.
+    {DataRoot, DataTree} = ar_merkle:generate_tree([{ChunkID, ChunkSize}]),
+    DataPath = ar_merkle:generate_path(DataRoot, 0, DataTree),
+    {TXRoot, TXTree} = ar_merkle:generate_tree([{DataRoot, ChunkSize}]),
+    TXPath = ar_merkle:generate_path(TXRoot, 0, TXTree),
+    PoA = #poa{ tx_path = TXPath, data_path = DataPath,
+                unpacked_chunk = ar_packing_server:pad_chunk(Chunk) },
+    B = #block{ height = 1, indep_hash = crypto:strong_rand_bytes(48),
+                packing_difficulty = 1 },
+    Packing = {composite, <<"address">>, 1},
+    Nonce = 0,
+    RecallByte = ChunkSize - 1,
+    SubChunkIndex = ar_block:get_sub_chunk_index(1, Nonce),
+    ArgCache = {0, RecallByte, TXRoot, ChunkSize, Packing, SubChunkIndex},
+    ar_test_util:with_mocked(
+        [{ar_block_index, get_block_bounds,
+          fun(_Offset) -> {0, ChunkSize, TXRoot} end}],
+        fun() ->
+            ?assertEqual({ArgCache, ChunkID},
+                         compute_poa_cache(B, PoA, RecallByte, Nonce, Packing)),
+            ?assertEqual(undefined,
+                         compute_poa_cache(B, PoA#poa{ data_path = <<>> },
+                                           RecallByte, Nonce, Packing))
+        end).
+-endif.
 
 clock_sync_ok_test() ->
     %% All valid, or valid strictly outnumbering invalid, is accepted.
