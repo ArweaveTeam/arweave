@@ -1,7 +1,7 @@
 {application, arweave,
  [
   {description, "Arweave"},
-  {vsn, "2.9.7"},
+  {vsn, "2.9.8"},
   {mod, {ar, []}},
   {applications, 
    [
