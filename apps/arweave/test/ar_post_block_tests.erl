@@ -420,14 +420,187 @@ test_add_external_block_with_invalid_timestamp() ->
     OkFutureTimestamp = os:system_time(second) + FutureTimestampTolerance - 3,
     B3 = sign_block(B#block{ timestamp = OkFutureTimestamp }, PrevB, Key),
     post_block(B3, valid),
-    %% Expect the timestamp too far behind the previous timestamp to be rejected.
-    PastTimestampTolerance = lists:sum([?JOIN_CLOCK_TOLERANCE * 2, ?CLOCK_DRIFT_MAX]),
-    TooFarPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance - 1,
-    B4 = sign_block(B#block{ timestamp = TooFarPastTimestamp }, PrevB, Key),
+    %% Expect the timestamp smaller than the previous timestamp to be rejected
+    %% without banning the peer.
+    B4 = sign_block(B#block{ timestamp = PrevB#block.timestamp - 1 }, PrevB,
+            Key),
     post_block(B4, invalid_timestamp),
-    OkPastTimestamp = PrevB#block.timestamp - PastTimestampTolerance + 1,
-    B5 = sign_block(B#block{ timestamp = OkPastTimestamp }, PrevB, Key),
+    assert_not_banned(ar_test_node:peer_ip(main)),
+    B5 = sign_block(B#block{ timestamp = PrevB#block.timestamp }, PrevB, Key),
     post_block(B5, valid).
+
+resigned_solution_prev_block_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT, fun test_resigned_solution_prev_block/0}.
+
+test_resigned_solution_prev_block() ->
+    [B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
+    ar_test_node:start(B0),
+    ar_test_node:start_peer(peer1, B0),
+    ar_test_node:disconnect_from(peer1),
+    ar_test_node:mine(peer1),
+    {ok, BI} = ar_test_await:node_height(peer1, 1),
+    B1 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI)]),
+    ok = ar_events:subscribe(block),
+    post_block(B1, valid),
+    MiningAddr = ar_test_node:remote_call(peer1, arweave_config, get,
+            [[mining, address]]),
+    Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [MiningAddr]),
+    Peer = ar_test_node:peer_ip(main),
+    B2 = sign_block(B1#block{ timestamp = B1#block.timestamp + 1 }, B0, Key),
+    post_block(B2, valid),
+    B3 = sign_block(B1#block{ timestamp = B1#block.timestamp + 2 }, B0, Key),
+    H3 = B3#block.indep_hash,
+    meck:new(ar_block, [passthrough]),
+    meck:expect(ar_block, compute_h0,
+        fun(#block{ indep_hash = H }, _PrevB) when H == H3 ->
+                crypto:strong_rand_bytes(32);
+           (B, PrevB) ->
+                meck:passthrough([B, PrevB])
+        end),
+    try
+        post_block(B3, invalid_hash_preimage_relative),
+        assert_banned(Peer)
+    after
+        meck:unload(ar_block)
+    end,
+    ar_blacklist_middleware:reset(),
+    B4 = sign_block(B1#block{ timestamp = B1#block.timestamp + 3 }, B0, Key),
+    meck:new(ar_block, [passthrough]),
+    meck:expect(ar_block, get_block_bounds,
+        fun(_RecallByte, _PrevB) -> {error, invalid_recall_byte} end),
+    try
+        post_block(B4, invalid_hash_preimage_relative),
+        assert_banned(Peer)
+    after
+        meck:unload(ar_block)
+    end,
+    ar_blacklist_middleware:reset(),
+    B4b = sign_block(B1#block{ timestamp = B1#block.timestamp + 4 }, B0, Key),
+    meck:new(ar_block, [passthrough]),
+    meck:expect(ar_block, get_block_bounds,
+        fun(_RecallByte, _PrevB) ->
+                {16#FFFFFFFFFF, 16#FFFFFFFFFF, crypto:strong_rand_bytes(32)}
+        end),
+    try
+        post_block(B4b, invalid_hash_preimage_relative),
+        assert_banned(Peer)
+    after
+        meck:unload(ar_block)
+    end,
+    ar_blacklist_middleware:reset(),
+    B4c = sign_block(B1#block{ timestamp = B1#block.timestamp + 6 }, B0, Key),
+    meck:new(ar_block, [passthrough]),
+    meck:expect(ar_block, get_block_bounds,
+        fun(_RecallByte, _PrevB) -> not_found end),
+    try
+        post_block(B4c, invalid_hash_preimage_relative),
+        assert_banned(Peer)
+    after
+        meck:unload(ar_block)
+    end,
+    ar_blacklist_middleware:reset(),
+    B5 = sign_block(B1#block{ timestamp = B1#block.timestamp + 5 }, B0, Key),
+    H5 = B5#block.indep_hash,
+    meck:new(ar_block, [passthrough]),
+    meck:expect(ar_block, compute_h0,
+        fun(#block{ indep_hash = H }, _PrevB) when H == H5 ->
+                crypto:strong_rand_bytes(32);
+           (B, PrevB) ->
+                meck:passthrough([B, PrevB])
+        end),
+    meck:new(ar_block_cache, [passthrough]),
+    meck:expect(ar_block_cache, rejects_resigned_relative_solution,
+        fun(_Height) -> true end),
+    try
+        post_block(B5, invalid_hash_preimage),
+        assert_banned(Peer)
+    after
+        meck:unload(ar_block_cache),
+        meck:unload(ar_block)
+    end,
+    ar_blacklist_middleware:reset(),
+    B6 = sign_block(B1#block{ timestamp = B1#block.timestamp + 7,
+            hash = crypto:strong_rand_bytes(32) }, B0, Key),
+    H6 = B6#block.indep_hash,
+    meck:new(ar_node_utils, [passthrough]),
+    meck:expect(ar_node_utils, block_passes_diff_check,
+        fun(_SolutionHash, #block{ indep_hash = H }) when H == H6 ->
+                false;
+           (SolutionHash, B) ->
+                meck:passthrough([SolutionHash, B])
+        end),
+    meck:new(ar_block_cache, [passthrough]),
+    meck:expect(ar_block_cache, rejects_resigned_relative_solution,
+        fun(_Height) -> true end),
+    try
+        post_block(B6, invalid_hash_preimage),
+        assert_banned(Peer)
+    after
+        meck:unload(ar_block_cache),
+        meck:unload(ar_node_utils)
+    end.
+
+resigned_solution_other_proof_test_() ->
+    {timeout, ?TEST_NODE_TIMEOUT, fun test_resigned_solution_other_proof/0}.
+
+test_resigned_solution_other_proof() ->
+    [B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
+    ar_test_node:start(B0),
+    ar_test_node:start_peer(peer1, B0),
+    ar_test_node:disconnect_from(peer1),
+    ar_test_node:mine(peer1),
+    {ok, BI} = ar_test_await:node_height(peer1, 1),
+    B1 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI)]),
+    ok = ar_events:subscribe(block),
+    post_block(B1, valid),
+    MiningAddr = ar_test_node:remote_call(peer1, arweave_config, get,
+            [[mining, address]]),
+    Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [MiningAddr]),
+    Peer = ar_test_node:peer_ip(main),
+    B2 = sign_block(B1#block{ timestamp = B1#block.timestamp + 1 }, B0, Key),
+    post_block(B2, valid),
+    %% The node has the solution cached, yet validates the other proof in full.
+    PoA = B1#block.poa,
+    B3 = sign_block(B1#block{ timestamp = B1#block.timestamp + 2,
+            poa = PoA#poa{ data_path = <<>> } }, B0, Key),
+    post_block(B3, invalid_poa_relative),
+    assert_banned(Peer),
+    ar_blacklist_middleware:reset(),
+    B4 = sign_block(B1#block{ timestamp = B1#block.timestamp + 3,
+            poa = PoA#poa{ data_path = <<>> } }, B0, Key),
+    meck:new(ar_block_cache, [passthrough]),
+    meck:expect(ar_block_cache, rejects_resigned_relative_solution,
+        fun(_Height) -> true end),
+    try
+        post_block(B4, invalid_poa),
+        assert_banned(Peer)
+    after
+        meck:unload(ar_block_cache)
+    end,
+    ar_blacklist_middleware:reset(),
+    %% A local validation failure drops the block without blaming the peer.
+    B5 = sign_block(B1#block{ timestamp = B1#block.timestamp + 4,
+            poa = PoA#poa{ data_path = <<>> } }, B0, Key),
+    H5 = B5#block.indep_hash,
+    meck:new(ar_poa, [passthrough]),
+    meck:expect(ar_poa, validate, fun(_Args) -> error end),
+    try
+        ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
+                ar_test_node:send_new_block(Peer, B5)),
+        meck:wait(ar_poa, validate, '_', 60_000),
+        assert_not_banned(Peer)
+    after
+        meck:unload(ar_poa)
+    end,
+    receive
+        {event, block, {rejected, Reason, H5, _}} ->
+            ?assert(false,
+                    io_lib:format("Unexpected rejection: ~p.", [Reason]));
+        {event, block, {new, #block{ indep_hash = H5 }, _}} ->
+            ?assert(false, "Unexpected acceptance.")
+    after 0 ->
+        ok
+    end.
 
 rejects_invalid_blocks_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_invalid_blocks/0}.
@@ -493,7 +666,8 @@ test_rejects_invalid_blocks() ->
             hash = crypto:strong_rand_bytes(32),
             reward_key = element(2, InvalidKey) }, B0, InvalidKey),
     timer:sleep(100 * 2), % ?THROTTLE_BY_IP_INTERVAL_MS * 2
-    post_block(B6, [invalid_hash_preimage, invalid_pow]),
+    post_block(B6, [invalid_hash_preimage_relative, invalid_hash_preimage,
+            invalid_pow]),
     assert_banned(Peer),
     ?assertMatch({ok, {{<<"403">>, _}, _,
             <<"IP address blocked due to previous request.">>, _, _}},
@@ -545,13 +719,15 @@ test_rejects_invalid_blocks() ->
     %% We might get invalid_hash_preimage occasionally, because the partition number
     %% changes H0 which changes the solution hash which may happen to be lower than
     %% the difficulty.
-    post_block(B11_1, [invalid_resigned_solution_hash, invalid_hash_preimage]),
+    post_block(B11_1, [invalid_resigned_solution_hash,
+            invalid_hash_preimage_relative, invalid_hash_preimage]),
     B11 = sign_block(B1#block{
             %% Change the solution hash so that the validator does not go down
             %% the comparing the resigned solution with the cached solution path.
             hash = crypto:strong_rand_bytes(32),
             partition_number = 1 }, B0, Key),
-    post_block(B11, [invalid_partition_number, invalid_hash_preimage]),
+    post_block(B11, [invalid_partition_number, invalid_hash_preimage_relative,
+            invalid_hash_preimage]),
     assert_banned(Peer),
     ?assertMatch({ok, {{<<"403">>, _}, _,
             <<"IP address blocked due to previous request.">>, _, _}},
@@ -893,6 +1069,13 @@ test_resigned_solution() ->
     post_block(B2, [valid]),
     B3 = sign_block(B#block{ tags = [<<"tag2">>] }, B0, Key),
     post_block(B3, [valid]),
+    %% A resigned solution keeps the VDF difficulty.
+    Info = B#block.nonce_limiter_info,
+    OtherVDFB = sign_block(B#block{ tags = [<<"tag3">>],
+            nonce_limiter_info = Info#nonce_limiter_info{
+                vdf_difficulty = Info#nonce_limiter_info.vdf_difficulty + 1 } },
+            B0, Key),
+    post_block(OtherVDFB, invalid_resigned_solution_hash),
     ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
     B4 = ar_test_node:remote_call(peer1, ar_node, get_current_block, []),
     ?assertEqual(B#block.indep_hash, B4#block.previous_block),

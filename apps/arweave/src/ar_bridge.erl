@@ -247,8 +247,8 @@ send_to_worker(Peer, {JSON, B}, W) ->
                                                             recall_byte = B#block.recall_byte,
                                                             recall_byte2 = B#block.recall_byte2,
                                                             solution_hash = SolutionH2,
-                                                            tx_prefixes = [ar_node_worker:tx_id_prefix(ID)
-                                                                           || #tx{ id = ID } <- TXs] },
+                                                            tx_prefixes = [ar_node_worker:tx_id_prefix(tx_id(TX))
+                                                                           || TX <- TXs] },
                         ar_http_iface_client:send_block_announcement(Peer, Announcement)
                 end,
             SendFun =
@@ -331,14 +331,15 @@ block_to_json(B) ->
 %% sending the entire transactions to peers who already know them) if either their 0-based
 %% indices or identifiers are found in MissingTXs. Elements in MissingTXs are assumed sorted
 %% in the order of their appearance in TXs. Return 'missing' if TXs contains an identifier (
-%% not a tx record) which (or its index) is found in MissingTXs.
+%% not a tx record) which (or its index) is found in MissingTXs. ECDSA tx records are always
+%% included.
 determine_included_transactions(TXs, MissingTXs) ->
     determine_included_transactions(TXs, MissingTXs, [], 0).
 
 determine_included_transactions([], _MissingTXs, Included, _N) ->
     lists:reverse(Included);
 determine_included_transactions([TXIDOrTX | TXs], [], Included, N) ->
-    determine_included_transactions(TXs, [], [tx_id(TXIDOrTX) | Included], N);
+    determine_included_transactions(TXs, [], [included_tx(TXIDOrTX) | Included], N);
 determine_included_transactions([TXIDOrTX | TXs], [TXIDOrIndex | MissingTXs], Included, N) ->
     TXID = tx_id(TXIDOrTX),
     case TXIDOrIndex == N orelse TXIDOrIndex == TXID of
@@ -351,14 +352,20 @@ determine_included_transactions([TXIDOrTX | TXs], [TXIDOrIndex | MissingTXs], In
                                                                      | Included], N + 1)
             end;
         false ->
-            determine_included_transactions(TXs, [TXIDOrIndex | MissingTXs], [TXID | Included],
-                                            N + 1)
+            determine_included_transactions(TXs, [TXIDOrIndex | MissingTXs],
+                                            [included_tx(TXIDOrTX) | Included], N + 1)
     end.
 
 tx_id(#tx{ id = TXID }) ->
     TXID;
 tx_id(TXID) ->
     TXID.
+
+included_tx(TXIDOrTX) ->
+    case ar_tx:is_ecdsa_tx(TXIDOrTX) of
+        true -> strip_v2_data(TXIDOrTX);
+        false -> tx_id(TXIDOrTX)
+    end.
 
 strip_v2_data(#tx{ format = 2 } = TX) ->
     TX#tx{ data = <<>> };
@@ -390,3 +397,51 @@ worker_down_frees_worker_test() ->
             State2#state.workers),
     %% A stale notification changes nothing.
     ?assertEqual({noreply, State2}, handle_info(Down, State2)).
+
+send_to_worker_test_() ->
+    ar_test_util:with_mocked([
+        {ar_peers, get_peer_release, fun(_Peer) -> ?RELEASE_NUMBER end},
+        {ar_http_iface_client, send_block_announcement,
+            fun(_Peer, _Announcement) -> ok end},
+        {ar_serialize, block_to_binary,
+            fun(#block{ txs = TXs }) -> term_to_binary(TXs) end},
+        {ar_http_iface_client, send_block_binary,
+            fun(_Peer, _H, _Bin, _RecallByte) -> ok end}],
+        fun test_send_to_worker/0).
+
+test_send_to_worker() ->
+    TXID = << 1, 0:248 >>,
+    ECDSAID = << 2, 0:248 >>,
+    ECDSATX = #tx{ id = ECDSAID, format = 2,
+            signature_type = ?ECDSA_KEY_TYPE },
+    B = #block{ height = arweave_lib_constants:height_2_6(),
+            txs = [TXID, ECDSATX], poa = #poa{}, poa2 = #poa{} },
+    Peer = {127, 0, 0, 1, 1984},
+    send_to_worker(Peer, {<<>>, B}, self()),
+    {SendAnnouncementFun, SendFun} =
+        receive
+            {'$gen_cast', {send_block2, Peer, Fun1, Fun2, 1, _}} ->
+                {Fun1, Fun2}
+        after 1000 ->
+            error(timeout)
+        end,
+    %% The announcement lists every transaction at its position in the block.
+    SendAnnouncementFun(),
+    #block_announcement{ tx_prefixes = Prefixes } = meck:capture(first,
+            ar_http_iface_client, send_block_announcement, '_', 2),
+    ?assertEqual([ar_node_worker:tx_id_prefix(ID) || ID <- [TXID, ECDSAID]],
+            Prefixes),
+    %% The block is sent with the transaction requested by its position.
+    SendFun(false, false, [1]),
+    ?assert(meck:called(ar_http_iface_client, send_block_binary,
+            [Peer, '_', term_to_binary([TXID, ECDSATX]), '_'])).
+
+determine_included_transactions_test() ->
+    TX = #tx{ id = <<"a">>, format = 2, data = <<"data">> },
+    ECDSATX = TX#tx{ id = <<"b">>, signature_type = ?ECDSA_KEY_TYPE },
+    ?assertEqual([<<"a">>, ECDSATX#tx{ data = <<>> }],
+            determine_included_transactions([TX, ECDSATX], [])),
+    ?assertEqual([TX#tx{ data = <<>> }, ECDSATX#tx{ data = <<>> }],
+            determine_included_transactions([TX, ECDSATX], [0])),
+    ?assertEqual(missing,
+            determine_included_transactions([<<"a">>, ECDSATX], [<<"a">>])).

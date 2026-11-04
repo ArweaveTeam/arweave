@@ -533,7 +533,8 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
                 false ->
                     #partial_solution_response{ status = <<"rejected_bad_poa">> };
                 {true, ChunkID} when H1 == SolutionH ->
-                    PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing}, ChunkID},
+                    PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1, Packing,
+                                 SubChunkIndex}, ChunkID},
                     PoA2Cache = undefined,
                     process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache);
                 {true, ChunkID} ->
@@ -554,9 +555,9 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
                                     #partial_solution_response{ status = <<"rejected_bad_poa">> };
                                 {true, Chunk2ID} ->
                                     PoA2Cache = {{BlockStart2, RecallByte2, TXRoot2, BlockSize2,
-                                                  Packing}, Chunk2ID},
+                                                  Packing, SubChunkIndex}, Chunk2ID},
                                     PoACache = {{BlockStart1, RecallByte1, TXRoot1, BlockSize1,
-                                                 Packing}, ChunkID},
+                                                 Packing, SubChunkIndex}, ChunkID},
                                     process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache)
                             end
                     end
@@ -994,10 +995,13 @@ test_process_solution() ->
     Zero48 = << 0:(48*8) >>,
     C = << 0:(262144 * 8) >>,
     H0 = ar_block:compute_h0(Zero, 0, Zero48, Zero, 0),
-    {_H1, Preimage1} = ar_block:compute_h1(H0, 1, C),
+    {H1, Preimage1} = ar_block:compute_h1(H0, 1, C),
     SolutionH = ar_block:compute_solution_h(H0, Preimage1),
-    {RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0, 0, 1),
+    {_H2, Preimage2} = ar_block:compute_h2(H1, C, H0),
+    SolutionH2 = ar_block:compute_solution_h(H0, Preimage2),
+    {RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0, 0, 1),
     RecallByte1 = RecallRange1Start + 1 * ?DATA_CHUNK_SIZE,
+    RecallByte2 = RecallRange2Start + 1 * ?DATA_CHUNK_SIZE,
     PoA = #poa{ chunk = C },
     TestCases = [
                  {"VDF not found",
@@ -1048,6 +1052,15 @@ test_process_solution() ->
                                     recall_byte1 = RecallByte1,
                                     poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
                                                     data_path = << 0:(349504 * 8) >> }},
+                  noreply},
+                 {"Accepted two chunks",
+                  #mining_solution{ next_seed = << 4:(48*8) >>, nonce = 1, solution_hash = SolutionH2,
+                                    preimage = Preimage2, partition_upper_bound = 1,
+                                    recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
+                                    poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
+                                                    data_path = << 0:(349504 * 8) >> },
+                                    poa2 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
+                                                    data_path = << 0:(349504 * 8) >> }},
                   noreply}
                 ],
     lists:foreach(
@@ -1056,4 +1069,13 @@ test_process_solution() ->
               ?assertEqual(ExpectedReply, process_partial_solution(Solution, Ref), Title)
       end,
       TestCases
-     ).
+     ),
+    %% The proof caches carry the arguments of ar_poa:validate/1, including the
+    %% sub-chunk index (-1 without a packing difficulty).
+    Cache = fun(RecallByte) ->
+                    {{10, RecallByte, << 1:256 >>, 100, {spora_2_6, Zero}, -1}, << 2:256 >>}
+            end,
+    ?assert(meck:called(ar_node_worker, found_solution,
+                        ['_', '_', Cache(RecallByte1), undefined])),
+    ?assert(meck:called(ar_node_worker, found_solution,
+                        ['_', '_', Cache(RecallByte1), Cache(RecallByte2)])).

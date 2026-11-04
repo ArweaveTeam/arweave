@@ -5,9 +5,15 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-%% Export below the tip so rejoining must discard the two later blocks.
--define(MINED_HEIGHT, 7).
--define(SNAPSHOT_HEIGHT, 5).
+%% Export below the tip so rejoining must discard the later blocks. Mine far
+%% enough that the node settles its set above the snapshot tip, so the export
+%% keeps only a part of the set: with the test consensus window of 10 blocks,
+%% the node settles up to 24 - 10 - 1 = 13 and the snapshot up to 12 - 10 = 2.
+-define(MINED_HEIGHT, 24).
+-define(SNAPSHOT_HEIGHT, 12).
+
+%% The number of blocks with an ECDSA transaction, from the block 1.
+-define(ECDSA_TX_COUNT, 3).
 
 suite() -> [{timetrap, {seconds, ?TEST_NODE_TIMEOUT}}].
 
@@ -53,10 +59,21 @@ end_per_testcase(_, Config) ->
 %% @doc Export an earlier chain height, rejoin from it, and resume mining.
 snapshot_export(Config) ->
     Peer = proplists:get_value(peer, Config),
-    [B0] = call(Peer, ar_weave, init, []),
+    TXs = [ecdsa_tx() || _ <- lists:seq(1, ?ECDSA_TX_COUNT)],
+    [B0] = call(Peer, ar_weave, init, [
+        [{ar_tx:get_owner_address(TX), ?AR(10), <<>>} || TX <- TXs]
+    ]),
     call(Peer, ar_test_node, start, [B0]),
     lists:foreach(
         fun(Height) ->
+            case Height =< ?ECDSA_TX_COUNT of
+                true ->
+                    call(Peer, ar_test_node, assert_post_tx_to_peer, [
+                        main, lists:nth(Height, TXs)
+                    ]);
+                false ->
+                    ok
+            end,
             call(Peer, ar_test_node, mine, []),
             ?assertMatch(
                 {ok, _}, call(Peer, ar_test_await, node_height, [main, Height])
@@ -65,6 +82,15 @@ snapshot_export(Config) ->
         lists:seq(1, ?MINED_HEIGHT)
     ),
     {ok, BI} = call(Peer, ar_test_await, node_height, [main, ?MINED_HEIGHT]),
+    Window = call(Peer, arweave_lib_constants, get_consensus_window_size, []),
+    %% The node settles the blocks up to one below the consensus window, above
+    %% the snapshot tip.
+    NodeSettledHeight = ?MINED_HEIGHT - Window - 1,
+    ?assertMatch(
+        {ok, {NodeSettledHeight, _, ?ECDSA_TX_COUNT, _}},
+        call(Peer, ar_ecdsa_settled, get_state, [])
+    ),
+    ?assert(NodeSettledHeight > ?SNAPSHOT_HEIGHT),
     {TipH, TipWeaveSize, _} = lists:nth(length(BI) - ?SNAPSHOT_HEIGHT, BI),
     DataDir = call(Peer, arweave_config, get, [[data_dir]]),
     SnapshotDir = filename:join(
@@ -110,6 +136,22 @@ snapshot_export(Config) ->
         #block{indep_hash = TipH, weave_size = TipWeaveSize},
         call(Peer, ar_node, get_current_block, [])
     ),
+    %% The snapshot carries the set up to the consensus window below its tip.
+    SettledHeight = ?SNAPSHOT_HEIGHT - Window,
+    {SettledH, _, _} = lists:nth(length(BI) - SettledHeight, BI),
+    ?assertMatch(
+        {ok, {SettledHeight, SettledH, SettledHeight, _}},
+        call(Peer, ar_ecdsa_settled, get_state, [])
+    ),
+    ?assertEqual(
+        [Height =< SettledHeight || Height <- lists:seq(1, ?ECDSA_TX_COUNT)],
+        [
+            call(Peer, ar_ecdsa_settled, is_settled, [
+                TX#tx.id, ?SNAPSHOT_HEIGHT
+            ])
+         || TX <- TXs
+        ]
+    ),
     call(Peer, ar_test_node, mine, []),
     ?assertMatch(
         {ok, _},
@@ -119,6 +161,14 @@ snapshot_export(Config) ->
 %%====================================================================
 %% Helpers
 %%====================================================================
+
+%% @doc Return an ECDSA-signed transaction from a new wallet. It carries no
+%% data: the node starting from the snapshot has no peer to sync data from.
+ecdsa_tx() ->
+    ar_tx:sign(
+        #tx{format = 2, reward = ?AR(1), denomination = 1},
+        ar_wallet:new(?ECDSA_KEY_TYPE)
+    ).
 
 %% @doc Run a fixture operation on the isolated node within the test timeout.
 call(Peer, Module, Function, Args) ->

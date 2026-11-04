@@ -91,19 +91,12 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer } = State) ->
                                 false ->
                                     ok
                             end,
-                            case collect_missing_transactions(B#block.txs) of
-                                {ok, TXs} ->
-                                    B2 = B#block{ txs = TXs },
-                                    ar_ignore_registry:remove_ref({poller_worker, H}, IgnoreRef),
-                                    gen_server:cast(ar_poller, {block, Peer, B2, TimeMicroseconds}),
-                                    ok;
-                                failed ->
-                                    ?LOG_WARNING([{event, failed_to_get_block_txs_from_peer},
-                                                  {block, arweave_lib_util:encode(H)},
-                                                  {peer, arweave_lib_util:format_peer(Peer)},
-                                                  {tx_count, length(B#block.txs)}]),
-                                    ok
-                            end;
+                            B2 = collect_missing_transactions(B),
+                            ar_ignore_registry:remove_ref({poller_worker, H},
+                                                          IgnoreRef),
+                            gen_server:cast(ar_poller, {block, Peer, B2,
+                                                        TimeMicroseconds}),
+                            ok;
                         Error ->
                             ar_ignore_registry:remove_ref({poller_worker, H}, IgnoreRef),
                             ?LOG_DEBUG([{event, failed_to_fetch_block},
@@ -196,11 +189,17 @@ get_missing_tx_indices(TXIDs) ->
 get_missing_tx_indices([], _N) ->
     [];
 get_missing_tx_indices([TXID | TXIDs], N) ->
-    case ar_mempool:has_tx(TXID) of
-        true ->
-            get_missing_tx_indices(TXIDs, N + 1);
-        false ->
-            [N | get_missing_tx_indices(TXIDs, N + 1)]
+    case ar_mempool:get_tx(TXID) of
+        not_found ->
+            [N | get_missing_tx_indices(TXIDs, N + 1)];
+        TX ->
+            %% Always ask for ECDSA transactions.
+            case ar_tx:is_ecdsa_tx(TX) of
+                true ->
+                    [N | get_missing_tx_indices(TXIDs, N + 1)];
+                false ->
+                    get_missing_tx_indices(TXIDs, N + 1)
+            end
     end.
 
 slow_block_application_warning(N) ->
@@ -235,19 +234,22 @@ warning(Peer, Event) ->
                        [arweave_lib_util:format_peer(Peer), EventMessage])
     end.
 
-collect_missing_transactions([#tx{} = TX | TXs]) ->
-    case collect_missing_transactions(TXs) of
-        failed ->
-            failed;
-        {ok, TXs2} ->
-            {ok, [TX | TXs2]}
-    end;
-collect_missing_transactions([TXID | TXs]) ->
+%% @doc Take the block transactions from the mempool unless their headers come
+%% from the block. ar_node_worker fetches the ones left as identifiers.
+collect_missing_transactions(B) ->
+    B#block{ txs = [collect_missing_transaction(TX) || TX <- B#block.txs] }.
+
+collect_missing_transaction(#tx{} = TX) ->
+    TX;
+collect_missing_transaction(TXID) ->
     case ar_mempool:get_tx(TXID) of
         not_found ->
-            failed;
+            TXID;
         TX ->
-            collect_missing_transactions([TX | TXs])
-    end;
-collect_missing_transactions([]) ->
-    {ok, []}.
+            case ar_tx:is_ecdsa_tx(TX) of
+                true ->
+                    TXID;
+                false ->
+                    TX
+            end
+    end.

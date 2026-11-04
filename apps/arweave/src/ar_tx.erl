@@ -8,7 +8,8 @@
         generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
         chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
         get_addresses/1, get_weave_size_increase/2, utility/1, get_owner_address/1,
-        is_v1_denomination0_tx/1]).
+        is_v1_denomination0_tx/1, is_ecdsa_tx/1, takes_header_from_block/1,
+        verify_hash/1]).
 
 -include("ar.hrl").
 
@@ -265,6 +266,17 @@ is_v1_denomination0_tx(#tx{ format = 1, denomination = 0 }) ->
     true;
 is_v1_denomination0_tx(_TX) ->
     false.
+
+%% @doc Return true if the transaction is ECDSA-signed.
+is_ecdsa_tx(#tx{ signature_type = ?ECDSA_KEY_TYPE }) ->
+    true;
+is_ecdsa_tx(_TX) ->
+    false.
+
+%% @doc Return true if nodes take the transaction header from the block
+%% carrying it.
+takes_header_from_block(TX) ->
+    is_v1_denomination0_tx(TX) orelse is_ecdsa_tx(TX).
 
 %%%===================================================================
 %%% Private functions.
@@ -724,7 +736,7 @@ tx_field_size_limit_v2(TX, Height, Denomination) ->
             (byte_size(integer_to_binary(TX#tx.data_size)) =< 21) andalso
             (byte_size(TX#tx.signature) =< 512) andalso
             (byte_size(integer_to_binary(TX#tx.reward)) =< MaxDigits) andalso
-            (byte_size(TX#tx.data_root) =< 32).
+            (TX#tx.data_root == <<>> orelse byte_size(TX#tx.data_root) == 32).
 
 validate_tags_size(TX, Height) ->
     case Height >= arweave_lib_constants:height_2_5() of
@@ -852,6 +864,29 @@ test_sign_and_verify_chunked() ->
     Args = {Rate, PricePerGiBMinute, 1, 1, 0, Height,
             maps:from_list([{Address, {?AR(100), <<>>}}]), Timestamp},
     ?assert(verify(SignedTX, Args)).
+
+verify_format_2_test_() ->
+    {timeout, 60, fun test_verify_format_2/0}.
+
+test_verify_format_2() ->
+    {Priv, Pub} = ar_wallet:new(),
+    Address = ar_wallet:to_address(Pub),
+    Args = {{1, 3}, 200, 1, 1, 0, 0,
+            maps:from_list([{Address, {?AR(100), <<>>}}]),
+            os:system_time(seconds)},
+    Sign =
+        fun(DataSize, DataRoot) ->
+            sign(#tx{ format = 2, reward = ?AR(100), data_size = DataSize,
+                      data_root = DataRoot }, Priv, Pub)
+        end,
+    ?assert(verify(Sign(0, <<>>), Args)),
+    ?assert(verify(Sign(?DATA_CHUNK_SIZE, crypto:strong_rand_bytes(32)), Args)),
+    lists:foreach(
+        fun(Size) ->
+            TX = Sign(?DATA_CHUNK_SIZE, crypto:strong_rand_bytes(Size)),
+            ?assert(not verify(TX, Args), integer_to_list(Size))
+        end,
+        lists:seq(1, 31)).
 
 %% Ensure that a forged transaction does not pass verification.
 

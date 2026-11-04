@@ -181,12 +181,16 @@ add_tx2(#tx{ id = TXID } = TX, Status) ->
 assert_same_tx(#tx{ format = 1 } = TX, #tx{ format = 1 } = TX) ->
     {TX, false};
 assert_same_tx(#tx{ format = 2, data = Data } = TX, #tx{ format = 2 } = TX2) ->
-    true = TX#tx{ data = <<>> } == TX2#tx{ data = <<>> },
-    case byte_size(Data) == 0 of
-        true ->
+    case TX#tx{ data = <<>> } == TX2#tx{ data = <<>> } of
+        true when byte_size(Data) == 0 ->
             {TX2, false};
+        true ->
+            {TX, true};
         false ->
-            {TX, true}
+            %% The identifier of an ECDSA transaction does not commit to the
+            %% whole header. Keep the header we have.
+            true = ar_tx:is_ecdsa_tx(TX2),
+            {TX2, false}
     end.
 
 drop_txs(DroppedTXs) ->
@@ -214,7 +218,9 @@ drop_txs2(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
                            OriginTXMap, OriginSpentTotalMap};
                       {_, Status, Timestamp} ->
                           ets:delete(node_state, {tx, TXID}),
-                          case RemoveTXPrefixes of
+                          %% Do not report confirmed ECDSA transactions as
+                          %% known.
+                          case RemoveTXPrefixes orelse ar_tx:is_ecdsa_tx(TX) of
                               true ->
                                   ets:delete_object(tx_prefixes,
                                                     {ar_node_worker:tx_id_prefix(TXID), TXID});

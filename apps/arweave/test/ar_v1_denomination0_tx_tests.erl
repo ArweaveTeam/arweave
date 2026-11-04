@@ -81,10 +81,10 @@ test_v1_denomination0_tx_in_block() ->
             end
         end),
         ?assertMatch({ok, {1, H}}, ar_storage:get_tx_confirmation_data(ID)),
-        ?assertEqual(<<"404">>, http_get_status(main, tx_path(ID))),
-        ?assertEqual(<<"404">>, http_get_status(main, tx2_path(ID))),
-        ?assertEqual(<<"404">>, http_get_status(main, tx_path(ID) ++ "/data")),
-        ?assertEqual(<<"404">>,
+        ?assertEqual(<<"202">>, http_get_status(main, tx_path(ID))),
+        ?assertEqual(<<"202">>, http_get_status(main, tx2_path(ID))),
+        ?assertEqual(<<"202">>, http_get_status(main, tx_path(ID) ++ "/data")),
+        ?assertEqual(<<"200">>,
                      http_get_status(main, tx_path(ID) ++ "/status")),
         %% Peers still fetch block transactions through GET /unconfirmed_tx.
         ?assertEqual(<<"200">>, http_get_status(main, unconfirmed_tx_path(ID))),
@@ -92,7 +92,7 @@ test_v1_denomination0_tx_in_block() ->
         %% ?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS confirmations. Mining that
         %% many blocks is too slow, so pretend the chain grew.
         at_height(?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS - 1, fun() ->
-            ?assertEqual(<<"404">>, http_get_status(main, tx_path(ID)))
+            ?assertEqual(<<"202">>, http_get_status(main, tx_path(ID)))
         end),
         at_height(?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS, fun() ->
             ?assertEqual(<<"200">>, http_get_status(main, tx_path(ID))),

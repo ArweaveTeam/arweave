@@ -5,7 +5,9 @@
 
 -export([
          start_link/0, create_ets/0, db_options/1, open/1, open_readonly/1, close/1,
-         put/3, write_batch/2, get/2, get_next_by_prefix/4, get_next/2, get_prev/2,
+         put/3, write_batch/2, write_batch/3, get/2, get_next_by_prefix/4,
+         get_next/2,
+         get_next_n/3, get_prev/2,
          get_range/2, get_range/3, delete/2, delete_range/3, count/1
         ]).
 
@@ -160,11 +162,18 @@ put(Name, Key, Value) ->
 %% @doc Atomically store the given list of {Key, Value} pairs as a single RocksDB write
 %% batch (one NIF call for the whole list).
 write_batch(Name, KVs) ->
+    write_batch(Name, KVs, []).
+
+%% @doc Atomically remove the given keys and store the given {Key, Value} pairs
+%% as a single RocksDB write batch.
+write_batch(Name, KVs, DeletedKeys) ->
     ?WITH_DB(Name, fun
         (#db{db_handle = Db, cf_handle = undefined}) ->
-            rocksdb:write(Db, [{put, K, V} || {K, V} <- KVs], []);
+            rocksdb:write(Db, [{delete, K} || K <- DeletedKeys]
+                    ++ [{put, K, V} || {K, V} <- KVs], []);
         (#db{db_handle = Db, cf_handle = Cf}) ->
-            rocksdb:write(Db, [{put, Cf, K, V} || {K, V} <- KVs], [])
+            rocksdb:write(Db, [{delete, Cf, K} || K <- DeletedKeys]
+                    ++ [{put, Cf, K, V} || {K, V} <- KVs], [])
     end).
 
 
@@ -218,6 +227,29 @@ get_next2(Iterator, Cursor) ->
         {error, invalid_iterator} -> none;
         Reply -> Reply
     end.
+
+
+
+%% @doc Return {ok, Pairs} with up to N {Key, Value} pairs whose keys are
+%% equal to or bigger than Start, in ascending key order.
+get_next_n(Name, Start, N) ->
+    ?WITH_ITERATOR(Name, [{total_order_seek, true}], fun
+        (Iterator) ->
+            Move = rocksdb:iterator_move(Iterator, {seek, Start}),
+            get_next_n2(Move, Iterator, N, [])
+    end).
+
+
+
+get_next_n2(_Move, _Iterator, 0, Pairs) ->
+    {ok, lists:reverse(Pairs)};
+get_next_n2({ok, Key, Value}, Iterator, N, Pairs) ->
+    get_next_n2(rocksdb:iterator_move(Iterator, next), Iterator, N - 1,
+            [{Key, Value} | Pairs]);
+get_next_n2({error, invalid_iterator}, _Iterator, _N, Pairs) ->
+    {ok, lists:reverse(Pairs)};
+get_next_n2({error, Reason}, _Iterator, _N, _Pairs) ->
+    {error, Reason}.
 
 
 
@@ -873,6 +905,29 @@ test_delete_range() ->
     ?assertEqual(not_found, ar_kv:get(test_db, << 2:256 >>)),
     ?assertEqual(not_found, ar_kv:get(test_db, << 3:256 >>)),
     ?assertEqual(not_found, ar_kv:get(test_db, << 4:256 >>)),
+
+    test_close(test_db),
+    test_destroy("test_db").
+
+write_batch_test_() ->
+    {timeout, 300, fun test_write_batch/0}.
+
+test_write_batch() ->
+    test_destroy("test_db"),
+    DataDir = test_get_data_dir(),
+    Path = filename:join([DataDir, ?ROCKS_DB_DIR, "test_db"]),
+    ok = ar_kv:open(#{ path => Path, name => test_db }),
+    ok = ar_kv:write_batch(test_db, [{<< 1 >>, << 1 >>}, {<< 2 >>, << 2 >>}]),
+    ?assertEqual({ok, << 1 >>}, ar_kv:get(test_db, << 1 >>)),
+    ?assertEqual({ok, << 2 >>}, ar_kv:get(test_db, << 2 >>)),
+    %% A key both removed and stored in one batch is stored.
+    ok = ar_kv:write_batch(test_db, [{<< 2 >>, << 3 >>}, {<< 4 >>, << 4 >>}],
+            [<< 1 >>, << 2 >>, << 5 >>]),
+    ?assertEqual(not_found, ar_kv:get(test_db, << 1 >>)),
+    ?assertEqual({ok, << 3 >>}, ar_kv:get(test_db, << 2 >>)),
+    ?assertEqual({ok, << 4 >>}, ar_kv:get(test_db, << 4 >>)),
+    ok = ar_kv:write_batch(test_db, [], [<< 2 >>, << 4 >>]),
+    ?assertEqual({ok, []}, ar_kv:get_next_n(test_db, << >>, 10)),
 
     test_close(test_db),
     test_destroy("test_db").

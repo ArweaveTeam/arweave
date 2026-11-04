@@ -85,19 +85,6 @@ target_block_time(_Height) ->
 
 -endif.
 
-%% @doc The number of blocks a mining reward stays locked. A localnet build
-%% lets the application environment override it, the way ar_pricing lets it
-%% override the redenomination parameters, so notebooks can shorten the
-%% lock. Every other build uses the build's value.
--ifdef(LOCALNET).
-locked_rewards_blocks(Height) ->
-    case application:get_env(arweave, locked_rewards_blocks) of
-        {ok, Value} when is_integer(Value), Value > 0 ->
-            Value;
-        _ ->
-            get_locked_rewards_blocks(Height)
-    end.
--else.
+%% @doc The number of blocks a mining reward stays locked.
 locked_rewards_blocks(Height) ->
     get_locked_rewards_blocks(Height).
--endif.

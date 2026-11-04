@@ -75,6 +75,14 @@ format_error({account_tree_not_found, Height, RootHash}) ->
     io_lib:format("the account tree ~s of the block at height ~B is missing "
             "from the data_dir; the requested tip cannot be served",
             [RootHash, Height]);
+format_error({ecdsa_settled_set_below_recent_blocks, Height}) ->
+    io_lib:format("the ECDSA settled set of the data_dir ends at height ~B, "
+            "below the recent blocks of the snapshot", [Height]);
+format_error({ecdsa_settled, ecdsa_settled_set_not_found}) ->
+    "the data_dir has no ECDSA settled set";
+format_error({ecdsa_settled, block_not_in_block_index}) ->
+    "the ECDSA settled set of the data_dir ends at a block that is not in "
+    "the block index";
 format_error({snapshot_dir_exists, Dir}) ->
     io_lib:format("the output directory ~s already exists", [Dir]);
 format_error({manifest_not_written, Reason}) ->

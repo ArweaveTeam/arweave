@@ -20,7 +20,7 @@
 
 -export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1,
          tx_id_prefix/1, found_solution/4, pause/0,
-         start_mining/0, mine_one_block/0, mine_until_height/1]).
+         start_mining/0, mine_one_block/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
@@ -31,27 +31,17 @@
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--ifdef(LOCALNET).
--define(MINING_SERVER, ar_localnet_mining_server).
--else.
--define(MINING_SERVER, ar_mining_server).
--endif.
-
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(AR_TEST).
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 10).
 -else.
--ifdef(LOCALNET).
--define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 10).
--else.
 -define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 200).
 -endif.
--endif.
 
-%% How long to refuse a rejected block carrying deprecated format-1
-%% transactions from the peer that supplied it.
--define(REJECTED_V1_BLOCK_IGNORE_MS, 30000).
+%% How long to refuse a block from the peer that supplied it when the other
+%% peers may still deliver it (ignore_block_from_peer/1).
+-define(BLOCK_FROM_PEER_IGNORE_MS, 30000).
 
 -define(FILTER_MEMPOOL_CHUNK_SIZE, 100).
 
@@ -77,8 +67,8 @@
 -define(COMPUTE_MINING_DIFFICULTY_INTERVAL, 10).
 -endif.
 
--ifndef(LOCALNET_BALANCE).
--define(LOCALNET_BALANCE, 1000000000000).
+-ifndef(GENESIS_BALANCE).
+-define(GENESIS_BALANCE, 1000000000000).
 -endif.
 
 %%%===================================================================
@@ -110,15 +100,10 @@ found_solution(Source, Solution, PoACache, PoA2Cache) ->
 start_mining() ->
     gen_server:cast(?MODULE, start_mining).
 
-%% @doc Mine until a block is found. The default server may produce several block
-%% candidates (happens often in tests). The localnet mining server only produces
-%% one candidate and one block.
+%% @doc Mine until a block is found. The mining server may produce several block
+%% candidates (happens often in tests).
 mine_one_block() ->
     gen_server:cast(?MODULE, mine_one_block).
-
-%% @doc Mine blocks until the given height is reached.
-mine_until_height(Height) ->
-    gen_server:cast(?MODULE, {mine_until_height, Height}).
 
 %% @doc Pause the mining server.
 pause() ->
@@ -175,7 +160,7 @@ init([]) ->
             arweave_config:set([genesis, init], false),
             MiningAddr = arweave_config:get([mining, address]),
             Diff = arweave_config:get([genesis, difficulty]),
-            InitialBalance = ?AR(?LOCALNET_BALANCE),
+            InitialBalance = ?AR(?GENESIS_BALANCE),
             [B0] = ar_weave:init([{MiningAddr, InitialBalance, <<>>}],
                                  ar_retarget:switch_to_linear_diff(Diff)),
             RootHash0 = B0#block.wallet_list,
@@ -211,7 +196,6 @@ init([]) ->
            miner_state => undefined,
            io_threads => [],
            automine => false,
-           mine_until_height => undefined,
            tags => [],
            blocks_missing_txs => sets:new(),
            missing_txs_lookup_processes => #{},
@@ -460,7 +444,209 @@ handle_info({event, node_state, _Event}, State) ->
     {noreply, State};
 
 handle_info({event, nonce_limiter, initialized}, State) ->
-    [{_, {Height, Blocks, BI, _CustomDir}}] = ets:lookup(node_state, join_state),
+    [{_, {Height, Blocks, BI, CustomDir}}] = ets:lookup(node_state, join_state),
+    StartFromLocalState = arweave_config:get([join, start_from_latest_state])
+            orelse arweave_config:get([join, start_from_block]) /= not_set,
+    Source =
+        case {StartFromLocalState, CustomDir} of
+            {false, _} -> peers;
+            {true, not_set} -> local;
+            {true, _} -> {snapshot, CustomDir}
+        end,
+    %% Every on-chain block below the ones we cache must be in the ECDSA
+    %% settled set.
+    case ar_ecdsa_settled:initialize(BI, Blocks, Source) of
+        ok ->
+            {noreply, complete_join(Height, Blocks, BI, State)};
+        {error, Reason} ->
+            ecdsa_settled_set_not_found(Reason),
+            {noreply, State}
+    end;
+
+handle_info({event, nonce_limiter, {invalid, H, Code}}, State) ->
+    ?LOG_WARNING([{event, received_block_with_invalid_nonce_limiter_chain},
+                  {block, arweave_lib_util:encode(H)}, {code, Code}]),
+    ar_block_cache:remove(block_cache, H),
+    ar_ignore_registry:add(H),
+    gen_server:cast(?MODULE, apply_block),
+    {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
+
+handle_info({event, nonce_limiter, {valid, H}}, State) ->
+    ?LOG_INFO([{event, vdf_validation_successful}, {block, arweave_lib_util:encode(H)}]),
+    ar_block_cache:mark_nonce_limiter_validated(block_cache, H),
+    gen_server:cast(?MODULE, apply_block),
+    {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
+
+handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
+    ?LOG_WARNING([{event, vdf_validation_error}, {block, arweave_lib_util:encode(H)}]),
+    ar_block_cache:remove(block_cache, H),
+    gen_server:cast(?MODULE, apply_block),
+    {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
+
+handle_info({event, nonce_limiter, {refuse_validation, H}}, State) ->
+    ar_util:cast_after(500, ?MODULE, apply_block),
+    {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
+
+handle_info({event, nonce_limiter, _}, State) ->
+    {noreply, State};
+
+handle_info({tx_ready_for_mining, #tx{ id = TXID }}, State) ->
+    %% Skip the transaction if it left the mempool in the meantime.
+    case ar_mempool:get_tx(TXID) of
+        not_found ->
+            ok;
+        TX ->
+            ar_mempool:add_tx(TX, ready_for_mining),
+            ar_events:send(tx, {ready_for_mining, TX})
+    end,
+    {noreply, State};
+
+handle_info({event, block, {new, Block, _Source}}, State)
+  when length(Block#block.txs) > ?BLOCK_TX_COUNT_LIMIT ->
+    ?LOG_WARNING([{event, received_block_with_too_many_txs},
+                  {block, arweave_lib_util:encode(Block#block.indep_hash)}, {txs, length(Block#block.txs)}]),
+    {noreply, State};
+
+handle_info({event, block, {new, B, _Source}}, State) ->
+    H = B#block.indep_hash,
+    %% Record the block in the block cache. Schedule an application of the
+    %% earliest not validated block from the longest chain, if any.
+    case ar_block_cache:get(block_cache, H) of
+        not_found ->
+            case ar_block_cache:get(block_cache, B#block.previous_block) of
+                not_found ->
+                    %% The cache should have been just pruned and this block is old.
+                    ?LOG_WARNING([{event, block_cache_missing_block},
+                                  {previous_block, arweave_lib_util:encode(B#block.previous_block)},
+                                  {previous_height, B#block.height - 1},
+                                  {block, arweave_lib_util:encode(H)}]),
+                    ar_ignore_registry:remove(H),
+                    {noreply, State};
+                _PrevB ->
+                    State2 = may_be_report_double_signing(B, State),
+                    ar_block_cache:add(block_cache, B),
+                    gen_server:cast(?MODULE, apply_block),
+                    {noreply, State2}
+            end;
+        _ ->
+            %% The block's already received from a different peer or
+            %% fetched by ar_poller.
+            {noreply, State}
+    end;
+
+handle_info({event, block, {mined_block_received, H, ReceiveTimestamp}}, State) ->
+    ar_block_cache:update_timestamp(block_cache, H, ReceiveTimestamp),
+    {noreply, State};
+
+handle_info({event, block, _}, State) ->
+    {noreply, State};
+
+%% Add the new waiting transaction to the server state.
+handle_info({event, tx, {new, TX, _Source}}, State) ->
+    TXID = TX#tx.id,
+    %% A block may have taken the transaction after it was validated.
+    case ar_mempool:has_tx(TXID) orelse is_recent_tx(TXID) of
+        false ->
+            InitialStatus =
+                case maps:get(automine, State) of
+                    false ->
+                        ready_for_mining;
+                    true ->
+                        waiting
+                end,
+            ar_mempool:add_tx(TX, InitialStatus),
+            case ar_mempool:has_tx(TXID) of
+                true ->
+                    case maps:get(automine, State) of
+                        true ->
+                            %% Do not include transactions into blocks until
+                            %% they had time to propagate around the network.
+                            start_tx_mining_timer(TX);
+                        false ->
+                            ok
+                    end;
+                false ->
+                    %% The transaction has been dropped because more valuable transactions
+                    %% exceed the mempool limit.
+                    ok
+            end,
+            {noreply, State};
+        true ->
+            {noreply, State}
+    end;
+
+handle_info({event, tx, {emitting_scheduled, Utility, TXID}}, State) ->
+    ar_mempool:del_from_propagation_queue(Utility, TXID),
+    {noreply, State};
+
+%% Add the transaction to the mining pool, to be included in the mined block.
+handle_info({event, tx, {ready_for_mining, TX}}, State) ->
+    ar_mempool:add_tx(TX, ready_for_mining),
+    {noreply, State};
+
+handle_info({event, tx, _}, State) ->
+    {noreply, State};
+
+handle_info({'DOWN', _Ref, process, PID, Reason}, State) ->
+    #{
+      blocks_missing_txs := Set,
+      missing_txs_lookup_processes := Map
+     } = State,
+    BH = maps:get(PID, Map),
+    case Reason of
+        normal ->
+            ok;
+        _ ->
+            ?LOG_WARNING([{event, missing_txs_lookup_failed},
+                    {block, arweave_lib_util:encode(BH)},
+                    {reason, io_lib:format("~p", [Reason])}]),
+            gen_server:cast(?MODULE, {missing_txs_not_found, BH})
+    end,
+    {noreply, State#{
+                     missing_txs_lookup_processes => maps:remove(PID, Map),
+                     blocks_missing_txs => sets:del_element(BH, Set)
+                    }};
+
+handle_info({'EXIT', _PID, normal}, State) ->
+    {noreply, State};
+
+%% Make sure we terminate when ar_account_tree terminates.
+handle_info({'EXIT', PID, Reason}, #{ account_tree_pid := PID } = State) ->
+    ?LOG_ERROR([{event, account_tree_terminated},
+                {reason, io_lib:format("~p", [Reason])}]),
+    {stop, {account_tree_terminated, Reason}, State};
+
+handle_info(shutdown, State) ->
+    {stop, shutdown, State};
+
+handle_info(Info, State) ->
+    ?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
+    {noreply, State}.
+
+terminate(Reason, _State) ->
+    case ets:lookup(node_state, is_joined) of
+        [{_, true}] ->
+            [{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
+            Mempool =
+                gb_sets:fold(
+                  fun({_Utility, TXID, Status}, Acc) ->
+                          maps:put(TXID, {ar_mempool:get_tx(TXID), Status}, Acc)
+                  end,
+                  #{},
+                  ar_mempool:get_priority_set()
+                 ),
+            dump_mempool(Mempool, MempoolSize);
+        _ ->
+            ok
+    end,
+    ?LOG_INFO([{event, ar_node_worker_terminated}, {reason, Reason}]).
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+%% @doc Make the node join the network at the tip of BI.
+complete_join(Height, Blocks, BI, State) ->
     ar_storage:store_block_index(BI),
     RecentBI = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
     Current = element(1, hd(RecentBI)),
@@ -514,6 +700,9 @@ handle_info({event, nonce_limiter, initialized}, State) ->
                             {scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute},
                             {merkle_rebase_support_threshold, get_merkle_rebase_threshold(B)}
                            ]),
+    %% Drop the loaded mempool transactions the recent blocks have taken.
+    gen_server:cast(self(),
+            {filter_mempool, lists:reverse(ar_mempool:get_all_txids())}),
     SearchSpaceUpperBound = ar_node:get_partition_upper_bound(B#block.height, RecentBI),
     ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
     ar_events:send(node_state, {initialized, B}),
@@ -524,173 +713,17 @@ handle_info({event, nonce_limiter, initialized}, State) ->
     ?LOG_INFO([{event, joined_the_network}, {block, arweave_lib_util:encode(Current)},
                {height, Height}]),
     ets:delete(node_state, join_state),
-    {noreply, maybe_reset_miner(State)};
+    maybe_reset_miner(State).
 
-handle_info({event, nonce_limiter, {invalid, H, Code}}, State) ->
-    ?LOG_WARNING([{event, received_block_with_invalid_nonce_limiter_chain},
-                  {block, arweave_lib_util:encode(H)}, {code, Code}]),
-    ar_block_cache:remove(block_cache, H),
-    ar_ignore_registry:add(H),
-    gen_server:cast(?MODULE, apply_block),
-    {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
-
-handle_info({event, nonce_limiter, {valid, H}}, State) ->
-    ?LOG_INFO([{event, vdf_validation_successful}, {block, arweave_lib_util:encode(H)}]),
-    ar_block_cache:mark_nonce_limiter_validated(block_cache, H),
-    gen_server:cast(?MODULE, apply_block),
-    {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
-
-handle_info({event, nonce_limiter, {validation_error, H}}, State) ->
-    ?LOG_WARNING([{event, vdf_validation_error}, {block, arweave_lib_util:encode(H)}]),
-    ar_block_cache:remove(block_cache, H),
-    gen_server:cast(?MODULE, apply_block),
-    {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
-
-handle_info({event, nonce_limiter, {refuse_validation, H}}, State) ->
-    ar_util:cast_after(500, ?MODULE, apply_block),
-    {noreply, maps:remove({nonce_limiter_validation_scheduled, H}, State)};
-
-handle_info({event, nonce_limiter, _}, State) ->
-    {noreply, State};
-
-handle_info({tx_ready_for_mining, TX}, State) ->
-    ar_mempool:add_tx(TX, ready_for_mining),
-    ar_events:send(tx, {ready_for_mining, TX}),
-    {noreply, State};
-
-handle_info({event, block, {new, Block, _Source}}, State)
-  when length(Block#block.txs) > ?BLOCK_TX_COUNT_LIMIT ->
-    ?LOG_WARNING([{event, received_block_with_too_many_txs},
-                  {block, arweave_lib_util:encode(Block#block.indep_hash)}, {txs, length(Block#block.txs)}]),
-    {noreply, State};
-
-handle_info({event, block, {new, B, _Source}}, State) ->
-    H = B#block.indep_hash,
-    %% Record the block in the block cache. Schedule an application of the
-    %% earliest not validated block from the longest chain, if any.
-    case ar_block_cache:get(block_cache, H) of
-        not_found ->
-            case ar_block_cache:get(block_cache, B#block.previous_block) of
-                not_found ->
-                    %% The cache should have been just pruned and this block is old.
-                    ?LOG_WARNING([{event, block_cache_missing_block},
-                                  {previous_block, arweave_lib_util:encode(B#block.previous_block)},
-                                  {previous_height, B#block.height - 1},
-                                  {block, arweave_lib_util:encode(H)}]),
-                    ar_ignore_registry:remove(H),
-                    {noreply, State};
-                _PrevB ->
-                    State2 = may_be_report_double_signing(B, State),
-                    ar_block_cache:add(block_cache, B),
-                    gen_server:cast(?MODULE, apply_block),
-                    {noreply, State2}
-            end;
-        _ ->
-            %% The block's already received from a different peer or
-            %% fetched by ar_poller.
-            {noreply, State}
-    end;
-
-handle_info({event, block, {mined_block_received, H, ReceiveTimestamp}}, State) ->
-    ar_block_cache:update_timestamp(block_cache, H, ReceiveTimestamp),
-    {noreply, State};
-
-handle_info({event, block, _}, State) ->
-    {noreply, State};
-
-%% Add the new waiting transaction to the server state.
-handle_info({event, tx, {new, TX, _Source}}, State) ->
-    TXID = TX#tx.id,
-    case ar_mempool:has_tx(TXID) of
-        false ->
-            InitialStatus =
-                case maps:get(automine, State) of
-                    false ->
-                        ready_for_mining;
-                    true ->
-                        waiting
-                end,
-            ar_mempool:add_tx(TX, InitialStatus),
-            case ar_mempool:has_tx(TXID) of
-                true ->
-                    case maps:get(automine, State) of
-                        true ->
-                            %% Do not include transactions into blocks until
-                            %% they had time to propagate around the network.
-                            start_tx_mining_timer(TX);
-                        false ->
-                            ok
-                    end;
-                false ->
-                    %% The transaction has been dropped because more valuable transactions
-                    %% exceed the mempool limit.
-                    ok
-            end,
-            {noreply, State};
-        true ->
-            {noreply, State}
-    end;
-
-handle_info({event, tx, {emitting_scheduled, Utility, TXID}}, State) ->
-    ar_mempool:del_from_propagation_queue(Utility, TXID),
-    {noreply, State};
-
-%% Add the transaction to the mining pool, to be included in the mined block.
-handle_info({event, tx, {ready_for_mining, TX}}, State) ->
-    ar_mempool:add_tx(TX, ready_for_mining),
-    {noreply, State};
-
-handle_info({event, tx, _}, State) ->
-    {noreply, State};
-
-handle_info({'DOWN', _Ref, process, PID, _Info}, State) ->
-    #{
-      blocks_missing_txs := Set,
-      missing_txs_lookup_processes := Map
-     } = State,
-    BH = maps:get(PID, Map),
-    {noreply, State#{
-                     missing_txs_lookup_processes => maps:remove(PID, Map),
-                     blocks_missing_txs => sets:del_element(BH, Set)
-                    }};
-
-handle_info({'EXIT', _PID, normal}, State) ->
-    {noreply, State};
-
-%% Make sure we terminate when ar_account_tree terminates.
-handle_info({'EXIT', PID, Reason}, #{ account_tree_pid := PID } = State) ->
-    ?LOG_ERROR([{event, account_tree_terminated},
-                {reason, io_lib:format("~p", [Reason])}]),
-    {stop, {account_tree_terminated, Reason}, State};
-
-handle_info(shutdown, State) ->
-    {stop, shutdown, State};
-
-handle_info(Info, State) ->
-    ?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
-    {noreply, State}.
-
-terminate(Reason, _State) ->
-    case ets:lookup(node_state, is_joined) of
-        [{_, true}] ->
-            [{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-            Mempool =
-                gb_sets:fold(
-                  fun({_Utility, TXID, Status}, Acc) ->
-                          maps:put(TXID, {ar_mempool:get_tx(TXID), Status}, Acc)
-                  end,
-                  #{},
-                  ar_mempool:get_priority_set()
-                 ),
-            dump_mempool(Mempool, MempoolSize);
-        _ ->
-            ok
-    end,
-    ?LOG_INFO([{event, ar_node_worker_terminated}, {reason, Reason}]).
-
-%%%===================================================================
-%%% Private functions.
-%%%===================================================================
+ecdsa_settled_set_not_found(Reason) ->
+    ar:console("~n~n\tThe local state has no ECDSA settled set matching the "
+               "block index. Restart the node without start_from_latest_state "
+               "and start_from_block to download the set from the trusted "
+               "peers.~n"),
+    ?LOG_WARNING([{event, ecdsa_settled_set_not_found},
+                  {reason, io_lib:format("~p", [Reason])}]),
+    timer:sleep(1000),
+    init:stop(1).
 
 record_metrics() ->
     [{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
@@ -751,6 +784,18 @@ handle_task({cache_missing_txs, BH, TXs}, State) ->
             {noreply, State}
     end;
 
+handle_task({missing_txs_not_found, BH}, State) ->
+    case ar_block_cache:get_block_and_status(block_cache, BH) of
+        {B, {{not_validated, _}, _}} ->
+            %% Let the other peers deliver the block.
+            ar_block_cache:remove(block_cache, BH),
+            ignore_block_from_peer(B),
+            gen_server:cast(?MODULE, apply_block);
+        _ ->
+            ok
+    end,
+    {noreply, State};
+
 handle_task(start_mining, State) ->
     {noreply, start_mining(State#{ automine => true })};
 
@@ -762,18 +807,14 @@ handle_task(mine_one_block, State) ->
             {noreply, State}
     end;
 
-handle_task({mine_until_height, Height}, State) ->
-    {noreply, start_mining(State#{ mine_until_height => {height, Height}, automine => true })};
-
 handle_task(pause, State) ->
     case maps:get(miner_state, State) of
         undefined ->
             ok;
         _ ->
-            ?MINING_SERVER:pause()
+            ar_mining_server:pause()
     end,
-    {noreply, State#{ miner_state => undefined, automine => false,
-                      mine_until_height => undefined }};
+    {noreply, State#{ miner_state => undefined, automine => false }};
 
 handle_task({filter_mempool, Mempool}, State) ->
     {ok, List, RemainingMempool} = ar_mempool:take_chunk(Mempool, ?FILTER_MEMPOOL_CHUNK_SIZE),
@@ -837,7 +878,7 @@ handle_task(compute_mining_difficulty, State) ->
         undefined ->
             ok;
         _ ->
-            ?MINING_SERVER:set_difficulty(Diff)
+            ar_mining_server:set_difficulty(Diff)
     end,
     ar_util:cast_after((?COMPUTE_MINING_DIFFICULTY_INTERVAL) * 1000, ?MODULE,
                        compute_mining_difficulty),
@@ -850,24 +891,28 @@ handle_task(Msg, State) ->
                ]),
     {noreply, State}.
 
+%% @doc Return the anchors of the last get_max_tx_anchor_depth() blocks and
+%% the identifiers of the transactions of all the given (up to
+%% 2 * get_max_tx_anchor_depth()) blocks.
 get_block_anchors_and_recent_txs_map(BlockTXPairs) ->
-    lists:foldr(
-      fun({BH, L}, {Acc1, Acc2}) ->
-              Acc3 =
+    Depth = arweave_lib_constants:get_max_tx_anchor_depth(),
+    BlockAnchors = [BH || {BH, _} <- lists:sublist(BlockTXPairs, Depth)],
+    RecentTXMap =
+        lists:foldl(
+          fun({_BH, L}, Acc) ->
                   lists:foldl(
-                    fun({{TXID, _}, _}, Acc4) ->
+                    fun({{TXID, _}, _}, Acc2) ->
                             %% We use a map instead of a set here because it is faster.
-                            maps:put(TXID, ok, Acc4)
+                            maps:put(TXID, ok, Acc2)
                     end,
-                    Acc2,
+                    Acc,
                     L
-                   ),
-              {[BH | Acc1], Acc3}
-      end,
-      {[], #{}},
-      lists:sublist(BlockTXPairs,
-          arweave_lib_constants:get_max_tx_anchor_depth())
-     ).
+                   )
+          end,
+          #{},
+          lists:sublist(BlockTXPairs, 2 * Depth)
+         ),
+    {BlockAnchors, RecentTXMap}.
 
 get_max_block_size([_SingleElement]) ->
     0;
@@ -1019,10 +1064,9 @@ apply_block2(BShadow, PrevBlocks, Timestamp, State) ->
         _ ->
             ?LOG_INFO([{event, missing_txs_for_block}, {count, length(MissingTXIDs)}]),
             Self = self(),
-            monitor(
-              process,
-              PID = spawn(fun() -> get_missing_txs_and_retry(BShadow, Self) end)
-             ),
+            BShadow2 = BShadow#block{ txs = TXs },
+            PID = spawn(fun() -> get_missing_txs_and_retry(BShadow2, Self) end),
+            monitor(process, PID),
             BH = BShadow#block.indep_hash,
             {noreply, State#{
                              blocks_missing_txs => sets:add_element(BH, BlocksMissingTXs),
@@ -1105,6 +1149,8 @@ request_nonce_limiter_validation(#block{ indep_hash = H } = B, PrevB) ->
     PrevInfo = ar_nonce_limiter:get_or_init_nonce_limiter_info(PrevB),
     ar_nonce_limiter:request_validation(H, Info, PrevInfo).
 
+%% @doc Return the block's transactions, each a local #tx{} or the
+%% identifier of a transaction to fetch, and the identifiers to fetch.
 pick_txs(TXIDs) ->
     Mempool = ar_mempool:get_map(),
     lists:foldr(
@@ -1117,19 +1163,24 @@ pick_txs(TXIDs) ->
                       %% the only reason to find some of these transactions on disk
                       %% is they had been written prior to the call, what means they are
                       %% from an orphaned fork, more than one block behind.
-                      case ar_storage:read_tx(TXID) of
-                          unavailable ->
-                              {Found, [TXID | Missing]};
-                          TX ->
-                              {[TX | Found], Missing}
-                      end;
+                      pick_local_tx(ar_storage:read_tx(TXID), TXID, Found, Missing);
                   _Status ->
-                      {[ar_mempool:get_tx(TXID) | Found], Missing}
+                      pick_local_tx(ar_mempool:get_tx(TXID), TXID, Found, Missing)
               end
       end,
       {[], []},
       TXIDs
      ).
+
+%% @doc Use the local copy of the transaction unless it is missing or its
+%% header comes from the block.
+pick_local_tx(#tx{} = TX, TXID, Found, Missing) ->
+    case ar_tx:takes_header_from_block(TX) of
+        true -> {[TXID | Found], [TXID | Missing]};
+        false -> {[TX | Found], Missing}
+    end;
+pick_local_tx(_NotFound, TXID, Found, Missing) ->
+    {[TXID | Found], [TXID | Missing]}.
 
 may_be_get_double_signing_proof(PrevB, State) ->
     LockedRewards = ar_rewards:get_locked_rewards(PrevB),
@@ -1445,18 +1496,24 @@ validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
             ok
     end.
 
-get_missing_txs_and_retry(#block{ txs = TXIDs }, _Worker)
+get_missing_txs_and_retry(#block{ txs = TXIDs, indep_hash = H }, Worker)
   when length(TXIDs) > 1000 ->
     ?LOG_WARNING([{event, ar_node_worker_downloaded_txs_count_exceeds_limit}]),
-    ok;
+    gen_server:cast(Worker, {missing_txs_not_found, H});
 get_missing_txs_and_retry(BShadow, Worker) ->
+    %% Ask the peer that supplied the block, if any.
+    Peers =
+        case BShadow#block.source_peer of
+            undefined -> ar_peers:get_peers(current);
+            Peer -> [Peer]
+        end,
     get_missing_txs_and_retry(BShadow#block.indep_hash, BShadow#block.txs,
-                              Worker, ar_peers:get_peers(current), [], 0).
+                              Worker, Peers, [], 0).
 
-get_missing_txs_and_retry(_H, _TXIDs, _Worker, _Peers, _TXs, TotalSize)
+get_missing_txs_and_retry(H, _TXIDs, Worker, _Peers, _TXs, TotalSize)
   when TotalSize > ?BLOCK_TX_DATA_SIZE_LIMIT ->
     ?LOG_WARNING([{event, ar_node_worker_downloaded_txs_exceed_block_size_limit}]),
-    ok;
+    gen_server:cast(Worker, {missing_txs_not_found, H});
 get_missing_txs_and_retry(H, [], Worker, _Peers, TXs, _TotalSize) ->
     gen_server:cast(Worker, {cache_missing_txs, H, lists:reverse(TXs)});
 get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
@@ -1474,8 +1531,10 @@ get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
           end,
           {TXs, TotalSize},
           arweave_lib_util:pmap(
-            fun(TXID) ->
-                    ar_http_iface_client:get_tx(Peers, TXID)
+            fun(#tx{} = TX) ->
+                    TX;
+               (TXID) ->
+                    get_tx_from_peers(Peers, TXID)
             end,
             Bulk
            )
@@ -1483,9 +1542,18 @@ get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
     case Fetch of
         failed_to_fetch_tx ->
             ?LOG_WARNING([{event, ar_node_worker_failed_to_fetch_missing_tx}]),
-            ok;
+            gen_server:cast(Worker, {missing_txs_not_found, H});
         {TXs2, TotalSize2} ->
             get_missing_txs_and_retry(H, Rest, Worker, Peers, TXs2, TotalSize2)
+    end.
+
+%% @doc Fetch a transaction pick_txs/1 did not take locally from the peers.
+get_tx_from_peers(Peers, TXID) ->
+    case ar_http_iface_client:get_tx_from_remote_peers(Peers, TXID, true) of
+        {#tx{} = TX, _Peer, _Time, _Size} ->
+            TX;
+        _ ->
+            not_found
     end.
 
 apply_validated_block(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
@@ -1517,6 +1585,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
     ar_block_cache:add(block_cache, B),
     ar_block_cache:mark_tip(block_cache, BH),
     PrunedBlocks = ar_block_cache:prune(block_cache, arweave_lib_constants:get_consensus_window_size()),
+    ar_ecdsa_settled:settle(PrunedBlocks),
     evict_confirmed_tx_prefixes(PrunedBlocks),
     %% We could have missed a few blocks due to networking issues, which would then
     %% be picked by ar_poller and end up waiting for missing transactions to be fetched.
@@ -1576,6 +1645,9 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
     AddedBlocks = tl(lists:reverse([B | [PrevB2 || PrevB2 <- PrevBlocks]])),
     AddedBIElements = [block_index_entry(Blck) || Blck <- AddedBlocks],
     OrphanCount = length(Orphans),
+    %% Record the confirmations before the header sync does, so that the
+    %% transactions are served once they leave the mempool.
+    lists:foreach(fun ar_storage:update_confirmation_index/1, AddedBlocks),
     ar_block_index:update(AddedBIElements, OrphanCount),
     RecentBI2 = lists:sublist(RecentBI, ?BLOCK_INDEX_HEAD_LEN),
     ar_data_sync:add_tip_block(BlockTXPairs, RecentBI2),
@@ -1759,26 +1831,41 @@ record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
             ok
     end.
 
-%% @doc Ignore the rejected block. A block carrying deprecated format-1
-%% transactions is only refused from the peer that supplied it, and only for a
-%% while, so the other peers can still deliver it.
+%% @doc Ignore the rejected block. Some blocks are only refused from the peer
+%% that supplied them.
 ignore_rejected_block(B) ->
-    BH = B#block.indep_hash,
-    case carries_v1_denomination0_tx(B)
-            andalso B#block.height < arweave_lib_constants:height_2_9_6() of
+    case (carries_v1_denomination0_tx(B)
+            andalso B#block.height < arweave_lib_constants:height_2_9_6())
+            orelse lists:any(fun ar_tx:is_ecdsa_tx/1, B#block.txs) of
         true ->
-            ?LOG_DEBUG([{event, rejected_block_with_deprecated_v1_tx},
-                        {block, arweave_lib_util:encode(BH)},
-                        {peer, B#block.source_peer}]),
-            ar_ignore_registry:remove(BH),
-            ID =
-                case B#block.source_peer of
-                    undefined -> BH;
-                    Peer -> {BH, Peer}
-                end,
-            ar_ignore_registry:add_temporary(ID, ?REJECTED_V1_BLOCK_IGNORE_MS);
+            ignore_block_from_peer(B);
         false ->
-            ar_ignore_registry:add(BH)
+            ar_ignore_registry:add(B#block.indep_hash)
+    end.
+
+%% @doc Refuse the block from the peer that supplied it for a while, so that
+%% the other peers can still deliver it.
+ignore_block_from_peer(B) ->
+    BH = B#block.indep_hash,
+    ?LOG_DEBUG([{event, ignore_block_from_peer},
+                {block, arweave_lib_util:encode(BH)},
+                {peer, B#block.source_peer}]),
+    ar_ignore_registry:remove(BH),
+    ID =
+        case B#block.source_peer of
+            undefined -> BH;
+            Peer -> {BH, Peer}
+        end,
+    ar_ignore_registry:add_temporary(ID, ?BLOCK_FROM_PEER_IGNORE_MS).
+
+%% @doc Return true if a recent block of the current chain has the
+%% transaction.
+is_recent_tx(TXID) ->
+    case ets:lookup(node_state, recent_txs_map) of
+        [{_, RecentTXMap}] ->
+            maps:is_key(TXID, RecentTXMap);
+        [] ->
+            false
     end.
 
 carries_v1_denomination0_tx(B) ->
@@ -1811,19 +1898,12 @@ return_orphaned_txs_to_mempool(H, BaseH, SkipTXIDs) ->
 
 %% @doc Stop the current mining session and optionally start a new one,
 %% depending on the automine setting.
-maybe_reset_miner(#{ mine_until_height := {height, TargetHeight} } = State) ->
-    case ar_node:get_height() >= TargetHeight of
-        true ->
-            maybe_reset_miner(State#{ mine_until_height => undefined, automine => false });
-        false ->
-            start_mining(State)
-    end;
 maybe_reset_miner(#{ miner_state := MinerState, automine := false } = State) ->
     case MinerState of
         undefined ->
             ok;
         _ ->
-            ?MINING_SERVER:pause()
+            ar_mining_server:pause()
     end,
     State#{ miner_state => undefined };
 maybe_reset_miner(State) ->
@@ -1834,14 +1914,14 @@ start_mining(State) ->
     [{_, MerkleRebaseThreshold}] = ets:lookup(node_state,
                                               merkle_rebase_support_threshold),
     [{_, Height}] = ets:lookup(node_state, height),
-    ?MINING_SERVER:start_mining({DiffPair, MerkleRebaseThreshold, Height}),
+    ar_mining_server:start_mining({DiffPair, MerkleRebaseThreshold, Height}),
     case maps:get(miner_state, State) of
         undefined ->
             State#{ miner_state => running };
         running ->
-            ?MINING_SERVER:set_difficulty(DiffPair),
-            ?MINING_SERVER:set_merkle_rebase_threshold(MerkleRebaseThreshold),
-            ?MINING_SERVER:set_height(Height),
+            ar_mining_server:set_difficulty(DiffPair),
+            ar_mining_server:set_merkle_rebase_threshold(MerkleRebaseThreshold),
+            ar_mining_server:set_height(Height),
             State
     end.
 
@@ -1863,7 +1943,9 @@ get_current_diff(TS) ->
     DiffPair = proplists:get_value(diff_pair, Props),
     LastRetarget = proplists:get_value(last_retarget, Props),
     PrevTS = proplists:get_value(timestamp, Props),
-    ar_retarget:maybe_retarget(Height + 1, DiffPair, TS, LastRetarget, PrevTS).
+    %% Use the timestamp handle_found_solution/4 gives the block.
+    TS2 = max(TS, PrevTS),
+    ar_retarget:maybe_retarget(Height + 1, DiffPair, TS2, LastRetarget, PrevTS).
 
 get_merkle_rebase_threshold(PrevB) ->
     case PrevB#block.height + 1 == arweave_lib_constants:height_2_7() of
@@ -1902,6 +1984,8 @@ priority(apply_block) ->
 priority({work_complete, _, _, _, _, _}) ->
     {2, 1};
 priority({cache_missing_txs, _, _}) ->
+    {3, 1};
+priority({missing_txs_not_found, _}) ->
     {3, 1};
 priority(_) ->
     {os:system_time(second), 1}.
@@ -2003,19 +2087,22 @@ compute_poa_cache(#block{ height = 0 }, _PoA, _RecallByte, _Nonce, _Packing) ->
 compute_poa_cache(B, PoA, RecallByte, Nonce, Packing) ->
     PackingDifficulty = B#block.packing_difficulty,
     SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),
-    {BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(RecallByte),
-    BlockSize = BlockEnd - BlockStart,
-    ChunkID =
-        case PoA#poa.unpacked_chunk of
-            <<>> ->
-                Args = {BlockStart, RecallByte, TXRoot, BlockSize, PoA, Packing,
-                        SubChunkIndex, not_set},
-                {true, ComputedChunkID} = ar_poa:validate(Args),
-                ComputedChunkID;
-            _ ->
-                ar_tx:generate_chunk_id(PoA#poa.unpacked_chunk)
-        end,
-    {{BlockStart, RecallByte, TXRoot, BlockSize, Packing, SubChunkIndex}, ChunkID}.
+    maybe
+        {BlockStart, BlockEnd, TXRoot} ?=
+            ar_block_index:get_block_bounds(RecallByte),
+        BlockSize = BlockEnd - BlockStart,
+        {ok, ChunkID} ?= ar_poa:get_chunk_id(BlockStart, RecallByte, TXRoot,
+                                            BlockSize, PoA),
+        {{BlockStart, RecallByte, TXRoot, BlockSize, Packing, SubChunkIndex},
+         ChunkID}
+    else
+        Error ->
+            ?LOG_WARNING([{event, failed_to_compute_poa_cache},
+                          {block, arweave_lib_util:encode(B#block.indep_hash)},
+                          {recall_byte, RecallByte},
+                          {reason, io_lib:format("~p", [Error])}]),
+            undefined
+    end.
 
 dump_mempool(TXs, MempoolSize) ->
     SerializedTXs = maps:map(fun(_, {TX, St}) -> {ar_serialize:tx_to_binary(TX), St} end, TXs),
@@ -2059,18 +2146,18 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
     Height = PrevHeight + 1,
     Now = os:system_time(second),
     MaxDeviation = arweave_lib_constants:get_max_timestamp_deviation(),
-    Timestamp =
-        case Now < PrevTimestamp - MaxDeviation of
-            true ->
-                ?LOG_WARNING([{event, clock_out_of_sync},
-                              {previous_block, arweave_lib_util:encode(PrevH)},
-                              {previous_block_timestamp, PrevTimestamp},
-                              {our_time, Now},
-                              {max_allowed_deviation, MaxDeviation}]),
-                PrevTimestamp - MaxDeviation;
-            false ->
-                Now
-        end,
+    case Now < PrevTimestamp - MaxDeviation of
+        true ->
+            ?LOG_WARNING([{event, clock_out_of_sync},
+                          {previous_block, arweave_lib_util:encode(PrevH)},
+                          {previous_block_timestamp, PrevTimestamp},
+                          {our_time, Now},
+                          {max_allowed_deviation, MaxDeviation}]);
+        false ->
+            ok
+    end,
+    %% The block timestamp must not be smaller than the previous one.
+    Timestamp = max(Now, PrevTimestamp),
     IsBanned = ar_node_utils:is_account_banned(MiningAddress,
                                                ar_account_tree:get(WalletList, MiningAddress)),
     %% Check the solution is ahead of the previous solution on the timeline.
@@ -2528,6 +2615,38 @@ checker_test_disabled() ->
     ?assertEqual({3, #{ true => 3 }}, checker([true, true, true])),
     ?assertEqual({3, #{ true => 2, false => 1}}, checker([true, true, false])),
     ?assertEqual({3, #{ true => 1, false => 2}}, checker([true, false, false])).
+
+-ifdef(AR_TEST).
+compute_poa_cache_test_() ->
+    %% Any size below ?DATA_CHUNK_SIZE, so that the chunk gets padded.
+    ChunkSize = 1000,
+    Chunk = crypto:strong_rand_bytes(ChunkSize),
+    ChunkID = ar_tx:generate_chunk_id(Chunk),
+    %% The only chunk of the only transaction of a block starting at offset 0.
+    {DataRoot, DataTree} = ar_merkle:generate_tree([{ChunkID, ChunkSize}]),
+    DataPath = ar_merkle:generate_path(DataRoot, 0, DataTree),
+    {TXRoot, TXTree} = ar_merkle:generate_tree([{DataRoot, ChunkSize}]),
+    TXPath = ar_merkle:generate_path(TXRoot, 0, TXTree),
+    PoA = #poa{ tx_path = TXPath, data_path = DataPath,
+                unpacked_chunk = ar_packing_server:pad_chunk(Chunk) },
+    B = #block{ height = 1, indep_hash = crypto:strong_rand_bytes(48),
+                packing_difficulty = 1 },
+    Packing = {composite, <<"address">>, 1},
+    Nonce = 0,
+    RecallByte = ChunkSize - 1,
+    SubChunkIndex = ar_block:get_sub_chunk_index(1, Nonce),
+    ArgCache = {0, RecallByte, TXRoot, ChunkSize, Packing, SubChunkIndex},
+    ar_test_util:with_mocked(
+        [{ar_block_index, get_block_bounds,
+          fun(_Offset) -> {0, ChunkSize, TXRoot} end}],
+        fun() ->
+            ?assertEqual({ArgCache, ChunkID},
+                         compute_poa_cache(B, PoA, RecallByte, Nonce, Packing)),
+            ?assertEqual(undefined,
+                         compute_poa_cache(B, PoA#poa{ data_path = <<>> },
+                                           RecallByte, Nonce, Packing))
+        end).
+-endif.
 
 clock_sync_ok_test() ->
     %% All valid, or valid strictly outnumbering invalid, is accepted.

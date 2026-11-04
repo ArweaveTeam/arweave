@@ -61,7 +61,8 @@ default_limits() ->
         post_tx => ?MAX_PARALLEL_POST_TX_REQUESTS,
         get_reward_history => ?MAX_PARALLEL_REWARD_HISTORY_REQUESTS,
         get_tx => ?MAX_PARALLEL_GET_TX_REQUESTS,
-        get_data_roots => ?MAX_PARALLEL_GET_DATA_ROOTS_REQUESTS
+        get_data_roots => ?MAX_PARALLEL_GET_DATA_ROOTS_REQUESTS,
+        get_ecdsa_settled => ?MAX_PARALLEL_ECDSA_SETTLED_REQUESTS
     }.
 
 %% @doc Apply a legacy `#{Name => Limit}' map, clearing all per-name

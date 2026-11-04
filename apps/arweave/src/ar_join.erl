@@ -169,7 +169,7 @@ get_block_index2(Peer, Start, Height, BI) ->
     end.
 
 get_block(Peers, H) ->
-    case ar_storage:read_block(H) of
+    case read_local_block(H) of
         unavailable ->
             get_block(Peers, H, 10);
         BShadow ->
@@ -211,7 +211,7 @@ get_block(Peers, H, Retries) ->
 get_block(_Peers, BShadow, [], TXs, _Retries) ->
     BShadow#block{ txs = lists:reverse(TXs) };
 get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries) ->
-    case ar_http_iface_client:get_tx(Peers, TXID) of
+    case get_tx(Peers, TXID, BShadow#block.indep_hash) of
         #tx{} = TX ->
             get_block(Peers, BShadow, TXIDs, [TX | TXs], Retries);
         _ ->
@@ -509,7 +509,7 @@ join_peers(Peers) ->
 worker() ->
     receive
         {get_block_shadow, H, Peer, From} ->
-            case ar_storage:read_block(H) of
+            case read_local_block(H) of
                 #block{} = B ->
                     From ! {block_response, H, Peer, B, storage};
                 unavailable ->
@@ -522,7 +522,10 @@ worker() ->
             end,
             worker();
         {get_tx, H, TXID, Peer, From} ->
-            case read_local_tx(TXID) of
+            case read_local_tx(TXID, H) of
+                #tx{} = TX when is_record(TXID, tx) ->
+                    %% Store the header the block carries.
+                    From ! {tx_response, H, TXID, Peer, TX, block};
                 #tx{} = TX ->
                     From ! {tx_response, H, TXID, Peer, TX, storage};
                 unavailable ->
@@ -536,22 +539,59 @@ worker() ->
             worker()
     end.
 
-%% @doc Read the transaction from the local storage unless it is a deprecated
-%% format-1 transaction, whose authoritative body is the one carried by the
-%% block.
-read_local_tx(#tx{} = TX) ->
-    TX;
-read_local_tx(TXID) ->
-    case ar_storage:read_tx(TXID) of
+%% @doc Return the transaction of the block H from the local storage or the
+%% peers.
+get_tx(Peers, TXID, H) ->
+    case read_local_tx(TXID, H) of
         #tx{} = TX ->
-            case ar_storage:is_v1_denomination0_local_tx(TX) of
+            TX;
+        unavailable ->
+            ar_http_iface_client:get_tx(Peers, TXID)
+    end.
+
+%% @doc Return the stored block H if read_local_tx/2 finds all its transactions,
+%% or unavailable.
+read_local_block(H) ->
+    case ar_storage:read_block(H) of
+        #block{ txs = TXs } = B ->
+            IsLocal = fun(TX) -> read_local_tx(TX, H) /= unavailable end,
+            %% Otherwise fetch the block, as a peer may serve it with the
+            %% headers.
+            case lists:all(IsLocal, TXs) of
                 true ->
-                    unavailable;
+                    B;
                 false ->
-                    TX
+                    unavailable
             end;
         unavailable ->
             unavailable
+    end.
+
+%% @doc Read the transaction of the block H from the local storage unless its
+%% header comes from the block (ar_tx:takes_header_from_block/1) and H did not
+%% confirm the local copy.
+read_local_tx(#tx{} = TX, _H) ->
+    TX;
+read_local_tx(TXID, H) ->
+    case ar_storage:read_tx(TXID) of
+        #tx{} = TX ->
+            case not ar_tx:takes_header_from_block(TX)
+                    orelse is_confirmed_by(TXID, H) of
+                true ->
+                    TX;
+                false ->
+                    unavailable
+            end;
+        unavailable ->
+            unavailable
+    end.
+
+is_confirmed_by(TXID, H) ->
+    case ar_storage:get_tx_confirmation_data(TXID) of
+        {ok, {_Height, H}} ->
+            true;
+        _ ->
+            false
     end.
 
 %%%===================================================================
@@ -560,7 +600,78 @@ read_local_tx(TXID) ->
 
 embedded_v1_transaction_is_authoritative_test() ->
     TX = #tx{ format = 1, denomination = 0 },
-    ?assertEqual(TX, read_local_tx(TX)).
+    ?assertEqual(TX, read_local_tx(TX, <<"h">>)).
+
+embedded_ecdsa_transaction_test() ->
+    TX = #tx{ format = 2, signature_type = ?ECDSA_KEY_TYPE },
+    ?assertEqual(TX, read_local_tx(TX, <<"h">>)),
+    %% The worker stores the header the block carries.
+    Worker = spawn(fun worker/0),
+    Worker ! {get_tx, <<"h">>, TX, peer, self()},
+    receive
+        {tx_response, <<"h">>, TX, peer, Reply, Origin} ->
+            ?assertEqual({TX, block}, {Reply, Origin})
+    after 5000 ->
+        ?assert(false, "The worker did not reply.")
+    end,
+    exit(Worker, kill).
+
+local_ecdsa_transaction_test() ->
+    TX = #tx{ format = 2, signature_type = ?ECDSA_KEY_TYPE },
+    meck:new(ar_storage, [passthrough]),
+    meck:new(ar_kv, [passthrough]),
+    try
+        meck:expect(ar_storage, read_tx, fun(_TXID) -> TX end),
+        meck:expect(ar_kv, get, fun(tx_confirmation_db, _TXID) -> not_found end),
+        ?assertEqual(unavailable, read_local_tx(<<"id">>, <<"h">>)),
+        %% Take the copy the block confirmed.
+        meck:expect(ar_kv, get, fun(tx_confirmation_db, _TXID) ->
+                {ok, term_to_binary({1, <<"h">>})} end),
+        ?assertEqual(TX, read_local_tx(<<"id">>, <<"h">>)),
+        ?assertEqual(unavailable, read_local_tx(<<"id">>, <<"other">>))
+    after
+        meck:unload(ar_kv),
+        meck:unload(ar_storage)
+    end.
+
+incomplete_local_block_test_() ->
+    TX = #tx{ id = <<"id">>, format = 2, signature_type = ?ECDSA_KEY_TYPE },
+    OtherTX = TX#tx{ reward = 1 },
+    B = #block{ indep_hash = <<"h">>, height = 1, txs = [<<"id">>] },
+    ar_test_util:with_mocked([
+        {ar_storage, read_block,
+            fun(<<"h">>) -> B; (H) -> meck:passthrough([H]) end},
+        {ar_storage, read_tx,
+            fun(<<"id">>) -> unavailable; (ID) -> meck:passthrough([ID]) end},
+        %% The transaction endpoints serve another header than the block.
+        {ar_http_iface_client, get_tx,
+            fun(_Peers, <<"id">>) -> OtherTX;
+               (Peers, ID) -> meck:passthrough([Peers, ID])
+            end},
+        {ar_http_iface_client, get_tx_from_remote_peer,
+            fun(peer, <<"id">>, _RatePeer) -> {OtherTX, peer, 0, 0};
+               (Peer, ID, RatePeer) -> meck:passthrough([Peer, ID, RatePeer])
+            end},
+        {ar_http_iface_client, get_block_shadow,
+            fun([peer], <<"h">>) -> {peer, B#block{ txs = [TX] }, 0, 0};
+               (Peers, ID) -> meck:passthrough([Peers, ID])
+            end},
+        {ar_disk_cache, write_block_shadow, fun(_B) -> ok end},
+        {ar_disk_cache, write_tx, fun(_TX) -> ok end}],
+        fun() ->
+            %% The head block.
+            ?assertEqual([TX], (get_block([peer], <<"h">>))#block.txs),
+            %% The trail.
+            Worker = spawn(fun worker/0),
+            try
+                [B2] = get_block_trail(queue:from_list([Worker]),
+                        queue:from_list([peer]), [{<<"h">>, 0, <<>>}],
+                        #{ peer => 0 }),
+                ?assertEqual([TX], B2#block.txs)
+            after
+                exit(Worker, kill)
+            end
+        end).
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test_() ->

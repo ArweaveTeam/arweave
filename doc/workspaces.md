@@ -210,14 +210,13 @@ uses becomes:
 | `bin/e2e`                         | `main-e2e` / `main-e2e-ns`                       |
 | `bin/shell`                       | `main-localtest` / `main-localtest-ns`           |
 | `bin/e2e_shell`                   | `main-e2e` / `main-e2e-ns`                       |
-| `bin/localnet_shell`              | `main-localnet` / `main-localnet-ns`             |
 | `bin/start`, `bin/console`, `bin/stop` | `arweave` / `arweave-ns`                    |
 
 The shared helper is `bin/dev/lib-namespace.sh`; `bin/arweave` and the dev
 shells source it. When `ARWEAVE_NAMESPACE` is unset every script behaves exactly as
 before. An explicit `NODE_NAME` (tests) or `ARNODE` (real node) always wins.
 
-The interactive dev shells (`bin/shell`, `bin/e2e_shell`, `bin/localnet_shell`)
+The interactive dev shells (`bin/shell`, `bin/e2e_shell`)
 used to refuse to start if *any* BEAM was running anywhere on the host. That
 guard is now scoped to the workspace's own node name, so shells in different
 namespaces run concurrently — only a second shell with the *same* node name is

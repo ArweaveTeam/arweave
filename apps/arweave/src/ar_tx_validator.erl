@@ -1,4 +1,5 @@
 -module(ar_tx_validator).
+-test_category([fast]).
 
 -export([validate/1]).
 
@@ -8,6 +9,9 @@
 %%% Public interface.
 %%%===================================================================
 
+validate(#tx{ data_root = DataRoot })
+        when byte_size(DataRoot) /= 0, byte_size(DataRoot) /= 32 ->
+    {invalid, invalid_data_root_length};
 validate(TX) ->
     Props =
         ets:select(
@@ -86,3 +90,21 @@ validate(TX) ->
         _ ->
             Result2
     end.
+
+-ifdef(AR_TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+short_data_root_test() ->
+    lists:foreach(
+      fun(Size) ->
+              TX = #tx{ format = 2, data_size = 1,
+                        data_root = binary:copy(<< 1 >>, Size) },
+              ?assertEqual({invalid, invalid_data_root_length}, validate(TX))
+      end,
+      lists:seq(1, 31)).
+
+-endif.

@@ -113,9 +113,40 @@ verify_tx2(Args) ->
     case ar_tx:verify(TX, {Rate, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
             RedenominationHeight, Height, FloatingWallets, Timestamp}, VerifySignature) of
         true ->
-            verify_anchor(TX, Height, FloatingWallets, BlockAnchors, RecentTXMap, Mempool);
+            case verify_ecdsa_tx_id(TX, Height, RecentTXMap, Mempool) of
+                valid ->
+                    verify_anchor(TX, Height, FloatingWallets, BlockAnchors,
+                            RecentTXMap, Mempool);
+                Invalid ->
+                    Invalid
+            end;
         false ->
             {invalid, tx_verification_failed}
+    end.
+
+%% @doc Reject an ECDSA transaction whose identifier is already in the mempool
+%% (earlier in the block), in the recent blocks, or in the ECDSA settled set at
+%% or below Height.
+verify_ecdsa_tx_id(TX, Height, RecentTXMap, Mempool) ->
+    case ar_tx:is_ecdsa_tx(TX) of
+        true ->
+            verify_ecdsa_tx_id2(TX#tx.id, Height, RecentTXMap, Mempool);
+        false ->
+            valid
+    end.
+
+verify_ecdsa_tx_id2(TXID, Height, RecentTXMap, Mempool) ->
+    case maps:is_key(TXID, Mempool) of
+        true ->
+            {invalid, tx_already_in_mempool};
+        false ->
+            case maps:is_key(TXID, RecentTXMap)
+                    orelse ar_ecdsa_settled:is_settled(TXID, Height) of
+                true ->
+                    {invalid, tx_already_in_weave};
+                false ->
+                    valid
+            end
     end.
 
 verify_anchor(TX, Height, FloatingWallets, BlockAnchors, RecentTXMap, Mempool) when

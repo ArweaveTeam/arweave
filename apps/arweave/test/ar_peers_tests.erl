@@ -501,11 +501,30 @@ test_block_rejected() ->
        ar_peers:get_peer_performances([Peer])),
     ?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(Peer)),
 
+    send_block_event({rejected, invalid_hash_preimage_relative, <<>>, Peer}),
+
+    ?assertEqual(#{Peer => #performance{}},
+        ar_peers:get_peer_performances([Peer])),
+    ?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)),
+    ?assert(ban_expires_within(Peer, ?BAD_HASH_PREIMAGE_BAN_TIME)),
+    ar_blacklist_middleware:reset(),
+
+    send_block_event({rejected, invalid_poa_relative, <<>>, Peer}),
+
+    ?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)),
+    ?assert(ban_expires_within(Peer, ?BAD_POA_BAN_TIME)),
+    ar_blacklist_middleware:reset(),
+
     send_block_event({rejected, invalid_previous_solution_hash, <<>>, Peer}),
 
     ?assertEqual(#{Peer => #performance{}},
         ar_peers:get_peer_performances([Peer])),
-    ?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)).
+    ?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)),
+    ?assertNot(ban_expires_within(Peer, ?BAD_HASH_PREIMAGE_BAN_TIME)).
+
+ban_expires_within({A, B, C, D, _Port}, Seconds) ->
+    [{_, Expires}] = ets:lookup(ar_blacklist_middleware, {ban, {A, B, C, D}}),
+    Expires =< os:system_time(seconds) + Seconds.
 
 %% Legacy 6/7-arity performance tuples stored the completed AVERAGE rating;
 %% the loader must scale it by the transfer count so the derived lifetime

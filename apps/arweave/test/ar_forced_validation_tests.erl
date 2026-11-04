@@ -106,9 +106,10 @@ inject_undersized_rsa({Key, BIn, PrevB}) ->
 
     debug_decode_block(B),
 
-    post_block(B, valid),
+    post_block(B, invalid_tx_body_relative),
 
     timer:sleep(1000),
+    ar_blacklist_middleware:reset(),
     ReqRes2 = ar_http:req(#{
                            method => get,
                            peer => Peer,

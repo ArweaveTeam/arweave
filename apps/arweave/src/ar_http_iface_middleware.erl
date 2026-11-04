@@ -357,12 +357,12 @@ handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
 %% Return a JSON-encoded transaction.
 %% GET request to endpoint /tx/{hash}.
 handle(<<"GET">>, [<<"tx">>, Hash], Req, _Pid) ->
-    handle_get_tx(Hash, Req, json, hide_v1_denomination0);
+    handle_get_tx(Hash, Req, json, public);
 
 %% Return a binary-encoded transaction.
 %% GET request to endpoint /tx2/{hash}.
 handle(<<"GET">>, [<<"tx2">>, Hash], Req, _Pid) ->
-    handle_get_tx(Hash, Req, binary, hide_v1_denomination0);
+    handle_get_tx(Hash, Req, binary, public);
 
 %% Return a possibly unconfirmed JSON-encoded transaction.
 %% GET request to endpoint /unconfirmed_tx/{hash}.
@@ -389,6 +389,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
                     case read_public_tx(ID) of
                         unavailable ->
                             {404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("genesis_data/not_found.html"), Req};
+                        hidden ->
+                            {202, #{}, <<"Pending">>, Req};
                         #tx{} = TX ->
                             serve_tx_html_data(Req, TX)
                     end
@@ -1139,6 +1141,33 @@ handle(<<"GET">>, [<<"total_supply">>], Req, _Pid) ->
             timeout_response(Req)
     end;
 
+%% Return the height and the block hash of the ECDSA settled set, the number of
+%% its entries and the XOR of their SHA-256 hashes (to verify a download).
+%% GET request to endpoint /ecdsa_settled.
+handle(<<"GET">>, [<<"ecdsa_settled">>], Req, _Pid) ->
+    case ar_ecdsa_settled:get_state() of
+        {ok, {Height, BH, Count, XOR}} ->
+            EncodedXOR = arweave_lib_util:encode(<< XOR:256 >>),
+            {200, #{}, jiffy:encode(#{ height => Height,
+                    indep_hash => arweave_lib_util:encode(BH), count => Count,
+                    xor_checksum => EncodedXOR }), Req};
+        _ ->
+            ecdsa_settled_not_available_response(Req)
+    end;
+
+%% Return up to ?ECDSA_SETTLED_CHUNK_SIZE {TXID, Height, Hash} entries of the
+%% ECDSA settled set with identifiers bigger than the given cursor, in
+%% ascending order. Hash is the SHA-256 hash of the signature data segment.
+%% GET request to endpoint /ecdsa_settled/{cursor}.
+handle(<<"GET">>, [<<"ecdsa_settled">>, EncodedCursor], Req, _Pid) ->
+    maybe
+        ok ?= acquire_http_semaphore(get_ecdsa_settled),
+        process_get_ecdsa_settled_chunk(EncodedCursor, Req)
+    else
+        {error, timeout} ->
+            timeout_response(Req)
+    end;
+
 %% Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list.
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
@@ -1300,6 +1329,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
                 false ->
                     {404, #{}, <<"Not Found.">>, Req}
             end;
+        {hidden, _TXID} ->
+            {202, #{}, <<"Pending">>, Req};
         {reply, Reply} ->
             Reply;
         {#tx{} = TX, _} ->
@@ -1554,7 +1585,7 @@ handle_get_tx_status(EncodedTXID, Req) ->
                 true ->
                     {202, #{}, <<"Pending">>, Req};
                 false ->
-                    case get_tx_confirmation_data(TXID) of
+                    case ar_storage:get_tx_confirmation_data(TXID) of
                         {ok, {Height, BH}} ->
                             PseudoTags = [
                                 {<<"block_height">>, Height},
@@ -1585,55 +1616,34 @@ handle_get_tx_status(EncodedTXID, Req) ->
             end
     end.
 
-%% @doc Look up the confirmation data, reporting hidden format-1
-%% transactions as not found.
-get_tx_confirmation_data(TXID) ->
-    case ar_storage:get_tx_confirmation_data(TXID) of
-        {ok, _} = Reply ->
-            case read_public_tx(TXID) of
-                #tx{} ->
-                    Reply;
-                unavailable ->
-                    not_found
-            end;
-        Reply ->
-            Reply
-    end.
-
-%% @doc Read the transaction from the local storage unless the public
-%% transaction endpoints do not serve it yet.
+%% @doc Read the transaction from the local storage. Return unavailable if no
+%% block in the current block index confirmed the stored header and hidden if
+%% the public transaction endpoints do not serve it yet.
 read_public_tx(TXID) ->
     case ar_storage:read_tx(TXID) of
         #tx{} = TX ->
-            case is_hidden_v1_denomination0_tx(TX) of
-                true -> unavailable;
-                false -> TX
+            case ar_storage:needs_block_header(TX) of
+                true ->
+                    unavailable;
+                false ->
+                    case is_hidden_tx(TX) of
+                        true -> hidden;
+                        false -> TX
+                    end
             end;
         unavailable ->
             unavailable
     end.
 
 %% @doc Return true if the transaction is a format-1 transaction without a
-%% denomination that is not served by the public transaction endpoints yet.
-%% Such transactions are only accepted inside blocks, so we only serve them
-%% once a block in the current block index confirmed them and they have
-%% ?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS confirmations.
-is_hidden_v1_denomination0_tx(TX) ->
-    case ar_storage:is_v1_denomination0_local_tx(TX) of
-        true ->
-            true;
-        false ->
-            case ar_tx:is_v1_denomination0_tx(TX) of
-                false ->
-                    false;
-                true ->
-                    not has_min_v1_denomination0_confirmations(TX)
-            end
-    end.
+%% denomination with fewer than ?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS
+%% confirmations.
+is_hidden_tx(TX) ->
+    ar_tx:is_v1_denomination0_tx(TX) andalso not has_min_confirmations(TX).
 
-%% @doc Return true if the format-1 transaction, confirmed by a block in the
-%% block index, has ?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS confirmations.
-has_min_v1_denomination0_confirmations(TX) ->
+%% @doc Return true if the transaction, confirmed by a block in the block
+%% index, has ?V1_DENOMINATION0_TX_MIN_CONFIRMATIONS confirmations.
+has_min_confirmations(TX) ->
     case ar_storage:get_tx_confirmation_data(TX#tx.id) of
         {ok, {Height, _BH}} ->
             Confirmations = ar_node:get_height() - Height + 1,
@@ -1646,8 +1656,8 @@ handle_get_tx(Hash, Req, Encoding) ->
     handle_get_tx(Hash, Req, Encoding, serve_all).
 
 %% @doc Serve the transaction. Peers fetch block transactions through
-%% GET /unconfirmed_tx, which serves everything. The public GET /tx hides
-%% recent format-1 transactions without a denomination.
+%% GET /unconfirmed_tx, which serves everything. The public GET /tx reports
+%% recent format-1 transactions without a denomination as pending.
 handle_get_tx(Hash, Req, Encoding, Visibility) ->
     case arweave_lib_util:safe_decode(Hash) of
         {error, invalid} ->
@@ -1655,16 +1665,16 @@ handle_get_tx(Hash, Req, Encoding, Visibility) ->
         {ok, ID} ->
             maybe
                 ok ?= acquire_http_semaphore(get_tx),
-                case ar_storage:read_tx(ID) of
+                ReadTX =
+                    case Visibility of
+                        public -> read_public_tx(ID);
+                        serve_all -> ar_storage:read_tx(ID)
+                    end,
+                case ReadTX of
                     unavailable ->
                         maybe_tx_is_pending_response(ID, Req);
-                    #tx{} = TX when Visibility == hide_v1_denomination0 ->
-                        case is_hidden_v1_denomination0_tx(TX) of
-                            true ->
-                                {404, #{}, <<"Not Found.">>, Req};
-                            false ->
-                                serve_tx(TX, Encoding, Req)
-                        end;
+                    hidden ->
+                        {202, #{}, <<"Pending">>, Req};
                     #tx{} = TX ->
                         serve_tx(TX, Encoding, Req)
                 end
@@ -1956,8 +1966,12 @@ handle_get_block(H, Req, Pid, Encoding) ->
                                     {400, #{}, <<>>, Req2};
                                 Indices ->
                                     Map = collect_missing_transactions(B#block.txs, Indices),
-                                    TXs2 = [maps:get(TX#tx.id, Map, TX#tx.id)
-                                            || TX <- B#block.txs],
+                                    %% Always include the ECDSA headers.
+                                    TXs2 = [case ar_tx:is_ecdsa_tx(TX)
+                                                    orelse maps:is_key(TX#tx.id, Map) of
+                                                true -> strip_v2_data(TX);
+                                                false -> TX#tx.id
+                                            end || TX <- B#block.txs],
                                     handle_get_block3(B#block{ txs = TXs2 }, Req2, binary)
                             end;
                         {error, body_size_too_large} ->
@@ -1987,6 +2001,11 @@ handle_get_block3(B, Req, Encoding) ->
                 ar_serialize:block_to_binary(B)
         end,
     {200, #{}, Bin, Req}.
+
+strip_v2_data(#tx{ format = 2 } = TX) ->
+    TX#tx{ data = <<>> };
+strip_v2_data(TX) ->
+    TX.
 
 collect_missing_transactions(TXs, Indices) ->
     collect_missing_transactions(TXs, Indices, 0).
@@ -2066,6 +2085,8 @@ handle_post_tx(Req, Peer, TX) ->
             handle_post_tx_already_in_mempool_response();
         {invalid, invalid_data_root_size} ->
             handle_post_tx_invalid_data_root_response();
+        {invalid, invalid_data_root_length} ->
+            handle_post_tx_invalid_data_root_length_response();
         {valid, TX2} ->
             ar_disk_pool:add_data_root(TX2#tx.data_root, TX2#tx.data_size,
                                        TX#tx.id),
@@ -2105,6 +2126,9 @@ handle_post_tx_already_in_mempool_response() ->
 
 handle_post_tx_invalid_data_root_response() ->
     {error_response, {400, #{}, <<"The attached data is split in an unknown way.">>}}.
+
+handle_post_tx_invalid_data_root_length_response() ->
+    {error_response, {400, #{}, <<"The data root must be empty or 32 bytes long.">>}}.
 
 handle_get_data_sync_record(Start, Limit, Req) ->
     Options = #{ start => Start, limit => Limit, format => content_type_format(Req) },
@@ -2658,7 +2682,8 @@ collect_missing_tx_indices(Prefixes) ->
 collect_missing_tx_indices([], Indices, _N) ->
     lists:reverse(Indices);
 collect_missing_tx_indices([Prefix | Prefixes], Indices, N) ->
-    case ets:member(tx_prefixes, Prefix) of
+    TXIDs = [TXID || {_, TXID} <- ets:lookup(tx_prefixes, Prefix)],
+    case TXIDs /= [] andalso not lists:any(fun is_ecdsa_mempool_tx/1, TXIDs) of
         false ->
             collect_missing_tx_indices(Prefixes, [N | Indices], N + 1);
         true ->
@@ -2949,12 +2974,18 @@ get_missing_tx_identifiers([_ | _], _, N) when N == ?BLOCK_TX_COUNT_LIMIT ->
 get_missing_tx_identifiers([#tx{} | TXIDs], MissingTXIDs, N) ->
     get_missing_tx_identifiers(TXIDs, MissingTXIDs, N + 1);
 get_missing_tx_identifiers([TXID | TXIDs], MissingTXIDs, N) ->
-    case ar_node_worker:is_mempool_or_block_cache_tx(TXID) of
+    case ar_node_worker:is_mempool_or_block_cache_tx(TXID)
+            andalso not is_ecdsa_mempool_tx(TXID) of
         true ->
             get_missing_tx_identifiers(TXIDs, MissingTXIDs, N + 1);
         false ->
             get_missing_tx_identifiers(TXIDs, [TXID | MissingTXIDs], N + 1)
     end.
+
+%% @doc Return true if our mempool copy of the transaction is ECDSA-signed. We
+%% always ask the sender for ECDSA transactions (see also ar_mempool:drop_txs/3).
+is_ecdsa_mempool_tx(TXID) ->
+    ar_tx:is_ecdsa_tx(ar_mempool:get_tx(TXID)).
 
 decode_recent_hash_list(<<>>) ->
     {ok, []};
@@ -3195,6 +3226,25 @@ process_get_wallet_list_balance(EncodedRootHash, EncodedAddr, Req) ->
                     {500, #{}, <<>>, Req}
             end
     end.
+
+process_get_ecdsa_settled_chunk(EncodedCursor, Req) ->
+    DecodeResult = arweave_lib_util:safe_decode(EncodedCursor),
+    case {DecodeResult, ar_ecdsa_settled:get_state()} of
+        {{ok, << _:32/binary >> = Cursor}, {ok, _State}} ->
+            case ar_ecdsa_settled:get_chunk(Cursor) of
+                {ok, Entries} ->
+                    {200, #{}, ar_ecdsa_settled:serialize_chunk(Entries), Req};
+                _ ->
+                    ecdsa_settled_not_available_response(Req)
+            end;
+        {{ok, << _:32/binary >>}, _} ->
+            ecdsa_settled_not_available_response(Req);
+        _ ->
+            {400, #{}, <<"Invalid cursor.">>, Req}
+    end.
+
+ecdsa_settled_not_available_response(Req) ->
+    {503, #{}, jiffy:encode(#{ error => ecdsa_settled_not_available }), Req}.
 
 process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
     DecodeCursorResult =
