@@ -126,7 +126,12 @@ Retrieve a string of the requested field for a given transaction.
   [transaction_id] : Base64url encoded ID associated with the transaction
   [field] : A string containing the name of the data field being requested
 - **Fields**
-  id | last_tx | owner | target | quantity | data | reward | signature
+  id | last_tx | owner | ecdsa_owner | target | quantity | data | reward | signature
+
+The owner field is empty for ECDSA transactions. The ecdsa_owner field is the
+Base64URL-encoded 33-byte compressed secp256k1 public key recovered from the
+signature for ECDSA transactions, and empty for other transactions. The owner
+address is the Base64URL-encoded SHA-256 hash of the decoded public key.
 
 
 #### Example Response

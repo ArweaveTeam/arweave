@@ -1312,7 +1312,12 @@ handle(<<"GET">>, [<<"current_block">>], Req, Pid) ->
 %% Return a given field of the transaction specified by the transaction ID (hash).
 %% GET request to endpoint /tx/{hash}/{field}
 %%
-%% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
+%% {field} := { id | last_tx | owner | ecdsa_owner | tags | target | quantity |
+%%              data | signature | reward }
+%%
+%% The owner field is empty for ECDSA transactions. The ecdsa_owner field is the
+%% public key recovered from the signature for ECDSA transactions and empty for
+%% other transactions.
 handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
     ReadTX =
         case arweave_lib_util:safe_decode(Hash) of
@@ -1344,6 +1349,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
                         TX#tx.tags)), Req};
                 <<"data">> ->
                     serve_tx_data(Req, TX);
+                <<"ecdsa_owner">> ->
+                    {200, #{}, ecdsa_owner(TX), Req};
                 _ ->
                     case catch binary_to_existing_atom(Field) of
                         {'EXIT', _} ->
@@ -1651,6 +1658,13 @@ has_min_confirmations(TX) ->
         _ ->
             false
     end.
+
+%% @doc Return the Base64URL-encoded public key of an ECDSA transaction, or an
+%% empty binary for other transactions.
+ecdsa_owner(#tx{ signature_type = ?ECDSA_KEY_TYPE, owner = Owner }) ->
+    arweave_lib_util:encode(Owner);
+ecdsa_owner(_TX) ->
+    <<>>.
 
 handle_get_tx(Hash, Req, Encoding) ->
     handle_get_tx(Hash, Req, Encoding, serve_all).

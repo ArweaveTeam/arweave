@@ -99,6 +99,7 @@ batch_test_() ->
                 test_register(fun test_find_external_tx/1, GenesisData),
                 test_register(fun test_add_tx_and_get_last/1, GenesisData),
                 test_register(fun test_get_subfields_of_tx/1, GenesisData),
+                test_register(fun test_get_ecdsa_owner_of_tx/1, GenesisData),
                 test_register(fun test_get_pending_tx/1, GenesisData),
                 test_register(fun test_get_tx_body/1, GenesisData),
                 test_register(fun test_get_tx_status/1, GenesisData),
@@ -776,6 +777,41 @@ test_get_subfields_of_tx({_, Wallet1, _, _}) ->
     %% transaction JSON.
     ?assertEqual({<<"400">>, <<"{\"error\":\"invalid_field\"}">>},
         GetField("owner_address")).
+
+%% @doc Fund an ECDSA wallet from an RSA wallet, spend from it, and check the
+%% owner and ecdsa_owner fields of both transactions.
+test_get_ecdsa_owner_of_tx({_, Wallet1, _, _}) ->
+    {_, {_, RSAPub}} = Wallet1,
+    {_, {_, ECDSAPub}} = ECDSAWallet = ar_wallet:new(?ECDSA_KEY_TYPE),
+    LocalHeight = ar_node:get_height(),
+    %% 10 AR covers the fee of the ECDSA transaction, which the mocked
+    %% ar_tx:get_tx_fee/1 sets to 1 AR.
+    RSATX = ar_test_node:sign_tx(main, Wallet1, #{
+        target => ar_wallet:to_address(ECDSAPub, ?ECDSA_KEY_TYPE),
+        quantity => ?AR(10) }),
+    ar_test_node:assert_post_tx_to_peer(main, RSATX),
+    ar_test_node:mine(),
+    ?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
+    ECDSATX = ar_test_node:sign_tx(main, ECDSAWallet, #{}),
+    ar_test_node:assert_post_tx_to_peer(main, ECDSATX),
+    ar_test_node:mine(),
+    ?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 2)),
+    GetField =
+        fun(TX, Field) ->
+            EncodedTXID = binary_to_list(arweave_lib_util:encode(TX#tx.id)),
+            {ok, {{Status, _}, _, Body, _, _}} = ar_http:req(#{
+                method => get,
+                peer => ar_test_node:peer_ip(main),
+                path => "/tx/" ++ EncodedTXID ++ "/" ++ Field
+            }),
+            {Status, Body}
+        end,
+    ?assertEqual({<<"200">>, arweave_lib_util:encode(RSAPub)},
+        GetField(RSATX, "owner")),
+    ?assertEqual({<<"200">>, <<>>}, GetField(RSATX, "ecdsa_owner")),
+    ?assertEqual({<<"200">>, <<>>}, GetField(ECDSATX, "owner")),
+    ?assertEqual({<<"200">>, arweave_lib_util:encode(ECDSAPub)},
+        GetField(ECDSATX, "ecdsa_owner")).
 
 %% @doc Correctly check the status of pending is returned for a pending transaction
 test_get_pending_tx({_, Wallet1, _, _}) ->
