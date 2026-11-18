@@ -238,14 +238,23 @@ get_block_and_status(Tab, H) ->
 %% @doc Return the start offset of the oldest on-chain block still in the cache.
 get_oldest_block_start(Tab) ->
     [{_, Set}] = ets:lookup(Tab, links),
-    {{_Height, H}, _Set2} = gb_sets:take_smallest(Set),
-    case ets:lookup(Tab, {block, H}) of
-        [] ->
+    get_oldest_block_start(Tab, gb_sets:iterator(Set)).
+
+get_oldest_block_start(Tab, Iterator) ->
+    case gb_sets:next(Iterator) of
+        none ->
             %% The block cache should have been just updated - retry.
             get_oldest_block_start(Tab);
-        %% The lowest block must be on-chain by construction.
-        [{_, {B, on_chain, _Timestamp, _Children}}] ->
-            B#block.weave_size - B#block.block_size
+        {{_Height, H}, Iterator2} ->
+            case ets:lookup(Tab, {block, H}) of
+                [{_, {B, on_chain, _Timestamp, _Children}}] ->
+                    B#block.weave_size - B#block.block_size;
+                _ ->
+                    %% Read while prune/2 or remove/2 runs in another process:
+                    %% the block is gone or is an off-chain child of a block
+                    %% that was just pruned.
+                    get_oldest_block_start(Tab, Iterator2)
+            end
     end.
 
 %% @doc Get a {block, previous blocks, status} tuple for the earliest block from
@@ -1841,6 +1850,36 @@ prune_returns_pruned_on_chain_blocks_test() ->
                  lists:sort([block_id(B) || B <- Pruned])),
     %% B2 (height 2) and B3 (height 3) remain; a second prune changes nothing.
     ?assertEqual([], prune(bcache_test, 1)).
+
+%% @doc get_oldest_block_start/1 skips the off-chain and deleted blocks a
+%% concurrent reader sees at the bottom of links while prune/2 runs.
+get_oldest_block_start_during_prune_test() ->
+    ets:new(bcache_test, [set, named_table]),
+    %% B0 spans [0, 1000), B1 spans [1000, 3000).
+    B0 = (random_block(0))#block{ weave_size = 1000, block_size = 1000 },
+    B1 = (on_top(random_block(1), B0))#block{
+        indep_hash = <<255, (crypto:strong_rand_bytes(47))/binary>>,
+        weave_size = 3000, block_size = 2000 },
+    %% A sibling of B1 awaiting VDF validation. The leading zero byte sorts it
+    %% before B1 in links. Its start offset, 9000 - 1000 = 8000, is not
+    %% checked yet, so it must not be returned.
+    Fork1 = (on_top(random_block(1), B0))#block{
+        indep_hash = <<0, (crypto:strong_rand_bytes(47))/binary>>,
+        weave_size = 9000, block_size = 1000 },
+    new(bcache_test, B0),
+    add(bcache_test, B1),
+    add(bcache_test, Fork1),
+    mark_tip(bcache_test, block_id(B1)),
+    ?assertEqual(0, get_oldest_block_start(bcache_test)),
+    %% prune/2 drops B0 from links before it removes Fork1.
+    [{_, Links}] = ets:lookup(bcache_test, links),
+    ets:insert(bcache_test,
+               {links, gb_sets:del_element({0, block_id(B0)}, Links)}),
+    ?assertEqual(1000, get_oldest_block_start(bcache_test)),
+    %% remove/2 deletes Fork1 before it drops Fork1 from links.
+    ets:delete(bcache_test, {block, block_id(Fork1)}),
+    ?assertEqual(1000, get_oldest_block_start(bcache_test)),
+    ets:delete(bcache_test).
 
 %% @doc Test that get_blocks_by_miner returns the correct blocks for a given miner.
 get_blocks_by_miner_test() ->
