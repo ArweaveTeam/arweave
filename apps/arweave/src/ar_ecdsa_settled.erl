@@ -64,7 +64,10 @@ initialize(BI, Blocks, Source) ->
     case find_set(BI, Blocks, Target, Source) of
         ok ->
             truncate(Target, BI),
-            settle_to(Target, BI, Blocks);
+            settle_to(Target, BI, Blocks),
+            %% A start may leave the stored state as it is.
+            record_checksum(read_state()),
+            ok;
         Error ->
             Error
     end.
@@ -186,7 +189,21 @@ write(Entries, State) ->
 write(Entries, RemovedTXIDs, State) ->
     KVs = [{?STATE_KEY, term_to_binary(State)} | pairs(Entries)],
     ok = with_retry(fun() -> ar_kv:write_batch(?DB, KVs, RemovedTXIDs) end,
-            write_ecdsa_settled).
+            write_ecdsa_settled),
+    record_checksum(State).
+
+%% @doc Publish the block and the XOR of State as a single sample, so that a
+%% scrape never pairs the block of one state with the XOR of another.
+record_checksum({_Height, BH, _Count, XOR}) ->
+    arweave_metrics:gauge_set(ecdsa_settled_checksum, checksum_sample(BH, XOR)),
+    ok.
+
+%% @doc Return the 48-bit integer made of the first 24 bits of BH followed by
+%% the first 24 bits of XOR. The empty set below the first block gets 0.
+checksum_sample(<<>>, XOR) ->
+    XOR bsr 232;
+checksum_sample(<< Prefix:24, _/binary >>, XOR) ->
+    (Prefix bsl 24) bor (XOR bsr 232).
 
 %% @doc Remove the state record and every transaction identifier.
 reset() ->
@@ -896,6 +913,17 @@ test_download() ->
     ?assertNot(meck:called(ar_kv, delete_range, '_')),
     ?assertNot(meck:called(ar_kv, write_batch, [?DB, '_'])),
     ?assertNot(meck:called(ar_kv, put, [?DB, '_', '_'])).
+
+checksum_sample_test() ->
+    %% The first 24 bits of the block hash, then the first 24 bits of the XOR.
+    BH = << 16#abcdef:24, 0:360 >>,
+    XOR = (16#123456 bsl 232) bor 16#ffffff,
+    ?assertEqual(16#abcdef123456, checksum_sample(BH, XOR)),
+    ?assertEqual(16#abcdef000000, checksum_sample(BH, 0)),
+    ?assertEqual(0, checksum_sample(<<>>, 0)),
+    ?assertEqual(ok, record_checksum({1, BH, 1, XOR})),
+    ?assertEqual(16#abcdef123456,
+            arweave_metrics:gauge_value(ecdsa_settled_checksum)).
 
 has_newer_set_test_() ->
     SnapshotDB = start_from_state_ecdsa_settled_2_db,

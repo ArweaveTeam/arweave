@@ -245,6 +245,14 @@ all_metrics() ->
             {help, "The number of the VDF steps a received block is ahead of our current step."}
         ]},
         {prometheus_gauge, [
+            {name, ecdsa_settled_checksum},
+            {help,
+                "The first 24 bits of the hash of the block the ECDSA settled "
+                "set is settled at, followed by the first 24 bits of the XOR "
+                "checksum of the set. Nodes reporting the same block must "
+                "report the same value."}
+        ]},
+        {prometheus_gauge, [
             {name, wallet_list_size},
             {
                 help,
