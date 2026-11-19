@@ -478,7 +478,8 @@ download(Peers, BI, MinHeight) ->
                     false
             end
         end,
-        Peers
+        %% Two trusted names may resolve to the same peer.
+        lists:usort(Peers)
     ),
     Sorted = lists:reverse(lists:sort(Sets)),
     download_sets(Sorted, Sorted, BI, MinHeight).
@@ -526,7 +527,7 @@ download_set(Peer, Name, {Height, _BH, Count, XOR} = State, LowerSets, BI) ->
     maybe
         {ok, Read} ?= download_chunks(Peer, Name, << 0:256 >>, Height, {0, 0}),
         true ?= Read == {Count, XOR} orelse {error, ecdsa_settled_set_mismatch},
-        ok ?= compare_sets(Name, Peer, LowerSets),
+        ok ?= compare_sets(Name, Peer, LowerSets, #{ Height => Read }),
         %% The state record marks the set as verified, so that a start after
         %% a crash finishes the replacement (promote_download/1).
         ok ?= ar_kv:put(Name, ?STATE_KEY, term_to_binary(State)),
@@ -535,18 +536,34 @@ download_set(Peer, Name, {Height, _BH, Count, XOR} = State, LowerSets, BI) ->
 
 %% @doc Return ok if, for each of the given sets, the entries of the database
 %% Name settled at or below its height have its Count and XOR. Peer is where
-%% the entries come from.
-compare_sets(_Name, _Peer, []) ->
+%% the entries come from. Settled maps the heights compared so far to the
+%% {Count, XOR} of the entries settled at or below them.
+compare_sets(_Name, _Peer, [], _Settled) ->
     ok;
-compare_sets(Name, Peer, [{{Height, _BH, Count, XOR}, Peer2} | Sets]) ->
-    maybe
-        {ok, Settled, _Read} ?= copy_entries(Name, none, << 0:256 >>, Height,
-                {0, 0}, {0, 0}),
-        true ?= Settled == {Count, XOR}
-                orelse {error,
-                    {ecdsa_settled_peer_set_mismatch, Peer, Peer2, Height}},
-        compare_sets(Name, Peer, Sets)
+compare_sets(Name, Peer, [{{Height, _BH, Count, XOR}, Peer2} | Sets],
+        Settled) ->
+    Settled2 =
+        case maps:is_key(Height, Settled) of
+            true ->
+                Settled;
+            false ->
+                Settled#{ Height => settled_up_to(Name, Height) }
+        end,
+    case maps:get(Height, Settled2) of
+        {Count, XOR} ->
+            compare_sets(Name, Peer, Sets, Settled2);
+        _ ->
+            {error, {ecdsa_settled_peer_set_mismatch, Peer, Peer2, Height}}
     end.
+
+%% @doc Return the {Count, XOR} of the entries of the database Name settled at
+%% or below Height.
+settled_up_to(Name, Height) ->
+    Read = fun() ->
+        copy_entries(Name, none, << 0:256 >>, Height, {0, 0}, {0, 0})
+    end,
+    {ok, Settled, _All} = with_retry(Read, read_ecdsa_settled_download),
+    Settled.
 
 %% @doc Replace the stored set with the verified set of the database Name.
 replace(Name, BI) ->
@@ -977,10 +994,14 @@ test_compare_peer_sets() ->
             xor_entries([Lower, Tip], 0)},
     SetLowerState = fun(LowerState) ->
         meck:reset(ar_kv),
+        meck:reset(ar_http_iface_client),
         meck:expect(ar_http_iface_client, get_ecdsa_settled_state,
             fun(Peer) when Peer == TipPeer -> {ok, TipState};
-               (Peer) when Peer == LowerPeer -> {ok, LowerState}
+               (_Peer) -> {ok, LowerState}
             end)
+    end,
+    Scans = fun() ->
+        meck:num_calls(ar_kv, get_next_n, [?DOWNLOAD_DB, '_', '_'])
     end,
     %% The two entries fill a chunk of the test build, so the download asks
     %% for the next one.
@@ -996,6 +1017,21 @@ test_compare_peer_sets() ->
     SetLowerState(TipState),
     ?assertEqual(ok, download(Peers, BI, ?GENESIS_HEIGHT)),
     ?assert(meck:called(ar_kv, delete_range, '_')),
+    %% Comparing it does not read the download again, and the sets at one lower
+    %% block share a read. Each read is one scan, as the two entries fit a
+    %% batch.
+    TipScans = Scans(),
+    SetLowerState(TipState),
+    ?assertEqual(ok, download([TipPeer], BI, ?GENESIS_HEIGHT)),
+    ?assertEqual(TipScans, Scans()),
+    SetLowerState({?GENESIS_HEIGHT, GenesisBH, 1, xor_entries([Lower], 0)}),
+    ?assertEqual(ok, download([{5, 5, 5, 5, 5} | Peers], BI, ?GENESIS_HEIGHT)),
+    ?assertEqual(TipScans + 1, Scans()),
+    %% A peer listed twice is asked once.
+    SetLowerState(TipState),
+    ?assertEqual(ok, download([TipPeer, TipPeer], BI, ?GENESIS_HEIGHT)),
+    ?assertEqual(1, meck:num_calls(ar_http_iface_client,
+            get_ecdsa_settled_state, [TipPeer])),
     %% A set of another chain is not compared.
     SetLowerState({?GENESIS_HEIGHT, <<"other">>, 0, 0}),
     ?assertEqual(ok, download(Peers, BI, ?GENESIS_HEIGHT)),
@@ -1014,7 +1050,16 @@ test_compare_peer_sets() ->
             ?assertNot(filelib:is_dir(download_db_path()))
         end,
         [{1, xor_entries([Tip], 0)}, {0, 0}, {2, xor_entries([Lower], 0)}]
-    ).
+    ),
+    %% A failed read of the download is retried instead of moving on to the
+    %% lower set, which would leave the two sets uncompared.
+    SetLowerState({?GENESIS_HEIGHT, GenesisBH, 0, 0}),
+    meck:expect(ar_kv, get_next_n, ['_', '_', '_'],
+            meck:seq([{error, eio}, meck:passthrough()])),
+    ?assertEqual(Mismatch, download(Peers, BI, ?GENESIS_HEIGHT)),
+    %% The failed read and its retry.
+    ?assertEqual(2, Scans()),
+    ?assertNot(meck:called(ar_kv, delete_range, '_')).
 
 checksum_sample_test() ->
     %% The first 24 bits of the block hash, then the first 24 bits of the XOR.
