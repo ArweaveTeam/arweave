@@ -3698,7 +3698,7 @@ test_restart_recovers_throughput(_Config) ->
         PeerCPS = 100,
         %% Thirty-two billion-byte ranges hold over 122,000 chunks per store,
         %% more than the 400 chunks/s peers can serve in the scenario's
-        %% 270 seconds.
+        %% 360 seconds.
         RangeCount = 32,
         Intervals = [
             sweep_chunk_interval(StoreRange, 0, RangeCount)
@@ -3715,7 +3715,12 @@ test_restart_recovers_throughput(_Config) ->
         %% Sixty simulated seconds cover discovery and concurrency growth, as
         %% in test_steady_state_no_monopoly.
         arweave_sync_sim:run_for(60),
-        Before = arweave_sync_sim:run_for(30),
+        %% The cap probes keep stepping after the warm-up. A step down can
+        %% hold a peer at 20 fetches for thirteen ticks, under the 25 that
+        %% 100 chunks/s take at four fetches a second. With all four peers
+        %% there at once that is 8.7% of a 30-second window, but 2.2% of
+        %% 120 seconds.
+        Before = arweave_sync_sim:run_for(120),
         assert_metric_utilization(stored_cps, capacity(Peers), Before),
         arweave_sync_sim:restart_sim(),
         %% C1: the restart repeats the start-up warm-up, which reached the full
