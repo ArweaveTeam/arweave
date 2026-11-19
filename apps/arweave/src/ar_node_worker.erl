@@ -458,6 +458,9 @@ handle_info({event, nonce_limiter, initialized}, State) ->
     case ar_ecdsa_settled:initialize(BI, Blocks, Source) of
         ok ->
             {noreply, complete_join(Height, Blocks, BI, State)};
+        {error, {ecdsa_settled_peer_set_mismatch, Peer, Peer2, SetHeight}} ->
+            ecdsa_settled_peer_set_mismatch(Peer, Peer2, SetHeight),
+            {noreply, State};
         {error, Reason} ->
             ecdsa_settled_set_not_found(Reason),
             {noreply, State}
@@ -722,6 +725,20 @@ ecdsa_settled_set_not_found(Reason) ->
                "peers.~n"),
     ?LOG_WARNING([{event, ecdsa_settled_set_not_found},
                   {reason, io_lib:format("~p", [Reason])}]),
+    timer:sleep(1000),
+    init:stop(1).
+
+ecdsa_settled_peer_set_mismatch(Peer, Peer2, Height) ->
+    ar:console("~n~n\tThe ECDSA settled set of the trusted peer ~s does not "
+               "match the set of the trusted peer ~s at the height ~B. Find "
+               "out which one is wrong and restart the node without it among "
+               "the trusted peers.~n",
+               [arweave_lib_util:format_peer(Peer),
+                arweave_lib_util:format_peer(Peer2), Height]),
+    ?LOG_ERROR([{event, ecdsa_settled_peer_set_mismatch},
+                {peer, arweave_lib_util:format_peer(Peer)},
+                {peer2, arweave_lib_util:format_peer(Peer2)},
+                {height, Height}]),
     timer:sleep(1000),
     init:stop(1).
 
