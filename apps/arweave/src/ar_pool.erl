@@ -412,7 +412,7 @@ process_partial_solution_partition_number(Solution, Ref) ->
     PartitionNumber = Solution#mining_solution.partition_number,
     PartitionUpperBound = Solution#mining_solution.partition_upper_bound,
     Max = ar_node:get_max_partition_number(PartitionUpperBound),
-    case PartitionNumber > Max of
+    case PartitionNumber < 0 orelse PartitionNumber > Max of
         false ->
             process_partial_solution_packing_difficulty(Solution, Ref);
         true ->
@@ -826,6 +826,9 @@ test_process_partial_solution() ->
 
                  {"Bad partition number",
                   #mining_solution{ partition_number = 1, poa1 = PoA },
+                  #partial_solution_response{ status = <<"rejected_bad_poa">> }},
+                 {"Bad partition number 2",
+                  #mining_solution{ partition_number = -1, poa1 = PoA },
                   #partial_solution_response{ status = <<"rejected_bad_poa">> }},
                  {"Bad nonce",
                   #mining_solution{ poa1 = PoA,
