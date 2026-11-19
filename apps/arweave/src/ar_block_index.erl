@@ -1,6 +1,8 @@
 -module(ar_block_index).
+-test_category([fast]).
 
 -include("ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -export([init/1, update/2, member/1, get_list/1, get_list_by_hash/1, get_element_by_height/1,
          get_block_bounds/1, get_block_bounds_with_height/1, get_intersection/2, get_intersection/1, get_range/2, get_last/0]).
@@ -39,12 +41,10 @@ get_list_by_hash(H) ->
 
 %% @doc Return the {H, WeaveSize, TXRoot} triplet for the given Height or not_found.
 get_element_by_height(Height) ->
-    case catch ets:slot(block_index, Height) of
-        {'EXIT', _} ->
+    case get_key_by_height(block_index, Height) of
+        not_found ->
             not_found;
-        '$end_of_table' ->
-            not_found;
-        [{{WeaveSize, Height, H, TXRoot}}] ->
+        {WeaveSize, Height, H, TXRoot} ->
             {H, WeaveSize, TXRoot}
     end.
 
@@ -85,8 +85,8 @@ get_intersection(_Height, []) ->
 get_intersection(Height, BI) ->
     ReverseBI = lists:reverse(BI),
     [{H, _, _} = Elem | ReverseBI2] = ReverseBI,
-    case catch ets:slot(block_index, Height) of
-        [{{_, Height, H, _} = Entry}] ->
+    case get_key_by_height(block_index, Height) of
+        {_, Height, H, _} = Entry ->
             get_intersection(Height + 1, Elem, ReverseBI2, ets:next(block_index, Entry));
         _ ->
             no_intersection
@@ -106,8 +106,8 @@ get_intersection(BI) ->
 get_range(Start, End) when Start > End ->
     [];
 get_range(Start, End) ->
-    case catch ets:slot(block_index, Start) of
-        [{{WeaveSize, _Height, H, TXRoot} = Entry}] ->
+    case get_key_by_height(block_index, Start) of
+        {WeaveSize, _Height, H, TXRoot} = Entry ->
             lists:reverse([{H, WeaveSize, TXRoot}
                           | get_range2(Start + 1, End, ets:next(block_index, Entry))]);
         _ ->
@@ -133,6 +133,43 @@ update2([], _Height) ->
 update2([{H, WeaveSize, TXRoot} | BI], Height) ->
     ets:insert(block_index, {{WeaveSize, Height, H, TXRoot}}),
     update2(BI, Height + 1).
+
+%% @doc Return the key of the block at the given Height in the given block
+%% index table or not_found.
+get_key_by_height(Table, Height) when is_integer(Height), Height >= 0 ->
+    case ets:last(Table) of
+        {WeaveSize, LastHeight, _H, _TXRoot} when Height =< LastHeight ->
+            %% Every block ends above -1 and not above WeaveSize.
+            case get_key_by_height(Table, Height, -1, WeaveSize) of
+                {_, Height, _, _} = Key ->
+                    Key;
+                _ ->
+                    %% The blocks were replaced while we searched.
+                    not_found
+            end;
+        _ ->
+            not_found
+    end;
+get_key_by_height(_Table, _Height) ->
+    not_found.
+
+%% @doc Search for the block at the given Height by its end offset, which
+%% the keys are sorted by and which does not decrease with the height.
+%% The block ends above Low and not above High.
+get_key_by_height(Table, Height, Low, High) when High - Low =< 1 ->
+    %% Blocks without data share the end offset, so name the height too.
+    ets:next(Table, {High, Height, n, n});
+get_key_by_height(Table, Height, Low, High) ->
+    Middle = (Low + High) div 2,
+    %% The first block that ends above Middle.
+    case ets:next(Table, {Middle, n, n, n}) of
+        {_, Height, _, _} = Key ->
+            Key;
+        {WeaveSize, Height2, _, _} when Height2 < Height ->
+            get_key_by_height(Table, Height, WeaveSize - 1, High);
+        _ ->
+            get_key_by_height(Table, Height, Low, Middle)
+    end.
 
 member(H, {_, _, H, _}) ->
     true;
@@ -198,3 +235,49 @@ get_range2(_Start, _End, '$end_of_table') ->
     [];
 get_range2(Start, End, {WeaveSize, _Height, H, TXRoot} = Elem) ->
     [{H, WeaveSize, TXRoot} | get_range2(Start + 1, End, ets:next(block_index, Elem))].
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+get_key_by_height_test() ->
+    %% Every third block has no data, and so do the first two, so that
+    %% blocks share an end offset at the start, in the middle and at the end.
+    %% The 200 blocks with data add up to 30,000,000 bytes, so the search
+    %% halves its range up to 25 times.
+    Sizes = [0, 0 | [case I rem 3 of 0 -> 0; _ -> I * 1000 end
+            || I <- lists:seq(1, 300)]],
+    Table = new_test_index(Sizes),
+    Count = length(Sizes),
+    Keys = [ets:slot(Table, Height) || Height <- lists:seq(0, Count - 1)],
+    ?assertEqual(Keys, [[{get_key_by_height(Table, Height)}]
+            || Height <- lists:seq(0, Count - 1)]),
+    ?assertEqual(not_found, get_key_by_height(Table, Count)),
+    ?assertEqual(not_found, get_key_by_height(Table, -1)),
+    ?assertEqual(not_found, get_key_by_height(Table, <<"1">>)),
+    ets:delete(Table).
+
+get_key_by_height_one_block_test() ->
+    Table = new_test_index([0]),
+    ?assertEqual({0, 0, <<0:256>>, <<>>}, get_key_by_height(Table, 0)),
+    ?assertEqual(not_found, get_key_by_height(Table, 1)),
+    ets:delete(Table).
+
+get_key_by_height_empty_index_test() ->
+    Table = new_test_index([]),
+    ?assertEqual(not_found, get_key_by_height(Table, 0)),
+    ets:delete(Table).
+
+%% @doc Return a block index table with a block per given block size.
+new_test_index(Sizes) ->
+    Table = ets:new(test_block_index, [ordered_set]),
+    lists:foldl(
+        fun(Size, {Height, WeaveSize}) ->
+            WeaveSize2 = WeaveSize + Size,
+            ets:insert(Table, {{WeaveSize2, Height, <<Height:256>>, <<>>}}),
+            {Height + 1, WeaveSize2}
+        end,
+        {0, 0},
+        Sizes
+    ),
+    Table.
