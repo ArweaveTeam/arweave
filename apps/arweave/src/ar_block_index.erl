@@ -2,7 +2,6 @@
 -test_category([fast]).
 
 -include("ar.hrl").
--include_lib("eunit/include/eunit.hrl").
 
 -export([init/1, update/2, member/1, get_list/1, get_list_by_hash/1, get_element_by_height/1,
          get_block_bounds/1, get_block_bounds_with_height/1, get_intersection/2, get_intersection/1, get_range/2, get_last/0]).
@@ -137,10 +136,21 @@ update2([{H, WeaveSize, TXRoot} | BI], Height) ->
 %% @doc Return the key of the block at the given Height in the given block
 %% index table or not_found.
 get_key_by_height(Table, Height) when is_integer(Height), Height >= 0 ->
+    try
+        do_get_key_by_height(Table, Height)
+    catch
+        error:badarg ->
+            %% There is no such table.
+            not_found
+    end;
+get_key_by_height(_Table, _Height) ->
+    not_found.
+
+do_get_key_by_height(Table, Height) ->
     case ets:last(Table) of
         {WeaveSize, LastHeight, _H, _TXRoot} when Height =< LastHeight ->
             %% Every block ends above -1 and not above WeaveSize.
-            case get_key_by_height(Table, Height, -1, WeaveSize) of
+            case search_key_by_height(Table, Height, -1, WeaveSize) of
                 {_, Height, _, _} = Key ->
                     Key;
                 _ ->
@@ -149,26 +159,24 @@ get_key_by_height(Table, Height) when is_integer(Height), Height >= 0 ->
             end;
         _ ->
             not_found
-    end;
-get_key_by_height(_Table, _Height) ->
-    not_found.
+    end.
 
 %% @doc Search for the block at the given Height by its end offset, which
 %% the keys are sorted by and which does not decrease with the height.
 %% The block ends above Low and not above High.
-get_key_by_height(Table, Height, Low, High) when High - Low =< 1 ->
+search_key_by_height(Table, Height, Low, High) when High - Low =< 1 ->
     %% Blocks without data share the end offset, so name the height too.
     ets:next(Table, {High, Height, n, n});
-get_key_by_height(Table, Height, Low, High) ->
+search_key_by_height(Table, Height, Low, High) ->
     Middle = (Low + High) div 2,
     %% The first block that ends above Middle.
     case ets:next(Table, {Middle, n, n, n}) of
         {_, Height, _, _} = Key ->
             Key;
         {WeaveSize, Height2, _, _} when Height2 < Height ->
-            get_key_by_height(Table, Height, WeaveSize - 1, High);
+            search_key_by_height(Table, Height, WeaveSize - 1, High);
         _ ->
-            get_key_by_height(Table, Height, Low, Middle)
+            search_key_by_height(Table, Height, Low, Middle)
     end.
 
 member(H, {_, _, H, _}) ->
@@ -236,6 +244,9 @@ get_range2(_Start, _End, '$end_of_table') ->
 get_range2(Start, End, {WeaveSize, _Height, H, TXRoot} = Elem) ->
     [{H, WeaveSize, TXRoot} | get_range2(Start + 1, End, ets:next(block_index, Elem))].
 
+-ifdef(AR_TEST).
+-include_lib("eunit/include/eunit.hrl").
+
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
@@ -268,6 +279,11 @@ get_key_by_height_empty_index_test() ->
     ?assertEqual(not_found, get_key_by_height(Table, 0)),
     ets:delete(Table).
 
+get_key_by_height_no_table_test() ->
+    Table = new_test_index([0]),
+    ets:delete(Table),
+    ?assertEqual(not_found, get_key_by_height(Table, 0)).
+
 %% @doc Return a block index table with a block per given block size.
 new_test_index(Sizes) ->
     Table = ets:new(test_block_index, [ordered_set]),
@@ -281,3 +297,5 @@ new_test_index(Sizes) ->
         Sizes
     ),
     Table.
+
+-endif.
