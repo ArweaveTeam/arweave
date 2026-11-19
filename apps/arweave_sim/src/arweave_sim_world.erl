@@ -19,6 +19,7 @@
     update_world/1,
     get_chunk_binary/3,
     clear_inflight_requests/0,
+    clear_entropy_generations/0,
     wait_for_entropy/2,
     is_chunk_cache_full/0,
     chunk_cache_size/0, chunk_cache_size/1,
@@ -221,6 +222,12 @@ clear_inflight_requests() ->
         end,
         get(peers)
     ).
+
+%% @doc Drop the entropy generations of killed callers, whose cleanup never
+%% ran. A generation left behind would block every later wait for its entropy.
+clear_entropy_generations() ->
+    true = ets:match_delete(?MODULE, {{entropy_generation, '_'}, '_'}),
+    ok.
 
 %% @doc Apply detailed-metadata latency while exposing concurrent requests to
 %% scenarios that model a peer whose metadata endpoint overloads under fan-out.

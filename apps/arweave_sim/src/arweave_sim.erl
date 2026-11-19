@@ -24,6 +24,7 @@
 -export([
     get_chunk_binary/3,
     clear_inflight_requests/0,
+    clear_entropy_generations/0,
     wait_for_entropy/2,
     wait_for_chunk_interval_response/1,
     peer_sync_kind_enabled/2,
@@ -85,6 +86,8 @@ get_chunk_binary(Peer, Offset, TimeoutMS) ->
     arweave_sim_world:get_chunk_binary(Peer, Offset, TimeoutMS).
 
 clear_inflight_requests() -> arweave_sim_world:clear_inflight_requests().
+
+clear_entropy_generations() -> arweave_sim_world:clear_entropy_generations().
 
 wait_for_entropy(Peer, Byte) ->
     arweave_sim_world:wait_for_entropy(Peer, Byte).

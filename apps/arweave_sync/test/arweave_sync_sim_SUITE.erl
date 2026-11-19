@@ -82,6 +82,7 @@ all() ->
         test_restart_recovers_throughput,
         test_restart_after_scarce_source_appears,
         test_restart_recovers_footprint_throughput,
+        test_restart_releases_interrupted_entropy_generation,
         test_scarce_early_ranges_do_not_block_fast_peers,
         test_scarce_ranges_sync_after_abundant_ranges
     ].
@@ -3829,10 +3830,15 @@ test_restart_recovers_footprint_throughput(_Config) ->
                 [packing, entropy, cache_size] => Slots * 256
             }
         }),
-        %% Ninety ticks cover discovery and the peers' concurrency growth, as
-        %% in test_more_stores_than_entropy_slots_keep_footprints.
+        %% Ninety ticks cover discovery and the peers' first concurrency
+        %% growth, as in test_more_stores_than_entropy_slots_keep_footprints.
         arweave_sync_sim:run_for(90),
-        Before = arweave_sync_sim:run_for(30),
+        %% The cap probes keep stepping after the warm-up. A step down can
+        %% hold both peers at eight fetches for thirteen ticks, under the ten
+        %% that 40 chunks/s take at four fetches a second. That is at least
+        %% 8.7% of a 30-second window, but 2.2% of the 120 seconds the
+        %% post-restart rate is measured over.
+        Before = arweave_sync_sim:run_for(120),
         assert_metric_utilization(stored_cps, capacity(Peers), Before),
         arweave_sync_sim:restart_sim(),
         %% C1: the warm-up, which also regenerates the entropy the restart
@@ -3841,6 +3847,59 @@ test_restart_recovers_footprint_throughput(_Config) ->
         arweave_sync_sim:run_for(60),
         After = arweave_sync_sim:run_for(120),
         assert_metric_utilization(stored_cps, capacity(Peers), After)
+    end).
+
+%% Scenario: A restart interrupts an entropy generation.
+%%
+%% Context:
+%% - One footprint peer. Generating a footprint's entropy takes a second.
+%%
+%% Timeline:
+%% - Start a generation and kill its process, as a restart kills a fetch
+%%   worker. Restart, then wait for the same entropy again.
+%%
+%% Contract:
+%% - C1: The interrupted generation does not block later waits for its
+%%   entropy.
+test_restart_releases_interrupted_entropy_generation(_Config) ->
+    arweave_config:internal_with_test_config(fun() ->
+        arweave_sim:use_mainnet_replica_2_9_sizes(),
+        Peer = ?PEER_UNLIMITED,
+        GenerationMs = 1000,
+        arweave_sync_sim:start_sim(#sim_world{
+            peers = #{Peer => #sim_peer{sync_kinds = [footprint]}},
+            entropy_generation_ms = GenerationMs
+        }),
+        %% Any byte works: both waits ask for the entropy of its footprint.
+        Byte = 0,
+        WaitForEntropy = fun() -> arweave_sim:wait_for_entropy(Peer, Byte) end,
+        Sleeping = arweave_sim:sleeping(),
+        {Interrupted, Monitor} = spawn_monitor(WaitForEntropy),
+        ok = ar_test_await:until(entropy_generation_started, fun() ->
+            arweave_sim:sleeping() =:= Sleeping + 1
+        end),
+        exit(Interrupted, kill),
+        receive
+            {'DOWN', Monitor, process, Interrupted, killed} -> ok
+        end,
+        arweave_sync_sim:restart_sim(),
+        SleepingAfterRestart = arweave_sim:sleeping(),
+        Parent = self(),
+        Waiter = spawn_link(fun() -> Parent ! {self(), WaitForEntropy()} end),
+        ok = ar_test_await:until(entropy_wait_started, fun() ->
+            arweave_sim:sleeping() =:= SleepingAfterRestart + 1
+        end),
+        ok = arweave_sim:advance(GenerationMs),
+        %% C1: the wait generates the entropy itself, so it ends with the
+        %% generation. Five real seconds are far more than its reply needs
+        %% once simulated time has passed.
+        Result =
+            receive
+                {Waiter, WaitResult} -> WaitResult
+            after 5000 ->
+                still_waiting
+            end,
+        ?assertEqual(ok, Result)
     end).
 
 %% Scenario: Only a slow peer holds each store's earliest unsynced data.
@@ -4320,6 +4379,7 @@ testcase_timeout(test_unaligned_store_matches_aligned_throughput) -> 300;
 testcase_timeout(test_restart_recovers_throughput) -> 300;
 testcase_timeout(test_restart_after_scarce_source_appears) -> 300;
 testcase_timeout(test_restart_recovers_footprint_throughput) -> 300;
+testcase_timeout(test_restart_releases_interrupted_entropy_generation) -> 60;
 testcase_timeout(test_scarce_early_ranges_do_not_block_fast_peers) -> 300;
 testcase_timeout(test_scarce_ranges_sync_after_abundant_ranges) -> 300.
 
