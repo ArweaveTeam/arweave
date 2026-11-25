@@ -91,6 +91,7 @@ restart_sim() ->
     stop_pipeline(),
     cancel_pipeline_timers(),
     arweave_sim:clear_inflight_requests(),
+    arweave_sim:clear_entropy_generations(),
     %% The caches live in tables that outlive the sync runtime but not the node.
     arweave_sync_discovery:reset_all_caches(),
     start_pipeline().
