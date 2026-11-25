@@ -78,12 +78,15 @@ add_task(Worker, TaskType, Candidate, ExtraArgs) ->
 
 -spec add_delayed_task(Worker :: pid(), TaskType :: atom(), Candidate :: #mining_candidate{}) -> ok.
 add_delayed_task(Worker, TaskType, Candidate) ->
+    add_delayed_task(Worker, TaskType, Candidate, []).
+
+add_delayed_task(Worker, TaskType, Candidate, ExtraArgs) ->
     %% Delay task by random amount between ?TASK_CHECK_INTERVAL_MS and 2*?TASK_CHECK_INTERVAL_MS
     %% The reason for the randomization to avoid a glut tasks to all get added at the same time -
     %% in particular when the chunk cache fills up it's possible for all queued compute_h0 tasks
     %% to be delayed at about the same time.
     Delay = rand:uniform(?TASK_CHECK_INTERVAL_MS) + ?TASK_CHECK_INTERVAL_MS,
-    ar_util:cast_after(Delay, Worker, ?MSG_ADD_TASK({TaskType, Candidate, []})).
+    ar_util:cast_after(Delay, Worker, ?MSG_ADD_TASK({TaskType, Candidate, ExtraArgs})).
 
 -spec chunks_read(
         Worker :: pid(),
@@ -460,44 +463,37 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 
 %% @doc Handle the `compute_h2_for_peer` task.
 %% Indicates that we got a request to compute H2 for a peer.
+handle_task({compute_h2_for_peer, Candidate, [retry]}, State) ->
+    #mining_candidate{ session_key = SessionKey } = Candidate,
+    %% A retry waits outside the task queue, where neither the removal of its
+    %% session nor the VDF queue limit reaches it.
+    case ar_mining_cache:session_exists(SessionKey, State#state.chunk_cache)
+            andalso is_recent_vdf_step(Candidate, State) of
+        true ->
+            compute_h2_for_peer(Candidate, State);
+        false ->
+            log_debug(mining_debug_drop_stale_h2_for_peer, Candidate, State, []),
+            State
+    end;
 handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
+    compute_h2_for_peer(Candidate, State).
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+compute_h2_for_peer(Candidate, State) ->
     #mining_candidate{
        h0 = H0,
        partition_number = Partition1,
-       partition_upper_bound = PartitionUpperBound,
-       cm_h1_list = H1List,
-       cm_lead_peer = Peer
+       partition_upper_bound = PartitionUpperBound
       } = Candidate,
     {_, RecallRange2Start} = ar_mining_server:get_recall_range(H0, Partition1, PartitionUpperBound),
-    Candidate1 = generate_cache_ref(Candidate),
     %% Clear the list so we aren't copying it around all over the place.
-    Candidate3 = Candidate1#mining_candidate{ cm_h1_list = [] },
-    SessionKey = Candidate3#mining_candidate.session_key,
-    case ar_mining_io:is_recall_range_readable(Candidate3, RecallRange2Start) of
+    Candidate1 = generate_cache_ref(Candidate#mining_candidate{ cm_h1_list = [] }),
+    case ar_mining_io:is_recall_range_readable(Candidate1, RecallRange2Start) of
         true ->
-            %% Add the candidate session to the cache. This is only needed during rare occasions
-            %% where a CM peer has added a new session a few seconds before this node does.
-            %% Typically all CM peers will be on the same VDF sessions within a few seconds, but
-            %% this step prevents the H1s shared during those few seconds from being rejected.
-            ChunkCache = ar_mining_cache:add_session(SessionKey, State#state.chunk_cache),
-            State1 = State#state{ chunk_cache = ChunkCache },
-            %% Every nonce of the second recall range consumes or releases one sub-chunk
-            %% of the session reservation once the range is read, so reserve the range
-            %% here. Otherwise the reservations of the local recall ranges pay for it.
-            case try_to_reserve_cache_range_space(1, SessionKey, State1) of
-                {true, State2} ->
-                    ar_mining_io:read_recall_range(chunk2, self(), Candidate3, RecallRange2Start),
-                    ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
-                    %% First we mark the whole first recall range as failed
-                    %% Then we can cache the H1 list. During this process, we also reset the chunk1_failed
-                    %% flag to false for the entries we have H1 for.
-                    %% After these manipulations we will only handle the second recall range nonces that
-                    %% have corresponding H1s.
-                    State3 = mark_recall_range_failed(chunk1, Candidate3, State2),
-                    cache_h1_list(Candidate3, H1List, State3);
-                false ->
-                    retry_compute_h2_for_peer(Candidate, State1)
-            end;
+            read_recall_range2_for_peer(Candidate, Candidate1, RecallRange2Start, State);
         false ->
             %% This can happen for two reasons:
             %% 1. (most common) Remote peer has requested a range we don't have from a
@@ -509,25 +505,59 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
             State
     end.
 
-%%%===================================================================
-%%% Private functions.
-%%%===================================================================
+read_recall_range2_for_peer(Candidate, Candidate1, RecallRange2Start, State) ->
+    #mining_candidate{
+       cm_h1_list = H1List,
+       cm_lead_peer = Peer,
+       session_key = SessionKey
+      } = Candidate,
+    %% Add the candidate session to the cache. This is only needed during rare occasions
+    %% where a CM peer has added a new session a few seconds before this node does.
+    %% Typically all CM peers will be on the same VDF sessions within a few seconds, but
+    %% this step prevents the H1s shared during those few seconds from being rejected.
+    ChunkCache = ar_mining_cache:add_session(SessionKey, State#state.chunk_cache),
+    State1 = State#state{ chunk_cache = ChunkCache },
+    %% Every nonce of the second recall range consumes or releases one sub-chunk
+    %% of the session reservation once the range is read, so reserve the range
+    %% here. Otherwise the reservations of the local recall ranges pay for it.
+    case try_to_reserve_cache_range_space(1, SessionKey, State1) of
+        {true, State2} ->
+            case ar_mining_io:read_recall_range(chunk2, self(), Candidate1, RecallRange2Start) of
+                true ->
+                    ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
+                    %% First we mark the whole first recall range as failed
+                    %% Then we can cache the H1 list. During this process, we also reset the chunk1_failed
+                    %% flag to false for the entries we have H1 for.
+                    %% After these manipulations we will only handle the second recall range nonces that
+                    %% have corresponding H1s.
+                    State3 = mark_recall_range_failed(chunk1, Candidate1, State2),
+                    cache_h1_list(Candidate1, H1List, State3);
+                false ->
+                    %% The range stopped being readable after the check. No chunks
+                    %% will arrive to release the reservation, so do not keep it.
+                    State
+            end;
+        false ->
+            retry_compute_h2_for_peer(Candidate, State1)
+    end.
 
 %% @doc Requeue a peer request that found no cache space unless its VDF step
 %% is too old.
 retry_compute_h2_for_peer(Candidate, State) ->
-    #state{
-       latest_vdf_step_number = LatestVDFStepNumber,
-       vdf_queue_limit = VDFQueueLimit
-      } = State,
-    #mining_candidate{ step_number = StepNumber } = Candidate,
-    case StepNumber >= LatestVDFStepNumber - VDFQueueLimit of
+    case is_recent_vdf_step(Candidate, State) of
         true ->
-            add_delayed_task(self(), compute_h2_for_peer, Candidate);
+            add_delayed_task(self(), compute_h2_for_peer, Candidate, [retry]);
         false ->
             log_debug(mining_debug_drop_stale_h2_for_peer, Candidate, State, [])
     end,
     State.
+
+is_recent_vdf_step(#mining_candidate{ step_number = StepNumber }, State) ->
+    #state{
+       latest_vdf_step_number = LatestVDFStepNumber,
+       vdf_queue_limit = VDFQueueLimit
+      } = State,
+    StepNumber >= LatestVDFStepNumber - VDFQueueLimit.
 
 process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
     PackingDifficulty = Candidate#mining_candidate.packing_difficulty,

@@ -23,7 +23,7 @@
 -define(is_recall_range_readable(H0, RecallRange), {is_recall_range_readable, H0, RecallRange}).
 -define(is_recall_range_readable_response(IsReadable), {is_recall_range_readable_response, IsReadable}).
 -define(read_recall_range(Kind, WorkerPid, Candidate2, RecallRangeStart), {read_recall_range, Kind, WorkerPid, Candidate2, RecallRangeStart}).
--define(read_recall_range_response(), {read_recall_range_response}).
+-define(read_recall_range_response(IsReading), {read_recall_range_response, IsReading}).
 -define(passes_diff_check(SolutionHash, IsPoA1, DiffPair, PackingDifficulty), {passes_diff_check, SolutionHash, IsPoA1, DiffPair, PackingDifficulty}).
 -define(passes_diff_check_response(IsPassed), {passes_diff_check_response, IsPassed}).
 -define(prepare_and_post_solution(Candidate), {prepare_and_post_solution, Candidate}).
@@ -129,7 +129,7 @@ ar_mining_io__is_recall_range_readable(Candidate, RecallRange) ->
 ar_mining_io__read_recall_range(Kind, WorkerPid, Candidate, RecallRangeStart) ->
     ?TESTER_REGISTER_NAME ! ?read_recall_range(Kind, WorkerPid, Candidate, RecallRangeStart),
     receive
-        ?read_recall_range_response() -> ok
+        ?read_recall_range_response(IsReading) -> IsReading
     after 1000 ->
         exit(no_read_recall_range_response_received)
     end.
@@ -219,10 +219,13 @@ handle_is_recall_range_readable(RecallRangeStart, IsReadable, State) ->
     end.
 
 handle_read_recall_range(Kind, RecallRangeStart, State) ->
+    handle_read_recall_range(Kind, RecallRangeStart, true, State).
+
+handle_read_recall_range(Kind, RecallRangeStart, IsReading, State) ->
     ?debugFmt("Handling read_recall_range for Kind ~p (RecallRangeStart ~p)", [Kind, RecallRangeStart]),
     receive
         ?read_recall_range(Kind, _WorkerPid, Candidate, RecallRangeStart) ->
-            State#state.worker_pid ! ?read_recall_range_response(),
+            State#state.worker_pid ! ?read_recall_range_response(IsReading),
             Candidate
     after 1000 ->
         exit(no_read_recall_range_message_received)
@@ -283,7 +286,7 @@ handle_peer_h2_retries(H0, RecallRange2Start, Retries, State) ->
             State#state.worker_pid ! ?is_recall_range_readable_response(true),
             handle_peer_h2_retries(H0, RecallRange2Start, Retries, State);
         ?read_recall_range(chunk2, _WorkerPid, Candidate, RecallRange2Start) ->
-            State#state.worker_pid ! ?read_recall_range_response(),
+            State#state.worker_pid ! ?read_recall_range_response(true),
             {Candidate, Retries}
     after 1000 ->
         exit(no_read_recall_range_message_received)
@@ -292,7 +295,7 @@ handle_peer_h2_retries(H0, RecallRange2Start, Retries, State) ->
 is_read_requested(RecallRangeStart, State) ->
     receive
         ?read_recall_range(_Kind, _WorkerPid, _Candidate, RecallRangeStart) ->
-            State#state.worker_pid ! ?read_recall_range_response(),
+            State#state.worker_pid ! ?read_recall_range_response(true),
             true
     after 1000 ->
         false
@@ -592,15 +595,21 @@ test_both_ranges_available_h2_solution(State) ->
 %% One chunk per recall range: its sub-chunks then add up to exactly the space
 %% reserved for the range, as they do with the mainnet constants. The default
 %% test recall range is smaller than two sub-chunks.
+%% Sessions are not mocked: these tests remove one.
 peer_h2_mocks() ->
     [{arweave_lib_constants, get_recall_range_size,
-        fun(_PackingDifficulty) -> ?DATA_CHUNK_SIZE end} | mocks()].
+        fun(_PackingDifficulty) -> ?DATA_CHUNK_SIZE end}
+        | [Mock || {_Module, Function, _Fun} = Mock <- mocks(),
+            Function /= session_exists]].
 
 peer_h2_test_() ->
     ar_test_util:with_mocked(peer_h2_mocks(),
         [
             ?with_setup_each(fun test_peer_h2_reserves_one_range/1),
-            ?with_setup_each(fun test_peer_h2_waits_for_cache_space/1)
+            ?with_setup_each(fun test_peer_h2_waits_for_cache_space/1),
+            ?with_setup_each(fun test_peer_h2_declined_read_keeps_no_reservation/1),
+            ?with_setup_each(fun test_peer_h2_retry_dropped_with_session/1),
+            ?with_setup_each(fun test_peer_h2_retry_dropped_when_stale/1)
         ]
     ).
 
@@ -695,4 +704,77 @@ test_peer_h2_waits_for_cache_space(State) ->
     {PeerCandidate, Retries} = handle_peer_h2_retries(<<"PeerH0">>, 300, 0, State),
     ?assert(Retries >= 1),
     ar_mining_worker:chunks_read(Pid, chunk2, PeerCandidate, 300, []),
+    assert_no_messages().
+
+%% A peer request whose range stops being readable between the check and the
+%% read keeps no reservation.
+test_peer_h2_declined_read_keeps_no_reservation(State) ->
+    Pid = State#state.worker_pid,
+    %% Space for exactly one peer range.
+    ar_mining_worker:set_cache_limits(Pid, ?DATA_CHUNK_SIZE, 10),
+    Step = 1,
+    %% 1. The range passes the check, then the read is declined.
+    ar_mining_worker:add_task(Pid, compute_h2_for_peer,
+        peer_candidate(<<"PeerH0-A">>, Step, State)),
+    handle_peer_h2_request(<<"PeerH0-A">>, 300, State),
+    _ = handle_read_recall_range(chunk2, 300, false, State),
+    %% 2. The next request is read at once. It would not fit next to a
+    %% reservation left behind by the first one.
+    ar_mining_worker:add_task(Pid, compute_h2_for_peer,
+        peer_candidate(<<"PeerH0-B">>, Step, State)),
+    handle_peer_h2_request(<<"PeerH0-B">>, 400, State),
+    PeerCandidateB = handle_read_recall_range(chunk2, 400, State),
+    ar_mining_worker:chunks_read(Pid, chunk2, PeerCandidateB, 400, []),
+    assert_no_messages().
+
+%% A peer request waiting for cache space is dropped when its session is removed.
+test_peer_h2_retry_dropped_with_session(State) ->
+    Pid = State#state.worker_pid,
+    %% Space for the two recall ranges of one local step and nothing else.
+    ar_mining_worker:set_cache_limits(Pid, 2 * ?DATA_CHUNK_SIZE, 10),
+    Step = 100,
+    %% 1. A local step reserves the whole cache.
+    ar_mining_worker:add_task(Pid, compute_h0,
+        (State#state.candidate)#mining_candidate{ step_number = Step }),
+    handle_compute_h0(Step, <<"H0">>, State),
+    handle_get_recall_range(<<"H0">>, 100, 200, State),
+    handle_is_recall_range_readable(100, true, State),
+    handle_is_recall_range_readable(200, true, State),
+    _ = handle_read_recall_range(chunk1, 100, State),
+    _ = handle_read_recall_range(chunk2, 200, State),
+    %% 2. A peer request finds no space and waits for a retry.
+    ar_mining_worker:add_task(Pid, compute_h2_for_peer,
+        peer_candidate(<<"PeerH0">>, Step, State)),
+    handle_peer_h2_request(<<"PeerH0">>, 300, State),
+    %% 3. The session goes away, and its reservations with it. A retry that ran
+    %% now would ask for the recall range again.
+    ar_mining_worker:set_sessions(Pid, []),
+    assert_no_messages().
+
+%% A peer request waiting for cache space is dropped once its step is older
+%% than the VDF queue limit, even though space has opened up.
+test_peer_h2_retry_dropped_when_stale(State) ->
+    Pid = State#state.worker_pid,
+    %% Space for the two recall ranges of one local step and nothing else.
+    ar_mining_worker:set_cache_limits(Pid, 2 * ?DATA_CHUNK_SIZE, 10),
+    LocalStep = 100,
+    %% Within the limit of 10 steps: 95 >= 100 - 10.
+    PeerStep = 95,
+    %% 1. A local step reserves the whole cache.
+    ar_mining_worker:add_task(Pid, compute_h0,
+        (State#state.candidate)#mining_candidate{ step_number = LocalStep }),
+    handle_compute_h0(LocalStep, <<"H0">>, State),
+    handle_get_recall_range(<<"H0">>, 100, 200, State),
+    handle_is_recall_range_readable(100, true, State),
+    handle_is_recall_range_readable(200, true, State),
+    _ = handle_read_recall_range(chunk1, 100, State),
+    _ = handle_read_recall_range(chunk2, 200, State),
+    %% 2. A peer request finds no space and waits for a retry.
+    ar_mining_worker:add_task(Pid, compute_h2_for_peer,
+        peer_candidate(<<"PeerH0">>, PeerStep, State)),
+    handle_peer_h2_request(<<"PeerH0">>, 300, State),
+    %% 3. A third range of space opens up, and the limit shrinks to one step,
+    %% which makes the request stale: 95 < 100 - 1. A retry that ran now would
+    %% ask for the recall range again.
+    ar_mining_worker:set_cache_limits(Pid, 3 * ?DATA_CHUNK_SIZE, 1),
     assert_no_messages().
