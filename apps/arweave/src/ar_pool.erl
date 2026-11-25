@@ -666,6 +666,14 @@ we_have_partition_for_the_second_recall_byte(Candidate, [_Partition | Partitions
 %%% Tests.
 %%%===================================================================
 
+-ifdef(AR_TEST).
+accepted_rebase_without_pending_request_test() ->
+    State = #state{},
+    Event = {accepted, #{source => {pool, make_ref()},
+                         indep_hash => <<"rebased block">>, is_rebase => true}},
+    ?assertEqual({noreply, State}, handle_info({event, solution, Event}, State)).
+-endif.
+
 get_jobs_test() ->
     ?assertEqual(#jobs{}, get_jobs(<<>>, [], maps:new())),
 
