@@ -472,25 +472,32 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
     Candidate1 = generate_cache_ref(Candidate),
     %% Clear the list so we aren't copying it around all over the place.
     Candidate3 = Candidate1#mining_candidate{ cm_h1_list = [] },
-    Range2Exists = ar_mining_io:read_recall_range(chunk2, self(), Candidate3, RecallRange2Start),
-    case Range2Exists of
+    SessionKey = Candidate3#mining_candidate.session_key,
+    case ar_mining_io:is_recall_range_readable(Candidate3, RecallRange2Start) of
         true ->
-            ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
-
             %% Add the candidate session to the cache. This is only needed during rare occasions
             %% where a CM peer has added a new session a few seconds before this node does.
             %% Typically all CM peers will be on the same VDF sessions within a few seconds, but
             %% this step prevents the H1s shared during those few seconds from being rejected.
-            ChunkCache = ar_mining_cache:add_session(
-                           Candidate3#mining_candidate.session_key, State#state.chunk_cache),
+            ChunkCache = ar_mining_cache:add_session(SessionKey, State#state.chunk_cache),
             State1 = State#state{ chunk_cache = ChunkCache },
-            %% First we mark the whole first recall range as failed
-            %% Then we can cache the H1 list. During this process, we also reset the chunk1_failed
-            %% flag to false for the entries we have H1 for.
-            %% After these manipulations we will only handle the second recall range nonces that
-            %% have corresponding H1s.
-            State2 = mark_recall_range_failed(chunk1, Candidate3, State1),
-            cache_h1_list(Candidate3, H1List, State2);
+            %% Every nonce of the second recall range consumes or releases one sub-chunk
+            %% of the session reservation once the range is read, so reserve the range
+            %% here. Otherwise the reservations of the local recall ranges pay for it.
+            case try_to_reserve_cache_range_space(1, SessionKey, State1) of
+                {true, State2} ->
+                    ar_mining_io:read_recall_range(chunk2, self(), Candidate3, RecallRange2Start),
+                    ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
+                    %% First we mark the whole first recall range as failed
+                    %% Then we can cache the H1 list. During this process, we also reset the chunk1_failed
+                    %% flag to false for the entries we have H1 for.
+                    %% After these manipulations we will only handle the second recall range nonces that
+                    %% have corresponding H1s.
+                    State3 = mark_recall_range_failed(chunk1, Candidate3, State2),
+                    cache_h1_list(Candidate3, H1List, State3);
+                false ->
+                    retry_compute_h2_for_peer(Candidate, State1)
+            end;
         false ->
             %% This can happen for two reasons:
             %% 1. (most common) Remote peer has requested a range we don't have from a
@@ -505,6 +512,22 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+%% @doc Requeue a peer request that found no cache space unless its VDF step
+%% is too old.
+retry_compute_h2_for_peer(Candidate, State) ->
+    #state{
+       latest_vdf_step_number = LatestVDFStepNumber,
+       vdf_queue_limit = VDFQueueLimit
+      } = State,
+    #mining_candidate{ step_number = StepNumber } = Candidate,
+    case StepNumber >= LatestVDFStepNumber - VDFQueueLimit of
+        true ->
+            add_delayed_task(self(), compute_h2_for_peer, Candidate);
+        false ->
+            log_debug(mining_debug_drop_stale_h2_for_peer, Candidate, State, [])
+    end,
+    State.
 
 process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
     PackingDifficulty = Candidate#mining_candidate.packing_difficulty,

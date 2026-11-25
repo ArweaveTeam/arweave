@@ -257,6 +257,47 @@ handle_prepare_and_post_solution_h2(H2) ->
         exit(no_prepare_and_post_solution_message_received)
     end.
 
+peer_candidate(H0, StepNumber, State) ->
+    (State#state.candidate)#mining_candidate{
+        h0 = H0,
+        step_number = StepNumber,
+        partition_number2 = ?PARTITION,
+        cm_lead_peer = {127, 0, 0, 1, 1984},
+        cm_h1_list = [{<<"PeerH1">>, 0}]
+    }.
+
+%% Answer the worker until it has decided whether the cache has space for the
+%% second recall range of a peer request.
+handle_peer_h2_request(H0, RecallRange2Start, State) ->
+    handle_get_recall_range(H0, 0, RecallRange2Start, State),
+    handle_is_recall_range_readable(RecallRange2Start, true, State).
+
+%% Answer the worker until it asks to read the second recall range of a peer
+%% request. Return the read candidate and how many times the request was retried.
+handle_peer_h2_retries(H0, RecallRange2Start, Retries, State) ->
+    receive
+        ?get_recall_range(H0, _Partition1, _PartitionUpperBound) ->
+            State#state.worker_pid ! ?get_recall_range_response(0, RecallRange2Start),
+            handle_peer_h2_retries(H0, RecallRange2Start, Retries + 1, State);
+        ?is_recall_range_readable(_Candidate, RecallRange2Start) ->
+            State#state.worker_pid ! ?is_recall_range_readable_response(true),
+            handle_peer_h2_retries(H0, RecallRange2Start, Retries, State);
+        ?read_recall_range(chunk2, _WorkerPid, Candidate, RecallRange2Start) ->
+            State#state.worker_pid ! ?read_recall_range_response(),
+            {Candidate, Retries}
+    after 1000 ->
+        exit(no_read_recall_range_message_received)
+    end.
+
+is_read_requested(RecallRangeStart, State) ->
+    receive
+        ?read_recall_range(_Kind, _WorkerPid, _Candidate, RecallRangeStart) ->
+            State#state.worker_pid ! ?read_recall_range_response(),
+            true
+    after 1000 ->
+        false
+    end.
+
 assert_no_messages() ->
     ?debugMsg("Asserting no significant messages left"),
     receive
@@ -546,4 +587,112 @@ test_both_ranges_available_h2_solution(State) ->
     %% 10. Worker posts the valid H2 solution
     handle_prepare_and_post_solution_h2(ValidH2),
     %% 12. No more messages expected
+    assert_no_messages().
+
+%% One chunk per recall range: its sub-chunks then add up to exactly the space
+%% reserved for the range, as they do with the mainnet constants. The default
+%% test recall range is smaller than two sub-chunks.
+peer_h2_mocks() ->
+    [{arweave_lib_constants, get_recall_range_size,
+        fun(_PackingDifficulty) -> ?DATA_CHUNK_SIZE end} | mocks()].
+
+peer_h2_test_() ->
+    ar_test_util:with_mocked(peer_h2_mocks(),
+        [
+            ?with_setup_each(fun test_peer_h2_reserves_one_range/1),
+            ?with_setup_each(fun test_peer_h2_waits_for_cache_space/1)
+        ]
+    ).
+
+%% A request to compute H2 for a peer holds one recall range of cache space
+%% while it is in flight and gives back exactly that much.
+test_peer_h2_reserves_one_range(State) ->
+    Pid = State#state.worker_pid,
+    Difficulty = (State#state.candidate)#mining_candidate.packing_difficulty,
+    %% Space for the two recall ranges of one local step and one peer range.
+    %% Steps more than 10 behind the latest local step are stale.
+    ar_mining_worker:set_cache_limits(Pid, 3 * ?DATA_CHUNK_SIZE, 10),
+    %% Step 100 makes a step 1 peer request stale: 1 < 100 - 10. A stale request
+    %% is dropped rather than retried when the cache has no space for it.
+    LocalStep = 100,
+    StaleStep = 1,
+    %% 1. A local step reserves two ranges and keeps them until they are read.
+    ar_mining_worker:add_task(Pid, compute_h0,
+        (State#state.candidate)#mining_candidate{ step_number = LocalStep }),
+    handle_compute_h0(LocalStep, <<"H0">>, State),
+    handle_get_recall_range(<<"H0">>, 100, 200, State),
+    handle_is_recall_range_readable(100, true, State),
+    handle_is_recall_range_readable(200, true, State),
+    LocalCandidate1 = handle_read_recall_range(chunk1, 100, State),
+    LocalCandidate2 = handle_read_recall_range(chunk2, 200, State),
+    %% 2. The first peer request takes the third range.
+    ar_mining_worker:add_task(Pid, compute_h2_for_peer,
+        peer_candidate(<<"PeerH0-A">>, LocalStep, State)),
+    handle_peer_h2_request(<<"PeerH0-A">>, 300, State),
+    PeerCandidateA = handle_read_recall_range(chunk2, 300, State),
+    %% 3. The cache is fully reserved now, the next peer request does not fit.
+    ar_mining_worker:add_task(Pid, compute_h2_for_peer,
+        peer_candidate(<<"PeerH0-B">>, StaleStep, State)),
+    handle_peer_h2_request(<<"PeerH0-B">>, 400, State),
+    ?assertNot(is_read_requested(400, State)),
+    %% 4. The first peer range is read. The only nonce with an H1 gets its H2,
+    %% the other nonces are dropped.
+    ar_mining_worker:chunks_read(Pid, chunk2, PeerCandidateA, 300,
+        generate_recall_range(300, Difficulty)),
+    handle_compute_h2s([<<"PeerH2">>], State),
+    handle_passes_diff_checks(#{ <<"PeerH2">> => false }, State),
+    %% 5. The first peer request gave its range back, the next one fits again.
+    ar_mining_worker:add_task(Pid, compute_h2_for_peer,
+        peer_candidate(<<"PeerH0-C">>, StaleStep, State)),
+    handle_peer_h2_request(<<"PeerH0-C">>, 500, State),
+    PeerCandidateC = handle_read_recall_range(chunk2, 500, State),
+    %% 6. It gave back no more than its range: the two local ranges are still
+    %% reserved and the cache is full again.
+    ar_mining_worker:add_task(Pid, compute_h2_for_peer,
+        peer_candidate(<<"PeerH0-D">>, StaleStep, State)),
+    handle_peer_h2_request(<<"PeerH0-D">>, 600, State),
+    ?assertNot(is_read_requested(600, State)),
+    %% 7. The peer range turns out to have no chunks.
+    ar_mining_worker:chunks_read(Pid, chunk2, PeerCandidateC, 500, []),
+    %% 8. The local step completes: every nonce gets its H1 and H2.
+    ar_mining_worker:chunks_read(Pid, chunk1, LocalCandidate1, 100,
+        generate_recall_range(100, Difficulty)),
+    ar_mining_worker:chunks_read(Pid, chunk2, LocalCandidate2, 200,
+        generate_recall_range(200, Difficulty)),
+    H1s = generate_hashes_for_recall_range(<<"H1-">>, Difficulty),
+    handle_compute_h1s(H1s, State),
+    handle_passes_diff_checks(maps:from_list([{H1, false} || H1 <- H1s]), State),
+    H2s = generate_hashes_for_recall_range(<<"H2-">>, Difficulty),
+    handle_compute_h2s(H2s, State),
+    handle_passes_diff_checks(maps:from_list([{H2, false} || H2 <- H2s]), State),
+    assert_no_messages().
+
+%% A request to compute H2 for a peer on a recent step is retried until the
+%% cache has space for its recall range.
+test_peer_h2_waits_for_cache_space(State) ->
+    Pid = State#state.worker_pid,
+    %% Space for the two recall ranges of one local step and nothing else.
+    %% The peer request is on the latest local step, so it is never stale.
+    ar_mining_worker:set_cache_limits(Pid, 2 * ?DATA_CHUNK_SIZE, 10),
+    Step = 100,
+    %% 1. A local step reserves the whole cache.
+    ar_mining_worker:add_task(Pid, compute_h0,
+        (State#state.candidate)#mining_candidate{ step_number = Step }),
+    handle_compute_h0(Step, <<"H0">>, State),
+    handle_get_recall_range(<<"H0">>, 100, 200, State),
+    handle_is_recall_range_readable(100, true, State),
+    handle_is_recall_range_readable(200, true, State),
+    LocalCandidate1 = handle_read_recall_range(chunk1, 100, State),
+    LocalCandidate2 = handle_read_recall_range(chunk2, 200, State),
+    %% 2. A peer request finds no space.
+    ar_mining_worker:add_task(Pid, compute_h2_for_peer,
+        peer_candidate(<<"PeerH0">>, Step, State)),
+    handle_peer_h2_request(<<"PeerH0">>, 300, State),
+    %% 3. The local ranges have no chunks, their space is released.
+    ar_mining_worker:chunks_read(Pid, chunk1, LocalCandidate1, 100, []),
+    ar_mining_worker:chunks_read(Pid, chunk2, LocalCandidate2, 200, []),
+    %% 4. The peer range is read on a retry, not on the first attempt.
+    {PeerCandidate, Retries} = handle_peer_h2_retries(<<"PeerH0">>, 300, 0, State),
+    ?assert(Retries >= 1),
+    ar_mining_worker:chunks_read(Pid, chunk2, PeerCandidate, 300, []),
     assert_no_messages().
