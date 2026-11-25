@@ -1,6 +1,6 @@
 {application, arweave_tools, [
     {description, "Arweave command-line tools"},
-    {vsn, "2.9.8"},
+    {vsn, "2.9.8-dev-cm-cache-20261125"},
     {applications, [
         kernel,
         stdlib,

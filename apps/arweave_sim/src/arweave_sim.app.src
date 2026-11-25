@@ -1,6 +1,6 @@
 {application, arweave_sim, [
     {description, "Deterministic simulation infrastructure (test-only)"},
-    {vsn, "2.9.8"},
+    {vsn, "2.9.8-dev-cm-cache-20261125"},
     {applications, [kernel, stdlib]},
     {modules, []},
     {registered, []},

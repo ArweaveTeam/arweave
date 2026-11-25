@@ -2,7 +2,7 @@
  [
   {id, "arweave_limiter"},
   {description, "Arweave Rate Limiter"},
-  {vsn, "2.9.8"},
+  {vsn, "2.9.8-dev-cm-cache-20261125"},
   {mod, {arweave_limiter, []}},
   {env, []},
   {applications, [

@@ -1,6 +1,6 @@
 {application, arweave_storage, [
     {description, "Chunk storage, entropy storage and persisted availability records"},
-    {vsn, "2.9.8"},
+    {vsn, "2.9.8-dev-cm-cache-20261125"},
     {mod, {arweave_storage, []}},
     {applications, [
         kernel,
